@@ -57,6 +57,49 @@ test("capture preserves raw when summary fails", async () => {
 	assert.match((await readText(join(store, "episodic", "2026-06-02.md"))) ?? "", /summary_pending: true/);
 });
 
+test("capture redacts secrets before writing raw or summarizing", async () => {
+	const store = await tempStore();
+	let prompt = "";
+	const memory = new Memory(store, {
+		complete(input) {
+			prompt = input;
+			return "- captured safely";
+		},
+	});
+
+	const deepseekKey = `sk-${"123456789012345678901234"}`;
+	const apiKey = "abc123-secret";
+	const githubToken = `ghp_${"1234567890abcdefghijklmnopqrstuvwxyz"}`;
+	const googleKey = `AIza${"1234567890abcdefghijklmnopqrstuvwxyz"}`;
+	const bearer = `${"Bearer"} ${"token-secret"}`;
+	const privateKeyHeader = `-----BEGIN ${"PRIVATE"} KEY-----`;
+	const privateKeyFooter = `-----END ${"PRIVATE"} KEY-----`;
+	const raw = `DeepSeek ${deepseekKey}
+api_key = ${apiKey}
+${githubToken}
+Authorization: ${bearer}
+${googleKey}
+${privateKeyHeader}
+abc123
+${privateKeyFooter}`;
+	await memory.capture(raw, meta);
+
+	const text = (await readText(join(store, "episodic", "raw", "2026-06-02T2330--sess01.md"))) ?? "";
+	for (const leaked of [
+		deepseekKey,
+		apiKey,
+		githubToken.slice(0, 14),
+		bearer,
+		googleKey.slice(0, 14),
+		`${"BEGIN"} PRIVATE KEY`,
+	]) {
+		assert.doesNotMatch(text, new RegExp(leaked.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+		assert.doesNotMatch(prompt, new RegExp(leaked.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+	}
+	assert.match(text, /«REDACTED:secret»/);
+	assert.match(prompt, /«REDACTED:secret»/);
+});
+
 test("getContext returns seed context and facts", async () => {
 	const store = await tempStore();
 	const context = await new Memory(store).getContext();

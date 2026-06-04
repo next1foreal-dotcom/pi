@@ -1,6 +1,23 @@
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
+const secretPatterns = [
+	/sk-[A-Za-z0-9]{20,}/g,
+	/api[_-]?key\s*[:=]\s*\S+/gi,
+	/ghp_\w+/g,
+	/AIza\w+/g,
+	/Bearer\s+\S+/gi,
+	/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
+];
+
+export function redactSecrets(text: string): string {
+	let redacted = text;
+	for (const pattern of secretPatterns) {
+		redacted = redacted.replace(pattern, "«REDACTED:secret»");
+	}
+	return redacted;
+}
+
 export async function readText(path: string): Promise<string | undefined> {
 	try {
 		return await readFile(path, "utf8");

@@ -3,7 +3,16 @@ import { mkdir, readdir } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { StorePaths } from "./paths.ts";
 import { type CorpusDoc, lexicalSearch, type Note } from "./retrieval.ts";
-import { appendText, frontmatter, parseFrontmatter, readJson, readText, writeJson, writeText } from "./store.ts";
+import {
+	appendText,
+	frontmatter,
+	parseFrontmatter,
+	readJson,
+	readText,
+	redactSecrets,
+	writeJson,
+	writeText,
+} from "./store.ts";
 
 export const SEED_CONTEXT =
 	"# CONTEXT - Living Narrative / alive narrative\n\n*(empty - Samantha has not yet formed an understanding of Fei.)*\n";
@@ -76,14 +85,15 @@ export class Memory {
 		const project = meta.project ?? "unknown";
 		const rawStem = `${safeStem(ts)}--${safeStem(sid)}`;
 		const rawFm = { id: sid, timestamp: ts, project, session_id: sid };
+		const safeRaw = redactSecrets(raw);
 
-		await writeText(join(this.paths.raw, `${rawStem}.md`), `${frontmatter(rawFm)}\n${raw}`);
+		await writeText(join(this.paths.raw, `${rawStem}.md`), `${frontmatter(rawFm)}\n${safeRaw}`);
 
 		let pending = false;
 		let summary: string;
 		try {
 			if (!this.model) throw new Error("no model configured");
-			summary = await this.model.complete(summaryPrompt(raw));
+			summary = await this.model.complete(summaryPrompt(safeRaw));
 		} catch {
 			summary = "- (summary pending - summarizer unavailable)";
 			pending = true;
