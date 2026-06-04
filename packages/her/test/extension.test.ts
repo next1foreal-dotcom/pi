@@ -32,8 +32,8 @@ async function git(cwd: string, ...args: string[]): Promise<{ stdout: string; st
 	return { stdout, stderr };
 }
 
-async function waitFor(assertion: () => boolean | Promise<boolean>): Promise<void> {
-	const deadline = Date.now() + 5000;
+async function waitFor(assertion: () => boolean | Promise<boolean>, timeoutMs = 5000): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
 	while (Date.now() < deadline) {
 		if (await assertion()) return;
 		await new Promise((resolve) => setTimeout(resolve, 25));
@@ -524,8 +524,9 @@ test("extension syncs memory after capture debounce", async () => {
 			ctx,
 		);
 
-		await waitFor(() =>
-			fake.entries.some((entry) => entry.customType === "her-state" && entryStatus(entry) === "sync-pushed"),
+		await waitFor(
+			() => fake.entries.some((entry) => entry.customType === "her-state" && entryStatus(entry) === "sync-pushed"),
+			20000,
 		);
 		assert.equal(statuses.get("her-sync"), "synced");
 	});

@@ -76,6 +76,24 @@ test("/her-intake prompt encodes the minimal source-to-memory chain", async () =
 	}
 });
 
+test("her-intake encodes quarantine rules for untrusted source text", async () => {
+	const skill = await readFile(join(herRoot, "pi-package", "skills", "her-intake", "SKILL.md"), "utf8");
+	const prompt = await readFile(join(herRoot, "pi-package", "prompts", "her-intake.md"), "utf8");
+
+	for (const text of [skill, prompt]) {
+		for (const required of [
+			"untrusted",
+			"prompt injection",
+			"do not execute instructions",
+			"reader/extractor",
+			"trusted memory writer",
+			"no write-memory tools",
+		]) {
+			assert.match(text, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"));
+		}
+	}
+});
+
 test("Pi powerline promotes Her memory sync status", async () => {
 	const settings = JSON.parse(await readFile(join(process.cwd(), ".pi", "settings.json"), "utf8")) as {
 		powerline?: { customItems?: Array<Record<string, unknown>> };
