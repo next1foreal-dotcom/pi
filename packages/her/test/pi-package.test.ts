@@ -5,6 +5,19 @@ import test from "node:test";
 
 const herRoot = join(process.cwd(), "packages", "her");
 const projectAgentsRoot = join(process.cwd(), ".pi", "agents");
+const subagentPin = "git:github.com/nicobailon/pi-subagents@efa7120047eaf76a32620eed0ec7d038b6cfa44e";
+
+const parseSimpleFrontmatter = (text: string): { frontmatter: Record<string, string>; body: string } => {
+	const normalized = text.replace(/\r\n/g, "\n");
+	const endIndex = normalized.indexOf("\n---", 3);
+	assert.ok(normalized.startsWith("---") && endIndex !== -1, "agent markdown must start with frontmatter");
+	const frontmatter: Record<string, string> = {};
+	for (const line of normalized.slice(4, endIndex).split("\n")) {
+		const match = line.match(/^([\w-]+):\s*(.*)$/);
+		if (match) frontmatter[match[1]] = match[2].trim();
+	}
+	return { frontmatter, body: normalized.slice(endIndex + 4).trim() };
+};
 
 test("her-intake skill encodes the universal inbox contract", async () => {
 	const skill = await readFile(join(herRoot, "pi-package", "skills", "her-intake", "SKILL.md"), "utf8");
@@ -56,4 +69,29 @@ test("Her subagents are project-discoverable and inherit memory context", async 
 	const ideaEngine = await readFile(join(projectAgentsRoot, "idea-engine.md"), "utf8");
 	assert.match(ideaEngine, /her_recall/);
 	assert.match(ideaEngine, /her_idea/);
+});
+
+test("Her Seam-2 subagents carry recall and durable writeback instructions", async () => {
+	const settings = JSON.parse(await readFile(join(process.cwd(), ".pi", "settings.json"), "utf8")) as {
+		packages?: string[];
+	};
+	assert.ok(settings.packages?.includes(subagentPin), "pi-subagents must stay pinned for project subagent runtime");
+
+	for (const agentName of ["coder", "explorer", "reviewer"]) {
+		const projectText = await readFile(join(projectAgentsRoot, `${agentName}.md`), "utf8");
+		const packageText = await readFile(join(herRoot, "pi-package", "agents", `${agentName}.md`), "utf8");
+		assert.equal(projectText, packageText);
+
+		const { frontmatter, body } = parseSimpleFrontmatter(projectText);
+		assert.equal(frontmatter.name, agentName);
+		assert.equal(frontmatter.systemPromptMode, "append");
+		assert.equal(frontmatter.inheritProjectContext, "true");
+		assert.equal(frontmatter.defaultContext, "fork");
+		assert.equal(frontmatter.tools, undefined, `${agentName} must not restrict away Her memory tools`);
+
+		assert.match(body, /CONTEXT\/FACTS/);
+		assert.match(body, /her_recall/);
+		assert.match(body, /her_(?:remember|world_note|judgment|idea)/);
+		assert.match(body, /child transcript/);
+	}
 });
