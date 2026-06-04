@@ -20,6 +20,8 @@ Current status:
 - `turn_end` captures raw episodes into `her-memory/episodic/raw`.
 - `her_sync` commits and pushes dirty memory; capture schedules the same sync after `HER_SYNC_DEBOUNCE_MS` (default 5 minutes).
 - `her-sync` is published through `ctx.ui.setStatus()` and promoted by `pi-powerline-footer` as the Her memory sync indicator.
+- `packages/her/src/cli.ts` exposes the same sync surface for operators:
+  `node --import tsx packages/her/src/cli.ts sync --status` or `node packages/her/bin/her.mjs sync --status`.
 - `synthesize()` autonomously writes `CONTEXT.md` through a reviewable git-backed `context-log.md`; `FACTS.md` remains read-only to the growth loop.
 - Tools are registered for recall, remember, world notes, judgments, memory status, idea capture, and context review/keep/revert.
 - Context digest follow-ups report due unreviewed context changes before Mirror, and both suppress themselves while `pi-codex-goal` owns an active continuation.
@@ -30,6 +32,7 @@ Current status:
 Verification:
 
 ```
+node --import tsx --test packages\her\test\cli.test.ts
 node --import tsx --test packages\her\test\*.test.ts
 npm run check
 ```

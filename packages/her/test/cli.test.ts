@@ -1,0 +1,79 @@
+import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+import { initStore, Memory } from "../src/her-core/index.ts";
+
+const execFileAsync = promisify(execFile);
+const repoRoot = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
+
+async function git(cwd: string, ...args: string[]): Promise<{ stdout: string; stderr: string }> {
+	const { stdout, stderr } = await execFileAsync("git", args, { cwd });
+	return { stdout, stderr };
+}
+
+async function gitBackedStore(): Promise<{ store: string; remote: string }> {
+	const store = await mkdtemp(join(tmpdir(), "her-cli-"));
+	const remote = await mkdtemp(join(tmpdir(), "her-cli-remote-"));
+	await initStore(store);
+	await git(remote, "init", "--bare");
+	await git(store, "init");
+	await git(store, "config", "user.name", "Her CLI Test");
+	await git(store, "config", "user.email", "her-cli-test@example.com");
+	await git(store, "add", "-A");
+	await git(store, "commit", "-m", "memory: init");
+	await git(store, "branch", "-M", "master");
+	await git(store, "remote", "add", "origin", remote);
+	await git(store, "push", "-u", "origin", "master");
+	return { store, remote };
+}
+
+async function runCli(args: string[], store: string): Promise<{ stdout: string; stderr: string }> {
+	const { stdout, stderr } = await execFileAsync(
+		process.execPath,
+		["--import", "tsx", "packages/her/src/cli.ts", ...args],
+		{
+			cwd: repoRoot,
+			env: { ...process.env, HER_MEMORY_DIR: store },
+		},
+	);
+	return { stdout, stderr };
+}
+
+test("CLI reports Her memory sync status as JSON", async () => {
+	const { store } = await gitBackedStore();
+
+	let result = await runCli(["sync", "--status", "--json"], store);
+	let payload = JSON.parse(result.stdout);
+	assert.equal(payload.memoryDir, store);
+	assert.equal(payload.status.status, "synced");
+	assert.equal(payload.status.pending, 0);
+	assert.equal(payload.status.branch, "master");
+	assert.match(payload.lastSyncedAt, /^\d{4}-\d{2}-\d{2}T/);
+
+	await new Memory(store).remember("Pending local memory for the CLI.", "note");
+	result = await runCli(["sync", "--status", "--json"], store);
+	payload = JSON.parse(result.stdout);
+	assert.equal(payload.status.status, "unsynced");
+	assert.equal(payload.status.dirtyFiles, 1);
+	assert.equal(payload.status.pending, 1);
+});
+
+test("CLI sync commits and pushes dirty Her memory", async () => {
+	const { store, remote } = await gitBackedStore();
+	await new Memory(store).remember("CLI should commit and push this memory.", "note");
+
+	const result = await runCli(["sync", "--message", "memory(sync): cli test", "--json"], store);
+	const payload = JSON.parse(result.stdout);
+
+	assert.equal(payload.result.status, "pushed");
+	assert.match(payload.result.commit, /^[0-9a-f]{7,40}$/);
+	assert.equal(payload.status.status, "synced");
+	assert.equal(payload.status.pending, 0);
+	assert.equal((await git(store, "status", "--porcelain")).stdout.trim(), "");
+	assert.match((await git(remote, "log", "--oneline", "-1")).stdout, /memory\(sync\): cli test/);
+});
