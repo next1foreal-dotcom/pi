@@ -103,6 +103,17 @@ test("W0 workflow capability decision is documented", async () => {
 	assert.match(organs, /thin Her orchestrator/);
 });
 
+test("growth loop has a single TS her-core owner", async () => {
+	const organs = await text("packages", "her", "ORGANS.md");
+	const readme = await text("packages", "her", "README.md");
+	for (const source of [organs, readme]) {
+		assert.match(source, /owner = TS her-core|Growth-loop owner = TS/);
+		assert.match(source, /capture-only/);
+	}
+	assert.match(organs, /must not run scheduled growth maintenance/);
+	assert.match(readme, /FACTS\.md.*read-only/);
+});
+
 test("W0 minimal adversarial workflow runs with structured keep/drop result", async () => {
 	const workflowModule = (await import(
 		pathToFileURL(

@@ -130,6 +130,28 @@ function renderSync(result: MemorySyncResult): string {
 	return `Her memory synced: ${result.commit}`;
 }
 
+function renderContextReview(updates: Awaited<ReturnType<Memory["reviewContextUpdates"]>>): string {
+	if (updates.length === 0) return "No unreviewed Her context updates.";
+	return updates
+		.map((update, index) =>
+			[
+				`${index + 1}. ${update.id} (${update.type}, ${update.status})`,
+				`change: ${update.change}`,
+				update.commit ? `commit: ${update.commit}` : undefined,
+				update.drivenBy.length > 0 ? `driven_by: ${update.drivenBy.join(", ")}` : undefined,
+			]
+				.filter(Boolean)
+				.join("\n"),
+		)
+		.join("\n\n");
+}
+
+function renderContextDigest(updates: Awaited<ReturnType<Memory["reviewContextUpdates"]>>): string {
+	const identityCount = updates.filter((update) => update.type === "identity").length;
+	const identityText = identityCount > 0 ? ` (${identityCount} identity-level)` : "";
+	return `Her context changed in ${updates.length} unreviewed update(s)${identityText}.\n\n${renderContextReview(updates)}`;
+}
+
 function renderRecall(notes: Awaited<ReturnType<Memory["recall"]>>): string {
 	if (notes.length === 0) return "No Her memory hits.";
 	return notes
@@ -294,28 +316,51 @@ export default function her(pi: ExtensionAPI): void {
 			noteId,
 			memoryDir,
 		});
-		scheduleSync("capture", ctx);
-		if (!ctx.isIdle() || ctx.hasPendingMessages() || hasActiveGoal(ctx)) return;
-		const hit = await mem.surface({
-			query: safeJson({ message: event.message, toolResults: event.toolResults }),
-			sessionId,
-		});
-		if (!hit) return;
-		pi.sendMessage(
-			{
-				customType: "her-mirror",
-				content: renderMirror(hit),
-				display: true,
-				details: { noteId: hit.id, kind: hit.kind, pinned: true },
-			},
-			{ deliverAs: "followUp" },
-		);
-		pi.appendEntry("her-state", {
-			phase: "5",
-			status: "mirror-sent",
-			noteId: hit.id,
-			memoryDir,
-		});
+		try {
+			if (!ctx.isIdle() || ctx.hasPendingMessages() || hasActiveGoal(ctx)) return;
+			const digest = await mem.contextDigestDue();
+			if (digest.length > 0) {
+				pi.sendMessage(
+					{
+						customType: "her-context-digest",
+						content: renderContextDigest(digest),
+						display: true,
+						details: { updates: digest.map((update) => update.id), pinned: true },
+					},
+					{ deliverAs: "followUp" },
+				);
+				await mem.markContextDigestSent(digest.map((update) => update.id));
+				pi.appendEntry("her-state", {
+					phase: "2",
+					status: "context-digest-sent",
+					count: digest.length,
+					memoryDir,
+				});
+				return;
+			}
+			const hit = await mem.surface({
+				query: safeJson({ message: event.message, toolResults: event.toolResults }),
+				sessionId,
+			});
+			if (!hit) return;
+			pi.sendMessage(
+				{
+					customType: "her-mirror",
+					content: renderMirror(hit),
+					display: true,
+					details: { noteId: hit.id, kind: hit.kind, pinned: true },
+				},
+				{ deliverAs: "followUp" },
+			);
+			pi.appendEntry("her-state", {
+				phase: "5",
+				status: "mirror-sent",
+				noteId: hit.id,
+				memoryDir,
+			});
+		} finally {
+			scheduleSync("capture", ctx);
+		}
 	});
 
 	pi.on("session_before_compact", () => {
@@ -367,6 +412,43 @@ export default function her(pi: ExtensionAPI): void {
 		async execute() {
 			const result = await mem.sync("memory(sync): manual");
 			return textResult(renderSync(result), { phase: "2", ...result, memoryDir });
+		},
+	});
+
+	pi.registerTool({
+		name: "her_review_context",
+		label: "Her Review Context",
+		description: "List unreviewed Her CONTEXT.md updates before they become trusted narrative.",
+		parameters: Type.Object({}),
+		async execute() {
+			const updates = await mem.reviewContextUpdates();
+			return textResult(renderContextReview(updates), { phase: "2", count: updates.length, updates, memoryDir });
+		},
+	});
+
+	pi.registerTool({
+		name: "her_keep",
+		label: "Her Keep Context",
+		description: "Mark a reviewed Her context update as kept.",
+		parameters: Type.Object({
+			id: Type.String({ description: "Context update id from her_review_context" }),
+		}),
+		async execute(_toolCallId, params) {
+			await mem.keepContextUpdate(params.id);
+			return textResult(`Kept Her context update: ${params.id}`, { phase: "2", id: params.id, memoryDir });
+		},
+	});
+
+	pi.registerTool({
+		name: "her_revert",
+		label: "Her Revert Context",
+		description: "Revert an unreviewed Her context update and restore the previous CONTEXT.md.",
+		parameters: Type.Object({
+			id: Type.String({ description: "Context update id from her_review_context" }),
+		}),
+		async execute(_toolCallId, params) {
+			await mem.revertContextUpdate(params.id);
+			return textResult(`Reverted Her context update: ${params.id}`, { phase: "2", id: params.id, memoryDir });
 		},
 	});
 

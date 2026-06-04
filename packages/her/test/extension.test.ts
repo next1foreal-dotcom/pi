@@ -7,7 +7,7 @@ import test from "node:test";
 import { promisify } from "node:util";
 import type { ExtensionAPI, ExtensionContext, ProviderConfig, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import her from "../src/extension.ts";
-import { initStore, readJson, readText, writeText } from "../src/her-core/index.ts";
+import { initStore, Memory, readJson, readText, writeText } from "../src/her-core/index.ts";
 
 type Handler = (event: unknown, ctx: ExtensionContext) => Promise<unknown> | unknown;
 const execFileAsync = promisify(execFile);
@@ -306,6 +306,97 @@ test("extension mirror does not compete with an active pi-codex-goal follow-up",
 	});
 });
 
+test("extension sends a context digest for due unreviewed updates", async () => {
+	const store = await tempStore();
+	await writeText(
+		join(store, ".her", "config.yaml"),
+		["llm:", "  base_url: https://api.deepseek.com", "cadence:", "  digest_after_unreviewed: 1", ""].join("\n"),
+	);
+	await git(store, "init");
+	await git(store, "config", "user.name", "Her Test");
+	await git(store, "config", "user.email", "her-test@example.com");
+	await git(store, "add", "-A");
+	await git(store, "commit", "-m", "memory: init");
+	const update = await new Memory(store).writeContextUpdate({
+		content: "# CONTEXT\n\nFei reviews autonomous context changes.\n",
+		change: "Report autonomous context changes",
+		type: "identity",
+		drivenBy: ["[[episodic/raw/turn-1]]"],
+	});
+	const ctx = createContext(store);
+
+	await withMemoryDir(store, async () => {
+		const fake = createFakePi();
+		her(fake.pi);
+
+		const turnEnd = fake.handlers.get("turn_end")?.[0];
+		assert.ok(turnEnd);
+		await turnEnd(
+			{ type: "turn_end", turnIndex: 1, message: { role: "assistant", content: [] }, toolResults: [] },
+			ctx,
+		);
+
+		const message = fake.messages.at(-1)?.message as { customType?: string; content?: string };
+		assert.equal(message.customType, "her-context-digest");
+		assert.match(message.content ?? "", new RegExp(update.id));
+		assert.deepEqual(fake.messages.at(-1)?.options, { deliverAs: "followUp" });
+		assert.equal(
+			fake.entries.some((entry) => entry.customType === "her-state" && entryStatus(entry) === "context-digest-sent"),
+			true,
+		);
+
+		await turnEnd(
+			{ type: "turn_end", turnIndex: 2, message: { role: "assistant", content: [] }, toolResults: [] },
+			ctx,
+		);
+		assert.equal(
+			fake.messages.filter((entry) => (entry.message as { customType?: string }).customType === "her-context-digest")
+				.length,
+			1,
+		);
+	});
+});
+
+test("extension context digest does not compete with an active pi-codex-goal follow-up", async () => {
+	const store = await tempStore();
+	await writeText(join(store, ".her", "config.yaml"), "cadence:\n  digest_after_unreviewed: 1\n");
+	await git(store, "init");
+	await git(store, "config", "user.name", "Her Test");
+	await git(store, "config", "user.email", "her-test@example.com");
+	await git(store, "add", "-A");
+	await git(store, "commit", "-m", "memory: init");
+	await new Memory(store).writeContextUpdate({
+		content: "# CONTEXT\n\nFei reviews context changes after the goal.\n",
+		change: "Defer digest during active goal",
+		type: "revise",
+		drivenBy: ["[[episodic/raw/turn-1]]"],
+	});
+	const ctx = createContext(store, [
+		{
+			customType: "pi-codex-goal",
+			data: { kind: "set", goal: { status: "active" } },
+		},
+	]);
+
+	await withMemoryDir(store, async () => {
+		const fake = createFakePi();
+		her(fake.pi);
+
+		const turnEnd = fake.handlers.get("turn_end")?.[0];
+		assert.ok(turnEnd);
+		await turnEnd(
+			{ type: "turn_end", turnIndex: 1, message: { role: "assistant", content: [] }, toolResults: [] },
+			ctx,
+		);
+
+		assert.equal(fake.messages.length, 0);
+		assert.equal(
+			fake.entries.some((entry) => entry.customType === "her-state" && entryStatus(entry) === "context-digest-sent"),
+			false,
+		);
+	});
+});
+
 test("extension passes configured summary model to Memory capture", async () => {
 	const store = await tempStore();
 	const ctx = createContext(store);
@@ -484,5 +575,55 @@ test("extension memory tools write, recall, judge, and update status", async () 
 		assert.match(world, /correction: Mirror must not interrupt active work/);
 		assert.match(world, /memory_status: active/);
 		assert.match(world, /reason: Feeds Phase 5 Mirror gating/);
+	});
+});
+
+test("extension context review tools list, keep, and revert updates", async () => {
+	const store = await tempStore();
+	await git(store, "init");
+	await git(store, "config", "user.name", "Her Test");
+	await git(store, "config", "user.email", "her-test@example.com");
+	await git(store, "add", "-A");
+	await git(store, "commit", "-m", "memory: init");
+	const ctx = createContext(store);
+
+	await withMemoryDir(store, async () => {
+		const fake = createFakePi();
+		her(fake.pi);
+
+		const review = fake.tools.get("her_review_context");
+		const keep = fake.tools.get("her_keep");
+		const revert = fake.tools.get("her_revert");
+		assert.ok(review);
+		assert.ok(keep);
+		assert.ok(revert);
+
+		const memory = new Memory(store);
+		const first = await memory.writeContextUpdate({
+			content: "# CONTEXT\n\nFei wants reversible narrative changes.\n",
+			change: "Prefer reversible context updates",
+			type: "identity",
+			drivenBy: ["[[episodic/raw/turn-1]]"],
+		});
+
+		const reviewed = await executeTool(review, {}, ctx);
+		assert.match(firstText(reviewed), new RegExp(first.id));
+		assert.equal((reviewed.details as { count?: number }).count, 1);
+
+		await executeTool(keep, { id: first.id }, ctx);
+		assert.equal((await memory.reviewContextUpdates()).length, 0);
+
+		const second = await memory.writeContextUpdate({
+			content: "# CONTEXT\n\nTemporary context that should go away.\n",
+			change: "Temporary context",
+			type: "revise",
+			drivenBy: ["[[episodic/raw/turn-2]]"],
+		});
+
+		await executeTool(revert, { id: second.id }, ctx);
+		assert.doesNotMatch((await readText(join(store, "narrative", "CONTEXT.md"))) ?? "", /Temporary context/);
+
+		const empty = await executeTool(review, {}, ctx);
+		assert.match(firstText(empty), /No unreviewed/);
 	});
 });

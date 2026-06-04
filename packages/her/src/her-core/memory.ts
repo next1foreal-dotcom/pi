@@ -85,6 +85,25 @@ export interface ConsolidateResult {
 	moments: number;
 }
 
+export interface ContextUpdateInput {
+	content: string;
+	change: string;
+	type: "add" | "revise" | "identity";
+	drivenBy: string[];
+	extraPaths?: string[];
+}
+
+export interface ContextUpdateRecord {
+	id: string;
+	timestamp: string;
+	type: string;
+	change: string;
+	status: "unreviewed" | "kept" | "reverted";
+	drivenBy: string[];
+	commit?: string;
+	diff?: string;
+}
+
 export class Memory {
 	readonly paths: StorePaths;
 	private readonly model?: ModelLike;
@@ -231,13 +250,26 @@ export class Memory {
 		await writeText(join(this.paths.proposals, `${proposalId}.md`), draft);
 		const state = await readJson<Record<string, unknown>>(this.paths.stateFile, {});
 		await writeJson(this.paths.stateFile, { ...state, last_synthesize: today() });
+		await this.writeContextUpdate({
+			content: draft,
+			change: "Synthesize narrative update",
+			type: "revise",
+			drivenBy: await this.contextUpdateSources(),
+			extraPaths: [`proposals/${proposalId}.md`],
+		});
 		return proposalId;
 	}
 
 	async approve(proposalId: string): Promise<void> {
 		const proposed = await readText(join(this.paths.proposals, `${proposalId}.md`));
 		if (proposed === undefined) throw new Error(`no proposal: ${proposalId}`);
-		await writeText(this.paths.contextFile, proposed);
+		if (((await readText(this.paths.contextFile)) ?? "") === proposed) return;
+		await this.writeContextUpdate({
+			content: proposed,
+			change: `Approve proposal ${proposalId}`,
+			type: "revise",
+			drivenBy: [`[[proposals/${proposalId}]]`],
+		});
 	}
 
 	async buildTopicMaps(): Promise<string[]> {
@@ -293,6 +325,69 @@ export class Memory {
 			written.push({ id, title: idea.title, kind });
 		}
 		return written;
+	}
+
+	async writeContextUpdate(input: ContextUpdateInput): Promise<{ id: string; commit: string }> {
+		const timestamp = new Date().toISOString();
+		const id = genId(timestamp, input.change);
+		await writeText(this.paths.contextFile, input.content);
+		await appendText(this.contextLogFile(), contextLogBlock(id, timestamp, input));
+		const state = await readJson<{ unreviewed_updates?: string[] }>(this.paths.stateFile, {});
+		await writeJson(this.paths.stateFile, {
+			...state,
+			unreviewed_updates: [...new Set([...(state.unreviewed_updates ?? []), id])],
+		});
+		await this.stageContextUpdateFiles(input.extraPaths);
+		await git(this.paths.root, "commit", "-m", `memory(context): ${input.change}`);
+		const commit = (await git(this.paths.root, "rev-parse", "--short", "HEAD")).stdout.trim();
+		return { id, commit };
+	}
+
+	async reviewContextUpdates(): Promise<ContextUpdateRecord[]> {
+		const records = parseContextLog((await readText(this.contextLogFile())) ?? "");
+		const unreviewed = records.filter((record) => record.status === "unreviewed");
+		for (const record of unreviewed) {
+			record.commit = await this.findContextUpdateCommit(record.id);
+			if (record.commit) record.diff = await this.contextUpdateDiff(record.commit);
+		}
+		return unreviewed;
+	}
+
+	async contextDigestDue(): Promise<ContextUpdateRecord[]> {
+		const updates = await this.reviewContextUpdates();
+		if (updates.length < this.config.cadence.digestAfterUnreviewed) return [];
+		const ids = updates.map((update) => update.id).sort();
+		const state = await readJson<{ last_digest_updates?: string[] }>(this.paths.stateFile, {});
+		const last = [...(state.last_digest_updates ?? [])].sort();
+		return sameStrings(ids, last) ? [] : updates;
+	}
+
+	async markContextDigestSent(updateIds: string[]): Promise<void> {
+		const state = await readJson<Record<string, unknown>>(this.paths.stateFile, {});
+		await writeJson(this.paths.stateFile, {
+			...state,
+			last_digest: today(),
+			last_digest_updates: [...updateIds].sort(),
+		});
+	}
+
+	async keepContextUpdate(id: string): Promise<void> {
+		await this.setContextUpdateStatus(id, "kept");
+		await this.removeUnreviewedUpdate(id);
+		await this.commitIfDirty(`memory(context): keep ${id}`);
+	}
+
+	async revertContextUpdate(id: string): Promise<void> {
+		const commit = await this.findContextUpdateCommit(id);
+		if (!commit) throw new Error(`context update commit not found: ${id}`);
+		const previous = await git(this.paths.root, "show", `${commit}^:narrative/CONTEXT.md`).catch(() => ({
+			stdout: SEED_CONTEXT,
+			stderr: "",
+		}));
+		await writeText(this.paths.contextFile, previous.stdout);
+		await this.setContextUpdateStatus(id, "reverted");
+		await this.removeUnreviewedUpdate(id);
+		await this.commitIfDirty(`memory(context): revert ${id}`);
 	}
 
 	async writeIdea(data: IdeaData): Promise<string> {
@@ -510,6 +605,61 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 		return titles;
 	}
 
+	private contextLogFile(): string {
+		return join(this.paths.narrative, "context-log.md");
+	}
+
+	private async stageContextUpdateFiles(extraPaths: string[] = []): Promise<void> {
+		await git(
+			this.paths.root,
+			"add",
+			"--",
+			"narrative/CONTEXT.md",
+			"narrative/context-log.md",
+			".her/state.json",
+			...extraPaths,
+		);
+	}
+
+	private async setContextUpdateStatus(id: string, status: ContextUpdateRecord["status"]): Promise<void> {
+		const text = (await readText(this.contextLogFile())) ?? "";
+		const pattern = new RegExp(`(### ${escapeRegExp(id)}[\\s\\S]*?- status: )\\w+`);
+		if (!pattern.test(text)) throw new Error(`context update not found: ${id}`);
+		await writeText(this.contextLogFile(), text.replace(pattern, `$1${status}`));
+	}
+
+	private async removeUnreviewedUpdate(id: string): Promise<void> {
+		const state = await readJson<{ unreviewed_updates?: string[] }>(this.paths.stateFile, {});
+		await writeJson(this.paths.stateFile, {
+			...state,
+			unreviewed_updates: (state.unreviewed_updates ?? []).filter((item) => item !== id),
+		});
+	}
+
+	private async findContextUpdateCommit(id: string): Promise<string | undefined> {
+		const result = await git(this.paths.root, "log", "--format=%H", "-G", id, "--", "narrative/context-log.md").catch(
+			() => ({ stdout: "", stderr: "" }),
+		);
+		return result.stdout.trim().split(/\r?\n/).find(Boolean);
+	}
+
+	private async contextUpdateDiff(commit: string): Promise<string | undefined> {
+		const result = await git(this.paths.root, "show", "--format=", commit, "--", "narrative/CONTEXT.md").catch(
+			() => ({
+				stdout: "",
+				stderr: "",
+			}),
+		);
+		return result.stdout.trim() || undefined;
+	}
+
+	private async commitIfDirty(message: string): Promise<void> {
+		await this.stageContextUpdateFiles();
+		const staged = await git(this.paths.root, "diff", "--cached", "--name-only");
+		if (!staged.stdout.trim()) return;
+		await git(this.paths.root, "commit", "-m", message);
+	}
+
 	private async markRecognitionAnswered(ref: string, episodeId: string): Promise<void> {
 		let entries: string[];
 		try {
@@ -538,6 +688,21 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 			if (parsed.data.id === noteId || basename(entry, ".md") === noteId) return path;
 		}
 		throw new Error(`world note not found: ${noteId}`);
+	}
+
+	private async contextUpdateSources(): Promise<string[]> {
+		const refs = new Set<string>();
+		for (const entry of await markdownEntries(this.paths.semantic)) {
+			const path = join(this.paths.semantic, entry);
+			const stem = basename(entry, ".md");
+			refs.add(`[[semantic/${stem}]]`);
+			const parsed = parseFrontmatter(await readText(path));
+			if (!Array.isArray(parsed.data.sources)) continue;
+			for (const source of parsed.data.sources) refs.add(sourceRef(String(source)));
+		}
+		const moments = (await readText(this.paths.becoming)) ?? "";
+		if (moments.trim()) refs.add("[[narrative/becoming-moments]]");
+		return [...refs].sort();
 	}
 }
 
@@ -622,6 +787,55 @@ function appendJudgment(body: string, fields: JudgmentFields): string {
 	return `${body.trimEnd()}\n\n${heading}\n\n${block}`;
 }
 
+function contextLogBlock(id: string, timestamp: string, input: ContextUpdateInput): string {
+	const drivenBy = input.drivenBy.length > 0 ? input.drivenBy.join(", ") : "(none)";
+	const change = input.change.replace(/\r?\n/g, " ");
+	return `\n### ${id} · ${timestamp} · ${input.type}
+- commit: self
+- driven_by: ${drivenBy}
+- change: ${change}
+- status: unreviewed
+`;
+}
+
+function parseContextLog(text: string): ContextUpdateRecord[] {
+	const records: ContextUpdateRecord[] = [];
+	for (const block of text.split(/\n(?=### )/)) {
+		const header = /^###\s+(\S+)\s+·\s+(.+?)\s+·\s+(.+)\s*$/m.exec(block);
+		if (!header) continue;
+		const rawStatus = contextLogField(block, "status");
+		const status =
+			rawStatus === "kept" || rawStatus === "reverted" || rawStatus === "unreviewed" ? rawStatus : "unreviewed";
+		const drivenBy = contextLogField(block, "driven_by");
+		const commit = contextLogField(block, "commit");
+		records.push({
+			id: header[1],
+			timestamp: header[2],
+			type: header[3],
+			change: contextLogField(block, "change"),
+			status,
+			drivenBy:
+				drivenBy && drivenBy !== "(none)"
+					? drivenBy
+							.split(",")
+							.map((item) => item.trim())
+							.filter(Boolean)
+					: [],
+			commit: commit || undefined,
+		});
+	}
+	return records;
+}
+
+function contextLogField(block: string, name: string): string {
+	const match = new RegExp(`^- ${escapeRegExp(name)}:\\s*(.*)$`, "m").exec(block);
+	return match?.[1]?.trim() ?? "";
+}
+
+function escapeRegExp(text: string): string {
+	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function stripSection(body: string, heading: string): string {
 	const pattern = new RegExp(`\\n?## ${heading}\\n[\\s\\S]*?(?=\\n## |$)`, "m");
 	return body.replace(pattern, "").trimEnd();
@@ -642,6 +856,18 @@ function slug(text: string): string {
 
 function safeStem(text: string): string {
 	return text.replace(/[^A-Za-z0-9._-]/g, "_") || "x";
+}
+
+function sourceRef(source: string): string {
+	const trimmed = source.trim();
+	if (!trimmed) return "[[episodic/raw/unknown]]";
+	if (trimmed.startsWith("[[") && trimmed.endsWith("]]")) return trimmed;
+	if (trimmed.includes("/")) return `[[${trimmed.replace(/\.md$/, "")}]]`;
+	return `[[episodic/raw/${trimmed.replace(/\.md$/, "")}]]`;
+}
+
+function sameStrings(a: string[], b: string[]): boolean {
+	return a.length === b.length && a.every((value, index) => value === b[index]);
 }
 
 function today(): string {

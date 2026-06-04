@@ -155,6 +155,8 @@ test("sync commits and pushes memory changes", async () => {
 
 test("consolidate distills raw episodes into typed semantic notes and moments", async () => {
 	const store = await tempStore();
+	await writeText(join(store, "narrative", "FACTS.md"), "Fei is the owner.\n");
+	const factsBefore = await readText(join(store, "narrative", "FACTS.md"));
 	const memory = new Memory(store, {
 		complete() {
 			return JSON.stringify({
@@ -181,6 +183,7 @@ test("consolidate distills raw episodes into typed semantic notes and moments", 
 	const result = await memory.consolidate();
 
 	assert.deepEqual(result, { episodes: 1, notesTouched: 1, moments: 1 });
+	assert.equal(await readText(join(store, "narrative", "FACTS.md")), factsBefore);
 	const note = (await readText(join(store, "semantic", "verification-over-reassurance.md"))) ?? "";
 	const parsed = parseFrontmatter(note);
 	assert.equal(parsed.data.type, "opinion");
@@ -191,7 +194,7 @@ test("consolidate distills raw episodes into typed semantic notes and moments", 
 	assert.equal((await readJson<{ cursor?: string }>(join(store, ".her", "state.json"), {})).cursor, "2026-06-03T1200");
 });
 
-test("synthesize writes a proposal with FACTS and approve promotes it to CONTEXT", async () => {
+test("synthesize writes CONTEXT with a trail commit and leaves FACTS unchanged", async () => {
 	const store = await tempStore();
 	const prompts: Array<{ prompt: string; strong: boolean }> = [];
 	const memory = new Memory(store, {
@@ -200,19 +203,57 @@ test("synthesize writes a proposal with FACTS and approve promotes it to CONTEXT
 			return "# CONTEXT\n\nFei values verified execution.\n";
 		},
 	});
-	await writeText(join(store, "semantic", "verification.md"), "# Verification\n\nMachine truth first.\n");
+	await writeText(
+		join(store, "semantic", "verification.md"),
+		'---\nsources: ["episode-1"]\n---\n# Verification\n\nMachine truth first.\n',
+	);
 	await writeText(join(store, "narrative", "becoming-moments.md"), "- 2026-06-03 · shift: calmer execution\n");
 	await writeText(join(store, "narrative", "FACTS.md"), "Fei is the owner.\n");
+	await git(store, "init");
+	await git(store, "config", "user.name", "Her Test");
+	await git(store, "config", "user.email", "her-test@example.com");
+	await git(store, "add", "-A");
+	await git(store, "commit", "-m", "memory: fixtures");
+	const factsBefore = await readText(join(store, "narrative", "FACTS.md"));
 
 	const proposalId = await memory.synthesize();
-	await memory.approve(proposalId);
 
 	assert.equal(proposalId, "2026-06-04-narrative-update");
 	assert.match((await readText(join(store, "proposals", `${proposalId}.md`))) ?? "", /verified execution/);
 	assert.match((await readText(join(store, "narrative", "CONTEXT.md"))) ?? "", /verified execution/);
+	assert.equal(await readText(join(store, "narrative", "FACTS.md")), factsBefore);
+	assert.match(
+		(await readText(join(store, "narrative", "context-log.md"))) ?? "",
+		/driven_by: \[\[episodic\/raw\/episode-1\]\]/,
+	);
+	assert.match((await git(store, "log", "--oneline", "-1")).stdout, /memory\(context\): Synthesize narrative update/);
+	const review = await memory.reviewContextUpdates();
+	assert.equal(review.length, 1);
+	assert.match(review[0].diff ?? "", /verified execution/);
 	assert.equal(prompts[0].strong, true);
 	assert.match(prompts[0].prompt, /GROUND-TRUTH FACTS/);
 	assert.match(prompts[0].prompt, /Fei is the owner/);
+});
+
+test("approve promotes a legacy proposal through a reviewable context update without changing FACTS", async () => {
+	const store = await tempStore();
+	await writeText(join(store, "narrative", "FACTS.md"), "Fei is the owner.\n");
+	await writeText(join(store, "proposals", "manual.md"), "# CONTEXT\n\nManual proposal becomes reviewable.\n");
+	await git(store, "init");
+	await git(store, "config", "user.name", "Her Test");
+	await git(store, "config", "user.email", "her-test@example.com");
+	await git(store, "add", "-A");
+	await git(store, "commit", "-m", "memory: fixtures");
+	const factsBefore = await readText(join(store, "narrative", "FACTS.md"));
+
+	const memory = new Memory(store);
+	await memory.approve("manual");
+
+	assert.match((await readText(join(store, "narrative", "CONTEXT.md"))) ?? "", /Manual proposal/);
+	assert.equal(await readText(join(store, "narrative", "FACTS.md")), factsBefore);
+	const review = await memory.reviewContextUpdates();
+	assert.equal(review.length, 1);
+	assert.equal(review[0].change, "Approve proposal manual");
 });
 
 test("buildTopicMaps and generateIdeas write derived markdown surfaces", async () => {
@@ -258,6 +299,70 @@ test("buildTopicMaps and generateIdeas write derived markdown surfaces", async (
 	const ideaFiles = await import("node:fs/promises").then((fs) => fs.readdir(join(store, "ideas")));
 	assert.equal(ideaFiles.length, 1);
 	assert.match((await readText(join(store, "ideas", ideaFiles[0]))) ?? "", /Reliability can be/);
+});
+
+test("context updates are logged, reviewable, keepable, and revertible", async () => {
+	const store = await tempStore();
+	await git(store, "init");
+	await git(store, "config", "user.name", "Her Test");
+	await git(store, "config", "user.email", "her-test@example.com");
+	await git(store, "add", "-A");
+	await git(store, "commit", "-m", "memory: init");
+	const memory = new Memory(store);
+
+	const first = await memory.writeContextUpdate({
+		content: "# CONTEXT\n\nFei wants verified state first.\n",
+		change: "Prefer verified state before reassurance",
+		type: "identity",
+		drivenBy: ["[[episodic/raw/episode-1]]"],
+	});
+
+	assert.match(first.id, /^[0-9a-f]{8}$/);
+	assert.match((await readText(join(store, "narrative", "CONTEXT.md"))) ?? "", /verified state/);
+	assert.match((await readText(join(store, "narrative", "context-log.md"))) ?? "", /status: unreviewed/);
+	assert.match((await git(store, "log", "--oneline", "-1")).stdout, /memory\(context\): Prefer verified state/);
+
+	const review = await memory.reviewContextUpdates();
+	assert.equal(review.length, 1);
+	assert.equal(review[0].id, first.id);
+	assert.equal(review[0].status, "unreviewed");
+	assert.match(review[0].commit ?? "", /^[0-9a-f]{7,40}$/);
+
+	await memory.keepContextUpdate(first.id);
+	assert.equal((await memory.reviewContextUpdates()).length, 0);
+	assert.match((await readText(join(store, "narrative", "context-log.md"))) ?? "", /status: kept/);
+
+	const second = await memory.writeContextUpdate({
+		content: "# CONTEXT\n\nFei wants an unreviewed change that can be reverted.\n",
+		change: "Temporary interpretation",
+		type: "revise",
+		drivenBy: ["[[episodic/raw/episode-2]]"],
+	});
+	await memory.revertContextUpdate(second.id);
+
+	assert.doesNotMatch((await readText(join(store, "narrative", "CONTEXT.md"))) ?? "", /Temporary/);
+	assert.match((await readText(join(store, "narrative", "context-log.md"))) ?? "", /status: reverted/);
+	assert.equal((await memory.reviewContextUpdates()).length, 0);
+});
+
+test("context update commits do not sweep unrelated dirty memory files", async () => {
+	const store = await tempStore();
+	await git(store, "init");
+	await git(store, "config", "user.name", "Her Test");
+	await git(store, "config", "user.email", "her-test@example.com");
+	await git(store, "add", "-A");
+	await git(store, "commit", "-m", "memory: init");
+	await writeText(join(store, "semantic", "unrelated.md"), "# Unrelated\n\nDo not commit me yet.\n");
+
+	await new Memory(store).writeContextUpdate({
+		content: "# CONTEXT\n\nA scoped context update.\n",
+		change: "Scoped context update",
+		type: "revise",
+		drivenBy: ["[[episodic/raw/turn-1]]"],
+	});
+
+	assert.doesNotMatch((await git(store, "show", "--name-only", "--format=", "HEAD")).stdout, /semantic\/unrelated/);
+	assert.match((await git(store, "status", "--short")).stdout, /\?\? semantic\//);
 });
 
 test("writeIdea stores subagent ideas in ideas namespace", async () => {

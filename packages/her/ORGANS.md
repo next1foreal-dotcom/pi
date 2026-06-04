@@ -42,3 +42,11 @@ Selected Her path:
 - T2 adversarial CONTEXT checks can use `pi-dynamic-workflows` directly: candidate agent -> skeptic agent -> structured keep/drop result.
 - Stage 3 quarantine and heavy intake use parent-only persistence: workflow/subagent results are staging only; the parent turn writes accepted durable notes through `her_world_note`, `her_judgment`, or future Her-only tools.
 - For true quarantine, worktree isolation, or resumable long jobs, use `pi-subagents` capabilities or add a thin Her orchestrator that spawns restricted children, records state, and resumes deterministically. Do not fake these guarantees with `pi-dynamic-workflows` prompt wording alone.
+
+## Growth-loop ownership
+
+owner = TS her-core (`packages/her/src/her-core`).
+
+- `consolidate`, `synthesize`, `approve`, `buildTopicMaps`, `generateIdeas`, context digesting, and context review/keep/revert are owned by the TS Her package in this pi fork.
+- Legacy Python adapters may remain only as capture-only transition shims. They must not run scheduled growth maintenance or write `narrative/CONTEXT.md`.
+- No Python `schtasks` for `consolidate` or `synthesize` are active on this machine as of 2026-06-04 verification.

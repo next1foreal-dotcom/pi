@@ -11,6 +11,7 @@ export interface HerConfig {
 		consolidate: string;
 		synthesize: string;
 		synthesizeStaleAfterDays: number;
+		digestAfterUnreviewed: number;
 	};
 }
 
@@ -25,6 +26,7 @@ export const DEFAULT_CONFIG: HerConfig = {
 		consolidate: "daily",
 		synthesize: "weekly",
 		synthesizeStaleAfterDays: 10,
+		digestAfterUnreviewed: 3,
 	},
 };
 
@@ -52,6 +54,7 @@ export function renderConfig(config: HerConfig = DEFAULT_CONFIG): string {
 		`  consolidate: ${config.cadence.consolidate}`,
 		`  synthesize: ${config.cadence.synthesize}`,
 		`  synthesize_stale_after_days: ${config.cadence.synthesizeStaleAfterDays}`,
+		`  digest_after_unreviewed: ${config.cadence.digestAfterUnreviewed}`,
 		"",
 	].join("\n");
 }
