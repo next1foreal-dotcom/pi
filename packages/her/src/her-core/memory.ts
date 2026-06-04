@@ -3,7 +3,10 @@ import { createHash } from "node:crypto";
 import { mkdir, readdir } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
+import { type HerConfig, loadConfig, renderConfig } from "./config.ts";
+import type { ModelLike } from "./model.ts";
 import { StorePaths } from "./paths.ts";
+import { summaryPrompt } from "./prompts.ts";
 import { type CorpusDoc, lexicalSearch, type Note } from "./retrieval.ts";
 import {
 	appendText,
@@ -20,10 +23,6 @@ const execFileAsync = promisify(execFile);
 
 export const SEED_CONTEXT =
 	"# CONTEXT - Living Narrative / alive narrative\n\n*(empty - Samantha has not yet formed an understanding of Fei.)*\n";
-
-export interface ModelLike {
-	complete(prompt: string, options?: { strong?: boolean }): Promise<string> | string;
-}
 
 export interface CaptureMeta {
 	timestamp?: string;
@@ -81,10 +80,12 @@ export interface MemorySyncResult {
 export class Memory {
 	readonly paths: StorePaths;
 	private readonly model?: ModelLike;
+	private readonly config: HerConfig;
 
-	constructor(root: string, model?: ModelLike) {
+	constructor(root: string, model?: ModelLike, config?: HerConfig) {
 		this.paths = new StorePaths(root);
 		this.model = model;
+		this.config = config ?? loadConfig(this.paths.configFile);
 	}
 
 	async capture(raw: string, meta: CaptureMeta = {}): Promise<string> {
@@ -295,7 +296,9 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 		const last = new Date(state.last_synthesize.slice(0, 10));
 		if (Number.isNaN(last.getTime())) return "";
 		const days = Math.floor((Date.now() - last.getTime()) / 86400000);
-		return days > 10 ? `> Weekly review skipped ${days} days - narrative may be stale.\n\n` : "";
+		return days > this.config.cadence.synthesizeStaleAfterDays
+			? `> Weekly review skipped ${days} days - narrative may be stale.\n\n`
+			: "";
 	}
 
 	private async markRecognitionAnswered(ref: string, episodeId: string): Promise<void> {
@@ -344,16 +347,12 @@ export async function initStore(root: string): Promise<StorePaths> {
 	]) {
 		await mkdir(dir, { recursive: true });
 	}
-	await writeText(paths.configFile, "cadence:\n  synthesize_stale_after_days: 10\n");
+	await writeText(paths.configFile, renderConfig());
 	await writeJson(paths.stateFile, { cursor: null, last_consolidate: null, last_synthesize: null });
 	await writeText(paths.contextFile, SEED_CONTEXT);
 	await writeText(join(paths.root, ".gitignore"), "# secrets - never commit\n.env\n.her/lock\n");
 	await writeText(join(paths.root, ".env.example"), "HER_LLM_API_KEY=your-key-here\n");
 	return paths;
-}
-
-function summaryPrompt(raw: string): string {
-	return `Summarize this memory episode:\n\n${raw}`;
 }
 
 function episodeSection(
