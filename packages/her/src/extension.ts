@@ -370,6 +370,10 @@ export default function her(pi: ExtensionAPI): void {
 			pinned: true,
 			instruction: "Preserve FACTS.md ground truth and her-* pinned entries.",
 		});
+		return {
+			customInstructions:
+				"Preserve Her memory grounding during compaction: keep narrative/FACTS.md ground truth, keep the latest Her CONTEXT.md injection, and retain her-* pinned entries/messages.",
+		};
 	});
 
 	pi.registerTool({

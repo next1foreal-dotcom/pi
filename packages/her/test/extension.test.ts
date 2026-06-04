@@ -397,6 +397,28 @@ test("extension context digest does not compete with an active pi-codex-goal fol
 	});
 });
 
+test("extension returns compact guard instructions for Her pinned context", async () => {
+	const store = await tempStore();
+	const ctx = createContext(store);
+
+	await withMemoryDir(store, async () => {
+		const fake = createFakePi();
+		her(fake.pi);
+
+		const beforeCompact = fake.handlers.get("session_before_compact")?.[0];
+		assert.ok(beforeCompact);
+		const result = (await beforeCompact({ type: "session_before_compact" }, ctx)) as { customInstructions?: string };
+
+		assert.match(result.customInstructions ?? "", /FACTS\.md/);
+		assert.match(result.customInstructions ?? "", /her-\*/);
+		assert.match(result.customInstructions ?? "", /pinned/);
+		assert.equal(
+			fake.entries.some((entry) => entry.customType === "her-state" && entryStatus(entry) === "compact-guard"),
+			true,
+		);
+	});
+});
+
 test("extension passes configured summary model to Memory capture", async () => {
 	const store = await tempStore();
 	const ctx = createContext(store);

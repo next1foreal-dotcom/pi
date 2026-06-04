@@ -1033,6 +1033,10 @@ export interface SessionBeforeForkResult {
 export interface SessionBeforeCompactResult {
 	cancel?: boolean;
 	compaction?: CompactionResult;
+	/** Additional instructions for the default compaction summary. */
+	customInstructions?: string;
+	/** Replace the existing customInstructions instead of appending to them. */
+	replaceInstructions?: boolean;
 }
 
 export interface SessionBeforeTreeResult {

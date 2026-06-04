@@ -120,6 +120,15 @@ export function parseSkillBlock(text: string): ParsedSkillBlock | null {
 	};
 }
 
+function mergeCompactInstructions(
+	existing: string | undefined,
+	result: SessionBeforeCompactResult | undefined,
+): string | undefined {
+	if (!result?.customInstructions) return existing;
+	if (result.replaceInstructions || !existing) return result.customInstructions;
+	return `${existing.trimEnd()}\n\n${result.customInstructions}`;
+}
+
 /** Session-specific events that extend the core AgentEvent */
 export type AgentSessionEvent =
 	| Exclude<AgentEvent, { type: "agent_end" }>
@@ -1661,6 +1670,7 @@ export class AgentSession {
 
 			let extensionCompaction: CompactionResult | undefined;
 			let fromExtension = false;
+			let effectiveCustomInstructions = customInstructions;
 
 			if (this._extensionRunner.hasHandlers("session_before_compact")) {
 				const result = (await this._extensionRunner.emit({
@@ -1679,6 +1689,7 @@ export class AgentSession {
 					extensionCompaction = result.compaction;
 					fromExtension = true;
 				}
+				effectiveCustomInstructions = mergeCompactInstructions(effectiveCustomInstructions, result);
 			}
 
 			let summary: string;
@@ -1699,7 +1710,7 @@ export class AgentSession {
 					this.model,
 					apiKey,
 					headers,
-					customInstructions,
+					effectiveCustomInstructions,
 					this._compactionAbortController.signal,
 					this.thinkingLevel,
 					this.agent.streamFn,
@@ -1927,6 +1938,7 @@ export class AgentSession {
 
 			let extensionCompaction: CompactionResult | undefined;
 			let fromExtension = false;
+			let customInstructions: string | undefined;
 
 			if (this._extensionRunner.hasHandlers("session_before_compact")) {
 				const extensionResult = (await this._extensionRunner.emit({
@@ -1952,6 +1964,7 @@ export class AgentSession {
 					extensionCompaction = extensionResult.compaction;
 					fromExtension = true;
 				}
+				customInstructions = mergeCompactInstructions(customInstructions, extensionResult);
 			}
 
 			let summary: string;
@@ -1972,7 +1985,7 @@ export class AgentSession {
 					this.model,
 					apiKey,
 					headers,
-					undefined,
+					customInstructions,
 					this._autoCompactionAbortController.signal,
 					this.thinkingLevel,
 					this.agent.streamFn,
