@@ -19,6 +19,7 @@ Current status:
 - `before_agent_start` injects `CONTEXT.md` and `FACTS.md` from `HER_MEMORY_DIR`.
 - `turn_end` captures raw episodes into `her-memory/episodic/raw`.
 - `her_sync` commits and pushes dirty memory; capture schedules the same sync after `HER_SYNC_DEBOUNCE_MS` (default 5 minutes).
+- `her-sync` is published through `ctx.ui.setStatus()` and promoted by `pi-powerline-footer` as the Her memory sync indicator.
 - `synthesize()` autonomously writes `CONTEXT.md` through a reviewable git-backed `context-log.md`; `FACTS.md` remains read-only to the growth loop.
 - Tools are registered for recall, remember, world notes, judgments, memory status, idea capture, and context review/keep/revert.
 - Context digest follow-ups report due unreviewed context changes before Mirror, and both suppress themselves while `pi-codex-goal` owns an active continuation.

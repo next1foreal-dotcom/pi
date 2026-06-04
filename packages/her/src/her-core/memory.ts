@@ -79,6 +79,15 @@ export interface MemorySyncResult {
 	commit?: string;
 }
 
+export interface MemorySyncStatus {
+	status: "synced" | "unsynced" | "unknown";
+	dirtyFiles: number;
+	aheadCommits: number;
+	pending: number;
+	branch?: string;
+	error?: string;
+}
+
 export interface ConsolidateResult {
 	episodes: number;
 	notesTouched: number;
@@ -473,6 +482,34 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 		const commit = (await git(this.paths.root, "rev-parse", "--short", "HEAD")).stdout.trim();
 		await git(this.paths.root, "push");
 		return { status: "pushed", commit };
+	}
+
+	async syncStatus(): Promise<MemorySyncStatus> {
+		try {
+			const dirty = (await git(this.paths.root, "status", "--porcelain")).stdout
+				.split(/\r?\n/)
+				.filter((line) => line.trim()).length;
+			const branch = (await git(this.paths.root, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim() || undefined;
+			const ahead = await git(this.paths.root, "rev-list", "--count", "@{upstream}..HEAD")
+				.then((result) => Number(result.stdout.trim()) || 0)
+				.catch(() => 0);
+			const pending = dirty + ahead;
+			return {
+				status: pending > 0 ? "unsynced" : "synced",
+				dirtyFiles: dirty,
+				aheadCommits: ahead,
+				pending,
+				branch,
+			};
+		} catch (error) {
+			return {
+				status: "unknown",
+				dirtyFiles: 0,
+				aheadCommits: 0,
+				pending: 0,
+				error: error instanceof Error ? error.message : String(error),
+			};
+		}
 	}
 
 	private async corpus(): Promise<CorpusDoc[]> {

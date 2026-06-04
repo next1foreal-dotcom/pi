@@ -10,6 +10,7 @@ import {
 	type JudgmentFields,
 	Memory,
 	type MemorySyncResult,
+	type MemorySyncStatus,
 	type WorldNoteData,
 } from "./her-core/index.ts";
 import { createSummaryModel } from "./summary-model.ts";
@@ -153,6 +154,12 @@ function renderSync(result: MemorySyncResult): string {
 	return `Her memory synced: ${result.commit}`;
 }
 
+function renderSyncFooterStatus(status: MemorySyncStatus): string {
+	if (status.status === "unknown") return "sync unknown";
+	if (status.pending === 0) return "synced";
+	return `${status.pending} unsynced`;
+}
+
 function renderContextReview(updates: Awaited<ReturnType<Memory["reviewContextUpdates"]>>): string {
 	if (updates.length === 0) return "No unreviewed Her context updates.";
 	return updates
@@ -259,6 +266,7 @@ export default function her(pi: ExtensionAPI): void {
 		try {
 			const result = await mem.sync(`memory(sync): ${reason}`);
 			const status = result.status === "pushed" ? "sync-pushed" : "sync-clean";
+			ctx?.ui.setStatus("her-sync", "synced");
 			pi.appendEntry("her-state", {
 				phase: "2",
 				status,
@@ -269,6 +277,7 @@ export default function her(pi: ExtensionAPI): void {
 			return result;
 		} catch (error) {
 			const message = errorMessage(error);
+			ctx?.ui.setStatus("her-sync", "sync failed");
 			pi.appendEntry("her-state", {
 				phase: "2",
 				status: "sync-failed",
@@ -278,6 +287,12 @@ export default function her(pi: ExtensionAPI): void {
 			if (ctx?.hasUI) ctx.ui.notify(`Her memory sync failed: ${message}`, "error");
 			return undefined;
 		}
+	};
+
+	const publishSyncStatus = async (ctx: ExtensionContext): Promise<MemorySyncStatus> => {
+		const status = await mem.syncStatus();
+		ctx.ui.setStatus("her-sync", renderSyncFooterStatus(status));
+		return status;
 	};
 
 	const scheduleSync = (reason: string, ctx: ExtensionContext): void => {
@@ -297,8 +312,9 @@ export default function her(pi: ExtensionAPI): void {
 		promptPaths: [promptsDir],
 	}));
 
-	pi.on("session_start", (_event, ctx) => {
+	pi.on("session_start", async (_event, ctx) => {
 		ctx.ui.setStatus("her", "Her loaded");
+		await publishSyncStatus(ctx);
 		ctx.ui.notify("Her loaded", "info");
 		pi.appendEntry("her-state", {
 			phase: "2",
@@ -382,6 +398,7 @@ export default function her(pi: ExtensionAPI): void {
 				memoryDir,
 			});
 		} finally {
+			await publishSyncStatus(ctx);
 			scheduleSync("capture", ctx);
 		}
 	});
@@ -436,8 +453,9 @@ export default function her(pi: ExtensionAPI): void {
 		label: "Her Sync",
 		description: "Commit and push pending Her memory changes.",
 		parameters: Type.Object({}),
-		async execute() {
-			const result = await mem.sync("memory(sync): manual");
+		async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
+			const result = await runSync("manual", ctx);
+			if (!result) return textResult("Her memory sync failed.", { phase: "2", status: "failed", memoryDir });
 			return textResult(renderSync(result), { phase: "2", ...result, memoryDir });
 		},
 	});

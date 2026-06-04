@@ -108,10 +108,16 @@ function createFakePi(): FakePi {
 	return { pi, handlers, tools, providers, entries, messages };
 }
 
-function createContext(cwd: string, entries: unknown[] = []): ExtensionContext {
+function createContext(
+	cwd: string,
+	entries: unknown[] = [],
+	statuses = new Map<string, string | undefined>(),
+): ExtensionContext {
 	return {
 		ui: {
-			setStatus() {},
+			setStatus(key: string, text: string | undefined) {
+				statuses.set(key, text);
+			},
 			notify() {},
 		},
 		mode: "tui",
@@ -501,7 +507,8 @@ test("extension syncs memory after capture debounce", async () => {
 	await git(store, "remote", "add", "origin", remote);
 	await git(store, "push", "-u", "origin", "master");
 
-	const ctx = createContext(store);
+	const statuses = new Map<string, string | undefined>();
+	const ctx = createContext(store, [], statuses);
 	await withEnv({ HER_MEMORY_DIR: store, HER_SYNC_DEBOUNCE_MS: "0" }, async () => {
 		const fake = createFakePi();
 		her(fake.pi);
@@ -520,10 +527,42 @@ test("extension syncs memory after capture debounce", async () => {
 		await waitFor(() =>
 			fake.entries.some((entry) => entry.customType === "her-state" && entryStatus(entry) === "sync-pushed"),
 		);
+		assert.equal(statuses.get("her-sync"), "synced");
 	});
 
 	assert.match((await git(remote, "log", "--oneline", "-1")).stdout, /memory\(sync\): capture/);
 	assert.equal((await git(store, "status", "--porcelain")).stdout.trim(), "");
+});
+
+test("extension publishes Her sync status for the powerline footer", async () => {
+	const store = await tempStore();
+	const remote = await mkdtemp(join(tmpdir(), "her-extension-remote-"));
+	await git(remote, "init", "--bare");
+	await git(store, "init");
+	await git(store, "config", "user.name", "Her Test");
+	await git(store, "config", "user.email", "her-test@example.com");
+	await git(store, "add", "-A");
+	await git(store, "commit", "-m", "memory: init");
+	await git(store, "branch", "-M", "master");
+	await git(store, "remote", "add", "origin", remote);
+	await git(store, "push", "-u", "origin", "master");
+
+	const statuses = new Map<string, string | undefined>();
+	const ctx = createContext(store, [], statuses);
+
+	await withMemoryDir(store, async () => {
+		const fake = createFakePi();
+		her(fake.pi);
+		const sessionStart = fake.handlers.get("session_start")?.[0];
+		assert.ok(sessionStart);
+
+		await sessionStart({ type: "session_start" }, ctx);
+		assert.equal(statuses.get("her-sync"), "synced");
+
+		await new Memory(store).remember("Pending footer memory.", "note");
+		await sessionStart({ type: "session_start" }, ctx);
+		assert.equal(statuses.get("her-sync"), "1 unsynced");
+	});
 });
 
 test("extension memory tools write, recall, judge, and update status", async () => {

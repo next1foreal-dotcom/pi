@@ -6,6 +6,18 @@
 	"extensions": [
 		"./extensions/her/index.ts"
 	],
+	"powerline": {
+		"preset": "default",
+		"customItems": [
+			{
+				"id": "her-sync",
+				"statusKey": "her-sync",
+				"position": "right",
+				"prefix": "Her",
+				"color": "accent"
+			}
+		]
+	},
 	"packages": [
 		"git:github.com/nicobailon/pi-subagents@efa7120047eaf76a32620eed0ec7d038b6cfa44e",
 		"git:github.com/Michaelliv/pi-dynamic-workflows@31b2aca0f1cb195aafbfc5e3ee2b8c83ad3f21a2",

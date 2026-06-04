@@ -50,6 +50,17 @@ test("Samantha prompt advertises durable memory tools", async () => {
 	assert.match(prompt, /Never fabricate intake coverage/);
 });
 
+test("Pi powerline promotes Her memory sync status", async () => {
+	const settings = JSON.parse(await readFile(join(process.cwd(), ".pi", "settings.json"), "utf8")) as {
+		powerline?: { customItems?: Array<Record<string, unknown>> };
+	};
+	const item = settings.powerline?.customItems?.find((entry) => entry.id === "her-sync");
+	assert.ok(item);
+	assert.equal(item.statusKey, "her-sync");
+	assert.equal(item.position, "right");
+	assert.equal(item.prefix, "Her");
+});
+
 test("Her subagents are project-discoverable and inherit memory context", async () => {
 	const packageAgentsRoot = join(herRoot, "pi-package", "agents");
 	const packageAgents = (await readdir(packageAgentsRoot)).filter((file) => file.endsWith(".md")).sort();

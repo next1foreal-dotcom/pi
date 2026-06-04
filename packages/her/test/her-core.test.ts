@@ -153,6 +153,40 @@ test("sync commits and pushes memory changes", async () => {
 	assert.match((await git(remote, "log", "--oneline", "-1")).stdout, /memory\(sync\): test/);
 });
 
+test("syncStatus reports dirty files and commits ahead of upstream", async () => {
+	const store = await tempStore();
+	const remote = await mkdtemp(join(tmpdir(), "her-remote-"));
+	await git(remote, "init", "--bare");
+	await git(store, "init");
+	await git(store, "config", "user.name", "Her Test");
+	await git(store, "config", "user.email", "her-test@example.com");
+	await git(store, "add", "-A");
+	await git(store, "commit", "-m", "memory: init");
+	await git(store, "branch", "-M", "master");
+	await git(store, "remote", "add", "origin", remote);
+	await git(store, "push", "-u", "origin", "master");
+
+	let status = await new Memory(store).syncStatus();
+	assert.equal(status.status, "synced");
+	assert.equal(status.pending, 0);
+	assert.equal(status.branch, "master");
+
+	await new Memory(store).remember("Pending local memory.", "note");
+	status = await new Memory(store).syncStatus();
+	assert.equal(status.status, "unsynced");
+	assert.equal(status.dirtyFiles, 1);
+	assert.equal(status.aheadCommits, 0);
+	assert.equal(status.pending, 1);
+
+	await git(store, "add", "-A");
+	await git(store, "commit", "-m", "memory: local pending");
+	status = await new Memory(store).syncStatus();
+	assert.equal(status.status, "unsynced");
+	assert.equal(status.dirtyFiles, 0);
+	assert.equal(status.aheadCommits, 1);
+	assert.equal(status.pending, 1);
+});
+
 test("consolidate distills raw episodes into typed semantic notes and moments", async () => {
 	const store = await tempStore();
 	await writeText(join(store, "narrative", "FACTS.md"), "Fei is the owner.\n");

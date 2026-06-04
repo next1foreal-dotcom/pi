@@ -50,3 +50,11 @@ owner = TS her-core (`packages/her/src/her-core`).
 - `consolidate`, `synthesize`, `approve`, `buildTopicMaps`, `generateIdeas`, context digesting, and context review/keep/revert are owned by the TS Her package in this pi fork.
 - Legacy Python adapters may remain only as capture-only transition shims. They must not run scheduled growth maintenance or write `narrative/CONTEXT.md`.
 - No Python `schtasks` for `consolidate` or `synthesize` are active on this machine as of 2026-06-04 verification.
+
+## Footer sync status
+
+owner = TS Her extension (`packages/her/src/extension.ts`); renderer = `pi-powerline-footer`.
+
+- Her publishes `her-sync` with `ctx.ui.setStatus()`.
+- Project `.pi/settings.json` promotes `her-sync` to a powerline custom item with prefix `Her`.
+- The status is computed from the independent `her-memory` git repo: dirty files plus commits ahead of upstream become the pending count.

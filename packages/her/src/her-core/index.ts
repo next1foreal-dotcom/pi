@@ -5,6 +5,7 @@ export type {
 	IdeaData,
 	JudgmentFields,
 	MemorySyncResult,
+	MemorySyncStatus,
 	SurfaceOptions,
 	WorldNoteData,
 } from "./memory.ts";
