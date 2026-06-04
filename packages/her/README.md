@@ -23,7 +23,7 @@ Current status:
 - `synthesize()` autonomously writes `CONTEXT.md` through a reviewable git-backed `context-log.md`; `FACTS.md` remains read-only to the growth loop.
 - Tools are registered for recall, remember, world notes, judgments, memory status, idea capture, and context review/keep/revert.
 - Context digest follow-ups report due unreviewed context changes before Mirror, and both suppress themselves while `pi-codex-goal` owns an active continuation.
-- `/her-intake` handles single-source Universal Inbox work; `her-batch-intake` coordinates multi-source workflow fan-out.
+- `/her-intake <url-or-path>` is a slash prompt for the Stage 2 minimal chain: `fetch_content` -> `her_world_note` or `her_remember` -> `her_recall` verification. `her-batch-intake` coordinates multi-source workflow fan-out.
 - Her project subagents live in `.pi/agents` and mirror `pi-package/agents`; they must use append/fork context inheritance.
 - Phase 7 migration keeps legacy Python capture adapters and the TS pi extension writing the same independent `D:/@Her/her-memory` git repo; all growth writes belong to TS.
 

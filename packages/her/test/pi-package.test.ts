@@ -5,6 +5,7 @@ import test from "node:test";
 
 const herRoot = join(process.cwd(), "packages", "her");
 const projectAgentsRoot = join(process.cwd(), ".pi", "agents");
+const projectPromptsRoot = join(process.cwd(), ".pi", "prompts");
 const subagentPin = "git:github.com/nicobailon/pi-subagents@efa7120047eaf76a32620eed0ec7d038b6cfa44e";
 
 const parseSimpleFrontmatter = (text: string): { frontmatter: Record<string, string>; body: string } => {
@@ -48,6 +49,31 @@ test("Samantha prompt advertises durable memory tools", async () => {
 	assert.match(prompt, /her_recall/);
 	assert.match(prompt, /her_world_note/);
 	assert.match(prompt, /Never fabricate intake coverage/);
+});
+
+test("/her-intake prompt encodes the minimal source-to-memory chain", async () => {
+	const packagePrompt = await readFile(join(herRoot, "pi-package", "prompts", "her-intake.md"), "utf8");
+	const projectPrompt = await readFile(join(projectPromptsRoot, "her-intake.md"), "utf8");
+	assert.equal(projectPrompt, packagePrompt);
+
+	const { frontmatter, body } = parseSimpleFrontmatter(packagePrompt);
+	assert.match(frontmatter.description, /Her memory/);
+	assert.equal(frontmatter["argument-hint"], "<url-or-path>");
+
+	for (const required of [
+		"$ARGUMENTS",
+		"her-intake",
+		"fetch_content",
+		"get_search_content",
+		"her_recall",
+		"her_world_note",
+		"her_remember",
+		"contentHash",
+		"memoryStatus",
+		"recall verification",
+	]) {
+		assert.match(body, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+	}
 });
 
 test("Pi powerline promotes Her memory sync status", async () => {
