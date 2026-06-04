@@ -38,4 +38,6 @@ todo.md
 plans/
 .pi/hf-sessions/
 .pi/hf-sessions-backup/
+.pi/git/
+.pi/npm/
 collect.sh

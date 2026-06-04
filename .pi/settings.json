@@ -1,0 +1,30 @@
+{
+	"npmCommand": [
+		"npm",
+		"--ignore-scripts"
+	],
+	"extensions": [
+		"./extensions/her/index.ts"
+	],
+	"packages": [
+		"git:github.com/nicobailon/pi-subagents@efa7120047eaf76a32620eed0ec7d038b6cfa44e",
+		"git:github.com/Michaelliv/pi-dynamic-workflows@31b2aca0f1cb195aafbfc5e3ee2b8c83ad3f21a2",
+		"git:github.com/fitchmultz/pi-codex-goal@e1fd927fc8df5b13c3b96e1a23788204b6173c5f",
+		"git:github.com/fitchmultz/pi-agent-browser-native@6a1e387bcf4e7c11a0a0610a359f2d592a099532",
+		"git:github.com/nicobailon/pi-web-access@076bf0db5e739b200286ca37486e4edd8d19123c",
+		"git:github.com/nicobailon/pi-powerline-footer@e34dacc8a9b932e4990db949d473ac01abdb03e1",
+		"npm:context-mode@1.0.162",
+		"npm:@ff-labs/pi-fff@0.9.0",
+		"npm:@ramarivera/pi-skill-selector@0.1.16",
+		"npm:pi-fallback-provider@0.0.1",
+		"npm:pi-oracle@0.7.5",
+		"npm:agent-eval@0.0.1",
+		"npm:@howaboua/pi-auto-reasoning-tool@0.1.6",
+		"npm:@howaboua/pi-codex-conversion@1.5.19",
+		"npm:@howaboua/pi-explore-subagents@0.1.8",
+		"npm:@howaboua/pi-semantic-grep@0.1.12",
+		"npm:@howaboua/pi-skill-agent-native-hardening@0.0.2",
+		"npm:@howaboua/pi-skill-chrome-cdp@0.0.1",
+		"npm:@howaboua/pi-subagent-review@0.2.2"
+	]
+}

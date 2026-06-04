@@ -1,0 +1,23 @@
+name: Merge Upstream Dry Run
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "her/**"
+  workflow_dispatch:
+
+jobs:
+  merge-upstream-dryrun:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Add upstream
+        run: git remote add upstream https://github.com/earendil-works/pi.git
+      - name: Fetch upstream
+        run: git fetch upstream main
+      - name: Dry-run merge upstream/main
+        run: git merge --no-commit --no-ff upstream/main
