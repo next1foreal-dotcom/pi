@@ -19,5 +19,9 @@ jobs:
         run: git remote add upstream https://github.com/earendil-works/pi.git
       - name: Fetch upstream
         run: git fetch upstream main
+      - name: Configure dry-run committer
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
       - name: Dry-run merge upstream/main
         run: git merge --no-commit --no-ff upstream/main
