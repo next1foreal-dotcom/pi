@@ -200,3 +200,20 @@ test("agent-eval pin is present but treated as placeholder at this version", asy
 	assert.equal(pkg.version, "0.0.1");
 	assert.deepEqual(files.sort(), ["LICENSE", "README.md", "package.json"]);
 });
+
+test("PATCHES only documents generic upstream seams", async () => {
+	const patches = await text("packages", "her", "PATCHES.md");
+	const entries = patches
+		.split(/\n(?=## )/)
+		.slice(1)
+		.map((entry) => entry.trim())
+		.filter(Boolean);
+
+	for (const entry of entries) {
+		assert.match(entry, /- Scope: generic extension seam\./);
+		assert.match(entry, /packages\/coding-agent\/src\//);
+		assert.doesNotMatch(entry, /packages\/her\//);
+		assert.doesNotMatch(entry, /\.pi\//);
+		assert.doesNotMatch(entry, /her-memory/);
+	}
+});
