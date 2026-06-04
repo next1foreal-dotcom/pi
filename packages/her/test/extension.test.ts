@@ -1,13 +1,16 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { mkdtemp, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { promisify } from "node:util";
 import type { ExtensionAPI, ExtensionContext, ProviderConfig, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import her from "../src/extension.ts";
 import { initStore, readJson, readText, writeText } from "../src/her-core/index.ts";
 
 type Handler = (event: unknown, ctx: ExtensionContext) => Promise<unknown> | unknown;
+const execFileAsync = promisify(execFile);
 
 interface FakePi {
 	pi: ExtensionAPI;
@@ -22,6 +25,20 @@ async function tempStore(): Promise<string> {
 	const root = await mkdtemp(join(tmpdir(), "her-extension-"));
 	await initStore(root);
 	return root;
+}
+
+async function git(cwd: string, ...args: string[]): Promise<{ stdout: string; stderr: string }> {
+	const { stdout, stderr } = await execFileAsync("git", args, { cwd });
+	return { stdout, stderr };
+}
+
+async function waitFor(assertion: () => boolean | Promise<boolean>): Promise<void> {
+	const deadline = Date.now() + 5000;
+	while (Date.now() < deadline) {
+		if (await assertion()) return;
+		await new Promise((resolve) => setTimeout(resolve, 25));
+	}
+	assert.fail("timed out waiting for condition");
 }
 
 function createFakePi(): FakePi {
@@ -352,6 +369,44 @@ test("extension passes configured summary model to Memory capture", async () => 
 	assert.equal(requests[0].url, "https://summary.test/v1/chat/completions");
 	assert.equal(requests[0].authorization, "Bearer test-summary-key");
 	assert.equal(requests[0].body.model, "cheap-summary");
+});
+
+test("extension syncs memory after capture debounce", async () => {
+	const store = await tempStore();
+	const remote = await mkdtemp(join(tmpdir(), "her-extension-remote-"));
+	await git(remote, "init", "--bare");
+	await git(store, "init");
+	await git(store, "config", "user.name", "Her Test");
+	await git(store, "config", "user.email", "her-test@example.com");
+	await git(store, "add", "-A");
+	await git(store, "commit", "-m", "memory: init");
+	await git(store, "branch", "-M", "master");
+	await git(store, "remote", "add", "origin", remote);
+	await git(store, "push", "-u", "origin", "master");
+
+	const ctx = createContext(store);
+	await withEnv({ HER_MEMORY_DIR: store, HER_SYNC_DEBOUNCE_MS: "0" }, async () => {
+		const fake = createFakePi();
+		her(fake.pi);
+		const turnEnd = fake.handlers.get("turn_end")?.[0];
+		assert.ok(turnEnd);
+		await turnEnd(
+			{
+				type: "turn_end",
+				turnIndex: 4,
+				message: { role: "assistant", content: [{ type: "text", text: "Sync this turn." }] },
+				toolResults: [],
+			},
+			ctx,
+		);
+
+		await waitFor(() =>
+			fake.entries.some((entry) => entry.customType === "her-state" && entryStatus(entry) === "sync-pushed"),
+		);
+	});
+
+	assert.match((await git(remote, "log", "--oneline", "-1")).stdout, /memory\(sync\): capture/);
+	assert.equal((await git(store, "status", "--porcelain")).stdout.trim(), "");
 });
 
 test("extension memory tools write, recall, judge, and update status", async () => {

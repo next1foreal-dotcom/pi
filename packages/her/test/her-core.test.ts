@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { promisify } from "node:util";
 import {
 	initStore,
 	Memory,
@@ -14,11 +16,17 @@ import {
 } from "../src/her-core/index.ts";
 
 const meta = { timestamp: "2026-06-02T2330", sessionId: "sess01", project: "her" };
+const execFileAsync = promisify(execFile);
 
 async function tempStore(): Promise<string> {
 	const root = await mkdtemp(join(tmpdir(), "her-ts-"));
 	await initStore(root);
 	return root;
+}
+
+async function git(cwd: string, ...args: string[]): Promise<{ stdout: string; stderr: string }> {
+	const { stdout, stderr } = await execFileAsync("git", args, { cwd });
+	return { stdout, stderr };
 }
 
 const fakeModel = {
@@ -121,6 +129,28 @@ test("recall searches markdown corpus", async () => {
 	await writeText(join(store, "semantic", "own-memory.md"), "# Own memory\n\nBorrow the harness, own memory.\n");
 	const hits = await new Memory(store).recall("harness memory");
 	assert.equal(hits[0]?.id, "semantic/own-memory");
+});
+
+test("sync commits and pushes memory changes", async () => {
+	const store = await tempStore();
+	const remote = await mkdtemp(join(tmpdir(), "her-remote-"));
+	await git(remote, "init", "--bare");
+	await git(store, "init");
+	await git(store, "config", "user.name", "Her Test");
+	await git(store, "config", "user.email", "her-test@example.com");
+	await git(store, "add", "-A");
+	await git(store, "commit", "-m", "memory: init");
+	await git(store, "branch", "-M", "master");
+	await git(store, "remote", "add", "origin", remote);
+	await git(store, "push", "-u", "origin", "master");
+
+	await new Memory(store).remember("Sync this new semantic note.", "note");
+	const result = await new Memory(store).sync("memory(sync): test");
+
+	assert.equal(result.status, "pushed");
+	assert.match(result.commit ?? "", /^[0-9a-f]{7,40}$/);
+	assert.equal((await git(store, "status", "--porcelain")).stdout.trim(), "");
+	assert.match((await git(remote, "log", "--oneline", "-1")).stdout, /memory\(sync\): test/);
 });
 
 test("writeIdea stores subagent ideas in ideas namespace", async () => {

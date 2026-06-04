@@ -16,6 +16,7 @@ Current status:
   `HER_SUMMARY_BASE_URL` + `HER_SUMMARY_MODEL` + `HER_SUMMARY_API_KEY`/`HER_LLM_API_KEY`, then relay, DeepSeek, then local.
 - `before_agent_start` injects `CONTEXT.md` and `FACTS.md` from `HER_MEMORY_DIR`.
 - `turn_end` captures raw episodes into `her-memory/episodic/raw`.
+- `her_sync` commits and pushes dirty memory; capture schedules the same sync after `HER_SYNC_DEBOUNCE_MS` (default 5 minutes).
 - Tools are registered for recall, remember, world notes, judgments, memory status, and idea capture.
 - `/her-intake` handles single-source Universal Inbox work; `her-batch-intake` coordinates multi-source workflow fan-out.
 - Her project subagents live in `.pi/agents` and mirror `pi-package/agents`; they must use append/fork context inheritance.

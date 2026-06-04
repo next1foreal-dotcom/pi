@@ -1,6 +1,8 @@
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readdir } from "node:fs/promises";
 import { basename, join } from "node:path";
+import { promisify } from "node:util";
 import { StorePaths } from "./paths.ts";
 import { type CorpusDoc, lexicalSearch, type Note } from "./retrieval.ts";
 import {
@@ -13,6 +15,8 @@ import {
 	writeJson,
 	writeText,
 } from "./store.ts";
+
+const execFileAsync = promisify(execFile);
 
 export const SEED_CONTEXT =
 	"# CONTEXT - Living Narrative / alive narrative\n\n*(empty - Samantha has not yet formed an understanding of Fei.)*\n";
@@ -67,6 +71,11 @@ export interface JudgmentFields {
 	reason?: string;
 	outcome?: string;
 	correction?: string;
+}
+
+export interface MemorySyncResult {
+	status: "clean" | "pushed";
+	commit?: string;
 }
 
 export class Memory {
@@ -236,6 +245,17 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 		parsed.data.memory_status = status;
 		const body = `${stripSection(parsed.body, "Memory Status")}\n## Memory Status\n\n- status: ${status}\n- reason: ${reason}\n`;
 		await writeText(path, `${frontmatter(parsed.data)}${body}`);
+	}
+
+	async sync(message = `memory(sync): ${new Date().toISOString()}`): Promise<MemorySyncResult> {
+		await git(this.paths.root, "add", "-A");
+		const staged = await git(this.paths.root, "diff", "--cached", "--name-only");
+		if (!staged.stdout.trim()) return { status: "clean" };
+
+		await git(this.paths.root, "commit", "-m", message);
+		const commit = (await git(this.paths.root, "rev-parse", "--short", "HEAD")).stdout.trim();
+		await git(this.paths.root, "push");
+		return { status: "pushed", commit };
 	}
 
 	private async corpus(): Promise<CorpusDoc[]> {
@@ -418,6 +438,11 @@ function safeStem(text: string): string {
 
 function today(): string {
 	return new Date().toISOString().slice(0, 10);
+}
+
+async function git(cwd: string, ...args: string[]): Promise<{ stdout: string; stderr: string }> {
+	const { stdout, stderr } = await execFileAsync("git", args, { cwd });
+	return { stdout, stderr };
 }
 
 function timestampMinute(): string {

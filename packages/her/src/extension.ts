@@ -4,7 +4,13 @@ import { fileURLToPath } from "node:url";
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, ProviderConfig } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { type IdeaData, type JudgmentFields, Memory, type WorldNoteData } from "./her-core/index.ts";
+import {
+	type IdeaData,
+	type JudgmentFields,
+	Memory,
+	type MemorySyncResult,
+	type WorldNoteData,
+} from "./her-core/index.ts";
 import { createSummaryModel } from "./summary-model.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -119,6 +125,11 @@ function textResult(text: string, details: Record<string, unknown> = {}) {
 	};
 }
 
+function renderSync(result: MemorySyncResult): string {
+	if (result.status === "clean") return "Her memory is already synced.";
+	return `Her memory synced: ${result.commit}`;
+}
+
 function renderRecall(notes: Awaited<ReturnType<Memory["recall"]>>): string {
 	if (notes.length === 0) return "No Her memory hits.";
 	return notes
@@ -183,10 +194,58 @@ function hasActiveGoal(ctx: ExtensionContext): boolean {
 	return false;
 }
 
+function syncDebounceMs(): number {
+	const parsed = Number(process.env.HER_SYNC_DEBOUNCE_MS);
+	if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+	return 5 * 60 * 1000;
+}
+
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
 export default function her(pi: ExtensionAPI): void {
 	const memoryDir = getMemoryDir();
 	const mem = new Memory(memoryDir, createSummaryModel());
+	let syncTimer: ReturnType<typeof setTimeout> | undefined;
 	registerProviderPool(pi);
+
+	const runSync = async (reason: string, ctx?: ExtensionContext): Promise<MemorySyncResult | undefined> => {
+		try {
+			const result = await mem.sync(`memory(sync): ${reason}`);
+			const status = result.status === "pushed" ? "sync-pushed" : "sync-clean";
+			pi.appendEntry("her-state", {
+				phase: "2",
+				status,
+				commit: result.commit,
+				memoryDir,
+			});
+			if (result.status === "pushed" && ctx?.hasUI) ctx.ui.notify(renderSync(result), "info");
+			return result;
+		} catch (error) {
+			const message = errorMessage(error);
+			pi.appendEntry("her-state", {
+				phase: "2",
+				status: "sync-failed",
+				error: message,
+				memoryDir,
+			});
+			if (ctx?.hasUI) ctx.ui.notify(`Her memory sync failed: ${message}`, "error");
+			return undefined;
+		}
+	};
+
+	const scheduleSync = (reason: string, ctx: ExtensionContext): void => {
+		if (syncTimer) clearTimeout(syncTimer);
+		const delay = syncDebounceMs();
+		const sync = () => void runSync(reason, ctx);
+		if (delay === 0) {
+			sync();
+			return;
+		}
+		syncTimer = setTimeout(sync, delay);
+		syncTimer.unref?.();
+	};
 
 	pi.on("resources_discover", () => ({
 		skillPaths: [skillsDir],
@@ -235,6 +294,7 @@ export default function her(pi: ExtensionAPI): void {
 			noteId,
 			memoryDir,
 		});
+		scheduleSync("capture", ctx);
 		if (!ctx.isIdle() || ctx.hasPendingMessages() || hasActiveGoal(ctx)) return;
 		const hit = await mem.surface({
 			query: safeJson({ message: event.message, toolResults: event.toolResults }),
@@ -296,6 +356,17 @@ export default function her(pi: ExtensionAPI): void {
 				count: notes.length,
 				notes: notes.map((note) => ({ id: note.id, kind: note.kind, path: note.path })),
 			});
+		},
+	});
+
+	pi.registerTool({
+		name: "her_sync",
+		label: "Her Sync",
+		description: "Commit and push pending Her memory changes.",
+		parameters: Type.Object({}),
+		async execute() {
+			const result = await mem.sync("memory(sync): manual");
+			return textResult(renderSync(result), { phase: "2", ...result, memoryDir });
 		},
 	});
 
