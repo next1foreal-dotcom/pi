@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 
 const repoRoot = process.cwd();
 
@@ -88,6 +89,76 @@ test("Phase 6 external organs expose the expected additive entrypoints", async (
 	for (const tool of ["oracle_preflight", "oracle_auth", "oracle_submit", "oracle_read", "oracle_cancel"]) {
 		assert.match(oracleTools, new RegExp(`name: "${tool}"`));
 	}
+});
+
+test("W0 workflow capability decision is documented", async () => {
+	const organs = await text("packages", "her", "ORGANS.md");
+	assert.match(organs, /W0 workflow capability spike/);
+	assert.match(organs, /adversarial validation/);
+	assert.match(organs, /fresh in-memory Pi sessions/);
+	assert.match(organs, /no persisted resume/);
+	assert.match(organs, /isolation: "worktree" is prompt-only/);
+	assert.match(organs, /quarantine/);
+	assert.match(organs, /parent-only persistence/);
+	assert.match(organs, /thin Her orchestrator/);
+});
+
+test("W0 minimal adversarial workflow runs with structured keep/drop result", async () => {
+	const workflowModule = (await import(
+		pathToFileURL(
+			join(repoRoot, ".pi", "git", "github.com", "Michaelliv", "pi-dynamic-workflows", "src", "workflow.ts"),
+		).href
+	)) as {
+		runWorkflow(script: string, options: Record<string, unknown>): Promise<{ result: unknown; agentCount: number }>;
+	};
+	const result = await workflowModule.runWorkflow(
+		`
+export const meta = {
+  name: "her_context_candidate_check",
+  description: "Synthesize one candidate and ask a skeptic to keep or drop it"
+}
+
+phase("Synthesize")
+const candidate = await agent("Synthesize one CONTEXT candidate from source evidence.", {
+  label: "candidate",
+  schema: {
+    type: "object",
+    properties: { change: { type: "string" } },
+    required: ["change"]
+  }
+})
+
+phase("Verify")
+const verdict = await agent("Skeptic: try to falsify this candidate before it reaches CONTEXT: " + JSON.stringify(candidate), {
+  label: "skeptic",
+  schema: {
+    type: "object",
+    properties: {
+      verdict: { type: "string" },
+      reason: { type: "string" }
+    },
+    required: ["verdict", "reason"]
+  }
+})
+
+return { kept: verdict.verdict === "keep", candidate, verdict }
+`,
+		{
+			agent: {
+				async run(_prompt: string, options: { label?: string }) {
+					if (options.label === "candidate") return { change: "Fei values evidence over reassurance." };
+					return { verdict: "keep", reason: "The source evidence directly supports the candidate." };
+				},
+			},
+		},
+	);
+
+	assert.equal(result.agentCount, 2);
+	assert.deepEqual(JSON.parse(JSON.stringify(result.result)), {
+		kept: true,
+		candidate: { change: "Fei values evidence over reassurance." },
+		verdict: { verdict: "keep", reason: "The source evidence directly supports the candidate." },
+	});
 });
 
 test("Her batch intake routes workflow results back into Her memory", async () => {

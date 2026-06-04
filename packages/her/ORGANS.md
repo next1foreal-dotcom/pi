@@ -24,3 +24,21 @@ All organs are pinned to exact git commits or npm versions. Packages in `.pi/set
 | agent-native-hardening | npm:@howaboua/pi-skill-agent-native-hardening | 0.0.2 | settings | Voice/style skill package. |
 | chrome-cdp-skill | npm:@howaboua/pi-skill-chrome-cdp | 0.0.1 | settings | Browser fallback skill. |
 | pi-subagent-review | npm:@howaboua/pi-subagent-review | 0.2.2 | settings | Code review organ. |
+
+## W0 workflow capability spike
+
+Decision for Stage 2 T2 and Stage 3: use `pi-dynamic-workflows` for bounded adversarial validation, but do not rely on it as the whole long-running/quarantine/worktree runtime.
+
+What is verified at the pinned `pi-dynamic-workflows` commit:
+
+- Good fit for adversarial validation: scripts expose `agent()`, `parallel()`, `pipeline()`, phases, abort, and JSON-schema structured output. The Her test suite runs a minimal workflow shape: synthesize a CONTEXT candidate, send it to an independent skeptic, and return a keep/drop verdict.
+- Child sessions are fresh in-memory Pi sessions. The parent workflow must include enough Her context in each prompt; children must not assume parent conversation context is already present.
+- The workflow tool has no persisted resume or `/workflows` manager at this pin. Its README explicitly calls this prototype status out.
+- `isolation: "worktree" is prompt-only` in `src/workflow.ts`; it is copied into agent instructions but does not create a git worktree.
+- Quarantine is not a runtime permission boundary here. `WorkflowAgent` defaults to standard coding tools via `createCodingTools(cwd)`, so untrusted-source readers are not automatically read-only and must not be allowed to persist Her memory directly.
+
+Selected Her path:
+
+- T2 adversarial CONTEXT checks can use `pi-dynamic-workflows` directly: candidate agent -> skeptic agent -> structured keep/drop result.
+- Stage 3 quarantine and heavy intake use parent-only persistence: workflow/subagent results are staging only; the parent turn writes accepted durable notes through `her_world_note`, `her_judgment`, or future Her-only tools.
+- For true quarantine, worktree isolation, or resumable long jobs, use `pi-subagents` capabilities or add a thin Her orchestrator that spawns restricted children, records state, and resumes deterministically. Do not fake these guarantees with `pi-dynamic-workflows` prompt wording alone.
