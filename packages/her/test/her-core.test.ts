@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -63,6 +63,26 @@ test("capture preserves raw when summary fails", async () => {
 	await memory.capture("important raw content", meta);
 	assert.match((await readText(join(store, "episodic", "raw", "2026-06-02T2330--sess01.md"))) ?? "", /important/);
 	assert.match((await readText(join(store, "episodic", "2026-06-02.md"))) ?? "", /summary_pending: true/);
+});
+
+test("capture never overwrites an existing raw episode with the same timestamp and session", async () => {
+	const store = await tempStore();
+	const memory = new Memory(store, fakeModel);
+
+	await memory.capture("first harness write", meta);
+	await memory.capture("second harness write", meta);
+
+	const rawFiles = (await readdir(join(store, "episodic", "raw"))).filter((name) => name.endsWith(".md")).sort();
+	assert.deepEqual(rawFiles, ["2026-06-02T2330--sess01--dup-1.md", "2026-06-02T2330--sess01.md"]);
+	assert.match((await readText(join(store, "episodic", "raw", "2026-06-02T2330--sess01.md"))) ?? "", /first harness/);
+	assert.match(
+		(await readText(join(store, "episodic", "raw", "2026-06-02T2330--sess01--dup-1.md"))) ?? "",
+		/second harness/,
+	);
+
+	const daily = (await readText(join(store, "episodic", "2026-06-02.md"))) ?? "";
+	assert.match(daily, /\[\[episodic\/raw\/2026-06-02T2330--sess01\]\]/);
+	assert.match(daily, /\[\[episodic\/raw\/2026-06-02T2330--sess01--dup-1\]\]/);
 });
 
 test("capture redacts secrets before writing raw or summarizing", async () => {

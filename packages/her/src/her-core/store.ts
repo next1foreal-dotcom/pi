@@ -34,6 +34,11 @@ export async function writeText(path: string, text: string): Promise<void> {
 	await writeFile(path, text, "utf8");
 }
 
+export async function writeNewText(path: string, text: string): Promise<void> {
+	await mkdir(dirname(path), { recursive: true });
+	await writeFile(path, text, { encoding: "utf8", flag: "wx" });
+}
+
 export async function appendText(path: string, text: string): Promise<void> {
 	await mkdir(dirname(path), { recursive: true });
 	await appendFile(path, text, "utf8");

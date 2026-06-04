@@ -16,6 +16,7 @@ import {
 	readText,
 	redactSecrets,
 	writeJson,
+	writeNewText,
 	writeText,
 } from "./store.ts";
 
@@ -129,11 +130,10 @@ export class Memory {
 		const sid = meta.sessionId ?? meta.session_id ?? genId(ts, raw);
 		const date = safeStem(ts.slice(0, 10));
 		const project = meta.project ?? "unknown";
-		const rawStem = `${safeStem(ts)}--${safeStem(sid)}`;
+		const rawBaseStem = `${safeStem(ts)}--${safeStem(sid)}`;
 		const rawFm = { id: sid, timestamp: ts, project, session_id: sid };
 		const safeRaw = redactSecrets(raw);
-
-		await writeText(join(this.paths.raw, `${rawStem}.md`), `${frontmatter(rawFm)}\n${safeRaw}`);
+		const rawStem = await this.writeRawEpisode(rawBaseStem, `${frontmatter(rawFm)}\n${safeRaw}`);
 
 		let pending = false;
 		let summary: string;
@@ -150,6 +150,20 @@ export class Memory {
 			await this.markRecognitionAnswered(meta.ref, sid);
 		}
 		return sid;
+	}
+
+	private async writeRawEpisode(baseStem: string, text: string): Promise<string> {
+		for (let duplicate = 0; duplicate < 1000; duplicate++) {
+			const stem = duplicate === 0 ? baseStem : `${baseStem}--dup-${duplicate}`;
+			try {
+				await writeNewText(join(this.paths.raw, `${stem}.md`), text);
+				return stem;
+			} catch (error) {
+				if (isFileExists(error)) continue;
+				throw error;
+			}
+		}
+		throw new Error(`could not allocate raw episode filename for ${baseStem}`);
 	}
 
 	async getContext(): Promise<{ context: string; facts: string }> {
@@ -893,6 +907,10 @@ function slug(text: string): string {
 
 function safeStem(text: string): string {
 	return text.replace(/[^A-Za-z0-9._-]/g, "_") || "x";
+}
+
+function isFileExists(error: unknown): boolean {
+	return Boolean(error && typeof error === "object" && "code" in error && error.code === "EEXIST");
 }
 
 function sourceRef(source: string): string {
