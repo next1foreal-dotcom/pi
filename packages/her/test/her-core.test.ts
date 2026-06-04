@@ -153,6 +153,113 @@ test("sync commits and pushes memory changes", async () => {
 	assert.match((await git(remote, "log", "--oneline", "-1")).stdout, /memory\(sync\): test/);
 });
 
+test("consolidate distills raw episodes into typed semantic notes and moments", async () => {
+	const store = await tempStore();
+	const memory = new Memory(store, {
+		complete() {
+			return JSON.stringify({
+				notes: [
+					{
+						key: "verification-over-reassurance",
+						type: "opinion",
+						title: "Verification over reassurance",
+						content: "Fei trusts machine truth more than soothing summaries.",
+						relations: [{ to: "agent-work-style", rel: "proves" }],
+						sources: ["episode-1"],
+					},
+				],
+				moments: [{ trigger: "debugging confusion", shift: "Samantha should report verified state first" }],
+			});
+		},
+	});
+	await memory.capture("We verified the real state before reporting.", {
+		timestamp: "2026-06-03T1200",
+		sessionId: "episode-1",
+		project: "her",
+	});
+
+	const result = await memory.consolidate();
+
+	assert.deepEqual(result, { episodes: 1, notesTouched: 1, moments: 1 });
+	const note = (await readText(join(store, "semantic", "verification-over-reassurance.md"))) ?? "";
+	const parsed = parseFrontmatter(note);
+	assert.equal(parsed.data.type, "opinion");
+	assert.deepEqual(parsed.data.sources, ["episode-1"]);
+	assert.deepEqual(parsed.data.relations, [{ to: "agent-work-style", rel: "proves" }]);
+	assert.match(parsed.body, /Fei trusts machine truth/);
+	assert.match((await readText(join(store, "narrative", "becoming-moments.md"))) ?? "", /Samantha should report/);
+	assert.equal((await readJson<{ cursor?: string }>(join(store, ".her", "state.json"), {})).cursor, "2026-06-03T1200");
+});
+
+test("synthesize writes a proposal with FACTS and approve promotes it to CONTEXT", async () => {
+	const store = await tempStore();
+	const prompts: Array<{ prompt: string; strong: boolean }> = [];
+	const memory = new Memory(store, {
+		complete(prompt, options) {
+			prompts.push({ prompt, strong: options?.strong === true });
+			return "# CONTEXT\n\nFei values verified execution.\n";
+		},
+	});
+	await writeText(join(store, "semantic", "verification.md"), "# Verification\n\nMachine truth first.\n");
+	await writeText(join(store, "narrative", "becoming-moments.md"), "- 2026-06-03 · shift: calmer execution\n");
+	await writeText(join(store, "narrative", "FACTS.md"), "Fei is the owner.\n");
+
+	const proposalId = await memory.synthesize();
+	await memory.approve(proposalId);
+
+	assert.equal(proposalId, "2026-06-04-narrative-update");
+	assert.match((await readText(join(store, "proposals", `${proposalId}.md`))) ?? "", /verified execution/);
+	assert.match((await readText(join(store, "narrative", "CONTEXT.md"))) ?? "", /verified execution/);
+	assert.equal(prompts[0].strong, true);
+	assert.match(prompts[0].prompt, /GROUND-TRUTH FACTS/);
+	assert.match(prompts[0].prompt, /Fei is the owner/);
+});
+
+test("buildTopicMaps and generateIdeas write derived markdown surfaces", async () => {
+	const store = await tempStore();
+	let call = 0;
+	const memory = new Memory(store, {
+		complete() {
+			call++;
+			if (call === 1) {
+				return JSON.stringify({
+					maps: [
+						{
+							theme: "Verification Practice",
+							summary: "Machine truth before closure.",
+							members: ["verification"],
+						},
+					],
+				});
+			}
+			return JSON.stringify({
+				ideas: [
+					{
+						title: "Verification as intimacy",
+						connects: ["verification"],
+						insight: "Reliability can be a relational signal.",
+						spark: "Make every close-out prove what changed.",
+						kind: "self-x-world",
+					},
+				],
+			});
+		},
+	});
+	await writeText(
+		join(store, "semantic", "verification.md"),
+		"---\ntype: opinion\n---\n# Verification\n\nMachine truth first.\n",
+	);
+
+	assert.deepEqual(await memory.buildTopicMaps(), ["verification-practice"]);
+	const ideas = await memory.generateIdeas();
+
+	assert.equal(ideas[0].title, "Verification as intimacy");
+	assert.match((await readText(join(store, "topics", "verification-practice.md"))) ?? "", /Machine truth/);
+	const ideaFiles = await import("node:fs/promises").then((fs) => fs.readdir(join(store, "ideas")));
+	assert.equal(ideaFiles.length, 1);
+	assert.match((await readText(join(store, "ideas", ideaFiles[0]))) ?? "", /Reliability can be/);
+});
+
 test("writeIdea stores subagent ideas in ideas namespace", async () => {
 	const store = await tempStore();
 	const id = await new Memory(store).writeIdea({

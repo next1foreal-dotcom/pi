@@ -53,6 +53,7 @@ function yamlScalar(value: unknown): string {
 	if (value === null || value === undefined) return "null";
 	if (typeof value === "boolean") return value ? "true" : "false";
 	if (typeof value === "number") return String(value);
+	if (typeof value === "object") return JSON.stringify(value);
 	const text = String(value);
 	if (text === "" || /[#\n\r]|^\s|\s$/.test(text)) return JSON.stringify(text);
 	return text;
@@ -80,6 +81,13 @@ function parseScalar(value: string): unknown {
 	if (text === "true") return true;
 	if (text === "false") return false;
 	if (/^-?\d+(?:\.\d+)?$/.test(text)) return Number(text);
+	if ((text.startsWith("{") && text.endsWith("}")) || (text.startsWith("[") && text.endsWith("]"))) {
+		try {
+			return JSON.parse(text);
+		} catch {
+			return text;
+		}
+	}
 	if ((text.startsWith('"') && text.endsWith('"')) || (text.startsWith("'") && text.endsWith("'"))) {
 		try {
 			return JSON.parse(text);
