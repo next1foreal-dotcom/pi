@@ -12,6 +12,8 @@ Rules:
 Current status:
 
 - Provider pool registration is wired for Claude, GPT/Codex, relay, DeepSeek, and local OpenAI-compatible providers.
+- Capture summaries use the first configured OpenAI-compatible summary model:
+  `HER_SUMMARY_BASE_URL` + `HER_SUMMARY_MODEL` + `HER_SUMMARY_API_KEY`/`HER_LLM_API_KEY`, then relay, DeepSeek, then local.
 - `before_agent_start` injects `CONTEXT.md` and `FACTS.md` from `HER_MEMORY_DIR`.
 - `turn_end` captures raw episodes into `her-memory/episodic/raw`.
 - Tools are registered for recall, remember, world notes, judgments, memory status, and idea capture.

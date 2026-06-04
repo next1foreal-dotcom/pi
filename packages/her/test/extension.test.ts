@@ -149,6 +149,25 @@ async function withMemoryDir<T>(root: string, fn: () => Promise<T>): Promise<T> 
 	}
 }
 
+async function withEnv<T>(values: Record<string, string>, fn: () => Promise<T>): Promise<T> {
+	const previous = new Map<string, string | undefined>();
+	for (const [key, value] of Object.entries(values)) {
+		previous.set(key, process.env[key]);
+		process.env[key] = value;
+	}
+	try {
+		return await fn();
+	} finally {
+		for (const [key, value] of previous) {
+			if (value === undefined) {
+				delete process.env[key];
+			} else {
+				process.env[key] = value;
+			}
+		}
+	}
+}
+
 async function executeTool(tool: ToolDefinition, params: Record<string, unknown>, ctx: ExtensionContext) {
 	return await tool.execute("tool-call-1", params, undefined, undefined, ctx);
 }
@@ -268,6 +287,71 @@ test("extension mirror does not compete with an active pi-codex-goal follow-up",
 			false,
 		);
 	});
+});
+
+test("extension passes configured summary model to Memory capture", async () => {
+	const store = await tempStore();
+	const ctx = createContext(store);
+	const previousFetch = globalThis.fetch;
+	const requests: Array<{ url: string; body: Record<string, unknown>; authorization: string | null }> = [];
+	globalThis.fetch = (async (input, init) => {
+		const headers = init?.headers as Headers | Record<string, string> | undefined;
+		const authorization =
+			headers instanceof Headers
+				? headers.get("authorization")
+				: (headers?.authorization ?? headers?.Authorization ?? null);
+		requests.push({
+			url: String(input),
+			body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>,
+			authorization,
+		});
+		return new Response(
+			JSON.stringify({
+				choices: [{ message: { content: "- live summary from cheap model" } }],
+			}),
+			{ status: 200, headers: { "content-type": "application/json" } },
+		);
+	}) as typeof fetch;
+
+	try {
+		await withEnv(
+			{
+				HER_MEMORY_DIR: store,
+				HER_SUMMARY_BASE_URL: "https://summary.test/v1",
+				HER_SUMMARY_API_KEY: "test-summary-key",
+				HER_SUMMARY_MODEL: "cheap-summary",
+			},
+			async () => {
+				const fake = createFakePi();
+				her(fake.pi);
+
+				const turnEnd = fake.handlers.get("turn_end")?.[0];
+				assert.ok(turnEnd);
+				await turnEnd(
+					{
+						type: "turn_end",
+						turnIndex: 3,
+						message: { role: "assistant", content: [{ type: "text", text: "Summarize this turn." }] },
+						toolResults: [],
+					},
+					ctx,
+				);
+			},
+		);
+	} finally {
+		globalThis.fetch = previousFetch;
+	}
+
+	const dailyFiles = await readdir(join(store, "episodic"));
+	const dailyFile = dailyFiles.find((entry) => entry.endsWith(".md"));
+	assert.ok(dailyFile);
+	const daily = (await readText(join(store, "episodic", dailyFile))) ?? "";
+	assert.match(daily, /live summary from cheap model/);
+	assert.match(daily, /summary_pending: false/);
+	assert.equal(requests.length, 1);
+	assert.equal(requests[0].url, "https://summary.test/v1/chat/completions");
+	assert.equal(requests[0].authorization, "Bearer test-summary-key");
+	assert.equal(requests[0].body.model, "cheap-summary");
 });
 
 test("extension memory tools write, recall, judge, and update status", async () => {

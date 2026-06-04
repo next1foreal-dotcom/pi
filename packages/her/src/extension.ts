@@ -5,6 +5,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, ProviderConfig } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { type IdeaData, type JudgmentFields, Memory, type WorldNoteData } from "./her-core/index.ts";
+import { createSummaryModel } from "./summary-model.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const packageRoot = resolve(here, "..");
@@ -184,7 +185,7 @@ function hasActiveGoal(ctx: ExtensionContext): boolean {
 
 export default function her(pi: ExtensionAPI): void {
 	const memoryDir = getMemoryDir();
-	const mem = new Memory(memoryDir);
+	const mem = new Memory(memoryDir, createSummaryModel());
 	registerProviderPool(pi);
 
 	pi.on("resources_discover", () => ({
