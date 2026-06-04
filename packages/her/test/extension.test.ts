@@ -211,7 +211,11 @@ test("extension injects Her context and captures completed turns", async () => {
 		her(fake.pi);
 
 		assert.equal(fake.providers.has("her-claude"), true);
+		assert.equal(fake.providers.has("her-claude-oauth"), true);
 		assert.equal(fake.providers.has("her-codex"), true);
+		assert.equal(fake.providers.has("her-codex-oauth"), true);
+		assert.match(fake.providers.get("her-claude-oauth")?.oauth?.name ?? "", /Claude Pro/);
+		assert.match(fake.providers.get("her-codex-oauth")?.oauth?.name ?? "", /ChatGPT/);
 		assert.equal(fake.tools.has("her_recall"), true);
 		assert.equal(fake.tools.has("her_remember"), true);
 		assert.equal(fake.tools.has("her_idea"), true);

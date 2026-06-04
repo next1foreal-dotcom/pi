@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { StringEnum } from "@earendil-works/pi-ai";
+import { anthropicOAuthProvider, openaiCodexOAuthProvider } from "@earendil-works/pi-ai/oauth";
 import type { ExtensionAPI, ExtensionContext, ProviderConfig } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import {
@@ -45,6 +46,18 @@ function model(id: string, name: string, api: string, reasoning: boolean) {
 function registerProviderPool(pi: ExtensionAPI): void {
 	const providers: Array<[string, ProviderConfig]> = [
 		[
+			"her-claude-oauth",
+			{
+				name: "Her Claude Pro/Max OAuth",
+				baseUrl: "https://api.anthropic.com",
+				api: "anthropic-messages",
+				oauth: anthropicOAuthProvider,
+				models: [
+					model("claude-sonnet-4-20250514", "Claude Sonnet 4 for Samantha (OAuth)", "anthropic-messages", true),
+				],
+			},
+		],
+		[
 			"her-claude",
 			{
 				name: "Her Claude",
@@ -52,6 +65,16 @@ function registerProviderPool(pi: ExtensionAPI): void {
 				apiKey: "$HER_CLAUDE_API_KEY",
 				api: "anthropic-messages",
 				models: [model("claude-sonnet-4-20250514", "Claude Sonnet 4 for Samantha", "anthropic-messages", true)],
+			},
+		],
+		[
+			"her-codex-oauth",
+			{
+				name: "Her ChatGPT Pro/Codex OAuth",
+				baseUrl: "https://chatgpt.com/backend-api",
+				api: "openai-codex-responses",
+				oauth: openaiCodexOAuthProvider,
+				models: [model("gpt-5-codex", "GPT-5 Codex for Samantha (OAuth)", "openai-codex-responses", true)],
 			},
 		],
 		[
