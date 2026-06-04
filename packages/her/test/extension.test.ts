@@ -577,12 +577,14 @@ test("extension memory tools write, recall, judge, and update status", async () 
 		const remember = fake.tools.get("her_remember");
 		const recall = fake.tools.get("her_recall");
 		const worldNote = fake.tools.get("her_world_note");
+		const intakeSource = fake.tools.get("her_intake_source");
 		const idea = fake.tools.get("her_idea");
 		const judgment = fake.tools.get("her_judgment");
 		const memoryStatus = fake.tools.get("her_memory_status");
 		assert.ok(remember);
 		assert.ok(recall);
 		assert.ok(worldNote);
+		assert.ok(intakeSource);
 		assert.ok(idea);
 		assert.ok(judgment);
 		assert.ok(memoryStatus);
@@ -641,6 +643,27 @@ test("extension memory tools write, recall, judge, and update status", async () 
 		assert.match(world, /correction: Mirror must not interrupt active work/);
 		assert.match(world, /memory_status: active/);
 		assert.match(world, /reason: Feeds Phase 5 Mirror gating/);
+
+		const intake = await executeTool(
+			intakeSource,
+			{
+				title: "Agent Intake Patterns",
+				sourceUrl: "https://example.com/intake",
+				sourceType: "article",
+				extracted: "A complete short article about source intake and recall verification.",
+				coverage: "Read full short article; no sections skipped.",
+				read: "The useful pattern is letting the trusted writer compute content hashes.",
+				steal: ["Compute content hashes in the trusted write tool"],
+				connections: ["mirror"],
+				take: "This tightens the Stage 2 intake chain.",
+				possibleMoves: ["Use her_intake_source from /her-intake"],
+			},
+			ctx,
+		);
+		const intakeDetails = intake.details as { contentHash?: string; recall?: Array<{ id: string }> };
+		assert.match(intakeDetails.contentHash ?? "", /^[0-9a-f]{64}$/);
+		assert.ok((intakeDetails.recall ?? []).some((note) => note.id === "world/agent-intake-patterns"));
+		assert.match((await readText(join(store, "world", "agent-intake-patterns.md"))) ?? "", /recall verification/);
 	});
 });
 

@@ -42,7 +42,7 @@ When running in a single-agent fallback, keep the same boundary explicitly: fetc
    - Samantha's Take
    - Possible Moves
 5. Persist:
-   - Source/world material: call `her_world_note`.
+   - Source/world material: call `her_intake_source` when available; it computes `contentHash`, writes the world note, and returns recall verification. If unavailable, call `her_world_note`.
    - Fei's raw thought or stable self-knowledge: call `her_remember`.
    - If the item is incomplete but worth keeping, still persist it with `memoryStatus: "needs_deep_read"` or `"archive_only"` and a precise coverage note.
 6. Update surfaces when a real edge appears:
@@ -51,14 +51,14 @@ When running in a single-agent fallback, keep the same boundary explicitly: fetc
 7. When Fei replies with a correction, attraction, rejection, or choice, call `her_judgment` on the relevant world note.
 8. Possible Moves are discussion only. Do not create tasks, goals, branches, or issues unless Fei explicitly asks.
 
-## Required `her_world_note` Shape
+## Required World Note Shape
 
-Call `her_world_note` with:
+Call `her_intake_source` when available, or `her_world_note` as the fallback, with:
 
 - `title`
 - `sourceUrl`
 - `sourceType`
-- `contentHash`
+- `contentHash` (`her_intake_source` computes this; provide it only when using `her_world_note`)
 - `memoryStatus`: `active`, `archive_only`, or `needs_deep_read`
 - `extracted`
 - `coverage`

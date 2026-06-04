@@ -66,6 +66,7 @@ test("/her-intake prompt encodes the minimal source-to-memory chain", async () =
 		"fetch_content",
 		"get_search_content",
 		"her_recall",
+		"her_intake_source",
 		"her_world_note",
 		"her_remember",
 		"contentHash",

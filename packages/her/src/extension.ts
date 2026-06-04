@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -158,6 +159,16 @@ function renderSyncFooterStatus(status: MemorySyncStatus): string {
 	if (status.status === "unknown") return "sync unknown";
 	if (status.pending === 0) return "synced";
 	return `${status.pending} unsynced`;
+}
+
+function intakeContentHash(sourceUrl: string, extracted: string): string {
+	return createHash("sha256").update(`${sourceUrl}\n${extracted}`).digest("hex");
+}
+
+function requireNonBlank(value: string, field: string): string {
+	const trimmed = value.trim();
+	if (!trimmed) throw new Error(`her_intake_source requires non-empty ${field}`);
+	return trimmed;
 }
 
 function renderContextReview(updates: Awaited<ReturnType<Memory["reviewContextUpdates"]>>): string {
@@ -533,6 +544,50 @@ export default function her(pi: ExtensionAPI): void {
 			const data: WorldNoteData = params;
 			const noteId = await mem.writeWorldNote(data);
 			return textResult(`World note saved in Her memory: ${noteId}`, { phase: "2", noteId, memoryDir });
+		},
+	});
+
+	pi.registerTool({
+		name: "her_intake_source",
+		label: "Her Intake Source",
+		description: "Persist a fetched external source as a world note and verify it is recallable.",
+		parameters: Type.Object({
+			title: Type.String(),
+			sourceUrl: Type.String(),
+			sourceType: Type.String(),
+			extracted: Type.String(),
+			coverage: Type.String(),
+			read: Type.String(),
+			steal: Type.Optional(Type.Array(Type.String())),
+			connections: Type.Optional(Type.Array(Type.String())),
+			take: Type.String(),
+			possibleMoves: Type.Optional(Type.Array(Type.String())),
+			memoryStatus: Type.Optional(StringEnum(memoryStatusValues)),
+		}),
+		async execute(_toolCallId, params) {
+			const data: WorldNoteData = {
+				title: requireNonBlank(params.title, "title"),
+				sourceUrl: requireNonBlank(params.sourceUrl, "sourceUrl"),
+				sourceType: requireNonBlank(params.sourceType, "sourceType"),
+				contentHash: intakeContentHash(params.sourceUrl, params.extracted),
+				memoryStatus: params.memoryStatus ?? "active",
+				extracted: requireNonBlank(params.extracted, "extracted"),
+				coverage: requireNonBlank(params.coverage, "coverage"),
+				read: requireNonBlank(params.read, "read"),
+				steal: params.steal ?? [],
+				connections: params.connections ?? [],
+				take: requireNonBlank(params.take, "take"),
+				possibleMoves: params.possibleMoves ?? [],
+			};
+			const noteId = await mem.writeWorldNote(data);
+			const recall = await mem.recall(`${data.title} ${data.sourceUrl} ${data.take}`, { k: 3 });
+			return textResult(`Intake source saved in Her memory: ${noteId}`, {
+				phase: "2",
+				noteId,
+				contentHash: data.contentHash,
+				recall: recall.map((note) => ({ id: note.id, kind: note.kind, path: note.path })),
+				memoryDir,
+			});
 		},
 	});
 
