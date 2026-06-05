@@ -176,13 +176,19 @@ test("Her batch intake routes workflow results back into Her memory", async () =
 	const skill = await text("packages", "her", "pi-package", "skills", "her-batch-intake", "SKILL.md");
 	assert.match(skill, /workflow/);
 	assert.match(skill, /parallel/);
+	assert.match(skill, /claim ledger/);
+	assert.match(skill, /claim-verifier/);
+	assert.match(skill, /supported/);
+	assert.match(skill, /insufficient_evidence/);
 	assert.match(skill, /her_world_note/);
+	assert.match(skill, /her_intake_source/);
 	assert.match(skill, /her_judgment/);
 	assert.match(skill, /coverage/);
 	assert.match(skill, /Never persist secrets/);
 
 	const config = await text("packages", "her", "pi-package", "samantha.config.md");
 	assert.match(config, /her-batch-intake/);
+	assert.match(config, /claim-ledger verification/);
 	assert.match(config, /active `pi-codex-goal`/);
 	assert.match(config, /repo-local node tests/);
 });

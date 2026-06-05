@@ -34,7 +34,7 @@ Current status:
 - `decaySweep()` moves old `tier: decay` semantic notes into `archive/semantic`; `tier: exact` is never swept and archive recall is explicit.
 - Tools are registered for recall, remember, world notes, judgments, memory status, idea capture, evolution synthesis, and context review/keep/revert.
 - Context digest follow-ups report due unreviewed context changes before Mirror, and both suppress themselves while `pi-codex-goal` owns an active continuation.
-- `/her-intake <url-or-path>` is a slash prompt for the Stage 2 minimal chain: `fetch_content` -> `her_intake_source`/`her_world_note` or `her_remember` -> recall verification. `her-batch-intake` coordinates multi-source workflow fan-out.
+- `/her-intake <url-or-path>` is a slash prompt for the Stage 2 minimal chain: `fetch_content` -> `her_intake_source`/`her_world_note` or `her_remember` -> recall verification. `deep-reader` stays quarantined from memory writes; `claim-verifier` checks claim ledgers; `her-batch-intake` coordinates multi-source workflow fan-out before the parent trusted writer persists memory.
 - Her project subagents live in `.pi/agents` and mirror `pi-package/agents`; they must use append/fork context inheritance.
 - Phase 7 migration keeps legacy Python capture adapters and the TS pi extension writing the same independent `D:/@Her/her-memory` git repo; all growth writes belong to TS.
 

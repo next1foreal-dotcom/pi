@@ -7,6 +7,7 @@ const herRoot = join(process.cwd(), "packages", "her");
 const projectAgentsRoot = join(process.cwd(), ".pi", "agents");
 const projectPromptsRoot = join(process.cwd(), ".pi", "prompts");
 const subagentPin = "git:github.com/nicobailon/pi-subagents@efa7120047eaf76a32620eed0ec7d038b6cfa44e";
+const quarantinedReadTools = ["fetch_content", "find", "get_search_content", "grep", "ls", "read", "web_search"].sort();
 
 const parseSimpleFrontmatter = (text: string): { frontmatter: Record<string, string>; body: string } => {
 	const normalized = text.replace(/\r\n/g, "\n");
@@ -106,10 +107,7 @@ test("deep-reader subagent is quarantined from Her memory writes", async () => {
 		.map((tool) => tool.trim())
 		.filter(Boolean);
 
-	assert.deepEqual(
-		tools.sort(),
-		["fetch_content", "find", "get_search_content", "grep", "ls", "read", "web_search"].sort(),
-	);
+	assert.deepEqual(tools.sort(), quarantinedReadTools);
 	for (const forbidden of [
 		"her_world_note",
 		"her_intake_source",
@@ -127,6 +125,37 @@ test("deep-reader subagent is quarantined from Her memory writes", async () => {
 	assert.match(body, /no write-memory tools/);
 	assert.match(body, /structured world-note candidate only/);
 	assert.match(body, /parent trusted Her writer decides/);
+});
+
+test("claim-verifier subagent verifies claims without Her memory writes", async () => {
+	const packageText = await readFile(join(herRoot, "pi-package", "agents", "claim-verifier.md"), "utf8");
+	const projectText = await readFile(join(projectAgentsRoot, "claim-verifier.md"), "utf8");
+	assert.equal(projectText, packageText);
+
+	const { frontmatter, body } = parseSimpleFrontmatter(projectText);
+	const tools = (frontmatter.tools ?? "")
+		.split(",")
+		.map((tool) => tool.trim())
+		.filter(Boolean);
+
+	assert.deepEqual(tools.sort(), quarantinedReadTools);
+	for (const forbidden of [
+		"her_world_note",
+		"her_intake_source",
+		"her_remember",
+		"her_judgment",
+		"write",
+		"edit",
+		"bash",
+	]) {
+		assert.ok(!tools.includes(forbidden), `claim-verifier must not expose ${forbidden}`);
+	}
+
+	assert.match(body, /independent claim verifier/);
+	assert.match(body, /claim ledger/);
+	assert.match(body, /supported, contradicted, or insufficient_evidence/);
+	assert.match(body, /source_quality/);
+	assert.match(body, /parent should persist uncertainty as coverage\/caveat/);
 });
 
 test("Pi powerline promotes Her memory sync status", async () => {
