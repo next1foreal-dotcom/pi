@@ -8,6 +8,8 @@ export type {
 	JudgmentFields,
 	MemorySyncResult,
 	MemorySyncStatus,
+	RestoreArchivedSemanticOptions,
+	RestoreArchivedSemanticResult,
 	SurfaceOptions,
 	SynthesizeDueReason,
 	SynthesizeDueResult,

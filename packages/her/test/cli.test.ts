@@ -102,3 +102,21 @@ test("CLI runs governed archive sweep as JSON", async () => {
 	assert.equal(payload.status.status, "unsynced");
 	assert.ok(payload.status.dirtyFiles >= 1);
 });
+
+test("CLI restores an archived semantic note as JSON", async () => {
+	const { store } = await gitBackedStore();
+	await writeFile(
+		join(store, "archive", "semantic", "old-noise.md"),
+		"---\ntier: archive\npre_archive_tier: decay\narchived_at: 2026-06-05\n---\n# Old noise\n\nRestore this memory.\n",
+		"utf8",
+	);
+
+	const result = await runCli(["restore", "--semantic", "old-noise", "--now", "2026-06-06", "--json"], store);
+	const payload = JSON.parse(result.stdout);
+
+	assert.equal(payload.memoryDir, store);
+	assert.deepEqual(payload.result, { key: "old-noise", restored: true });
+	assert.match(await readFile(join(store, "semantic", "old-noise.md"), "utf8"), /restored_at: 2026-06-06/);
+	assert.equal(payload.status.status, "unsynced");
+	assert.ok(payload.status.dirtyFiles >= 1);
+});

@@ -9,6 +9,7 @@ const execFileAsync = promisify(execFile);
 type CliCommand =
 	| { kind: "decay"; json: boolean; olderThanDays?: number; now?: string }
 	| { kind: "help" }
+	| { kind: "restore"; json: boolean; semanticKey: string; now?: string }
 	| { kind: "status"; json: boolean }
 	| { kind: "sync"; json: boolean; message?: string };
 
@@ -27,6 +28,10 @@ interface CliDecayPayload extends CliStatusPayload {
 	result: DecaySweepResult;
 }
 
+interface CliRestorePayload extends CliStatusPayload {
+	result: Awaited<ReturnType<Memory["restoreArchivedSemantic"]>>;
+}
+
 interface CliIo {
 	stdout: NodeJS.WritableStream;
 	stderr: NodeJS.WritableStream;
@@ -38,6 +43,7 @@ export function parseArgs(argv: string[]): CliCommand {
 	const [command, ...rest] = argv;
 	if (!command || command === "help" || command === "--help" || command === "-h") return { kind: "help" };
 	if (command === "decay") return parseDecay(rest);
+	if (command === "restore") return parseRestore(rest);
 	if (command === "status") return parseStatus(rest);
 	if (command === "sync") return parseSync(rest);
 	throw new UsageError(`unknown Her command: ${command}`);
@@ -76,6 +82,13 @@ export async function runHerCli(
 		const result = await memory.decaySweep({ olderThanDays: command.olderThanDays, now: command.now });
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderDecay);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "restore") {
+		const result = await memory.restoreArchivedSemantic(command.semanticKey, { now: command.now });
+		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
+		writePayload(io.stdout, payload, command.json, renderRestore);
 		return payload.status.status === "unknown" ? 1 : 0;
 	}
 
@@ -158,6 +171,34 @@ function parseDecay(argv: string[]): CliCommand {
 	return { kind: "decay", json, olderThanDays, now };
 }
 
+function parseRestore(argv: string[]): CliCommand {
+	let json = false;
+	let semanticKey: string | undefined;
+	let now: string | undefined;
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--semantic") {
+			const value = argv[++i];
+			if (!value) throw new UsageError(`${arg} requires a value`);
+			semanticKey = value;
+			continue;
+		}
+		if (arg === "--now") {
+			const value = argv[++i];
+			if (!value) throw new UsageError(`${arg} requires a value`);
+			now = value;
+			continue;
+		}
+		throw new UsageError(`unknown restore option: ${arg}`);
+	}
+	if (!semanticKey) throw new UsageError("restore requires --semantic <key>");
+	return { kind: "restore", json, semanticKey, now };
+}
+
 async function buildStatusPayload(memoryDir: string, memory: Memory): Promise<CliStatusPayload> {
 	const status = await memory.syncStatus();
 	const lastSync = await readLastSyncedAt(memoryDir);
@@ -214,6 +255,10 @@ function renderDecay(payload: CliDecayPayload): string {
 	].join("\n");
 }
 
+function renderRestore(payload: CliRestorePayload): string {
+	return [`Her memory restored archived semantic note: ${payload.result.key}`, "", renderStatus(payload)].join("\n");
+}
+
 function writePayload<T>(
 	stream: NodeJS.WritableStream,
 	payload: T,
@@ -230,6 +275,7 @@ function writeLine(stream: NodeJS.WritableStream, text: string): void {
 function usage(): string {
 	return `Usage:
   her decay [--older-than-days <days>] [--now <YYYY-MM-DD>] [--json]
+  her restore --semantic <key> [--now <YYYY-MM-DD>] [--json]
   her sync --status [--json]
   her sync [--message <message>] [--json]
   her status [--json]

@@ -141,6 +141,15 @@ export interface DecaySweepResult {
 	archivedKeys: string[];
 }
 
+export interface RestoreArchivedSemanticOptions {
+	now?: string;
+}
+
+export interface RestoreArchivedSemanticResult {
+	key: string;
+	restored: true;
+}
+
 export class Memory {
 	readonly paths: StorePaths;
 	private readonly model?: ModelLike;
@@ -397,6 +406,7 @@ export class Memory {
 			}
 
 			const key = basename(entry, ".md");
+			parsed.data.pre_archive_tier = tier;
 			parsed.data.tier = "archive";
 			parsed.data.archived_at = nowText.slice(0, 10);
 			parsed.data.archive_reason = `decay-tier semantic note older than ${olderThanDays} days`;
@@ -406,6 +416,26 @@ export class Memory {
 		}
 
 		return { archived: archivedKeys.length, kept, archivedKeys };
+	}
+
+	async restoreArchivedSemantic(
+		key: string,
+		opts: RestoreArchivedSemanticOptions = {},
+	): Promise<RestoreArchivedSemanticResult> {
+		const safeKey = slug(key);
+		const archivePath = join(this.paths.archiveSemantic, `${safeKey}.md`);
+		const text = await readText(archivePath);
+		if (text === undefined) throw new Error(`archived semantic note not found: ${safeKey}`);
+		const parsed = parseFrontmatter(text);
+		const restoredTier = typeof parsed.data.pre_archive_tier === "string" ? parsed.data.pre_archive_tier : "decay";
+		parsed.data.tier = restoredTier;
+		parsed.data.restored_at = (opts.now ?? today()).slice(0, 10);
+		delete parsed.data.pre_archive_tier;
+		delete parsed.data.archived_at;
+		delete parsed.data.archive_reason;
+		await writeNewText(join(this.paths.semantic, `${safeKey}.md`), `${frontmatter(parsed.data)}${parsed.body}`);
+		await unlink(archivePath);
+		return { key: safeKey, restored: true };
 	}
 
 	async approve(proposalId: string): Promise<void> {

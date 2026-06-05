@@ -189,6 +189,25 @@ test("decaySweep archives only old decay-tier semantic notes and keeps them reco
 	assert.equal((await new Memory(store).recallArchive("stale low-value"))[0]?.id, "archive/semantic/old-noise");
 });
 
+test("restoreArchivedSemantic returns an archived note to the main semantic namespace", async () => {
+	const store = await tempStore();
+	await writeText(
+		join(store, "archive", "semantic", "old-noise.md"),
+		"---\ntier: archive\npre_archive_tier: decay\narchived_at: 2026-06-05\n---\n# Old noise\n\nRecoverable archived memory.\n",
+	);
+
+	const result = await new Memory(store).restoreArchivedSemantic("old-noise", { now: "2026-06-06" });
+
+	assert.deepEqual(result, { key: "old-noise", restored: true });
+	assert.equal(await readText(join(store, "archive", "semantic", "old-noise.md")), undefined);
+	const restored = (await readText(join(store, "semantic", "old-noise.md"))) ?? "";
+	const parsed = parseFrontmatter(restored);
+	assert.equal(parsed.data.tier, "decay");
+	assert.equal(parsed.data.restored_at, "2026-06-06");
+	assert.match(parsed.body, /Recoverable archived memory/);
+	assert.equal((await new Memory(store).recall("Recoverable archived"))[0]?.id, "semantic/old-noise");
+});
+
 test("sync commits and pushes memory changes", async () => {
 	const store = await tempStore();
 	const remote = await mkdtemp(join(tmpdir(), "her-remote-"));
