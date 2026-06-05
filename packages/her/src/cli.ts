@@ -18,6 +18,7 @@ const execFileAsync = promisify(execFile);
 
 type CliCommand =
 	| { kind: "approve"; json: boolean; proposalId: string }
+	| { kind: "capture"; json: boolean; text: string; project?: string; sessionId?: string; timestamp?: string }
 	| { kind: "choice-model"; json: boolean }
 	| { kind: "consolidate"; json: boolean; limit?: number }
 	| { kind: "decay"; json: boolean; olderThanDays?: number; now?: string }
@@ -61,6 +62,12 @@ interface CliApprovePayload extends CliStatusPayload {
 	};
 }
 
+interface CliCapturePayload extends CliStatusPayload {
+	result: {
+		id: string;
+	};
+}
+
 interface CliSynthesizePayload extends CliStatusPayload {
 	result: {
 		proposalId: string | null;
@@ -91,6 +98,7 @@ export function parseArgs(argv: string[]): CliCommand {
 	const [command, ...rest] = argv;
 	if (!command || command === "help" || command === "--help" || command === "-h") return { kind: "help" };
 	if (command === "approve") return parseApprove(rest);
+	if (command === "capture") return parseCapture(rest);
 	if (command === "choice-model") return parseJsonOnly("choice-model", rest);
 	if (command === "consolidate") return parseConsolidate(rest);
 	if (command === "decay") return parseDecay(rest);
@@ -162,6 +170,17 @@ export async function runHerCli(
 			result: { proposalId: command.proposalId, approved: true as const },
 		};
 		writePayload(io.stdout, payload, command.json, renderApprove);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "capture") {
+		const id = await memory.capture(command.text, {
+			project: command.project ?? "her-cli",
+			sessionId: command.sessionId,
+			timestamp: command.timestamp,
+		});
+		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result: { id } };
+		writePayload(io.stdout, payload, command.json, renderCapture);
 		return payload.status.status === "unknown" ? 1 : 0;
 	}
 
@@ -263,6 +282,48 @@ function parseApprove(argv: string[]): CliCommand {
 	}
 	if (!proposalId) throw new UsageError("approve requires --proposal <id>");
 	return { kind: "approve", json, proposalId };
+}
+
+function parseCapture(argv: string[]): CliCommand {
+	let json = false;
+	let text: string | undefined;
+	let project: string | undefined;
+	let sessionId: string | undefined;
+	let timestamp: string | undefined;
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--text") {
+			const value = argv[++i];
+			if (!value) throw new UsageError(`${arg} requires a value`);
+			text = value;
+			continue;
+		}
+		if (arg === "--project") {
+			const value = argv[++i];
+			if (!value) throw new UsageError(`${arg} requires a value`);
+			project = value;
+			continue;
+		}
+		if (arg === "--session" || arg === "--session-id") {
+			const value = argv[++i];
+			if (!value) throw new UsageError(`${arg} requires a value`);
+			sessionId = value;
+			continue;
+		}
+		if (arg === "--timestamp") {
+			const value = argv[++i];
+			if (!value) throw new UsageError(`${arg} requires a value`);
+			timestamp = value;
+			continue;
+		}
+		throw new UsageError(`unknown capture option: ${arg}`);
+	}
+	if (!text?.trim()) throw new UsageError("capture requires --text <text>");
+	return { kind: "capture", json, text, project, sessionId, timestamp };
 }
 
 function parseConsolidate(argv: string[]): CliCommand {
@@ -468,6 +529,10 @@ function renderApprove(payload: CliApprovePayload): string {
 	return [`Her proposal approved: ${payload.result.proposalId}`, "", renderStatus(payload)].join("\n");
 }
 
+function renderCapture(payload: CliCapturePayload): string {
+	return [`Her memory captured: ${payload.result.id}`, "", renderStatus(payload)].join("\n");
+}
+
 function renderSynthesize(payload: CliSynthesizePayload): string {
 	const result =
 		payload.result.proposalId === null
@@ -517,6 +582,7 @@ function writeLine(stream: NodeJS.WritableStream, text: string): void {
 function usage(): string {
 	return `Usage:
   her approve --proposal <id> [--json]
+  her capture --text <text> [--project <name>] [--session <id>] [--timestamp <ISO>] [--json]
   her choice-model [--json]
   her consolidate [--limit <n>] [--json]
   her decay [--older-than-days <days>] [--now <YYYY-MM-DD>] [--json]

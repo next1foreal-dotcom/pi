@@ -128,6 +128,48 @@ test("CLI sync commits and pushes dirty Her memory", async () => {
 	assert.match((await git(remote, "log", "--oneline", "-1")).stdout, /memory\(sync\): cli test/);
 });
 
+test("CLI captures a UI message through TS her-core as JSON", async () => {
+	const { store } = await gitBackedStore();
+	const secret = `sk-${"123456789012345678901234"}`;
+	const text = `Samantha UI should capture this safely. ${secret}`;
+
+	await withLocalChatModel(
+		(prompt) => {
+			assert.doesNotMatch(prompt, new RegExp(secret));
+			assert.match(prompt, /«REDACTED:secret»/);
+			return "- captured safely from UI";
+		},
+		async (modelEnv, prompts) => {
+			const result = await runCli(
+				[
+					"capture",
+					"--text",
+					text,
+					"--project",
+					"samantha-ui",
+					"--session",
+					"gui-test",
+					"--timestamp",
+					"2026-06-05T1200",
+					"--json",
+				],
+				store,
+				modelEnv,
+			);
+			const payload = JSON.parse(result.stdout);
+
+			assert.equal(payload.result.id, "gui-test");
+			assert.equal(payload.status.status, "unsynced");
+			assert.equal(prompts.length, 1);
+			const raw = await readFile(join(store, "episodic", "raw", "2026-06-05T1200--gui-test.md"), "utf8");
+			assert.match(raw, /samantha-ui/);
+			assert.doesNotMatch(raw, new RegExp(secret));
+			assert.match(raw, /«REDACTED:secret»/);
+			assert.match(await readFile(join(store, "episodic", "2026-06-05.md"), "utf8"), /captured safely from UI/);
+		},
+	);
+});
+
 test("CLI runs TS growth maintenance commands as JSON", async () => {
 	const { store } = await gitBackedStore();
 	await writeFile(join(store, "narrative", "FACTS.md"), "Fei is the owner.\n", "utf8");
