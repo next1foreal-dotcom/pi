@@ -19,6 +19,7 @@ import {
 	Memory,
 	type MemorySyncResult,
 	type MemorySyncStatus,
+	type SamanthaZoneCategory,
 	startLongTask,
 	type WorldNoteData,
 } from "./her-core/index.ts";
@@ -33,6 +34,7 @@ const herPromptPath = resolve(promptsDir, "her.md");
 const zeroCost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 const memoryStatusValues = ["active", "archive_only", "needs_deep_read"] as const;
 const checkpointStatusValues = ["active", "blocked"] as const;
+const samanthaZoneCategoryValues = ["journal", "collection", "projects", "tools", "dreams"] as const;
 const claimVerdictValues = ["supported", "contradicted", "insufficient_evidence"] as const;
 const sourceQualityValues = ["primary", "secondary", "weak", "unavailable", "blocked"] as const;
 const claimLedgerSchema = Type.Array(
@@ -157,9 +159,17 @@ function getMemoryDir(): string {
 	return process.env.HER_MEMORY_DIR ?? resolve(process.cwd(), "..", "her-memory");
 }
 
-function composeSystemPrompt(base: string, context: string, facts: string, self: string, choiceModel: string): string {
+function composeSystemPrompt(
+	base: string,
+	context: string,
+	facts: string,
+	soul: string,
+	self: string,
+	choiceModel: string,
+): string {
 	const sections = [readHerPrompt(), `## Her CONTEXT.md\n\n${context.trim()}`];
 	if (facts.trim()) sections.push(`## Her FACTS.md\n\n${facts.trim()}`);
+	if (soul.trim()) sections.push(`## Her SOUL.md\n\n${soul.trim()}`);
 	if (self.trim()) sections.push(`## Her SAMANTHA.md\n\n${self.trim()}`);
 	if (choiceModel.trim()) sections.push(`## Her CHOICE-MODEL.md\n\n${choiceModel.trim()}`);
 	return `${base.trimEnd()}\n\n${sections.join("\n\n")}`;
@@ -381,12 +391,12 @@ export default function her(pi: ExtensionAPI): void {
 	});
 
 	pi.on("before_agent_start", async (event) => {
-		const { context, facts, self, choiceModel } = await mem.getContext();
+		const { context, facts, soul, self, choiceModel } = await mem.getContext();
 		return {
-			systemPrompt: composeSystemPrompt(event.systemPrompt, context, facts, self, choiceModel),
+			systemPrompt: composeSystemPrompt(event.systemPrompt, context, facts, soul, self, choiceModel),
 			message: {
 				customType: "her-context",
-				content: "Her CONTEXT.md, FACTS.md, SAMANTHA.md, and CHOICE-MODEL.md were injected for this turn.",
+				content: "Her CONTEXT.md, FACTS.md, SOUL.md, SAMANTHA.md, and CHOICE-MODEL.md were injected for this turn.",
 				display: false,
 				details: { pinned: true, memoryDir },
 			},
@@ -496,7 +506,7 @@ export default function her(pi: ExtensionAPI): void {
 		});
 		return {
 			customInstructions:
-				"Preserve Her memory grounding during compaction: keep narrative/FACTS.md ground truth, keep the latest Her CONTEXT.md injection, and retain her-* pinned entries/messages.",
+				"Preserve Her memory grounding during compaction: keep narrative/FACTS.md ground truth, keep narrative/SOUL.md voice seed, keep the latest Her CONTEXT.md injection, and retain her-* pinned entries/messages.",
 		};
 	});
 
@@ -793,6 +803,27 @@ export default function her(pi: ExtensionAPI): void {
 				recall: recall.map((note) => ({ id: note.id, kind: note.kind, path: note.path })),
 				memoryDir,
 			});
+		},
+	});
+
+	pi.registerTool({
+		name: "her_zone_note",
+		label: "Her Zone Note",
+		description: "Write a note into Samantha's own Her Zone without injecting it as default context.",
+		parameters: Type.Object({
+			category: StringEnum(samanthaZoneCategoryValues),
+			title: Type.String(),
+			content: Type.String(),
+			source: Type.Optional(Type.String()),
+		}),
+		async execute(_toolCallId, params) {
+			const result = await mem.writeSamanthaZoneNote({
+				category: params.category as SamanthaZoneCategory,
+				title: params.title,
+				content: params.content,
+				...(params.source ? { source: params.source } : {}),
+			});
+			return textResult(`Her Zone note saved: ${result.path}`, { phase: "5", ...result, memoryDir });
 		},
 	});
 

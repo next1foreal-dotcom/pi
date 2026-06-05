@@ -35,6 +35,10 @@ export class StorePaths {
 		return join(this.narrative, "CONTEXT.md");
 	}
 
+	get soulFile(): string {
+		return join(this.narrative, "SOUL.md");
+	}
+
 	get selfFile(): string {
 		return join(this.narrative, "SAMANTHA.md");
 	}
@@ -73,6 +77,30 @@ export class StorePaths {
 
 	get goals(): string {
 		return join(this.root, "goals");
+	}
+
+	get samantha(): string {
+		return join(this.root, "samantha");
+	}
+
+	get samanthaJournal(): string {
+		return join(this.samantha, "journal");
+	}
+
+	get samanthaCollection(): string {
+		return join(this.samantha, "collection");
+	}
+
+	get samanthaProjects(): string {
+		return join(this.samantha, "projects");
+	}
+
+	get samanthaTools(): string {
+		return join(this.samantha, "tools");
+	}
+
+	get samanthaDreams(): string {
+		return join(this.samantha, "dreams");
 	}
 
 	get herDir(): string {

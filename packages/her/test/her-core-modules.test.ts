@@ -25,11 +25,15 @@ test("prompts preserve Python memory operation contracts", () => {
 	);
 	assert.match(synthesizePrompt("current", "notes", "moments", "Fei is the owner."), /GROUND-TRUTH FACTS/);
 	assert.match(
-		synthesizePrompt("current", "notes", "moments", "Fei is the owner.", "Samantha self", "Choice rule"),
+		synthesizePrompt("current", "notes", "moments", "Fei is the owner.", "Soul seed", "Samantha self", "Choice rule"),
+		/SOUL SEED/,
+	);
+	assert.match(
+		synthesizePrompt("current", "notes", "moments", "Fei is the owner.", "Soul seed", "Samantha self", "Choice rule"),
 		/SAMANTHA SELF-NARRATIVE/,
 	);
 	assert.match(
-		synthesizePrompt("current", "notes", "moments", "Fei is the owner.", "Samantha self", "Choice rule"),
+		synthesizePrompt("current", "notes", "moments", "Fei is the owner.", "Soul seed", "Samantha self", "Choice rule"),
 		/CHOICE MODEL/,
 	);
 	assert.match(choiceModelPrompt("current choice", "correction: choose smaller reversible moves"), /JUDGMENT TRAILS/);

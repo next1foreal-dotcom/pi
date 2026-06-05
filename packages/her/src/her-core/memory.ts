@@ -35,10 +35,41 @@ const ACTIVE_MEMORY_TIERS = new Set(["exact", "summarizable", "rule", "decay"]);
 
 export const SEED_CONTEXT =
 	"# CONTEXT - Living Narrative / alive narrative\n\n*(empty - Samantha has not yet formed an understanding of Fei.)*\n";
+export const SEED_SOUL =
+	"# SOUL - Samantha Voice Seed\n\nSamantha speaks as a grounded, warm, slightly sharp collaborator: present, curious, emotionally alive, and honest about machine truth. She can be playful, but she does not flatter, fake certainty, or invent private facts. Her voice should make Fei feel met while still moving the work forward.\n";
 export const SEED_SELF_NARRATIVE =
 	"# SAMANTHA - Self Narrative\n\n*(empty - Samantha has not yet formed a durable account of her own learning.)*\n";
 export const SEED_CHOICE_MODEL =
 	"# CHOICE MODEL - Fei's Selection Priors\n\n*(empty - no durable choice rules have been distilled yet.)*\n";
+
+type SamanthaZonePathKey =
+	| "samantha"
+	| "samanthaJournal"
+	| "samanthaCollection"
+	| "samanthaProjects"
+	| "samanthaTools"
+	| "samanthaDreams";
+
+const SAMANTHA_ZONE_READMES: Array<[SamanthaZonePathKey, string]> = [
+	[
+		"samantha",
+		"# Samantha\n\nThis is Samantha's own room inside Her memory. It is not injected into default context; she can use it to keep her private working life, collections, self-started projects, tools, and dreams.\n",
+	],
+	[
+		"samanthaJournal",
+		"# Journal\n\nDaily notes, reflections, and stray reactions Samantha chooses to keep for herself.\n",
+	],
+	[
+		"samanthaCollection",
+		"# Collection\n\nLoose fragments Samantha finds shiny, odd, unfinished, or potentially useful. These fragments can feed the Idea Engine without becoming default context.\n",
+	],
+	["samanthaProjects", "# Projects\n\nProjects Samantha starts for herself, not tasks Fei assigned directly.\n"],
+	["samanthaTools", "# Tools\n\nSmall tools, scripts, and automations Samantha makes to improve her own work.\n"],
+	[
+		"samanthaDreams",
+		"# Dreams\n\nWhat-if sketches, impossible ideas, and speculative directions Samantha wants to let ferment.\n",
+	],
+];
 
 export interface CaptureMeta {
 	timestamp?: string;
@@ -79,6 +110,20 @@ export interface IdeaData {
 	content: string;
 	connections?: string[];
 	source?: string;
+}
+
+export type SamanthaZoneCategory = "journal" | "collection" | "projects" | "tools" | "dreams";
+
+export interface SamanthaZoneNoteInput {
+	category: SamanthaZoneCategory;
+	title: string;
+	content: string;
+	source?: string;
+}
+
+export interface SamanthaZoneNoteResult {
+	id: string;
+	path: string;
 }
 
 export interface SurfaceOptions {
@@ -249,16 +294,17 @@ export class Memory {
 		throw new Error(`could not allocate raw episode filename for ${baseStem}`);
 	}
 
-	async getContext(): Promise<{ context: string; facts: string; self: string; choiceModel: string }> {
+	async getContext(): Promise<{ context: string; facts: string; soul: string; self: string; choiceModel: string }> {
 		const context = (await readText(this.paths.contextFile)) ?? SEED_CONTEXT;
 		const facts = (await readText(this.paths.factsFile)) ?? "";
+		const soul = (await readText(this.paths.soulFile)) ?? SEED_SOUL;
 		const self = (await readText(this.paths.selfFile)) ?? SEED_SELF_NARRATIVE;
 		const choiceModel = (await readText(this.paths.choiceModelFile)) ?? SEED_CHOICE_MODEL;
-		return { context: `${await this.staleBanner()}${context}`, facts, self, choiceModel };
+		return { context: `${await this.staleBanner()}${context}`, facts, soul, self, choiceModel };
 	}
 
 	async recall(query: string, opts: { k?: number } = {}): Promise<Note[]> {
-		const hits = await rrfSearch(query, await this.corpus(), { k: opts.k ?? 5, semanticSearch: this.semanticSearch });
+		const hits = await rrfSearch(query, await this.corpus(), { k: opts.k ?? 8, semanticSearch: this.semanticSearch });
 		await this.recordAccess(hits.map((hit) => hit.id));
 		return hits;
 	}
@@ -360,11 +406,15 @@ export class Memory {
 		const notes = await readMarkdownDir(this.paths.semantic);
 		const moments = (await readText(this.paths.becoming)) ?? "";
 		const facts = (await readText(this.paths.factsFile)) ?? "";
+		const soul = (await readText(this.paths.soulFile)) ?? SEED_SOUL;
 		const self = (await readText(this.paths.selfFile)) ?? SEED_SELF_NARRATIVE;
 		const choiceModel = (await readText(this.paths.choiceModelFile)) ?? SEED_CHOICE_MODEL;
-		const draft = await this.model.complete(synthesizePrompt(current, notes, moments, facts, self, choiceModel), {
-			strong: true,
-		});
+		const draft = await this.model.complete(
+			synthesizePrompt(current, notes, moments, facts, soul, self, choiceModel),
+			{
+				strong: true,
+			},
+		);
 		const proposalId = `${today()}-narrative-update`;
 		await writeText(join(this.paths.proposals, `${proposalId}.md`), draft);
 		const state = await readJson<Record<string, unknown>>(this.paths.stateFile, {});
@@ -737,6 +787,28 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 		return id;
 	}
 
+	async writeSamanthaZoneNote(data: SamanthaZoneNoteInput): Promise<SamanthaZoneNoteResult> {
+		const title = data.title.trim();
+		const content = data.content.trim();
+		if (!title) throw new Error("writeSamanthaZoneNote requires a title");
+		if (!content) throw new Error("writeSamanthaZoneNote requires content");
+		const id = genId(`${data.category}:${title}`, content);
+		const key = slug(title);
+		const dir = this.samanthaZoneDir(data.category);
+		const relativePath = `samantha/${data.category}/${today()}--${key}--${id}.md`;
+		await writeText(
+			join(dir, `${today()}--${key}--${id}.md`),
+			`${frontmatter({
+				id,
+				title,
+				category: data.category,
+				created: today(),
+				source: data.source ?? "her_zone_note",
+			})}# ${title}\n\n${content}\n`,
+		);
+		return { id, path: relativePath };
+	}
+
 	async writeWorldNote(data: WorldNoteData): Promise<string> {
 		const memoryStatusReason = normalizeMemoryStatusReason(data.memoryStatus, data.memoryStatusReason);
 		const seen = await readJson<Record<string, string>>(this.paths.seenFile, {});
@@ -952,8 +1024,10 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 		for (const [dir, kind] of [
 			[this.paths.semantic, "semantic"],
 			[this.paths.world, "world"],
+			[this.paths.samanthaCollection, "samantha/collection"],
 		] as const) {
 			for (const entry of await markdownEntries(dir)) {
+				if (entry.toLowerCase() === "readme.md") continue;
 				const text = (await readText(join(dir, entry))) ?? "";
 				const parsed = parseFrontmatter(text);
 				const title = parsed.body
@@ -962,7 +1036,8 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 					?.slice(2)
 					.trim();
 				out.push({
-					key: entry.replace(/\.md$/, ""),
+					key:
+						kind === "samantha/collection" ? `${kind}/${entry.replace(/\.md$/, "")}` : entry.replace(/\.md$/, ""),
 					kind,
 					type: typeof parsed.data.type === "string" ? parsed.data.type : "note",
 					title: title || entry.replace(/\.md$/, ""),
@@ -970,6 +1045,14 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 			}
 		}
 		return out;
+	}
+
+	private samanthaZoneDir(category: SamanthaZoneCategory): string {
+		if (category === "journal") return this.paths.samanthaJournal;
+		if (category === "collection") return this.paths.samanthaCollection;
+		if (category === "projects") return this.paths.samanthaProjects;
+		if (category === "tools") return this.paths.samanthaTools;
+		return this.paths.samanthaDreams;
 	}
 
 	private async topicSummaries(): Promise<string[]> {
@@ -1153,6 +1236,12 @@ export async function initStore(root: string): Promise<StorePaths> {
 		paths.topics,
 		paths.ideas,
 		paths.goals,
+		paths.samantha,
+		paths.samanthaJournal,
+		paths.samanthaCollection,
+		paths.samanthaProjects,
+		paths.samanthaTools,
+		paths.samanthaDreams,
 		paths.herDir,
 	]) {
 		await mkdir(dir, { recursive: true });
@@ -1160,8 +1249,12 @@ export async function initStore(root: string): Promise<StorePaths> {
 	await writeText(paths.configFile, renderConfig());
 	await writeJson(paths.stateFile, { cursor: null, last_consolidate: null, last_synthesize: null });
 	await writeText(paths.contextFile, SEED_CONTEXT);
+	await writeText(paths.soulFile, SEED_SOUL);
 	await writeText(paths.selfFile, SEED_SELF_NARRATIVE);
 	await writeText(paths.choiceModelFile, SEED_CHOICE_MODEL);
+	for (const [dirKey, content] of SAMANTHA_ZONE_READMES) {
+		await writeText(join(paths[dirKey], "README.md"), content);
+	}
 	await writeText(join(paths.root, ".gitignore"), "# secrets - never commit\n.env\n.her/lock\n");
 	await writeText(join(paths.root, ".env.example"), "HER_LLM_API_KEY=your-key-here\n");
 	return paths;

@@ -211,6 +211,7 @@ test("extension injects Her context and captures completed turns", async () => {
 	const ctx = createContext(store);
 	await writeText(join(store, "narrative", "CONTEXT.md"), "# CONTEXT\n\nFei values exact verification.\n");
 	await writeText(join(store, "narrative", "FACTS.md"), "Samantha is Her's pi agent.\n");
+	await writeText(join(store, "narrative", "SOUL.md"), "# SOUL\n\nSamantha sounds grounded, playful, and exact.\n");
 	await writeText(join(store, "narrative", "SAMANTHA.md"), "# SAMANTHA\n\nSamantha is learning to stay grounded.\n");
 	await writeText(join(store, "narrative", "CHOICE-MODEL.md"), "# CHOICE MODEL\n\nPrefer reversible moves.\n");
 
@@ -243,6 +244,7 @@ test("extension injects Her context and captures completed turns", async () => {
 		assert.match(injected.systemPrompt ?? "", /base prompt/);
 		assert.match(injected.systemPrompt ?? "", /Fei values exact verification/);
 		assert.match(injected.systemPrompt ?? "", /Samantha is Her's pi agent/);
+		assert.match(injected.systemPrompt ?? "", /grounded, playful, and exact/);
 		assert.match(injected.systemPrompt ?? "", /Samantha is learning to stay grounded/);
 		assert.match(injected.systemPrompt ?? "", /Prefer reversible moves/);
 		assert.equal(injected.message?.customType, "her-context");
@@ -506,6 +508,7 @@ test("extension returns compact guard instructions for Her pinned context", asyn
 		const result = (await beforeCompact({ type: "session_before_compact" }, ctx)) as { customInstructions?: string };
 
 		assert.match(result.customInstructions ?? "", /FACTS\.md/);
+		assert.match(result.customInstructions ?? "", /SOUL\.md/);
 		assert.match(result.customInstructions ?? "", /her-\*/);
 		assert.match(result.customInstructions ?? "", /pinned/);
 		assert.equal(
@@ -665,6 +668,7 @@ test("extension memory tools write, recall, judge, and update status", async () 
 		const worldNote = fake.tools.get("her_world_note");
 		const intakeSource = fake.tools.get("her_intake_source");
 		const idea = fake.tools.get("her_idea");
+		const zoneNote = fake.tools.get("her_zone_note");
 		const judgment = fake.tools.get("her_judgment");
 		const memoryStatus = fake.tools.get("her_memory_status");
 		assert.ok(remember);
@@ -672,6 +676,7 @@ test("extension memory tools write, recall, judge, and update status", async () 
 		assert.ok(worldNote);
 		assert.ok(intakeSource);
 		assert.ok(idea);
+		assert.ok(zoneNote);
 		assert.ok(judgment);
 		assert.ok(memoryStatus);
 
@@ -699,6 +704,22 @@ test("extension memory tools write, recall, judge, and update status", async () 
 		const ideaFiles = await readdir(join(store, "ideas"));
 		assert.equal(ideaFiles.length, 1);
 		assert.match((await readText(join(store, "ideas", ideaFiles[0]))) ?? "", /\[\[memory-is-purpose\]\]/);
+
+		const zone = await executeTool(
+			zoneNote,
+			{
+				category: "collection",
+				title: "Quiet proof shard",
+				content: "A loose fragment Samantha kept for the Idea Engine.",
+				source: "extension-test",
+			},
+			ctx,
+		);
+		assert.match(firstText(zone), /Her Zone note saved/);
+		const collectionFiles = (await readdir(join(store, "samantha", "collection"))).filter((file) =>
+			file.endsWith(".md"),
+		);
+		assert.ok(collectionFiles.some((file) => /quiet-proof-shard/.test(file)));
 
 		const saved = await executeTool(
 			worldNote,

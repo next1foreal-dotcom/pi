@@ -18,6 +18,7 @@ import {
 	SEED_CHOICE_MODEL,
 	SEED_CONTEXT,
 	SEED_SELF_NARRATIVE,
+	SEED_SOUL,
 	type SearchBackend,
 	startLongTask,
 	writeJson,
@@ -147,21 +148,28 @@ ${privateKeyFooter}`;
 	assert.match(prompt, /«REDACTED:secret»/);
 });
 
-test("initStore and getContext expose context, facts, self narrative, and choice model", async () => {
+test("initStore and getContext expose context, facts, soul, self narrative, and choice model", async () => {
 	const store = await tempStore();
 	const context = await new Memory(store).getContext();
 	assert.equal(context.context, SEED_CONTEXT);
 	assert.equal(context.facts, "");
+	assert.equal(context.soul, SEED_SOUL);
 	assert.equal(context.self, SEED_SELF_NARRATIVE);
 	assert.equal(context.choiceModel, SEED_CHOICE_MODEL);
+	assert.equal(await readText(join(store, "narrative", "SOUL.md")), SEED_SOUL);
 	assert.equal(await readText(join(store, "narrative", "SAMANTHA.md")), SEED_SELF_NARRATIVE);
 	assert.equal(await readText(join(store, "narrative", "CHOICE-MODEL.md")), SEED_CHOICE_MODEL);
+	for (const dir of ["journal", "collection", "projects", "tools", "dreams"]) {
+		assert.match((await readText(join(store, "samantha", dir, "README.md"))) ?? "", /#/);
+	}
 
 	await writeText(join(store, "narrative", "FACTS.md"), "Fei is the owner.\n");
+	await writeText(join(store, "narrative", "SOUL.md"), "# SOUL\n\nSamantha sounds grounded and alive.\n");
 	await writeText(join(store, "narrative", "SAMANTHA.md"), "# SAMANTHA\n\nSamantha learned to verify first.\n");
 	await writeText(join(store, "narrative", "CHOICE-MODEL.md"), "# CHOICE MODEL\n\nPrefer verified small steps.\n");
 	const updated = await new Memory(store).getContext();
 	assert.match(updated.facts, /Fei/);
+	assert.match(updated.soul, /grounded and alive/);
 	assert.match(updated.self, /verify first/);
 	assert.match(updated.choiceModel, /verified small steps/);
 });
@@ -197,6 +205,21 @@ test("recall fuses lexical and injected semantic rankings with RRF", async () =>
 	const state = await readJson<{ access?: Record<string, { count?: number }> }>(join(store, ".her", "state.json"), {});
 	assert.equal(state.access?.["semantic/literal"]?.count, 1);
 	assert.equal(state.access?.["world/conceptual"]?.count, 1);
+});
+
+test("recall uses FTS and entity/path signals before fusing rankings", async () => {
+	const store = await tempStore();
+	await writeText(join(store, "semantic", "silent-care.md"), "# Silent Care\n\nA quiet-proof phrase lives here.\n");
+	await writeText(
+		join(store, "world", "samantha-zone.md"),
+		"# Private Room\n\nA room note without the query words.\n",
+	);
+
+	const ftsHits = await new Memory(store).recall("quiet-proof", { k: 3 });
+	assert.equal(ftsHits[0]?.id, "semantic/silent-care");
+
+	const entityHits = await new Memory(store).recall("Samantha Zone", { k: 3 });
+	assert.equal(entityHits[0]?.id, "world/samantha-zone");
 });
 
 test("decaySweep archives only old unaccessed decay-tier semantic notes and keeps them recoverable", async () => {
@@ -499,6 +522,7 @@ test("synthesize writes CONTEXT with a trail commit and leaves FACTS unchanged",
 	);
 	await writeText(join(store, "narrative", "becoming-moments.md"), "- 2026-06-03 · shift: calmer execution\n");
 	await writeText(join(store, "narrative", "FACTS.md"), "Fei is the owner.\n");
+	await writeText(join(store, "narrative", "SOUL.md"), "# SOUL\n\nSamantha's voice is warm and a little sharp.\n");
 	await writeText(join(store, "narrative", "SAMANTHA.md"), "# SAMANTHA\n\nSamantha is learning concise execution.\n");
 	await writeText(join(store, "narrative", "CHOICE-MODEL.md"), "# CHOICE MODEL\n\nFei chooses verified work.\n");
 	await git(store, "init");
@@ -526,10 +550,95 @@ test("synthesize writes CONTEXT with a trail commit and leaves FACTS unchanged",
 	assert.equal(prompts[0].strong, true);
 	assert.match(prompts[0].prompt, /GROUND-TRUTH FACTS/);
 	assert.match(prompts[0].prompt, /Fei is the owner/);
+	assert.match(prompts[0].prompt, /SOUL SEED/);
+	assert.match(prompts[0].prompt, /warm and a little sharp/);
 	assert.match(prompts[0].prompt, /SAMANTHA SELF-NARRATIVE/);
 	assert.match(prompts[0].prompt, /Samantha is learning concise execution/);
 	assert.match(prompts[0].prompt, /CHOICE MODEL/);
 	assert.match(prompts[0].prompt, /Fei chooses verified work/);
+});
+
+test("proof-of-life loop accumulates context and Samantha self growth with traceable review", async () => {
+	const store = await tempStore();
+	await writeText(join(store, ".her", "config.yaml"), "cadence:\n  digest_after_unreviewed: 1\n");
+	const replies = [
+		"- what: first feed\n- decisions: none\n- signals: Fei values calm proof",
+		JSON.stringify({
+			notes: [
+				{
+					key: "calm-proof",
+					type: "opinion",
+					tier: "rule",
+					title: "Calm proof",
+					content: "Fei relaxes when Samantha proves the real state before reassurance.",
+					sources: ["round-1"],
+				},
+			],
+			moments: [{ trigger: "Fei felt confused", shift: "Samantha should make growth visible and reviewable" }],
+		}),
+		"# CONTEXT\n\nFei relaxes when Samantha proves the real state before reassurance.\n",
+		"# SAMANTHA\n\nSamantha learned that visible, reviewable growth is part of care.\n",
+		"- what: second feed\n- decisions: none\n- signals: Fei wants accumulation",
+		JSON.stringify({
+			notes: [
+				{
+					key: "accumulating-growth",
+					type: "concept",
+					tier: "rule",
+					title: "Accumulating growth",
+					content: "Fei needs Samantha's memory changes to accumulate instead of refreshing from scratch.",
+					sources: ["round-2"],
+				},
+			],
+			moments: [{ trigger: "second feed", shift: "Samantha should preserve prior growth while adding new signals" }],
+		}),
+		"# CONTEXT\n\nFei relaxes when Samantha proves the real state before reassurance. He also needs growth to accumulate instead of refreshing from scratch.\n",
+	];
+	const memory = new Memory(store, {
+		complete() {
+			const reply = replies.shift();
+			assert.ok(reply, "proof-of-life fixture ran out of model replies");
+			return reply;
+		},
+	});
+	await git(store, "init");
+	await git(store, "config", "user.name", "Her Test");
+	await git(store, "config", "user.email", "her-test@example.com");
+	await git(store, "add", "-A");
+	await git(store, "commit", "-m", "memory: init");
+
+	await memory.capture("Fei says: prove the real state before telling me it is okay.", {
+		timestamp: "2026-06-06T0900",
+		sessionId: "round-1",
+		project: "her",
+	});
+	await memory.consolidate();
+	await memory.synthesize();
+	const selfResult = await memory.synthesizeSelfNarrative();
+	const firstContext = (await readText(join(store, "narrative", "CONTEXT.md"))) ?? "";
+	assert.match(firstContext, /proves the real state/);
+	assert.match((await readText(join(store, "narrative", "SAMANTHA.md"))) ?? "", /reviewable growth/);
+	assert.match(selfResult.commit, /^[0-9a-f]{7,40}$/);
+	assert.match((await readText(join(store, "narrative", "context-log.md"))) ?? "", /driven_by: .*round-1/);
+	assert.match((await git(store, "log", "--oneline", "-2")).stdout, /memory\(self\): Synthesize self narrative/);
+	const digest = await memory.contextDigestDue();
+	assert.equal(digest.length, 1);
+	await memory.keepContextUpdate(digest[0].id);
+	assert.equal((await memory.contextDigestDue()).length, 0);
+
+	await memory.capture("Fei says: do not refresh from scratch; keep accumulating.", {
+		timestamp: "2026-06-06T1000",
+		sessionId: "round-2",
+		project: "her",
+	});
+	await memory.consolidate();
+	await memory.synthesize();
+
+	const grown = await memory.getContext();
+	assert.match(grown.context, /proves the real state/);
+	assert.match(grown.context, /accumulate instead of refreshing/);
+	assert.match(grown.self, /reviewable growth/);
+	assert.match(grown.soul, /Samantha speaks as/);
 });
 
 test("synthesizeDue waits for the configured count of new semantic notes", async () => {
@@ -607,8 +716,10 @@ test("approve promotes a legacy proposal through a reviewable context update wit
 test("buildTopicMaps and generateIdeas write derived markdown surfaces", async () => {
 	const store = await tempStore();
 	let call = 0;
+	const prompts: string[] = [];
 	const memory = new Memory(store, {
-		complete() {
+		complete(prompt) {
+			prompts.push(prompt);
 			call++;
 			if (call === 1) {
 				return JSON.stringify({
@@ -625,9 +736,9 @@ test("buildTopicMaps and generateIdeas write derived markdown surfaces", async (
 				ideas: [
 					{
 						title: "Verification as intimacy",
-						connects: ["verification"],
-						insight: "Reliability can be a relational signal.",
-						spark: "Make every close-out prove what changed.",
+						connects: ["verification", "samantha/collection/quiet-signal"],
+						insight: "Reliability and the quiet-signal fragment both treat care as proof, not volume.",
+						spark: "Make every close-out prove what changed, then surface it quietly.",
 						kind: "self-x-world",
 					},
 				],
@@ -638,15 +749,20 @@ test("buildTopicMaps and generateIdeas write derived markdown surfaces", async (
 		join(store, "semantic", "verification.md"),
 		"---\ntype: opinion\n---\n# Verification\n\nMachine truth first.\n",
 	);
+	await writeText(
+		join(store, "samantha", "collection", "quiet-signal.md"),
+		"---\ntype: spark\n---\n# Quiet Signal\n\nSamantha likes proof that does not need to announce itself loudly.\n",
+	);
 
 	assert.deepEqual(await memory.buildTopicMaps(), ["verification-practice"]);
 	const ideas = await memory.generateIdeas();
 
 	assert.equal(ideas[0].title, "Verification as intimacy");
+	assert.match(prompts[1], /samantha\/collection\/quiet-signal/);
 	assert.match((await readText(join(store, "topics", "verification-practice.md"))) ?? "", /Machine truth/);
 	const ideaFiles = await import("node:fs/promises").then((fs) => fs.readdir(join(store, "ideas")));
 	assert.equal(ideaFiles.length, 1);
-	assert.match((await readText(join(store, "ideas", ideaFiles[0]))) ?? "", /Reliability can be/);
+	assert.match((await readText(join(store, "ideas", ideaFiles[0]))) ?? "", /quiet-signal/);
 });
 
 test("context updates are logged, reviewable, keepable, and revertible", async () => {

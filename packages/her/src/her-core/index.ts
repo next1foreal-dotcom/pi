@@ -33,13 +33,16 @@ export type {
 	MemorySyncStatus,
 	RestoreArchivedSemanticOptions,
 	RestoreArchivedSemanticResult,
+	SamanthaZoneCategory,
+	SamanthaZoneNoteInput,
+	SamanthaZoneNoteResult,
 	SelfNarrativeUpdateResult,
 	SurfaceOptions,
 	SynthesizeDueReason,
 	SynthesizeDueResult,
 	WorldNoteData,
 } from "./memory.ts";
-export { initStore, Memory, SEED_CHOICE_MODEL, SEED_CONTEXT, SEED_SELF_NARRATIVE } from "./memory.ts";
+export { initStore, Memory, SEED_CHOICE_MODEL, SEED_CONTEXT, SEED_SELF_NARRATIVE, SEED_SOUL } from "./memory.ts";
 export type { ModelLike } from "./model.ts";
 export { FakeModel, OpenAICompatibleModel } from "./model.ts";
 export { StorePaths } from "./paths.ts";

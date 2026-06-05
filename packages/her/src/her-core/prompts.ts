@@ -28,6 +28,7 @@ export function synthesizePrompt(
 	notes: string,
 	moments: string,
 	facts = "",
+	soul = "",
 	selfNarrative = "",
 	choiceModel = "",
 ): string {
@@ -43,6 +44,12 @@ export function synthesizePrompt(
 				selfNarrative,
 			].join("\n")
 		: "";
+	const soulBlock = soul.trim()
+		? [
+				"SOUL SEED - Samantha's stable voice/persona operating frame; preserve unless direct evidence says it should evolve:",
+				soul,
+			].join("\n")
+		: "";
 	const choiceBlock = choiceModel.trim()
 		? ["CHOICE MODEL - Fei's observed selection rules and decision priors:", choiceModel].join("\n")
 		: "";
@@ -50,6 +57,7 @@ export function synthesizePrompt(
 		"You maintain a living narrative (prose, not bullets) of who Fei is becoming, covering knowledge, values, work style, goals, emotions, relationships, aesthetics, intuitions, language, growth, and contradictions.",
 		"Produce an UPDATED full narrative in Markdown: keep what still holds, integrate what's new, name the shifts.",
 		factsBlock,
+		soulBlock,
 		selfBlock,
 		choiceBlock,
 		`CURRENT NARRATIVE:\n${current}`,

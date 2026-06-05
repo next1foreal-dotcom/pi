@@ -16,7 +16,7 @@ Current status:
 
 - Her extension loads from `packages/her/src/extension.ts`.
 - Provider pool is registered with environment-backed credentials only.
-- CONTEXT/FACTS/SAMANTHA/CHOICE-MODEL injection, turn capture, durable recall, remember, world-note, judgment, and memory-status tools are wired.
+- CONTEXT/FACTS/SOUL/SAMANTHA/CHOICE-MODEL injection, turn capture, durable recall, remember, world-note, judgment, and memory-status tools are wired.
 - `/her-intake` is the rich conversational intake path.
 - `her-batch-intake` uses the workflow organ for multi-source fan-out, requires claim-ledger verification through `claim-verifier`, and keeps final persistence in the parent trusted Her writer.
 - Her long-task state is durable in `goals/*.md` via `her_goal_start`, `her_goal_checkpoint`, `her_goal_complete`, and `her_goal_list`; idle continuation is claimed through the `goal-next` lease path and sent as a `her-goal-continuation` follow-up.

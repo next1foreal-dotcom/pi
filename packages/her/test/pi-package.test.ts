@@ -47,9 +47,10 @@ test("her-intake skill encodes the universal inbox contract", async () => {
 
 test("Samantha prompt advertises durable memory tools", async () => {
 	const prompt = await readFile(join(herRoot, "pi-package", "prompts", "her.md"), "utf8");
-	assert.match(prompt, /CONTEXT\.md, FACTS\.md, SAMANTHA\.md, and CHOICE-MODEL\.md are injected/);
+	assert.match(prompt, /CONTEXT\.md, FACTS\.md, SOUL\.md, SAMANTHA\.md, and CHOICE-MODEL\.md are injected/);
 	assert.match(prompt, /her_recall/);
 	assert.match(prompt, /her_world_note/);
+	assert.match(prompt, /her_zone_note/);
 	assert.match(prompt, /her_goal_start/);
 	assert.match(prompt, /her_goal_checkpoint/);
 	assert.match(prompt, /her_goal_complete/);
@@ -187,7 +188,7 @@ test("Her subagents are project-discoverable and inherit memory context", async 
 		assert.match(packageText, /^systemPromptMode: append$/m);
 		assert.match(packageText, /^inheritProjectContext: true$/m);
 		assert.match(packageText, /^defaultContext: fork$/m);
-		assert.match(packageText, /CONTEXT\/FACTS plus SAMANTHA\/CHOICE-MODEL/);
+		assert.match(packageText, /CONTEXT\/FACTS plus SOUL\/SAMANTHA\/CHOICE-MODEL/);
 	}
 
 	const ideaEngine = await readFile(join(projectAgentsRoot, "idea-engine.md"), "utf8");
@@ -213,7 +214,7 @@ test("Her Seam-2 subagents carry recall and durable writeback instructions", asy
 		assert.equal(frontmatter.defaultContext, "fork");
 		assert.equal(frontmatter.tools, undefined, `${agentName} must not restrict away Her memory tools`);
 
-		assert.match(body, /CONTEXT\/FACTS plus SAMANTHA\/CHOICE-MODEL/);
+		assert.match(body, /CONTEXT\/FACTS plus SOUL\/SAMANTHA\/CHOICE-MODEL/);
 		assert.match(body, /her_recall/);
 		assert.match(body, /her_(?:remember|world_note|judgment|idea)/);
 		assert.match(body, /child transcript/);

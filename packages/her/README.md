@@ -16,11 +16,11 @@ Current status:
 - Provider pool registration is wired for Claude Pro/Max OAuth, ChatGPT Pro/Codex OAuth, Claude API-key, GPT/Codex API-key, relay, DeepSeek, and local OpenAI-compatible providers.
 - Capture summaries use the first configured OpenAI-compatible summary model:
   `HER_SUMMARY_BASE_URL` + `HER_SUMMARY_MODEL` + `HER_SUMMARY_API_KEY`/`HER_LLM_API_KEY`, then relay, DeepSeek, then local.
-- `before_agent_start` injects `CONTEXT.md`, `FACTS.md`, `SAMANTHA.md`, and `CHOICE-MODEL.md` from `HER_MEMORY_DIR`.
+- `before_agent_start` injects `CONTEXT.md`, `FACTS.md`, `SOUL.md`, `SAMANTHA.md`, and `CHOICE-MODEL.md` from `HER_MEMORY_DIR`.
 - `turn_end` captures raw episodes into `her-memory/episodic/raw`.
 - `her_sync` commits and pushes dirty memory; capture schedules the same sync after `HER_SYNC_DEBOUNCE_MS` (default 5 minutes).
 - `her-sync` is published through `ctx.ui.setStatus()` and promoted by `pi-powerline-footer` as the Her memory sync indicator; `sync --status` reports pending local memory count plus the upstream HEAD time as the last successful push signal.
-- `recall()` and Mirror `surface()` use Reciprocal Rank Fusion over lexical search plus an injectable semantic backend. Set `HER_EMBEDDINGS_BASE_URL` + `HER_EMBEDDINGS_MODEL` (optional `HER_EMBEDDINGS_API_KEY`) to add an OpenAI-compatible embedding signal; otherwise Her degrades to lexical-only ranking. The `@howaboua/pi-semantic-grep` organ remains pinned for repo-local embedding indexes.
+- `recall()` and Mirror `surface()` use Reciprocal Rank Fusion over three rebuildable signals: in-memory SQLite FTS5, an injectable OpenAI-compatible embedding backend, and entity/path/title matching. If FTS5 is unavailable, Her degrades to lexical-only ranking. Set `HER_EMBEDDINGS_BASE_URL` + `HER_EMBEDDINGS_MODEL` (optional `HER_EMBEDDINGS_API_KEY`) to add the embedding signal. The `@howaboua/pi-semantic-grep` organ remains pinned for repo-local embedding indexes.
 - `packages/her/src/cli.ts` exposes the same sync surface for operators:
   `node --import tsx packages/her/src/cli.ts sync --status` or `node packages/her/bin/her.mjs sync --status`.
 - The same CLI exposes the governed archive sweep:
@@ -29,13 +29,15 @@ Current status:
   `node packages/her/bin/her.mjs restore --semantic <note-key> --json`.
 - `synthesize()` autonomously writes `CONTEXT.md` through a reviewable git-backed `context-log.md`; `FACTS.md` remains read-only to the growth loop.
 - `synthesizeDue()` gates narrative proposals on configured semantic-note volume, new conflict relations, or stale `last_synthesize`.
+- `SOUL.md` is Samantha's stable voice/persona seed. It is injected every turn but remains separate from ground-truth `FACTS.md`.
 - `synthesizeSelfNarrative()` distills becoming moments and recognitions into `SAMANTHA.md` with a traceable log commit.
 - `synthesizeChoiceModel()` distills world-note Judgment Trails into `CHOICE-MODEL.md` with a traceable log commit.
 - The CLI exposes growth-loop maintenance commands: `consolidate`, `synthesize`, `synthesize-due`, `approve`, `topic-maps`, `ideas`, `choice-model`, and `self-narrative`.
 - `decaySweep()` moves old `tier: decay` semantic notes into `archive/semantic`; `tier: exact` is never swept and archive recall is explicit.
 - Long-running work has a real Her-owned ledger under `goals/*.md`: use `goal-start`, `goal-next`, `goal-checkpoint`, `goal-complete`, and `goal-list` (or the matching `her_goal_*` tools) to preserve objective, checkpoints, next continuation, completion outcome, and optional durable memory writeback. `goal-next` claims the next active continuation with a lease, so a crashed runner can be resumed after `claim_expires_at`.
-- Tools are registered for recall, remember, world notes, judgments, memory status, idea capture, evolution synthesis, and context review/keep/revert.
+- Tools are registered for recall, remember, world notes, judgments, memory status, Her Zone notes, idea capture, evolution synthesis, and context review/keep/revert.
 - Idle Her goal continuations run before context digest and Mirror by sending a pinned `her-goal-continuation` follow-up with `triggerTurn: true`; context digest and Mirror both suppress themselves while `pi-codex-goal` owns an active continuation.
+- New stores create Samantha's Her Zone under `samantha/{journal,collection,projects,tools,dreams}` with README files. Her Zone is not injected by default; `samantha/collection/*.md` is only surfaced to the Idea Engine as a loose upstream for connections.
 - `/her-intake <url-or-path>` is a slash prompt for the Stage 2 minimal chain: `fetch_content` -> `her_intake_source`/`her_world_note` or `her_remember` -> recall verification. `deep-reader` stays quarantined from memory writes; `claim-verifier` checks claim ledgers; `her-batch-intake` coordinates multi-source workflow fan-out before the parent trusted writer persists memory.
 - `her intake-url --url <url>` reads ordinary article/text URLs, GitHub repository URLs, and arXiv paper metadata/abstracts. Repo intake uses GitHub metadata/tree/raw file reads, records the actual files and code symbols read, and marks weak coverage as `needs_deep_read`. `intake-source` and `intake-url` accept `--update-surfaces` to immediately refresh topic maps and idea candidates after the world note is written.
 - X/Twitter status URLs, video URLs, PDFs, and EPUBs are not pretended-read by the minimal URL intake; they are saved as `needs_deep_read` stubs until a browser-native, transcript, PDF, or EPUB reader can produce honest coverage.
