@@ -22,17 +22,35 @@ export function consolidatePrompt(episodes: string, existingKeys: string[]): str
 	].join("\n");
 }
 
-export function synthesizePrompt(current: string, notes: string, moments: string, facts = ""): string {
+export function synthesizePrompt(
+	current: string,
+	notes: string,
+	moments: string,
+	facts = "",
+	selfNarrative = "",
+	choiceModel = "",
+): string {
 	const factsBlock = facts.trim()
 		? [
 				"GROUND-TRUTH FACTS - authoritative, never contradict these (e.g. use the stated name and pronouns exactly; do not infer others):",
 				facts,
 			].join("\n")
 		: "";
+	const selfBlock = selfNarrative.trim()
+		? [
+				"SAMANTHA SELF-NARRATIVE - how Samantha understands her own learning and judgment shifts:",
+				selfNarrative,
+			].join("\n")
+		: "";
+	const choiceBlock = choiceModel.trim()
+		? ["CHOICE MODEL - Fei's observed selection rules and decision priors:", choiceModel].join("\n")
+		: "";
 	return [
 		"You maintain a living narrative (prose, not bullets) of who Fei is becoming, covering knowledge, values, work style, goals, emotions, relationships, aesthetics, intuitions, language, growth, and contradictions.",
 		"Produce an UPDATED full narrative in Markdown: keep what still holds, integrate what's new, name the shifts.",
 		factsBlock,
+		selfBlock,
+		choiceBlock,
 		`CURRENT NARRATIVE:\n${current}`,
 		`SEMANTIC NOTES:\n${notes}`,
 		`BECOMING MOMENTS:\n${moments}`,

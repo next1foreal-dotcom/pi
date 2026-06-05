@@ -27,6 +27,14 @@ export class StorePaths {
 		return join(this.narrative, "CONTEXT.md");
 	}
 
+	get selfFile(): string {
+		return join(this.narrative, "SAMANTHA.md");
+	}
+
+	get choiceModelFile(): string {
+		return join(this.narrative, "CHOICE-MODEL.md");
+	}
+
 	get becoming(): string {
 		return join(this.narrative, "becoming-moments.md");
 	}

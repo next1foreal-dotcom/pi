@@ -16,6 +16,14 @@ test("prompts preserve Python memory operation contracts", () => {
 		/question \| concept \| opinion \| case \| solution/,
 	);
 	assert.match(synthesizePrompt("current", "notes", "moments", "Fei is the owner."), /GROUND-TRUTH FACTS/);
+	assert.match(
+		synthesizePrompt("current", "notes", "moments", "Fei is the owner.", "Samantha self", "Choice rule"),
+		/SAMANTHA SELF-NARRATIVE/,
+	);
+	assert.match(
+		synthesizePrompt("current", "notes", "moments", "Fei is the owner.", "Samantha self", "Choice rule"),
+		/CHOICE MODEL/,
+	);
 	assert.match(surfacePrompt("recent", "existing"), /reply with exactly: NONE/);
 });
 

@@ -26,6 +26,10 @@ const RELATION_TYPES = new Set(["responds", "explains", "proves", "conflicts", "
 
 export const SEED_CONTEXT =
 	"# CONTEXT - Living Narrative / alive narrative\n\n*(empty - Samantha has not yet formed an understanding of Fei.)*\n";
+export const SEED_SELF_NARRATIVE =
+	"# SAMANTHA - Self Narrative\n\n*(empty - Samantha has not yet formed a durable account of her own learning.)*\n";
+export const SEED_CHOICE_MODEL =
+	"# CHOICE MODEL - Fei's Selection Priors\n\n*(empty - no durable choice rules have been distilled yet.)*\n";
 
 export interface CaptureMeta {
 	timestamp?: string;
@@ -178,10 +182,12 @@ export class Memory {
 		throw new Error(`could not allocate raw episode filename for ${baseStem}`);
 	}
 
-	async getContext(): Promise<{ context: string; facts: string }> {
+	async getContext(): Promise<{ context: string; facts: string; self: string; choiceModel: string }> {
 		const context = (await readText(this.paths.contextFile)) ?? SEED_CONTEXT;
 		const facts = (await readText(this.paths.factsFile)) ?? "";
-		return { context: `${await this.staleBanner()}${context}`, facts };
+		const self = (await readText(this.paths.selfFile)) ?? SEED_SELF_NARRATIVE;
+		const choiceModel = (await readText(this.paths.choiceModelFile)) ?? SEED_CHOICE_MODEL;
+		return { context: `${await this.staleBanner()}${context}`, facts, self, choiceModel };
 	}
 
 	async recall(query: string, opts: { k?: number } = {}): Promise<Note[]> {
@@ -280,7 +286,11 @@ export class Memory {
 		const notes = await readMarkdownDir(this.paths.semantic);
 		const moments = (await readText(this.paths.becoming)) ?? "";
 		const facts = (await readText(this.paths.factsFile)) ?? "";
-		const draft = await this.model.complete(synthesizePrompt(current, notes, moments, facts), { strong: true });
+		const self = (await readText(this.paths.selfFile)) ?? SEED_SELF_NARRATIVE;
+		const choiceModel = (await readText(this.paths.choiceModelFile)) ?? SEED_CHOICE_MODEL;
+		const draft = await this.model.complete(synthesizePrompt(current, notes, moments, facts, self, choiceModel), {
+			strong: true,
+		});
 		const proposalId = `${today()}-narrative-update`;
 		await writeText(join(this.paths.proposals, `${proposalId}.md`), draft);
 		const state = await readJson<Record<string, unknown>>(this.paths.stateFile, {});
@@ -842,6 +852,8 @@ export async function initStore(root: string): Promise<StorePaths> {
 	await writeText(paths.configFile, renderConfig());
 	await writeJson(paths.stateFile, { cursor: null, last_consolidate: null, last_synthesize: null });
 	await writeText(paths.contextFile, SEED_CONTEXT);
+	await writeText(paths.selfFile, SEED_SELF_NARRATIVE);
+	await writeText(paths.choiceModelFile, SEED_CHOICE_MODEL);
 	await writeText(join(paths.root, ".gitignore"), "# secrets - never commit\n.env\n.her/lock\n");
 	await writeText(join(paths.root, ".env.example"), "HER_LLM_API_KEY=your-key-here\n");
 	return paths;

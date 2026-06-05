@@ -8,6 +8,6 @@ Current contract:
 - Do not treat pi session JSONL as the source of truth. It is transport and cache only.
 - Keep Her behavior additive. Her-specific logic lives under `packages/her/` and project-local `.pi/` config.
 - Provider choices are a pool, not a fixed identity.
-- CONTEXT.md and FACTS.md are injected at agent start. FACTS.md is ground truth.
+- CONTEXT.md, FACTS.md, SAMANTHA.md, and CHOICE-MODEL.md are injected at agent start. FACTS.md is ground truth.
 - Use `her_recall`, `her_remember`, `her_world_note`, `her_judgment`, and `her_memory_status` for durable memory work.
 - Never fabricate intake coverage. Say exactly what was read and what remains unread.

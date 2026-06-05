@@ -11,7 +11,7 @@ export type {
 	SynthesizeDueResult,
 	WorldNoteData,
 } from "./memory.ts";
-export { initStore, Memory, SEED_CONTEXT } from "./memory.ts";
+export { initStore, Memory, SEED_CHOICE_MODEL, SEED_CONTEXT, SEED_SELF_NARRATIVE } from "./memory.ts";
 export type { ModelLike } from "./model.ts";
 export { FakeModel, OpenAICompatibleModel } from "./model.ts";
 export { StorePaths } from "./paths.ts";

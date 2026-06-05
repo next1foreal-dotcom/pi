@@ -11,7 +11,9 @@ import {
 	parseFrontmatter,
 	readJson,
 	readText,
+	SEED_CHOICE_MODEL,
 	SEED_CONTEXT,
+	SEED_SELF_NARRATIVE,
 	writeText,
 } from "../src/her-core/index.ts";
 
@@ -128,14 +130,23 @@ ${privateKeyFooter}`;
 	assert.match(prompt, /«REDACTED:secret»/);
 });
 
-test("getContext returns seed context and facts", async () => {
+test("initStore and getContext expose context, facts, self narrative, and choice model", async () => {
 	const store = await tempStore();
 	const context = await new Memory(store).getContext();
 	assert.equal(context.context, SEED_CONTEXT);
 	assert.equal(context.facts, "");
+	assert.equal(context.self, SEED_SELF_NARRATIVE);
+	assert.equal(context.choiceModel, SEED_CHOICE_MODEL);
+	assert.equal(await readText(join(store, "narrative", "SAMANTHA.md")), SEED_SELF_NARRATIVE);
+	assert.equal(await readText(join(store, "narrative", "CHOICE-MODEL.md")), SEED_CHOICE_MODEL);
 
 	await writeText(join(store, "narrative", "FACTS.md"), "Fei is the owner.\n");
-	assert.match((await new Memory(store).getContext()).facts, /Fei/);
+	await writeText(join(store, "narrative", "SAMANTHA.md"), "# SAMANTHA\n\nSamantha learned to verify first.\n");
+	await writeText(join(store, "narrative", "CHOICE-MODEL.md"), "# CHOICE MODEL\n\nPrefer verified small steps.\n");
+	const updated = await new Memory(store).getContext();
+	assert.match(updated.facts, /Fei/);
+	assert.match(updated.self, /verify first/);
+	assert.match(updated.choiceModel, /verified small steps/);
 });
 
 test("readJson tolerates UTF-8 BOM in existing memory files", async () => {
@@ -263,6 +274,8 @@ test("synthesize writes CONTEXT with a trail commit and leaves FACTS unchanged",
 	);
 	await writeText(join(store, "narrative", "becoming-moments.md"), "- 2026-06-03 · shift: calmer execution\n");
 	await writeText(join(store, "narrative", "FACTS.md"), "Fei is the owner.\n");
+	await writeText(join(store, "narrative", "SAMANTHA.md"), "# SAMANTHA\n\nSamantha is learning concise execution.\n");
+	await writeText(join(store, "narrative", "CHOICE-MODEL.md"), "# CHOICE MODEL\n\nFei chooses verified work.\n");
 	await git(store, "init");
 	await git(store, "config", "user.name", "Her Test");
 	await git(store, "config", "user.email", "her-test@example.com");
@@ -288,6 +301,10 @@ test("synthesize writes CONTEXT with a trail commit and leaves FACTS unchanged",
 	assert.equal(prompts[0].strong, true);
 	assert.match(prompts[0].prompt, /GROUND-TRUTH FACTS/);
 	assert.match(prompts[0].prompt, /Fei is the owner/);
+	assert.match(prompts[0].prompt, /SAMANTHA SELF-NARRATIVE/);
+	assert.match(prompts[0].prompt, /Samantha is learning concise execution/);
+	assert.match(prompts[0].prompt, /CHOICE MODEL/);
+	assert.match(prompts[0].prompt, /Fei chooses verified work/);
 });
 
 test("synthesizeDue waits for the configured count of new semantic notes", async () => {

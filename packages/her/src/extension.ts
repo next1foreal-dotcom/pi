@@ -137,9 +137,11 @@ function getMemoryDir(): string {
 	return process.env.HER_MEMORY_DIR ?? resolve(process.cwd(), "..", "her-memory");
 }
 
-function composeSystemPrompt(base: string, context: string, facts: string): string {
+function composeSystemPrompt(base: string, context: string, facts: string, self: string, choiceModel: string): string {
 	const sections = [readHerPrompt(), `## Her CONTEXT.md\n\n${context.trim()}`];
 	if (facts.trim()) sections.push(`## Her FACTS.md\n\n${facts.trim()}`);
+	if (self.trim()) sections.push(`## Her SAMANTHA.md\n\n${self.trim()}`);
+	if (choiceModel.trim()) sections.push(`## Her CHOICE-MODEL.md\n\n${choiceModel.trim()}`);
 	return `${base.trimEnd()}\n\n${sections.join("\n\n")}`;
 }
 
@@ -335,12 +337,12 @@ export default function her(pi: ExtensionAPI): void {
 	});
 
 	pi.on("before_agent_start", async (event) => {
-		const { context, facts } = await mem.getContext();
+		const { context, facts, self, choiceModel } = await mem.getContext();
 		return {
-			systemPrompt: composeSystemPrompt(event.systemPrompt, context, facts),
+			systemPrompt: composeSystemPrompt(event.systemPrompt, context, facts, self, choiceModel),
 			message: {
 				customType: "her-context",
-				content: "Her CONTEXT.md and FACTS.md were injected for this turn.",
+				content: "Her CONTEXT.md, FACTS.md, SAMANTHA.md, and CHOICE-MODEL.md were injected for this turn.",
 				display: false,
 				details: { pinned: true, memoryDir },
 			},

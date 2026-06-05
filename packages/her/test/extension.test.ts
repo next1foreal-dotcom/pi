@@ -211,6 +211,8 @@ test("extension injects Her context and captures completed turns", async () => {
 	const ctx = createContext(store);
 	await writeText(join(store, "narrative", "CONTEXT.md"), "# CONTEXT\n\nFei values exact verification.\n");
 	await writeText(join(store, "narrative", "FACTS.md"), "Samantha is Her's pi agent.\n");
+	await writeText(join(store, "narrative", "SAMANTHA.md"), "# SAMANTHA\n\nSamantha is learning to stay grounded.\n");
+	await writeText(join(store, "narrative", "CHOICE-MODEL.md"), "# CHOICE MODEL\n\nPrefer reversible moves.\n");
 
 	await withMemoryDir(store, async () => {
 		const fake = createFakePi();
@@ -241,6 +243,8 @@ test("extension injects Her context and captures completed turns", async () => {
 		assert.match(injected.systemPrompt ?? "", /base prompt/);
 		assert.match(injected.systemPrompt ?? "", /Fei values exact verification/);
 		assert.match(injected.systemPrompt ?? "", /Samantha is Her's pi agent/);
+		assert.match(injected.systemPrompt ?? "", /Samantha is learning to stay grounded/);
+		assert.match(injected.systemPrompt ?? "", /Prefer reversible moves/);
 		assert.equal(injected.message?.customType, "her-context");
 		assert.equal(injected.message?.details?.pinned, true);
 

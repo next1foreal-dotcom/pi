@@ -16,7 +16,7 @@ Current status:
 
 - Her extension loads from `packages/her/src/extension.ts`.
 - Provider pool is registered with environment-backed credentials only.
-- CONTEXT/FACTS injection, turn capture, durable recall, remember, world-note, judgment, and memory-status tools are wired.
+- CONTEXT/FACTS/SAMANTHA/CHOICE-MODEL injection, turn capture, durable recall, remember, world-note, judgment, and memory-status tools are wired.
 - `/her-intake` is the rich conversational intake path.
 - `her-batch-intake` uses the workflow organ for multi-source fan-out and requires final persistence through `her_world_note`.
 - Mirror is active and suppresses itself when an active `pi-codex-goal` entry owns the next continuation.
