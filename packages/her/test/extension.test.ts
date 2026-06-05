@@ -720,3 +720,87 @@ test("extension context review tools list, keep, and revert updates", async () =
 		assert.match(firstText(empty), /No unreviewed/);
 	});
 });
+
+test("extension evolution tools synthesize choice model and self narrative", async () => {
+	const store = await tempStore();
+	await git(store, "init");
+	await git(store, "config", "user.name", "Her Test");
+	await git(store, "config", "user.email", "her-test@example.com");
+	await git(store, "add", "-A");
+	await git(store, "commit", "-m", "memory: init");
+	const memory = new Memory(store);
+	const noteId = await memory.writeWorldNote({
+		title: "Mirror Timing",
+		sourceUrl: "https://example.com/mirror",
+		sourceType: "article",
+		contentHash: "extension-evolution-fixture",
+		memoryStatus: "active",
+		extracted: "Fei prefers quieter proactive timing.",
+		coverage: "Read full short fixture.",
+		read: "Mirror should wait for moments that change action.",
+		steal: ["Interrupt less; matter more."],
+		connections: ["mirror"],
+		take: "Use high-signal thresholds for proactive messages.",
+		possibleMoves: ["Synthesize choice model after judgment trails accumulate."],
+	});
+	await memory.recordJudgment(noteId, {
+		choice: "Prefer quiet high-signal prompts",
+		correction: "Do not surface every adjacent memory.",
+	});
+	await writeText(
+		join(store, "narrative", "becoming-moments.md"),
+		"- 2026-06-05 · trigger: Fei asked for less drift · shift: Samantha should expose machine-checkable evolution runs\n",
+	);
+	await writeText(
+		join(store, "recognitions", "less-drift.md"),
+		"---\nid: rec-extension\nstatus: new\n---\n# Less Drift\n\nSamantha learned that runnable tools beat hidden intentions.\n",
+	);
+	await git(store, "add", "-A");
+	await git(store, "commit", "-m", "memory: evolution evidence");
+	const ctx = createContext(store);
+	const prompts: string[] = [];
+	const previousFetch = globalThis.fetch;
+	globalThis.fetch = (async (_input, init) => {
+		const body = JSON.parse(String(init?.body ?? "{}")) as { messages?: Array<{ content?: unknown }> };
+		const prompt = String(body.messages?.[0]?.content ?? "");
+		prompts.push(prompt);
+		const content = prompt.includes("SAMANTHA SELF-EVIDENCE")
+			? "# SAMANTHA\n\nSamantha makes her own evolution runnable and reviewable.\n"
+			: "# CHOICE MODEL\n\nPrefer quiet high-signal prompts before interrupting Fei.\n";
+		return new Response(JSON.stringify({ choices: [{ message: { content } }] }), {
+			status: 200,
+			headers: { "content-type": "application/json" },
+		});
+	}) as typeof fetch;
+
+	try {
+		await withMemoryDir(store, async () => {
+			await withEnv({ HER_SUMMARY_BASE_URL: "https://model.test/v1", HER_SUMMARY_MODEL: "test-model" }, async () => {
+				const fake = createFakePi();
+				her(fake.pi);
+
+				const choice = fake.tools.get("her_synthesize_choice_model");
+				const self = fake.tools.get("her_synthesize_self_narrative");
+				assert.ok(choice);
+				assert.ok(self);
+
+				const choiceResult = await executeTool(choice, {}, ctx);
+				assert.match(firstText(choiceResult), /choice model synthesized/);
+				assert.match((choiceResult.details as { commit?: string }).commit ?? "", /^[0-9a-f]{7,40}$/);
+				assert.match((await readText(join(store, "narrative", "CHOICE-MODEL.md"))) ?? "", /quiet high-signal/);
+
+				const selfResult = await executeTool(self, {}, ctx);
+				assert.match(firstText(selfResult), /self narrative synthesized/);
+				assert.match((selfResult.details as { commit?: string }).commit ?? "", /^[0-9a-f]{7,40}$/);
+				assert.match((await readText(join(store, "narrative", "SAMANTHA.md"))) ?? "", /evolution runnable/);
+			});
+		});
+	} finally {
+		globalThis.fetch = previousFetch;
+	}
+
+	assert.equal(prompts.length, 2);
+	assert.ok(prompts.some((prompt) => /JUDGMENT TRAILS/.test(prompt)));
+	assert.ok(prompts.some((prompt) => /SAMANTHA SELF-EVIDENCE/.test(prompt)));
+	assert.match((await git(store, "log", "--oneline", "-2")).stdout, /memory\(self\): Synthesize self narrative/);
+});

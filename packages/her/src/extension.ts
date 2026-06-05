@@ -474,6 +474,28 @@ export default function her(pi: ExtensionAPI): void {
 	});
 
 	pi.registerTool({
+		name: "her_synthesize_choice_model",
+		label: "Her Synthesize Choice Model",
+		description: "Distill Judgment Trail evidence into Her CHOICE-MODEL.md with a traceable commit.",
+		parameters: Type.Object({}),
+		async execute() {
+			const result = await mem.synthesizeChoiceModel();
+			return textResult(`Her choice model synthesized: ${result.commit}`, { phase: "5", ...result, memoryDir });
+		},
+	});
+
+	pi.registerTool({
+		name: "her_synthesize_self_narrative",
+		label: "Her Synthesize Self Narrative",
+		description: "Distill becoming moments and recognitions into Her SAMANTHA.md with a traceable commit.",
+		parameters: Type.Object({}),
+		async execute() {
+			const result = await mem.synthesizeSelfNarrative();
+			return textResult(`Her self narrative synthesized: ${result.commit}`, { phase: "5", ...result, memoryDir });
+		},
+	});
+
+	pi.registerTool({
 		name: "her_review_context",
 		label: "Her Review Context",
 		description: "List unreviewed Her CONTEXT.md updates before they become trusted narrative.",
