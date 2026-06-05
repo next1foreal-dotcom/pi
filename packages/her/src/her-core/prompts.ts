@@ -108,3 +108,15 @@ export function ideaEnginePrompt(units: string, topics: string, existing: string
 		`ALREADY SURFACED:\n${existing}`,
 	].join("\n");
 }
+
+export function choiceModelPrompt(current: string, judgmentTrails: string): string {
+	return [
+		"Return an UPDATED full CHOICE MODEL in Markdown. Distill Fei's durable selection priors from Judgment Trail evidence.",
+		"Write rules that predict how Fei chooses, rejects, hesitates, corrects, and defines a good next move.",
+		"Prefer operational rules that change Samantha's future recommendations. Do not invent private facts; keep weak signals tentative.",
+		"",
+		`CURRENT CHOICE MODEL:\n${current}`,
+		"",
+		`JUDGMENT TRAILS:\n${judgmentTrails}`,
+	].join("\n");
+}

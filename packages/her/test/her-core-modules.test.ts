@@ -5,7 +5,13 @@ import { join } from "node:path";
 import test from "node:test";
 import { loadConfig } from "../src/her-core/config.ts";
 import { FakeModel, OpenAICompatibleModel } from "../src/her-core/model.ts";
-import { consolidatePrompt, summaryPrompt, surfacePrompt, synthesizePrompt } from "../src/her-core/prompts.ts";
+import {
+	choiceModelPrompt,
+	consolidatePrompt,
+	summaryPrompt,
+	surfacePrompt,
+	synthesizePrompt,
+} from "../src/her-core/prompts.ts";
 
 test("prompts preserve Python memory operation contracts", () => {
 	assert.match(summaryPrompt("raw session"), /exactly these fields/);
@@ -24,6 +30,8 @@ test("prompts preserve Python memory operation contracts", () => {
 		synthesizePrompt("current", "notes", "moments", "Fei is the owner.", "Samantha self", "Choice rule"),
 		/CHOICE MODEL/,
 	);
+	assert.match(choiceModelPrompt("current choice", "correction: choose smaller reversible moves"), /JUDGMENT TRAILS/);
+	assert.match(choiceModelPrompt("current choice", "correction: choose smaller reversible moves"), /current choice/);
 	assert.match(surfacePrompt("recent", "existing"), /reply with exactly: NONE/);
 });
 

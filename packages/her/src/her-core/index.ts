@@ -2,6 +2,7 @@ export type { HerConfig } from "./config.ts";
 export { DEFAULT_CONFIG, loadConfig, renderConfig } from "./config.ts";
 export type {
 	CaptureMeta,
+	ChoiceModelUpdateResult,
 	DecaySweepOptions,
 	DecaySweepResult,
 	IdeaData,
@@ -20,6 +21,7 @@ export type { ModelLike } from "./model.ts";
 export { FakeModel, OpenAICompatibleModel } from "./model.ts";
 export { StorePaths } from "./paths.ts";
 export {
+	choiceModelPrompt,
 	consolidatePrompt,
 	ideaEnginePrompt,
 	ingestPrompt,

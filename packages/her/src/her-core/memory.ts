@@ -6,7 +6,14 @@ import { promisify } from "node:util";
 import { type HerConfig, loadConfig, renderConfig } from "./config.ts";
 import type { ModelLike } from "./model.ts";
 import { StorePaths } from "./paths.ts";
-import { consolidatePrompt, ideaEnginePrompt, summaryPrompt, synthesizePrompt, topicMapPrompt } from "./prompts.ts";
+import {
+	choiceModelPrompt,
+	consolidatePrompt,
+	ideaEnginePrompt,
+	summaryPrompt,
+	synthesizePrompt,
+	topicMapPrompt,
+} from "./prompts.ts";
 import { type CorpusDoc, lexicalSearch, type Note } from "./retrieval.ts";
 import {
 	appendText,
@@ -148,6 +155,11 @@ export interface RestoreArchivedSemanticOptions {
 export interface RestoreArchivedSemanticResult {
 	key: string;
 	restored: true;
+}
+
+export interface ChoiceModelUpdateResult {
+	id: string;
+	commit: string;
 }
 
 export class Memory {
@@ -505,6 +517,39 @@ export class Memory {
 		return written;
 	}
 
+	async synthesizeChoiceModel(): Promise<ChoiceModelUpdateResult> {
+		if (!this.model) throw new Error("synthesizeChoiceModel requires a model");
+		const trails = await this.choiceModelJudgmentTrails();
+		if (trails.length === 0) throw new Error("synthesizeChoiceModel requires Judgment Trail evidence");
+		const current = (await readText(this.paths.choiceModelFile)) ?? SEED_CHOICE_MODEL;
+		const evidence = trails.map((trail) => `${trail.ref}\n${trail.text}`).join("\n\n");
+		const draft = await this.model.complete(choiceModelPrompt(current, evidence), { strong: true });
+		const timestamp = new Date().toISOString();
+		const id = genId(timestamp, "choice-model");
+		await writeText(this.paths.choiceModelFile, draft);
+		await appendText(
+			this.choiceModelLogFile(),
+			choiceModelLogBlock(
+				id,
+				timestamp,
+				trails.map((trail) => trail.ref),
+			),
+		);
+		const state = await readJson<Record<string, unknown>>(this.paths.stateFile, {});
+		await writeJson(this.paths.stateFile, { ...state, last_choice_model: timestamp.slice(0, 10) });
+		await git(
+			this.paths.root,
+			"add",
+			"--",
+			"narrative/CHOICE-MODEL.md",
+			"narrative/choice-model-log.md",
+			".her/state.json",
+		);
+		await git(this.paths.root, "commit", "-m", "memory(choice): Synthesize choice model");
+		const commit = (await git(this.paths.root, "rev-parse", "--short", "HEAD")).stdout.trim();
+		return { id, commit };
+	}
+
 	async writeContextUpdate(input: ContextUpdateInput): Promise<{ id: string; commit: string }> {
 		const timestamp = new Date().toISOString();
 		const id = genId(timestamp, input.change);
@@ -821,6 +866,10 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 		return join(this.paths.narrative, "context-log.md");
 	}
 
+	private choiceModelLogFile(): string {
+		return join(this.paths.narrative, "choice-model-log.md");
+	}
+
 	private async stageContextUpdateFiles(extraPaths: string[] = []): Promise<void> {
 		await git(
 			this.paths.root,
@@ -915,6 +964,17 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 		const moments = (await readText(this.paths.becoming)) ?? "";
 		if (moments.trim()) refs.add("[[narrative/becoming-moments]]");
 		return [...refs].sort();
+	}
+
+	private async choiceModelJudgmentTrails(): Promise<Array<{ ref: string; text: string }>> {
+		const trails: Array<{ ref: string; text: string }> = [];
+		for (const entry of await markdownEntries(this.paths.world)) {
+			const body = parseFrontmatter(await readText(join(this.paths.world, entry))).body;
+			const trail = extractSection(body, "Judgment Trail");
+			if (!trail.trim()) continue;
+			trails.push({ ref: `[[world/${basename(entry, ".md")}]]`, text: trail.trim() });
+		}
+		return trails.sort((a, b) => a.ref.localeCompare(b.ref));
 	}
 }
 
@@ -1013,6 +1073,15 @@ function contextLogBlock(id: string, timestamp: string, input: ContextUpdateInpu
 `;
 }
 
+function choiceModelLogBlock(id: string, timestamp: string, drivenBy: string[]): string {
+	return `\n### ${id} · ${timestamp}
+- commit: self
+- driven_by: ${drivenBy.join(", ")}
+- change: Synthesize choice model from Judgment Trail
+- status: unreviewed
+`;
+}
+
 function parseContextLog(text: string): ContextUpdateRecord[] {
 	const records: ContextUpdateRecord[] = [];
 	for (const block of text.split(/\n(?=### )/)) {
@@ -1054,6 +1123,15 @@ function escapeRegExp(text: string): string {
 function stripSection(body: string, heading: string): string {
 	const pattern = new RegExp(`\\n?## ${heading}\\n[\\s\\S]*?(?=\\n## |$)`, "m");
 	return body.replace(pattern, "").trimEnd();
+}
+
+function extractSection(body: string, heading: string): string {
+	const marker = `## ${heading}`;
+	const start = body.indexOf(marker);
+	if (start < 0) return "";
+	const afterHeading = body.slice(start + marker.length).replace(/^\r?\n/, "");
+	const nextHeading = afterHeading.search(/\r?\n## /);
+	return (nextHeading >= 0 ? afterHeading.slice(0, nextHeading) : afterHeading).trim();
 }
 
 function genId(seedA: string, seedB: string): string {

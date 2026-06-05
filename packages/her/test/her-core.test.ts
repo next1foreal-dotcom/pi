@@ -627,3 +627,58 @@ test("judgment and memory status update existing world note", async () => {
 	assert.match(parsed.body, /correction: Do not over-trigger Mirror/);
 	assert.match(parsed.body, /reason: Useful but not urgent/);
 });
+
+test("synthesizeChoiceModel distills Judgment Trail into a traceable choice model update", async () => {
+	const store = await tempStore();
+	let prompt = "";
+	const memory = new Memory(store, {
+		complete(input, options) {
+			assert.equal(options?.strong, true);
+			prompt = input;
+			return "# CHOICE MODEL\n\nFei prefers small reversible moves with verified evidence.\n";
+		},
+	});
+	await writeText(join(store, "narrative", "FACTS.md"), "Fei is the owner.\n");
+	await writeText(join(store, "narrative", "CONTEXT.md"), "# CONTEXT\n\nFei values verified state.\n");
+	const factsBefore = await readText(join(store, "narrative", "FACTS.md"));
+	const contextBefore = await readText(join(store, "narrative", "CONTEXT.md"));
+	const noteId = await memory.writeWorldNote({
+		title: "Mirror Timing",
+		sourceUrl: "https://example.com/mirror",
+		sourceType: "article",
+		contentHash: "hash-choice",
+		memoryStatus: "active",
+		extracted: "Mirror should wait for the right moment.",
+		coverage: "Read short article.",
+		read: "Timing matters.",
+		steal: [],
+		connections: [],
+		take: "Useful for active-work interruption rules.",
+		possibleMoves: [],
+	});
+	await memory.recordJudgment(noteId, {
+		choice: "keep only if it changes the next action",
+		correction: "Prefer small reversible moves with verified evidence.",
+	});
+	await git(store, "init");
+	await git(store, "config", "user.name", "Her Test");
+	await git(store, "config", "user.email", "her-test@example.com");
+	await git(store, "add", "-A");
+	await git(store, "commit", "-m", "memory: fixtures");
+
+	const result = await memory.synthesizeChoiceModel();
+
+	assert.match(result.id, /^[0-9a-f]{8}$/);
+	assert.match((await readText(join(store, "narrative", "CHOICE-MODEL.md"))) ?? "", /small reversible moves/);
+	assert.equal(await readText(join(store, "narrative", "FACTS.md")), factsBefore);
+	assert.equal(await readText(join(store, "narrative", "CONTEXT.md")), contextBefore);
+	assert.match((await readText(join(store, "narrative", "choice-model-log.md"))) ?? "", new RegExp(result.id));
+	assert.match(
+		(await readText(join(store, "narrative", "choice-model-log.md"))) ?? "",
+		/\[\[world\/mirror-timing\]\]/,
+	);
+	assert.match((await git(store, "log", "--oneline", "-1")).stdout, /memory\(choice\): Synthesize choice model/);
+	assert.match(prompt, /JUDGMENT TRAILS/);
+	assert.match(prompt, /Prefer small reversible moves/);
+	assert.match(prompt, /world\/mirror-timing/);
+});
