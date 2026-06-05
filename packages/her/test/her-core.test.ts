@@ -272,7 +272,8 @@ test("synthesize writes CONTEXT with a trail commit and leaves FACTS unchanged",
 
 	const proposalId = await memory.synthesize();
 
-	assert.equal(proposalId, "2026-06-04-narrative-update");
+	const proposalDate = new Date().toISOString().slice(0, 10);
+	assert.equal(proposalId, `${proposalDate}-narrative-update`);
 	assert.match((await readText(join(store, "proposals", `${proposalId}.md`))) ?? "", /verified execution/);
 	assert.match((await readText(join(store, "narrative", "CONTEXT.md"))) ?? "", /verified execution/);
 	assert.equal(await readText(join(store, "narrative", "FACTS.md")), factsBefore);
@@ -287,6 +288,57 @@ test("synthesize writes CONTEXT with a trail commit and leaves FACTS unchanged",
 	assert.equal(prompts[0].strong, true);
 	assert.match(prompts[0].prompt, /GROUND-TRUTH FACTS/);
 	assert.match(prompts[0].prompt, /Fei is the owner/);
+});
+
+test("synthesizeDue waits for the configured count of new semantic notes", async () => {
+	const store = await tempStore();
+	await writeText(
+		join(store, ".her", "config.yaml"),
+		["llm:", "  base_url: https://api.deepseek.com", "cadence:", "  synthesize_after_new_notes: 2", ""].join("\n"),
+	);
+	await writeText(join(store, ".her", "state.json"), JSON.stringify({ last_synthesize: "2026-06-01" }));
+	await writeText(join(store, "semantic", "one.md"), "---\nupdated: 2026-06-02\n---\n# One\n\nFirst new note.\n");
+
+	const first = await new Memory(store).synthesizeDue();
+	assert.equal(first.due, false);
+	assert.equal(first.newSemanticNotes, 1);
+	assert.equal(first.threshold, 2);
+
+	await writeText(join(store, "semantic", "two.md"), "---\nupdated: 2026-06-03\n---\n# Two\n\nSecond new note.\n");
+	const second = await new Memory(store).synthesizeDue();
+	assert.equal(second.due, true);
+	assert.equal(second.reason, "new_notes");
+	assert.equal(second.newSemanticNotes, 2);
+});
+
+test("synthesizeDue triggers when the narrative is stale", async () => {
+	const store = await tempStore();
+	await writeText(
+		join(store, ".her", "config.yaml"),
+		["llm:", "  base_url: https://api.deepseek.com", "cadence:", "  synthesize_stale_after_days: 1", ""].join("\n"),
+	);
+	await writeText(join(store, ".her", "state.json"), JSON.stringify({ last_synthesize: "2000-01-01" }));
+
+	const due = await new Memory(store).synthesizeDue();
+
+	assert.equal(due.due, true);
+	assert.equal(due.reason, "stale");
+	assert.ok((due.daysSinceLastSynthesize ?? 0) > 1);
+});
+
+test("synthesizeDue triggers immediately on a new conflict relation", async () => {
+	const store = await tempStore();
+	await writeText(join(store, ".her", "state.json"), JSON.stringify({ last_synthesize: "2026-06-01" }));
+	await writeText(
+		join(store, "semantic", "conflict.md"),
+		'---\nupdated: 2026-06-02\nrelations:\n  - {"to":"old-belief","rel":"conflicts"}\n---\n# Conflict\n\nThis contradicts an older belief.\n',
+	);
+
+	const due = await new Memory(store).synthesizeDue();
+
+	assert.equal(due.due, true);
+	assert.equal(due.reason, "conflict");
+	assert.equal(due.hasConflict, true);
 });
 
 test("approve promotes a legacy proposal through a reviewable context update without changing FACTS", async () => {

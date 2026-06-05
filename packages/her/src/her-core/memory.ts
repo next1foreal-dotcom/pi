@@ -114,6 +114,18 @@ export interface ContextUpdateRecord {
 	diff?: string;
 }
 
+export type SynthesizeDueReason = "conflict" | "new_notes" | "stale";
+
+export interface SynthesizeDueResult {
+	due: boolean;
+	threshold: number;
+	newSemanticNotes: number;
+	hasConflict: boolean;
+	lastSynthesize?: string;
+	daysSinceLastSynthesize?: number;
+	reason?: SynthesizeDueReason;
+}
+
 export class Memory {
 	readonly paths: StorePaths;
 	private readonly model?: ModelLike;
@@ -281,6 +293,61 @@ export class Memory {
 			extraPaths: [`proposals/${proposalId}.md`],
 		});
 		return proposalId;
+	}
+
+	async synthesizeDue(): Promise<SynthesizeDueResult> {
+		const state = await readJson<{ last_synthesize?: string | null }>(this.paths.stateFile, {});
+		const lastSynthesize = typeof state.last_synthesize === "string" ? state.last_synthesize : undefined;
+		const lastTime = parseDate(lastSynthesize);
+		const threshold = this.config.cadence.synthesizeAfterNewNotes;
+		let newSemanticNotes = 0;
+		let hasConflict = false;
+
+		for (const entry of await markdownEntries(this.paths.semantic)) {
+			const parsed = parseFrontmatter(await readText(join(this.paths.semantic, entry)));
+			if (!changedAfter(parsed.data, lastTime)) continue;
+			newSemanticNotes++;
+			hasConflict ||= hasConflictRelation(parsed.data.relations);
+		}
+
+		const daysSinceLastSynthesize = daysSince(lastTime);
+		if (hasConflict) {
+			return {
+				due: true,
+				reason: "conflict",
+				threshold,
+				newSemanticNotes,
+				hasConflict,
+				lastSynthesize,
+				daysSinceLastSynthesize,
+			};
+		}
+		if (newSemanticNotes >= threshold) {
+			return {
+				due: true,
+				reason: "new_notes",
+				threshold,
+				newSemanticNotes,
+				hasConflict,
+				lastSynthesize,
+				daysSinceLastSynthesize,
+			};
+		}
+		if (
+			daysSinceLastSynthesize !== undefined &&
+			daysSinceLastSynthesize > this.config.cadence.synthesizeStaleAfterDays
+		) {
+			return {
+				due: true,
+				reason: "stale",
+				threshold,
+				newSemanticNotes,
+				hasConflict,
+				lastSynthesize,
+				daysSinceLastSynthesize,
+			};
+		}
+		return { due: false, threshold, newSemanticNotes, hasConflict, lastSynthesize, daysSinceLastSynthesize };
 	}
 
 	async approve(proposalId: string): Promise<void> {
@@ -923,6 +990,31 @@ function sourceRef(source: string): string {
 
 function sameStrings(a: string[], b: string[]): boolean {
 	return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+function changedAfter(data: Record<string, unknown>, lastTime: number | undefined): boolean {
+	if (lastTime === undefined) return true;
+	const noteTime = parseDate(String(data.updated ?? data.created ?? ""));
+	return noteTime !== undefined && noteTime > lastTime;
+}
+
+function hasConflictRelation(relations: unknown): boolean {
+	if (!Array.isArray(relations)) return false;
+	return relations.some(
+		(relation) =>
+			relation !== null && typeof relation === "object" && "rel" in relation && relation.rel === "conflicts",
+	);
+}
+
+function parseDate(value: string | undefined): number | undefined {
+	if (!value) return undefined;
+	const time = Date.parse(value);
+	return Number.isNaN(time) ? undefined : time;
+}
+
+function daysSince(time: number | undefined): number | undefined {
+	if (time === undefined) return undefined;
+	return Math.floor((Date.now() - time) / 86400000);
 }
 
 function today(): string {

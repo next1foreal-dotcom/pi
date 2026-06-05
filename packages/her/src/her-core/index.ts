@@ -7,6 +7,8 @@ export type {
 	MemorySyncResult,
 	MemorySyncStatus,
 	SurfaceOptions,
+	SynthesizeDueReason,
+	SynthesizeDueResult,
 	WorldNoteData,
 } from "./memory.ts";
 export { initStore, Memory, SEED_CONTEXT } from "./memory.ts";

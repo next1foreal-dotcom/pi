@@ -30,6 +30,7 @@ test("config loads shallow YAML overrides over defaults", async () => {
 			"  model_fast: cheap-model",
 			"cadence:",
 			"  synthesize_stale_after_days: 3",
+			"  synthesize_after_new_notes: 5",
 			"  digest_after_unreviewed: 2",
 			"",
 		].join("\n"),
@@ -43,6 +44,7 @@ test("config loads shallow YAML overrides over defaults", async () => {
 	assert.equal(config.llm.modelStrong, "deepseek-v4-pro");
 	assert.equal(config.llm.apiKeyEnv, "HER_LLM_API_KEY");
 	assert.equal(config.cadence.synthesizeStaleAfterDays, 3);
+	assert.equal(config.cadence.synthesizeAfterNewNotes, 5);
 	assert.equal(config.cadence.digestAfterUnreviewed, 2);
 });
 
@@ -76,6 +78,7 @@ test("OpenAICompatibleModel uses fast or strong configured model", async () => {
 				consolidate: "daily",
 				synthesize: "weekly",
 				synthesizeStaleAfterDays: 10,
+				synthesizeAfterNewNotes: 8,
 				digestAfterUnreviewed: 3,
 			},
 		},
