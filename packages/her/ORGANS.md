@@ -4,7 +4,7 @@ All organs are pinned to exact git commits or npm versions. Packages in `.pi/set
 
 | Organ | Source | Pin | Load status | Notes |
 |---|---|---:|---|---|
-| pi base | https://github.com/earendil-works/pi.git | dc7b547f628475676acfd00cb0f54df05d42acaf | forked | Fork lives at https://github.com/next1foreal/pi with upstream remote set. |
+| pi base | https://github.com/earendil-works/pi.git | dc7b547f628475676acfd00cb0f54df05d42acaf | forked | Fork lives at https://github.com/next1foreal-dotcom/pi with upstream remote set. |
 | pi-subagents | git:github.com/nicobailon/pi-subagents | efa7120047eaf76a32620eed0ec7d038b6cfa44e | settings | Memory inheritance must remain append/fork in Her agent markdown. |
 | pi-dynamic-workflows | git:github.com/Michaelliv/pi-dynamic-workflows | 31b2aca0f1cb195aafbfc5e3ee2b8c83ad3f21a2 | settings | Phase 6 batch/workflow organ. `her-batch-intake` requires workflow results to be persisted with `her_world_note`. |
 | pi-codex-goal | git:github.com/fitchmultz/pi-codex-goal | e1fd927fc8df5b13c3b96e1a23788204b6173c5f | settings | This pin has hidden idle continuations and no public disable flag; Her coordinates by detecting active `pi-codex-goal` entries and suppressing Mirror. |
@@ -41,7 +41,7 @@ Selected Her path:
 
 - T2 adversarial CONTEXT checks can use `pi-dynamic-workflows` directly: candidate agent -> skeptic agent -> structured keep/drop result.
 - Stage 3 quarantine and heavy intake use parent-only persistence: workflow/subagent results are staging only; the parent turn writes accepted durable notes through `her_world_note`, `her_judgment`, or future Her-only tools.
-- For true quarantine, worktree isolation, or resumable long jobs, use `pi-subagents` capabilities or add a thin Her orchestrator that spawns restricted children, records state, and resumes deterministically. Do not fake these guarantees with `pi-dynamic-workflows` prompt wording alone.
+- For true quarantine, worktree isolation, or resumable long jobs, use `pi-subagents` capabilities or a thin Her orchestrator that spawns restricted children, records state, and resumes deterministically. The first Her-owned long-task base now records durable `goals/*.md` ledgers through `her_goal_start`, `her_goal_checkpoint`, `her_goal_complete`, and `her_goal_list`; it is a state/resume substrate, not a full autonomous runner yet. Do not fake stronger guarantees with `pi-dynamic-workflows` prompt wording alone.
 
 ## Growth-loop ownership
 

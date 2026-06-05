@@ -50,6 +50,9 @@ test("Samantha prompt advertises durable memory tools", async () => {
 	assert.match(prompt, /CONTEXT\.md, FACTS\.md, SAMANTHA\.md, and CHOICE-MODEL\.md are injected/);
 	assert.match(prompt, /her_recall/);
 	assert.match(prompt, /her_world_note/);
+	assert.match(prompt, /her_goal_start/);
+	assert.match(prompt, /her_goal_checkpoint/);
+	assert.match(prompt, /her_goal_complete/);
 	assert.match(prompt, /Never fabricate intake coverage/);
 });
 

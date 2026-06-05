@@ -1152,6 +1152,7 @@ export async function initStore(root: string): Promise<StorePaths> {
 		paths.world,
 		paths.topics,
 		paths.ideas,
+		paths.goals,
 		paths.herDir,
 	]) {
 		await mkdir(dir, { recursive: true });

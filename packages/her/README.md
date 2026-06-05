@@ -33,6 +33,7 @@ Current status:
 - `synthesizeChoiceModel()` distills world-note Judgment Trails into `CHOICE-MODEL.md` with a traceable log commit.
 - The CLI exposes growth-loop maintenance commands: `consolidate`, `synthesize`, `synthesize-due`, `approve`, `topic-maps`, `ideas`, `choice-model`, and `self-narrative`.
 - `decaySweep()` moves old `tier: decay` semantic notes into `archive/semantic`; `tier: exact` is never swept and archive recall is explicit.
+- Long-running work has a real Her-owned ledger under `goals/*.md`: use `goal-start`, `goal-checkpoint`, `goal-complete`, and `goal-list` (or the matching `her_goal_*` tools) to preserve objective, checkpoints, next continuation, completion outcome, and optional durable memory writeback.
 - Tools are registered for recall, remember, world notes, judgments, memory status, idea capture, evolution synthesis, and context review/keep/revert.
 - Context digest follow-ups report due unreviewed context changes before Mirror, and both suppress themselves while `pi-codex-goal` owns an active continuation.
 - `/her-intake <url-or-path>` is a slash prompt for the Stage 2 minimal chain: `fetch_content` -> `her_intake_source`/`her_world_note` or `her_remember` -> recall verification. `deep-reader` stays quarantined from memory writes; `claim-verifier` checks claim ledgers; `her-batch-intake` coordinates multi-source workflow fan-out before the parent trusted writer persists memory.

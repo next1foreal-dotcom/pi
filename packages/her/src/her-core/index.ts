@@ -4,6 +4,20 @@ export { createEmbeddingSearch } from "./embedding-search.ts";
 export type { UrlIntakeOptions, UrlIntakeResult } from "./intake.ts";
 export { readUrlForWorldNote } from "./intake.ts";
 export type {
+	LongTaskCheckpointOptions,
+	LongTaskCompleteOptions,
+	LongTaskRecord,
+	LongTaskStartOptions,
+	LongTaskStatus,
+} from "./long-task.ts";
+export {
+	checkpointLongTask,
+	completeLongTask,
+	listLongTasks,
+	longTaskStatuses,
+	startLongTask,
+} from "./long-task.ts";
+export type {
 	CaptureMeta,
 	ChoiceModelUpdateResult,
 	ClaimLedgerEntry,

@@ -10,4 +10,5 @@ Current contract:
 - Provider choices are a pool, not a fixed identity.
 - CONTEXT.md, FACTS.md, SAMANTHA.md, and CHOICE-MODEL.md are injected at agent start. FACTS.md is ground truth.
 - Use `her_recall`, `her_remember`, `her_world_note`, `her_judgment`, and `her_memory_status` for durable memory work.
+- For multi-step work that may need continuation, use `her_goal_start`, `her_goal_checkpoint`, `her_goal_complete`, and `her_goal_list` so the objective, next step, evidence, and outcome survive outside the live session.
 - Never fabricate intake coverage. Say exactly what was read and what remains unread.

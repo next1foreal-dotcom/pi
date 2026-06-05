@@ -71,6 +71,10 @@ export class StorePaths {
 		return join(this.root, "ideas");
 	}
 
+	get goals(): string {
+		return join(this.root, "goals");
+	}
+
 	get herDir(): string {
 		return join(this.root, ".her");
 	}

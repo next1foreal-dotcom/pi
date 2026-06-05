@@ -780,3 +780,74 @@ test("CLI restores an archived semantic note as JSON", async () => {
 	assert.equal(payload.status.status, "unsynced");
 	assert.ok(payload.status.dirtyFiles >= 1);
 });
+
+test("CLI persists Her long task checkpoints and completion writeback", async () => {
+	const { store } = await gitBackedStore();
+
+	let result = await runCli(
+		[
+			"goal-start",
+			"--objective",
+			"Ship the resumable long-task base",
+			"--source",
+			"pi-codex-goal",
+			"--next",
+			"Run focused tests.",
+			"--json",
+		],
+		store,
+	);
+	let payload = JSON.parse(result.stdout);
+	const id = payload.result.id;
+	assert.match(id, /^goal-/);
+	assert.equal(payload.result.status, "active");
+	assert.equal(payload.result.path, `goals/${id}.md`);
+
+	result = await runCli(
+		[
+			"goal-checkpoint",
+			"--id",
+			id,
+			"--summary",
+			"Focused tests passed.",
+			"--evidence",
+			"packages/her/test/cli.test.ts",
+			"--next",
+			"Commit and push.",
+			"--json",
+		],
+		store,
+	);
+	payload = JSON.parse(result.stdout);
+	assert.equal(payload.result.nextContinuation, "Commit and push.");
+
+	result = await runCli(
+		[
+			"goal-complete",
+			"--id",
+			id,
+			"--outcome",
+			"Committed and pushed.",
+			"--remember",
+			"Long-task completion should write a durable Her memory when requested.",
+			"--json",
+		],
+		store,
+	);
+	payload = JSON.parse(result.stdout);
+	assert.equal(payload.result.task.status, "completed");
+	assert.match(payload.result.memoryNoteId, /^[0-9a-f]{8}$/);
+	const memoryNoteId = payload.result.memoryNoteId;
+
+	result = await runCli(["goal-list", "--status", "completed", "--json"], store);
+	payload = JSON.parse(result.stdout);
+	assert.deepEqual(
+		payload.result.map((task: { id: string; status: string }) => [task.id, task.status]),
+		[[id, "completed"]],
+	);
+	assert.match(await readFile(join(store, "goals", `${id}.md`), "utf8"), /Completed/);
+	const semanticFiles = await readdir(join(store, "semantic"));
+	const memoryFile = semanticFiles.find((file) => file.endsWith(`${memoryNoteId}.md`));
+	assert.ok(memoryFile);
+	assert.match(await readFile(join(store, "semantic", memoryFile), "utf8"), /Long-task completion/);
+});

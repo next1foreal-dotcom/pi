@@ -693,6 +693,70 @@ test("extension memory tools write, recall, judge, and update status", async () 
 	});
 });
 
+test("extension long task tools persist checkpoints and completion writeback", async () => {
+	const store = await tempStore();
+	const ctx = createContext(store);
+
+	await withMemoryDir(store, async () => {
+		const fake = createFakePi();
+		her(fake.pi);
+
+		const start = fake.tools.get("her_goal_start");
+		const checkpoint = fake.tools.get("her_goal_checkpoint");
+		const complete = fake.tools.get("her_goal_complete");
+		const list = fake.tools.get("her_goal_list");
+		assert.ok(start);
+		assert.ok(checkpoint);
+		assert.ok(complete);
+		assert.ok(list);
+
+		const started = await executeTool(
+			start,
+			{
+				objective: "Run a resumable Her long task",
+				source: "pi-codex-goal",
+				nextContinuation: "Write the first checkpoint.",
+			},
+			ctx,
+		);
+		const id = (started.details as { id?: string }).id ?? "";
+		assert.match(id, /^goal-/);
+		assert.match(firstText(started), /started/);
+
+		await executeTool(
+			checkpoint,
+			{
+				id,
+				summary: "First checkpoint captured.",
+				nextContinuation: "Complete and write back memory.",
+				evidence: ["goals ledger"],
+			},
+			ctx,
+		);
+
+		const completed = await executeTool(
+			complete,
+			{
+				id,
+				outcome: "Task finished.",
+				remember: "Samantha can keep resumable long-task state in Her goals.",
+			},
+			ctx,
+		);
+		const details = completed.details as { memoryNoteId?: string; task?: { status?: string } };
+		assert.equal(details.task?.status, "completed");
+		assert.match(details.memoryNoteId ?? "", /^[0-9a-f]{8}$/);
+
+		const listed = await executeTool(list, { status: "completed" }, ctx);
+		assert.match(firstText(listed), new RegExp(id));
+		assert.match((await readText(join(store, "goals", `${id}.md`))) ?? "", /Complete and write back memory/);
+		const semanticFiles = await readdir(join(store, "semantic"));
+		const memoryFile = semanticFiles.find((file) => file.endsWith(`${details.memoryNoteId}.md`));
+		assert.ok(memoryFile);
+		assert.match((await readText(join(store, "semantic", memoryFile))) ?? "", /resumable long-task state/);
+	});
+});
+
 test("extension context review tools list, keep, and revert updates", async () => {
 	const store = await tempStore();
 	await git(store, "init");

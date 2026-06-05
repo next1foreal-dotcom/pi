@@ -6,7 +6,10 @@ import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import {
+	checkpointLongTask,
+	completeLongTask,
 	initStore,
+	listLongTasks,
 	Memory,
 	parseFrontmatter,
 	readJson,
@@ -15,6 +18,7 @@ import {
 	SEED_CONTEXT,
 	SEED_SELF_NARRATIVE,
 	type SearchBackend,
+	startLongTask,
 	writeJson,
 	writeText,
 } from "../src/her-core/index.ts";
@@ -263,6 +267,50 @@ test("restoreArchivedSemantic returns an archived note to the main semantic name
 	assert.equal(parsed.data.restored_at, "2026-06-06");
 	assert.match(parsed.body, /Recoverable archived memory/);
 	assert.equal((await new Memory(store).recall("Recoverable archived"))[0]?.id, "semantic/old-noise");
+});
+
+test("long task ledger persists checkpoints and completion without losing state", async () => {
+	const store = await tempStore();
+	const started = await startLongTask(store, {
+		id: "goal-demo",
+		objective: "Refactor the Her intake flow without leaking sk-12345678901234567890",
+		source: "pi-codex-goal",
+		nextContinuation: "Run the focused intake tests.",
+		now: "2026-06-06T10:00:00.000Z",
+	});
+
+	assert.equal(started.status, "active");
+	assert.equal(started.path, "goals/goal-demo.md");
+	let text = (await readText(join(store, "goals", "goal-demo.md"))) ?? "";
+	assert.doesNotMatch(text, /sk-12345678901234567890/);
+	assert.match(text, /«REDACTED:secret»/);
+	assert.match(text, /Run the focused intake tests/);
+
+	const checkpointed = await checkpointLongTask(store, "goal-demo", {
+		summary: "Focused intake tests passed.",
+		evidence: ["packages/her/test/intake.test.ts"],
+		nextContinuation: "Commit and push the verified slice.",
+		now: "2026-06-06T10:30:00.000Z",
+	});
+	assert.equal(checkpointed.nextContinuation, "Commit and push the verified slice.");
+
+	const completed = await completeLongTask(store, "goal-demo", {
+		outcome: "Verified and shipped.",
+		remember: "Long tasks need explicit checkpoint ledgers before idle continuation.",
+		now: "2026-06-06T11:00:00.000Z",
+	});
+	assert.equal(completed.status, "completed");
+	assert.equal(completed.nextContinuation, undefined);
+
+	const tasks = await listLongTasks(store, "completed");
+	assert.deepEqual(
+		tasks.map((task) => [task.id, task.status, task.objective]),
+		[["goal-demo", "completed", "Refactor the Her intake flow without leaking «REDACTED:secret»"]],
+	);
+	text = (await readText(join(store, "goals", "goal-demo.md"))) ?? "";
+	assert.match(text, /## Checkpoint - 2026-06-06T10:30:00.000Z/);
+	assert.match(text, /## Completed - 2026-06-06T11:00:00.000Z/);
+	assert.match(text, /Durable memory writeback/);
 });
 
 test("sync commits and pushes memory changes", async () => {

@@ -5,15 +5,22 @@ import {
 	type ChoiceModelUpdateResult,
 	type ClaimLedgerEntry,
 	type ConsolidateResult,
+	checkpointLongTask,
+	completeLongTask,
 	createEmbeddingSearch,
 	type DecaySweepResult,
 	type JudgmentFields,
+	type LongTaskRecord,
+	type LongTaskStatus,
+	listLongTasks,
 	loadConfig,
+	longTaskStatuses,
 	Memory,
 	type MemorySyncStatus,
 	OpenAICompatibleModel,
 	readUrlForWorldNote,
 	type SelfNarrativeUpdateResult,
+	startLongTask,
 	type WorldNoteData,
 } from "./her-core/index.ts";
 import { createSummaryModel } from "./summary-model.ts";
@@ -24,6 +31,25 @@ type CliCommand =
 	| { kind: "choice-model"; json: boolean }
 	| { kind: "consolidate"; json: boolean; limit?: number }
 	| { kind: "decay"; json: boolean; olderThanDays?: number; now?: string }
+	| {
+			kind: "goal-checkpoint";
+			evidence: string[];
+			id: string;
+			json: boolean;
+			nextContinuation?: string;
+			status?: Extract<LongTaskStatus, "active" | "blocked">;
+			summary: string;
+	  }
+	| { kind: "goal-complete"; id: string; json: boolean; outcome: string; remember?: string }
+	| { kind: "goal-list"; json: boolean; status?: LongTaskStatus }
+	| {
+			kind: "goal-start";
+			json: boolean;
+			nextContinuation?: string;
+			objective: string;
+			owner?: string;
+			source?: string;
+	  }
 	| { kind: "help" }
 	| { kind: "ideas"; json: boolean }
 	| { kind: "intake-source"; data: WorldNoteData; json: boolean; updateSurfaces: boolean }
@@ -140,6 +166,21 @@ interface CliMemoryStatusPayload extends CliStatusPayload {
 	};
 }
 
+interface CliGoalPayload extends CliStatusPayload {
+	result: LongTaskRecord;
+}
+
+interface CliGoalCompletePayload extends CliStatusPayload {
+	result: {
+		task: LongTaskRecord;
+		memoryNoteId?: string;
+	};
+}
+
+interface CliGoalListPayload extends CliStatusPayload {
+	result: LongTaskRecord[];
+}
+
 interface CliRecallPayload extends CliStatusPayload {
 	result: Awaited<ReturnType<Memory["recall"]>>;
 }
@@ -159,6 +200,10 @@ export function parseArgs(argv: string[]): CliCommand {
 	if (command === "choice-model") return parseJsonOnly("choice-model", rest);
 	if (command === "consolidate") return parseConsolidate(rest);
 	if (command === "decay") return parseDecay(rest);
+	if (command === "goal-checkpoint") return parseGoalCheckpoint(rest);
+	if (command === "goal-complete") return parseGoalComplete(rest);
+	if (command === "goal-list") return parseGoalList(rest);
+	if (command === "goal-start") return parseGoalStart(rest);
 	if (command === "ideas") return parseJsonOnly("ideas", rest);
 	if (command === "intake-source") return parseIntakeSource(rest);
 	if (command === "intake-url") return parseIntakeUrl(rest);
@@ -222,6 +267,38 @@ export async function runHerCli(
 		const result = await memory.restoreArchivedSemantic(command.semanticKey, { now: command.now });
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderRestore);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "goal-start") {
+		const result = await startLongTask(memoryDir, command);
+		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
+		writePayload(io.stdout, payload, command.json, renderGoal);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "goal-checkpoint") {
+		const result = await checkpointLongTask(memoryDir, command.id, command);
+		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
+		writePayload(io.stdout, payload, command.json, renderGoal);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "goal-complete") {
+		const task = await completeLongTask(memoryDir, command.id, command);
+		const memoryNoteId = command.remember ? await memory.remember(command.remember, "long-task") : undefined;
+		const payload = {
+			...(await buildStatusPayload(memoryDir, memory)),
+			result: { task, ...(memoryNoteId ? { memoryNoteId } : {}) },
+		};
+		writePayload(io.stdout, payload, command.json, renderGoalComplete);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "goal-list") {
+		const result = await listLongTasks(memoryDir, command.status);
+		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
+		writePayload(io.stdout, payload, command.json, renderGoalList);
 		return payload.status.status === "unknown" ? 1 : 0;
 	}
 
@@ -594,6 +671,143 @@ function parseRestore(argv: string[]): CliCommand {
 	return { kind: "restore", json, semanticKey, now };
 }
 
+function parseGoalStart(argv: string[]): CliCommand {
+	let json = false;
+	let objective: string | undefined;
+	let owner: string | undefined;
+	let source: string | undefined;
+	let nextContinuation: string | undefined;
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--objective") {
+			objective = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--owner") {
+			owner = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--source") {
+			source = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--next") {
+			nextContinuation = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		throw new UsageError(`unknown goal-start option: ${arg}`);
+	}
+	if (!objective?.trim()) throw new UsageError("goal-start requires --objective <text>");
+	return {
+		kind: "goal-start",
+		json,
+		objective,
+		...(owner ? { owner } : {}),
+		...(source ? { source } : {}),
+		...(nextContinuation ? { nextContinuation } : {}),
+	};
+}
+
+function parseGoalCheckpoint(argv: string[]): CliCommand {
+	let json = false;
+	let id: string | undefined;
+	let summary: string | undefined;
+	let status: Extract<LongTaskStatus, "active" | "blocked"> | undefined;
+	let nextContinuation: string | undefined;
+	const evidence: string[] = [];
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--id") {
+			id = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--summary") {
+			summary = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--status") {
+			status = parseGoalCheckpointStatus(requireOptionValue(argv[++i], arg));
+			continue;
+		}
+		if (arg === "--next") {
+			nextContinuation = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--evidence") {
+			evidence.push(requireOptionValue(argv[++i], arg));
+			continue;
+		}
+		throw new UsageError(`unknown goal-checkpoint option: ${arg}`);
+	}
+	if (!id?.trim()) throw new UsageError("goal-checkpoint requires --id <id>");
+	if (!summary?.trim()) throw new UsageError("goal-checkpoint requires --summary <text>");
+	return {
+		kind: "goal-checkpoint",
+		json,
+		id,
+		summary,
+		evidence,
+		...(status ? { status } : {}),
+		...(nextContinuation ? { nextContinuation } : {}),
+	};
+}
+
+function parseGoalComplete(argv: string[]): CliCommand {
+	let json = false;
+	let id: string | undefined;
+	let outcome: string | undefined;
+	let remember: string | undefined;
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--id") {
+			id = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--outcome") {
+			outcome = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--remember") {
+			remember = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		throw new UsageError(`unknown goal-complete option: ${arg}`);
+	}
+	if (!id?.trim()) throw new UsageError("goal-complete requires --id <id>");
+	if (!outcome?.trim()) throw new UsageError("goal-complete requires --outcome <text>");
+	return { kind: "goal-complete", json, id, outcome, ...(remember ? { remember } : {}) };
+}
+
+function parseGoalList(argv: string[]): CliCommand {
+	let json = false;
+	let status: LongTaskStatus | undefined;
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--status") {
+			status = parseGoalStatus(requireOptionValue(argv[++i], arg));
+			continue;
+		}
+		throw new UsageError(`unknown goal-list option: ${arg}`);
+	}
+	return { kind: "goal-list", json, ...(status ? { status } : {}) };
+}
+
 function parseRecall(argv: string[]): CliCommand {
 	let archive = false;
 	let json = false;
@@ -927,6 +1141,37 @@ function renderRestore(payload: CliRestorePayload): string {
 	return [`Her memory restored archived semantic note: ${payload.result.key}`, "", renderStatus(payload)].join("\n");
 }
 
+function renderGoal(payload: CliGoalPayload): string {
+	return [
+		`Her long task ${payload.result.status}: ${payload.result.id}`,
+		`objective: ${payload.result.objective}`,
+		`path: ${payload.result.path}`,
+		`next: ${payload.result.nextContinuation ?? "(none)"}`,
+		"",
+		renderStatus(payload),
+	].join("\n");
+}
+
+function renderGoalComplete(payload: CliGoalCompletePayload): string {
+	return [
+		`Her long task completed: ${payload.result.task.id}`,
+		`path: ${payload.result.task.path}`,
+		`memory note: ${payload.result.memoryNoteId ?? "(not written)"}`,
+		"",
+		renderStatus(payload),
+	].join("\n");
+}
+
+function renderGoalList(payload: CliGoalListPayload): string {
+	const lines = payload.result.map((task) => `${task.status}\t${task.id}\t${task.objective}`);
+	return [
+		`Her long tasks: ${payload.result.length}`,
+		...(lines.length ? lines : ["(none)"]),
+		"",
+		renderStatus(payload),
+	].join("\n");
+}
+
 function renderApprove(payload: CliApprovePayload): string {
 	return [`Her proposal approved: ${payload.result.proposalId}`, "", renderStatus(payload)].join("\n");
 }
@@ -1046,6 +1291,10 @@ function usage(): string {
   her choice-model [--json]
   her consolidate [--limit <n>] [--json]
   her decay [--older-than-days <days>] [--now <YYYY-MM-DD>] [--json]
+  her goal-start --objective <text> [--source <text>] [--owner <text>] [--next <text>] [--json]
+  her goal-checkpoint --id <id> --summary <text> [--status active|blocked] [--next <text>] [--evidence <ref>] [--json]
+  her goal-complete --id <id> --outcome <text> [--remember <text>] [--json]
+  her goal-list [--status active|blocked|completed|cancelled] [--json]
   her ideas [--json]
   her intake-source --title <title> --source-url <url> --source-type <kind> --extracted <text> --coverage <text> --read <text> --take <text> [--memory-status active|archive_only|needs_deep_read] [--memory-status-reason <text>] [--claim-json <json>] [--steal <text>] [--connection <id>] [--possible-move <text>] [--update-surfaces] [--json]
   her intake-url --url <url> [--max-bytes <n>] [--update-surfaces] [--json]
@@ -1089,6 +1338,16 @@ function requireNonBlank(value: string | undefined, option: string): string {
 function parseMemoryStatus(value: string): WorldNoteData["memoryStatus"] {
 	if (value === "active" || value === "archive_only" || value === "needs_deep_read") return value;
 	throw new UsageError("--memory-status must be active, archive_only, or needs_deep_read");
+}
+
+function parseGoalStatus(value: string): LongTaskStatus {
+	if (longTaskStatuses.includes(value as LongTaskStatus)) return value as LongTaskStatus;
+	throw new UsageError("--status must be active, blocked, completed, or cancelled");
+}
+
+function parseGoalCheckpointStatus(value: string): Extract<LongTaskStatus, "active" | "blocked"> {
+	if (value === "active" || value === "blocked") return value;
+	throw new UsageError("--status must be active or blocked for goal-checkpoint");
 }
 
 function parseClaimJson(value: string): ClaimLedgerEntry {

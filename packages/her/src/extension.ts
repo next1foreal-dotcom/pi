@@ -7,12 +7,17 @@ import { anthropicOAuthProvider, openaiCodexOAuthProvider } from "@earendil-work
 import type { ExtensionAPI, ExtensionContext, ProviderConfig } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import {
+	checkpointLongTask,
+	completeLongTask,
 	createEmbeddingSearch,
 	type IdeaData,
 	type JudgmentFields,
+	listLongTasks,
+	longTaskStatuses,
 	Memory,
 	type MemorySyncResult,
 	type MemorySyncStatus,
+	startLongTask,
 	type WorldNoteData,
 } from "./her-core/index.ts";
 import { createSummaryModel } from "./summary-model.ts";
@@ -25,6 +30,7 @@ const herPromptPath = resolve(promptsDir, "her.md");
 
 const zeroCost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 const memoryStatusValues = ["active", "archive_only", "needs_deep_read"] as const;
+const checkpointStatusValues = ["active", "blocked"] as const;
 const claimVerdictValues = ["supported", "contradicted", "insufficient_evidence"] as const;
 const sourceQualityValues = ["primary", "secondary", "weak", "unavailable", "blocked"] as const;
 const claimLedgerSchema = Type.Array(
@@ -167,6 +173,11 @@ function textResult(text: string, details: Record<string, unknown> = {}) {
 function renderSync(result: MemorySyncResult): string {
 	if (result.status === "clean") return "Her memory is already synced.";
 	return `Her memory synced: ${result.commit}`;
+}
+
+function renderLongTasks(tasks: Awaited<ReturnType<typeof listLongTasks>>): string {
+	if (tasks.length === 0) return "No Her long tasks found.";
+	return tasks.map((task) => `${task.status}\t${task.id}\t${task.objective}`).join("\n");
 }
 
 function renderSyncFooterStatus(status: MemorySyncStatus): string {
@@ -482,6 +493,86 @@ export default function her(pi: ExtensionAPI): void {
 			const result = await runSync("manual", ctx);
 			if (!result) return textResult("Her memory sync failed.", { phase: "2", status: "failed", memoryDir });
 			return textResult(renderSync(result), { phase: "2", ...result, memoryDir });
+		},
+	});
+
+	pi.registerTool({
+		name: "her_goal_start",
+		label: "Her Goal Start",
+		description: "Start a persistent Her long-task ledger entry for resumable multi-step work.",
+		parameters: Type.Object({
+			objective: Type.String(),
+			source: Type.Optional(Type.String()),
+			owner: Type.Optional(Type.String()),
+			nextContinuation: Type.Optional(Type.String()),
+		}),
+		async execute(_toolCallId, params) {
+			const result = await startLongTask(memoryDir, {
+				objective: params.objective,
+				...(params.source ? { source: params.source } : {}),
+				...(params.owner ? { owner: params.owner } : {}),
+				...(params.nextContinuation ? { nextContinuation: params.nextContinuation } : {}),
+			});
+			return textResult(`Her long task started: ${result.id}`, { phase: "4", ...result, memoryDir });
+		},
+	});
+
+	pi.registerTool({
+		name: "her_goal_checkpoint",
+		label: "Her Goal Checkpoint",
+		description: "Append a checkpoint and next continuation to a persistent Her long task.",
+		parameters: Type.Object({
+			id: Type.String(),
+			summary: Type.String(),
+			status: Type.Optional(StringEnum(checkpointStatusValues)),
+			nextContinuation: Type.Optional(Type.String()),
+			evidence: Type.Optional(Type.Array(Type.String())),
+		}),
+		async execute(_toolCallId, params) {
+			const result = await checkpointLongTask(memoryDir, params.id, {
+				summary: params.summary,
+				...(params.status ? { status: params.status } : {}),
+				...(params.nextContinuation ? { nextContinuation: params.nextContinuation } : {}),
+				...(params.evidence ? { evidence: params.evidence } : {}),
+			});
+			return textResult(`Her long task checkpointed: ${result.id}`, { phase: "4", ...result, memoryDir });
+		},
+	});
+
+	pi.registerTool({
+		name: "her_goal_complete",
+		label: "Her Goal Complete",
+		description: "Complete a persistent Her long task and optionally write a durable memory note.",
+		parameters: Type.Object({
+			id: Type.String(),
+			outcome: Type.String(),
+			remember: Type.Optional(Type.String()),
+		}),
+		async execute(_toolCallId, params) {
+			const task = await completeLongTask(memoryDir, params.id, {
+				outcome: params.outcome,
+				...(params.remember ? { remember: params.remember } : {}),
+			});
+			const memoryNoteId = params.remember ? await mem.remember(params.remember, "long-task") : undefined;
+			return textResult(`Her long task completed: ${task.id}`, {
+				phase: "4",
+				task,
+				...(memoryNoteId ? { memoryNoteId } : {}),
+				memoryDir,
+			});
+		},
+	});
+
+	pi.registerTool({
+		name: "her_goal_list",
+		label: "Her Goal List",
+		description: "List persistent Her long tasks by status.",
+		parameters: Type.Object({
+			status: Type.Optional(StringEnum(longTaskStatuses)),
+		}),
+		async execute(_toolCallId, params) {
+			const tasks = await listLongTasks(memoryDir, params.status);
+			return textResult(renderLongTasks(tasks), { phase: "4", count: tasks.length, tasks, memoryDir });
 		},
 	});
 
