@@ -19,7 +19,7 @@ Current status:
 - `before_agent_start` injects `CONTEXT.md`, `FACTS.md`, `SAMANTHA.md`, and `CHOICE-MODEL.md` from `HER_MEMORY_DIR`.
 - `turn_end` captures raw episodes into `her-memory/episodic/raw`.
 - `her_sync` commits and pushes dirty memory; capture schedules the same sync after `HER_SYNC_DEBOUNCE_MS` (default 5 minutes).
-- `her-sync` is published through `ctx.ui.setStatus()` and promoted by `pi-powerline-footer` as the Her memory sync indicator.
+- `her-sync` is published through `ctx.ui.setStatus()` and promoted by `pi-powerline-footer` as the Her memory sync indicator; `sync --status` reports pending local memory count plus the upstream HEAD time as the last successful push signal.
 - `recall()` and Mirror `surface()` use Reciprocal Rank Fusion over lexical search plus an injectable semantic backend. Set `HER_EMBEDDINGS_BASE_URL` + `HER_EMBEDDINGS_MODEL` (optional `HER_EMBEDDINGS_API_KEY`) to add an OpenAI-compatible embedding signal; otherwise Her degrades to lexical-only ranking. The `@howaboua/pi-semantic-grep` organ remains pinned for repo-local embedding indexes.
 - `packages/her/src/cli.ts` exposes the same sync surface for operators:
   `node --import tsx packages/her/src/cli.ts sync --status` or `node packages/her/bin/her.mjs sync --status`.

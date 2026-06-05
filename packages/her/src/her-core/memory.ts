@@ -109,6 +109,8 @@ export interface MemorySyncStatus {
 	aheadCommits: number;
 	pending: number;
 	branch?: string;
+	lastSyncedAt?: string;
+	lastSyncedAtError?: string;
 	error?: string;
 }
 
@@ -816,6 +818,7 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 			const ahead = await git(this.paths.root, "rev-list", "--count", "@{upstream}..HEAD")
 				.then((result) => Number(result.stdout.trim()) || 0)
 				.catch(() => 0);
+			const lastSynced = await readLastSyncedAt(this.paths.root);
 			const pending = dirty + ahead;
 			return {
 				status: pending > 0 ? "unsynced" : "synced",
@@ -823,6 +826,8 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 				aheadCommits: ahead,
 				pending,
 				branch,
+				...(lastSynced.value ? { lastSyncedAt: lastSynced.value } : {}),
+				...(lastSynced.error ? { lastSyncedAtError: lastSynced.error } : {}),
 			};
 		} catch (error) {
 			return {
@@ -1398,6 +1403,20 @@ function today(): string {
 async function git(cwd: string, ...args: string[]): Promise<{ stdout: string; stderr: string }> {
 	const { stdout, stderr } = await execFileAsync("git", args, { cwd });
 	return { stdout, stderr };
+}
+
+async function readLastSyncedAt(cwd: string): Promise<{ value?: string; error?: string }> {
+	try {
+		// Git does not store a durable push timestamp locally; upstream HEAD time is the closest sync signal.
+		const value = (await git(cwd, "log", "-1", "--format=%cI", "@{upstream}")).stdout.trim();
+		return value ? { value } : {};
+	} catch (error) {
+		return { error: errorMessage(error) };
+	}
+}
+
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
 }
 
 function extractJson<T>(text: string): T {

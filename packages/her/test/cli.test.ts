@@ -159,6 +159,7 @@ test("CLI reports Her memory sync status as JSON", async () => {
 	assert.equal(payload.status.pending, 0);
 	assert.equal(payload.status.branch, "master");
 	assert.match(payload.lastSyncedAt, /^\d{4}-\d{2}-\d{2}T/);
+	assert.equal(payload.status.lastSyncedAt, payload.lastSyncedAt);
 
 	await new Memory(store).remember("Pending local memory for the CLI.", "note");
 	result = await runCli(["sync", "--status", "--json"], store);
@@ -166,6 +167,7 @@ test("CLI reports Her memory sync status as JSON", async () => {
 	assert.equal(payload.status.status, "unsynced");
 	assert.equal(payload.status.dirtyFiles, 1);
 	assert.equal(payload.status.pending, 1);
+	assert.equal(payload.status.lastSyncedAt, payload.lastSyncedAt);
 });
 
 test("CLI sync commits and pushes dirty Her memory", async () => {

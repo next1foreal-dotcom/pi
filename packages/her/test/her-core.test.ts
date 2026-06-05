@@ -304,6 +304,7 @@ test("syncStatus reports dirty files and commits ahead of upstream", async () =>
 	assert.equal(status.status, "synced");
 	assert.equal(status.pending, 0);
 	assert.equal(status.branch, "master");
+	assert.match(status.lastSyncedAt ?? "", /^\d{4}-\d{2}-\d{2}T/);
 
 	await new Memory(store).remember("Pending local memory.", "note");
 	status = await new Memory(store).syncStatus();
@@ -311,6 +312,7 @@ test("syncStatus reports dirty files and commits ahead of upstream", async () =>
 	assert.equal(status.dirtyFiles, 1);
 	assert.equal(status.aheadCommits, 0);
 	assert.equal(status.pending, 1);
+	assert.match(status.lastSyncedAt ?? "", /^\d{4}-\d{2}-\d{2}T/);
 
 	await git(store, "add", "-A");
 	await git(store, "commit", "-m", "memory: local pending");

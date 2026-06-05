@@ -1,8 +1,6 @@
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { promisify } from "node:util";
 import {
 	type ChoiceModelUpdateResult,
 	type ClaimLedgerEntry,
@@ -19,8 +17,6 @@ import {
 	type WorldNoteData,
 } from "./her-core/index.ts";
 import { createSummaryModel } from "./summary-model.ts";
-
-const execFileAsync = promisify(execFile);
 
 type CliCommand =
 	| { kind: "approve"; json: boolean; proposalId: string }
@@ -830,23 +826,12 @@ function parseMemoryStatusCommand(argv: string[]): CliCommand {
 
 async function buildStatusPayload(memoryDir: string, memory: Memory): Promise<CliStatusPayload> {
 	const status = await memory.syncStatus();
-	const lastSync = await readLastSyncedAt(memoryDir);
 	return {
 		memoryDir,
 		status,
-		lastSyncedAt: lastSync.value,
-		lastSyncedAtError: lastSync.error,
+		lastSyncedAt: status.lastSyncedAt ?? null,
+		lastSyncedAtError: status.lastSyncedAtError,
 	};
-}
-
-async function readLastSyncedAt(memoryDir: string): Promise<{ value: string | null; error?: string }> {
-	try {
-		// Git does not store a durable push timestamp locally; upstream HEAD time is the closest sync signal.
-		const { stdout } = await execFileAsync("git", ["log", "-1", "--format=%cI", "@{upstream}"], { cwd: memoryDir });
-		return { value: stdout.trim() || null };
-	} catch (error) {
-		return { value: null, error: errorMessage(error) };
-	}
 }
 
 function renderStatus(payload: CliStatusPayload): string {

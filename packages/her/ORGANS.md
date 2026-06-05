@@ -57,4 +57,4 @@ owner = TS Her extension (`packages/her/src/extension.ts`); renderer = `pi-power
 
 - Her publishes `her-sync` with `ctx.ui.setStatus()`.
 - Project `.pi/settings.json` promotes `her-sync` to a powerline custom item with prefix `Her`.
-- The status is computed from the independent `her-memory` git repo: dirty files plus commits ahead of upstream become the pending count.
+- The status is computed from the independent `her-memory` git repo: dirty files plus commits ahead of upstream become the pending count, and upstream HEAD commit time is reported as the last successful push signal.
