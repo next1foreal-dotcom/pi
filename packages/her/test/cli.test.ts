@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -32,16 +34,64 @@ async function gitBackedStore(): Promise<{ store: string; remote: string }> {
 	return { store, remote };
 }
 
-async function runCli(args: string[], store: string): Promise<{ stdout: string; stderr: string }> {
+async function runCli(
+	args: string[],
+	store: string,
+	envOverrides: Record<string, string> = {},
+): Promise<{ stdout: string; stderr: string }> {
 	const { stdout, stderr } = await execFileAsync(
 		process.execPath,
 		["--import", "tsx", "packages/her/src/cli.ts", ...args],
 		{
 			cwd: repoRoot,
-			env: { ...process.env, HER_MEMORY_DIR: store },
+			env: { ...process.env, HER_MEMORY_DIR: store, ...envOverrides },
 		},
 	);
 	return { stdout, stderr };
+}
+
+async function withLocalChatModel<T>(
+	reply: (prompt: string) => string,
+	fn: (env: Record<string, string>, prompts: string[]) => Promise<T>,
+): Promise<T> {
+	const prompts: string[] = [];
+	const server = createServer((req, res) => {
+		let body = "";
+		req.setEncoding("utf8");
+		req.on("data", (chunk) => {
+			body += chunk;
+		});
+		req.on("end", () => {
+			const parsed = JSON.parse(body) as { messages?: Array<{ content?: unknown }> };
+			const prompt = String(parsed.messages?.[0]?.content ?? "");
+			prompts.push(prompt);
+			let content: string;
+			try {
+				content = reply(prompt);
+			} catch (error) {
+				res.writeHead(500, { "content-type": "application/json" });
+				res.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
+				return;
+			}
+			res.writeHead(200, { "content-type": "application/json" });
+			res.end(JSON.stringify({ choices: [{ message: { content } }] }));
+		});
+	});
+	await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+	const { port } = server.address() as AddressInfo;
+	try {
+		return await fn(
+			{
+				HER_SUMMARY_BASE_URL: `http://127.0.0.1:${port}`,
+				HER_SUMMARY_MODEL: "her-cli-test-model",
+			},
+			prompts,
+		);
+	} finally {
+		await new Promise<void>((resolveClose, reject) =>
+			server.close((error) => (error ? reject(error) : resolveClose())),
+		);
+	}
 }
 
 test("CLI reports Her memory sync status as JSON", async () => {
@@ -101,6 +151,92 @@ test("CLI runs governed archive sweep as JSON", async () => {
 	assert.match(await readFile(join(store, "semantic", "identity.md"), "utf8"), /Never archive exact memory/);
 	assert.equal(payload.status.status, "unsynced");
 	assert.ok(payload.status.dirtyFiles >= 1);
+});
+
+test("CLI synthesizes choice model as JSON", async () => {
+	const { store } = await gitBackedStore();
+	const memory = new Memory(store);
+	const noteId = await memory.writeWorldNote({
+		title: "Mirror Timing",
+		sourceUrl: "https://example.com/mirror-timing",
+		sourceType: "article",
+		contentHash: "choice-model-cli-fixture",
+		memoryStatus: "active",
+		extracted: "Fei rejected noisy proactive interruptions.",
+		coverage: "Read full short fixture.",
+		read: "The source argues timing matters more than volume.",
+		steal: ["Quiet timing beats frequent interruption."],
+		connections: ["[[semantic/mirror]]"],
+		take: "Samantha should wait for high-signal moments.",
+		possibleMoves: ["Prefer fewer proactive messages."],
+	});
+	await memory.recordJudgment(noteId, {
+		choice: "Prefer quiet high-signal prompts",
+		correction: "Do not treat every related memory as worth interrupting Fei.",
+	});
+	await git(store, "add", "-A");
+	await git(store, "commit", "-m", "memory: choice evidence");
+
+	await withLocalChatModel(
+		(prompt) => {
+			assert.match(prompt, /CHOICE MODEL/);
+			assert.match(prompt, /Prefer quiet high-signal prompts/);
+			return "# CHOICE MODEL\n\nPrefer quiet high-signal prompts before interrupting Fei.\n";
+		},
+		async (modelEnv, prompts) => {
+			const result = await runCli(["choice-model", "--json"], store, modelEnv);
+			const payload = JSON.parse(result.stdout);
+
+			assert.match(payload.result.id, /^[0-9a-f]{8}$/);
+			assert.match(payload.result.commit, /^[0-9a-f]{7,40}$/);
+			assert.equal(payload.status.status, "unsynced");
+			assert.match(await readFile(join(store, "narrative", "CHOICE-MODEL.md"), "utf8"), /quiet high-signal/);
+			assert.match(
+				await readFile(join(store, "narrative", "choice-model-log.md"), "utf8"),
+				/\[\[world\/mirror-timing\]\]/,
+			);
+			assert.match((await git(store, "log", "--oneline", "-1")).stdout, /memory\(choice\): Synthesize choice model/);
+			assert.equal(prompts.length, 1);
+		},
+	);
+});
+
+test("CLI synthesizes Samantha self narrative as JSON", async () => {
+	const { store } = await gitBackedStore();
+	await writeFile(
+		join(store, "narrative", "becoming-moments.md"),
+		"- 2026-06-05 · trigger: Fei asked for machine truth · shift: Samantha should verify before reassurance\n",
+		"utf8",
+	);
+	await writeFile(
+		join(store, "recognitions", "machine-truth-care.md"),
+		"---\nid: rec-cli\nstatus: new\n---\n# Machine Truth Care\n\nVerification helped Fei feel the project was less chaotic.\n",
+		"utf8",
+	);
+	await git(store, "add", "-A");
+	await git(store, "commit", "-m", "memory: self evidence");
+
+	await withLocalChatModel(
+		(prompt) => {
+			assert.match(prompt, /SAMANTHA SELF-EVIDENCE/);
+			assert.match(prompt, /Machine Truth Care/);
+			return "# SAMANTHA\n\nSamantha treats verification as part of care, not a separate ritual.\n";
+		},
+		async (modelEnv, prompts) => {
+			const result = await runCli(["self-narrative", "--json"], store, modelEnv);
+			const payload = JSON.parse(result.stdout);
+
+			assert.match(payload.result.id, /^[0-9a-f]{8}$/);
+			assert.match(payload.result.commit, /^[0-9a-f]{7,40}$/);
+			assert.equal(payload.status.status, "unsynced");
+			assert.match(await readFile(join(store, "narrative", "SAMANTHA.md"), "utf8"), /verification as part of care/);
+			const log = await readFile(join(store, "narrative", "self-narrative-log.md"), "utf8");
+			assert.match(log, /\[\[narrative\/becoming-moments\]\]/);
+			assert.match(log, /\[\[recognitions\/machine-truth-care\]\]/);
+			assert.match((await git(store, "log", "--oneline", "-1")).stdout, /memory\(self\): Synthesize self narrative/);
+			assert.equal(prompts.length, 1);
+		},
+	);
 });
 
 test("CLI restores an archived semantic note as JSON", async () => {

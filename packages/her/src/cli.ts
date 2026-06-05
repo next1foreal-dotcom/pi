@@ -1,15 +1,26 @@
 import { execFile } from "node:child_process";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { type DecaySweepResult, Memory, type MemorySyncStatus } from "./her-core/index.ts";
+import {
+	type ChoiceModelUpdateResult,
+	type DecaySweepResult,
+	loadConfig,
+	Memory,
+	type MemorySyncStatus,
+	OpenAICompatibleModel,
+	type SelfNarrativeUpdateResult,
+} from "./her-core/index.ts";
+import { createSummaryModel } from "./summary-model.ts";
 
 const execFileAsync = promisify(execFile);
 
 type CliCommand =
+	| { kind: "choice-model"; json: boolean }
 	| { kind: "decay"; json: boolean; olderThanDays?: number; now?: string }
 	| { kind: "help" }
 	| { kind: "restore"; json: boolean; semanticKey: string; now?: string }
+	| { kind: "self-narrative"; json: boolean }
 	| { kind: "status"; json: boolean }
 	| { kind: "sync"; json: boolean; message?: string };
 
@@ -32,6 +43,14 @@ interface CliRestorePayload extends CliStatusPayload {
 	result: Awaited<ReturnType<Memory["restoreArchivedSemantic"]>>;
 }
 
+interface CliChoiceModelPayload extends CliStatusPayload {
+	result: ChoiceModelUpdateResult;
+}
+
+interface CliSelfNarrativePayload extends CliStatusPayload {
+	result: SelfNarrativeUpdateResult;
+}
+
 interface CliIo {
 	stdout: NodeJS.WritableStream;
 	stderr: NodeJS.WritableStream;
@@ -42,8 +61,10 @@ class UsageError extends Error {}
 export function parseArgs(argv: string[]): CliCommand {
 	const [command, ...rest] = argv;
 	if (!command || command === "help" || command === "--help" || command === "-h") return { kind: "help" };
+	if (command === "choice-model") return parseJsonOnly("choice-model", rest);
 	if (command === "decay") return parseDecay(rest);
 	if (command === "restore") return parseRestore(rest);
+	if (command === "self-narrative") return parseJsonOnly("self-narrative", rest);
 	if (command === "status") return parseStatus(rest);
 	if (command === "sync") return parseSync(rest);
 	throw new UsageError(`unknown Her command: ${command}`);
@@ -70,7 +91,7 @@ export async function runHerCli(
 	}
 
 	const memoryDir = getMemoryDir(env, cwd);
-	const memory = new Memory(memoryDir);
+	const memory = createCliMemory(memoryDir, env);
 
 	if (command.kind === "status") {
 		const payload = await buildStatusPayload(memoryDir, memory);
@@ -92,6 +113,20 @@ export async function runHerCli(
 		return payload.status.status === "unknown" ? 1 : 0;
 	}
 
+	if (command.kind === "choice-model") {
+		const result = await memory.synthesizeChoiceModel();
+		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
+		writePayload(io.stdout, payload, command.json, renderChoiceModel);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "self-narrative") {
+		const result = await memory.synthesizeSelfNarrative();
+		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
+		writePayload(io.stdout, payload, command.json, renderSelfNarrative);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
 	try {
 		const result = await memory.sync(command.message ?? `memory(sync): cli ${new Date().toISOString()}`);
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
@@ -105,6 +140,24 @@ export async function runHerCli(
 
 export function getMemoryDir(env: NodeJS.ProcessEnv = process.env, cwd = process.cwd()): string {
 	return resolve(env.HER_MEMORY_DIR ?? resolve(cwd, "..", "her-memory"));
+}
+
+function createCliMemory(memoryDir: string, env: NodeJS.ProcessEnv): Memory {
+	const model =
+		createSummaryModel(env) ?? new OpenAICompatibleModel(loadConfig(join(memoryDir, ".her", "config.yaml")), env);
+	return new Memory(memoryDir, model);
+}
+
+function parseJsonOnly(kind: "choice-model" | "self-narrative", argv: string[]): CliCommand {
+	let json = false;
+	for (const arg of argv) {
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		throw new UsageError(`unknown ${kind} option: ${arg}`);
+	}
+	return { kind, json };
 }
 
 function parseStatus(argv: string[]): CliCommand {
@@ -259,6 +312,14 @@ function renderRestore(payload: CliRestorePayload): string {
 	return [`Her memory restored archived semantic note: ${payload.result.key}`, "", renderStatus(payload)].join("\n");
 }
 
+function renderChoiceModel(payload: CliChoiceModelPayload): string {
+	return [`Her choice model synthesized: ${payload.result.commit}`, "", renderStatus(payload)].join("\n");
+}
+
+function renderSelfNarrative(payload: CliSelfNarrativePayload): string {
+	return [`Her self narrative synthesized: ${payload.result.commit}`, "", renderStatus(payload)].join("\n");
+}
+
 function writePayload<T>(
 	stream: NodeJS.WritableStream,
 	payload: T,
@@ -274,8 +335,10 @@ function writeLine(stream: NodeJS.WritableStream, text: string): void {
 
 function usage(): string {
 	return `Usage:
+  her choice-model [--json]
   her decay [--older-than-days <days>] [--now <YYYY-MM-DD>] [--json]
   her restore --semantic <key> [--now <YYYY-MM-DD>] [--json]
+  her self-narrative [--json]
   her sync --status [--json]
   her sync [--message <message>] [--json]
   her status [--json]

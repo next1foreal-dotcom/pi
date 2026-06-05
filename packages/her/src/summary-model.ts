@@ -92,7 +92,7 @@ function chatCompletionsUrl(baseUrl: string): string {
 }
 
 function headers(apiKey: string | undefined): Record<string, string> {
-	const result: Record<string, string> = { "content-type": "application/json" };
+	const result: Record<string, string> = { connection: "close", "content-type": "application/json" };
 	if (apiKey) result.authorization = `Bearer ${apiKey}`;
 	return result;
 }

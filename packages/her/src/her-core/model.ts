@@ -51,6 +51,7 @@ export class OpenAICompatibleModel implements ModelLike {
 			method: "POST",
 			headers: new Headers({
 				authorization: `Bearer ${key}`,
+				connection: "close",
 				"content-type": "application/json",
 			}),
 			body: JSON.stringify({
