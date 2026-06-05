@@ -567,6 +567,7 @@ export default function her(pi: ExtensionAPI): void {
 			sourceType: Type.String(),
 			contentHash: Type.String(),
 			memoryStatus: StringEnum(memoryStatusValues),
+			memoryStatusReason: Type.Optional(Type.String()),
 			extracted: Type.String(),
 			coverage: Type.String(),
 			claims: Type.Optional(claimLedgerSchema),
@@ -600,6 +601,7 @@ export default function her(pi: ExtensionAPI): void {
 			take: Type.String(),
 			possibleMoves: Type.Optional(Type.Array(Type.String())),
 			memoryStatus: Type.Optional(StringEnum(memoryStatusValues)),
+			memoryStatusReason: Type.Optional(Type.String()),
 		}),
 		async execute(_toolCallId, params) {
 			const data: WorldNoteData = {
@@ -608,6 +610,7 @@ export default function her(pi: ExtensionAPI): void {
 				sourceType: requireNonBlank(params.sourceType, "sourceType"),
 				contentHash: intakeContentHash(params.sourceUrl, params.extracted),
 				memoryStatus: params.memoryStatus ?? "active",
+				...(params.memoryStatusReason ? { memoryStatusReason: params.memoryStatusReason } : {}),
 				extracted: requireNonBlank(params.extracted, "extracted"),
 				coverage: requireNonBlank(params.coverage, "coverage"),
 				claims: params.claims ?? [],

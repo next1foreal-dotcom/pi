@@ -664,6 +664,7 @@ test("judgment and memory status update existing world note", async () => {
 		sourceType: "article",
 		contentHash: "hash-456",
 		memoryStatus: "needs_deep_read",
+		memoryStatusReason: "Only an orientation pass has been read.",
 		extracted: "Mirror should wait.",
 		coverage: "Orientation only.",
 		read: "Timing matters.",
@@ -679,9 +680,47 @@ test("judgment and memory status update existing world note", async () => {
 	const text = (await readText(join(store, "world", "mirror-timing.md"))) ?? "";
 	const parsed = parseFrontmatter(text);
 	assert.equal(parsed.data.memory_status, "archive_only");
+	assert.equal(parsed.data.memory_status_reason, "Useful but not urgent.");
 	assert.match(parsed.body, /attraction: timing/);
 	assert.match(parsed.body, /correction: Do not over-trigger Mirror/);
 	assert.match(parsed.body, /reason: Useful but not urgent/);
+});
+
+test("writeWorldNote requires and stores a reason for inactive memory status", async () => {
+	const store = await tempStore();
+	const memory = new Memory(store);
+	const base = {
+		title: "Needs Deep Read",
+		sourceUrl: "https://example.com/deep",
+		sourceType: "article",
+		contentHash: "hash-status-reason",
+		memoryStatus: "needs_deep_read" as const,
+		extracted: "Only the abstract was available.",
+		coverage: "Orientation only: abstract read; body unavailable.",
+		read: "The source may matter but cannot be trusted as fully read yet.",
+		steal: [],
+		connections: [],
+		take: "Keep as a stub until the full article can be read.",
+		possibleMoves: [],
+	};
+
+	await assert.rejects(() => memory.writeWorldNote(base), /requires memoryStatusReason/);
+
+	const noteId = await memory.writeWorldNote({
+		...base,
+		memoryStatusReason: "Full article body was unavailable, so this is only an orientation stub.",
+	});
+
+	assert.match(noteId, /^[0-9a-f]{8}$/);
+	const text = (await readText(join(store, "world", "needs-deep-read.md"))) ?? "";
+	const parsed = parseFrontmatter(text);
+	assert.equal(parsed.data.memory_status, "needs_deep_read");
+	assert.equal(
+		parsed.data.memory_status_reason,
+		"Full article body was unavailable, so this is only an orientation stub.",
+	);
+	assert.match(text, /## Memory Status/);
+	assert.match(text, /reason: Full article body was unavailable/);
 });
 
 test("synthesizeChoiceModel distills Judgment Trail into a traceable choice model update", async () => {

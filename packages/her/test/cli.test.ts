@@ -206,6 +206,8 @@ test("CLI persists an intake source with recall verification as JSON", async () 
 			"Use her intake-source from RPC shells.",
 			"--memory-status",
 			"needs_deep_read",
+			"--memory-status-reason",
+			"Fixture source is useful but still needs a deeper second pass.",
 			"--json",
 		],
 		store,
@@ -219,6 +221,8 @@ test("CLI persists an intake source with recall verification as JSON", async () 
 
 	const world = await readFile(join(store, "world", "agent-intake-patterns.md"), "utf8");
 	assert.match(world, /memory_status: needs_deep_read/);
+	assert.match(world, /memory_status_reason: Fixture source is useful but still needs a deeper second pass\./);
+	assert.match(world, /reason: Fixture source is useful but still needs a deeper second pass\./);
 	assert.match(world, /claim_count: 1/);
 	assert.match(world, /claim: Trusted writer computes content hashes/);
 	assert.match(world, /verdict: supported/);
@@ -226,6 +230,65 @@ test("CLI persists an intake source with recall verification as JSON", async () 
 	assert.match(world, /\[\[mirror\]\]/);
 	const seen = JSON.parse(await readFile(join(store, ".her", "seen.json"), "utf8"));
 	assert.equal(seen[payload.result.contentHash], payload.result.noteId);
+});
+
+test("CLI records judgment and memory status through TS her-core", async () => {
+	const { store } = await gitBackedStore();
+	const memory = new Memory(store);
+	const noteId = await memory.writeWorldNote({
+		title: "Interrupt Timing",
+		sourceUrl: "https://example.com/interrupt",
+		sourceType: "article",
+		contentHash: "judgment-cli-fixture",
+		memoryStatus: "active",
+		extracted: "Interruptions should wait for high-signal moments.",
+		coverage: "Read full short fixture.",
+		read: "Timing matters more than volume.",
+		steal: ["Prefer high-signal interruption windows."],
+		connections: ["mirror"],
+		take: "Useful for proactive Samantha behavior.",
+		possibleMoves: ["Tune proactive trigger thresholds."],
+	});
+
+	let result = await runCli(
+		[
+			"judgment",
+			"--note",
+			noteId,
+			"--choice",
+			"Keep the high-signal interruption rule.",
+			"--correction",
+			"Do not interrupt active work for weak associations.",
+			"--json",
+		],
+		store,
+	);
+	let payload = JSON.parse(result.stdout);
+	assert.deepEqual(payload.result, { noteId, recorded: true });
+	assert.equal(payload.status.status, "unsynced");
+
+	result = await runCli(
+		[
+			"memory-status",
+			"--note",
+			noteId,
+			"--status",
+			"archive_only",
+			"--reason",
+			"Useful later but should stay out of active recall for now.",
+			"--json",
+		],
+		store,
+	);
+	payload = JSON.parse(result.stdout);
+	assert.deepEqual(payload.result, { noteId, status: "archive_only" });
+
+	const world = await readFile(join(store, "world", "interrupt-timing.md"), "utf8");
+	assert.match(world, /choice: Keep the high-signal interruption rule/);
+	assert.match(world, /correction: Do not interrupt active work/);
+	assert.match(world, /memory_status: archive_only/);
+	assert.match(world, /memory_status_reason: Useful later but should stay out of active recall for now\./);
+	assert.match(world, /reason: Useful later but should stay out of active recall for now\./);
 });
 
 test("CLI recalls active and archived memory as JSON", async () => {

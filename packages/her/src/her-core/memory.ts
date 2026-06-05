@@ -55,6 +55,7 @@ export interface WorldNoteData {
 	sourceType: string;
 	contentHash: string;
 	memoryStatus: "active" | "archive_only" | "needs_deep_read";
+	memoryStatusReason?: string;
 	extracted: string;
 	coverage: string;
 	claims?: ClaimLedgerEntry[];
@@ -722,6 +723,7 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 	}
 
 	async writeWorldNote(data: WorldNoteData): Promise<string> {
+		const memoryStatusReason = normalizeMemoryStatusReason(data.memoryStatus, data.memoryStatusReason);
 		const seen = await readJson<Record<string, string>>(this.paths.seenFile, {});
 		const existing = seen[data.contentHash];
 		if (existing) return existing;
@@ -747,12 +749,13 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 			content_hash: data.contentHash,
 			status: "captured",
 			memory_status: data.memoryStatus,
+			memory_status_reason: memoryStatusReason,
 			claim_count: data.claims?.length ?? 0,
 			supported_claims: data.claims?.filter((claim) => claim.verdict === "supported").length ?? 0,
 			insufficient_claims: data.claims?.filter((claim) => claim.verdict === "insufficient_evidence").length ?? 0,
 			response_version: 1,
 		};
-		await writeText(path, `${frontmatter(fm)}${worldBody(data)}`);
+		await writeText(path, `${frontmatter(fm)}${worldBody(data, memoryStatusReason)}`);
 		seen[data.contentHash] = id;
 		await writeJson(this.paths.seenFile, seen);
 		return id;
@@ -775,6 +778,7 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 		const text = await readText(path);
 		const parsed = parseFrontmatter(text);
 		parsed.data.memory_status = status;
+		parsed.data.memory_status_reason = reason;
 		const body = `${stripSection(parsed.body, "Memory Status")}\n## Memory Status\n\n- status: ${status}\n- reason: ${reason}\n`;
 		await writeText(path, `${frontmatter(parsed.data)}${body}`);
 	}
@@ -1146,7 +1150,7 @@ function episodeSection(
 	return `\n## ${sid} · ${ts.replace("T", " ")} · project: ${project}\n${summary}\n- raw: [[episodic/raw/${rawStem}]]\n- summary_pending: ${String(pending)}\n`;
 }
 
-function worldBody(data: WorldNoteData): string {
+function worldBody(data: WorldNoteData, memoryStatusReason: string): string {
 	return `# ${data.title}
 
 ## Extracted Content
@@ -1181,9 +1185,21 @@ ${data.take}
 
 ${data.possibleMoves.map((item) => `- ${item}`).join("\n")}
 
+## Memory Status
+
+- status: ${data.memoryStatus}
+- reason: ${memoryStatusReason}
+
 ## Judgment Trail
 
 `;
+}
+
+function normalizeMemoryStatusReason(status: WorldNoteData["memoryStatus"], reason: string | undefined): string {
+	const trimmed = reason?.trim();
+	if (trimmed) return trimmed;
+	if (status === "active") return "Trusted writer marked this source active after intake.";
+	throw new Error(`${status} world note requires memoryStatusReason`);
 }
 
 function claimLedgerBody(claims: ClaimLedgerEntry[]): string {

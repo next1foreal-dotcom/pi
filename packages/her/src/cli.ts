@@ -8,6 +8,7 @@ import {
 	type ClaimLedgerEntry,
 	type ConsolidateResult,
 	type DecaySweepResult,
+	type JudgmentFields,
 	loadConfig,
 	Memory,
 	type MemorySyncStatus,
@@ -28,6 +29,8 @@ type CliCommand =
 	| { kind: "help" }
 	| { kind: "ideas"; json: boolean }
 	| { kind: "intake-source"; data: WorldNoteData; json: boolean }
+	| { kind: "judgment"; fields: JudgmentFields; json: boolean; noteId: string }
+	| { kind: "memory-status"; json: boolean; noteId: string; reason: string; status: WorldNoteData["memoryStatus"] }
 	| { kind: "recall"; archive: boolean; json: boolean; k?: number; query: string }
 	| { kind: "restore"; json: boolean; semanticKey: string; now?: string }
 	| { kind: "self-narrative"; json: boolean }
@@ -100,6 +103,20 @@ interface CliIntakeSourcePayload extends CliStatusPayload {
 	};
 }
 
+interface CliJudgmentPayload extends CliStatusPayload {
+	result: {
+		noteId: string;
+		recorded: true;
+	};
+}
+
+interface CliMemoryStatusPayload extends CliStatusPayload {
+	result: {
+		noteId: string;
+		status: WorldNoteData["memoryStatus"];
+	};
+}
+
 interface CliRecallPayload extends CliStatusPayload {
 	result: Awaited<ReturnType<Memory["recall"]>>;
 }
@@ -121,6 +138,8 @@ export function parseArgs(argv: string[]): CliCommand {
 	if (command === "decay") return parseDecay(rest);
 	if (command === "ideas") return parseJsonOnly("ideas", rest);
 	if (command === "intake-source") return parseIntakeSource(rest);
+	if (command === "judgment") return parseJudgment(rest);
+	if (command === "memory-status") return parseMemoryStatusCommand(rest);
 	if (command === "recall") return parseRecall(rest);
 	if (command === "restore") return parseRestore(rest);
 	if (command === "self-narrative") return parseJsonOnly("self-narrative", rest);
@@ -255,6 +274,26 @@ export async function runHerCli(
 			},
 		};
 		writePayload(io.stdout, payload, command.json, renderIntakeSource);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "judgment") {
+		await memory.recordJudgment(command.noteId, command.fields);
+		const payload = {
+			...(await buildStatusPayload(memoryDir, memory)),
+			result: { noteId: command.noteId, recorded: true as const },
+		};
+		writePayload(io.stdout, payload, command.json, renderJudgment);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "memory-status") {
+		await memory.setMemoryStatus(command.noteId, command.status, command.reason);
+		const payload = {
+			...(await buildStatusPayload(memoryDir, memory)),
+			result: { noteId: command.noteId, status: command.status },
+		};
+		writePayload(io.stdout, payload, command.json, renderMemoryStatus);
 		return payload.status.status === "unknown" ? 1 : 0;
 	}
 
@@ -539,6 +578,7 @@ function parseIntakeSource(argv: string[]): CliCommand {
 	let read: string | undefined;
 	let take: string | undefined;
 	let memoryStatus: WorldNoteData["memoryStatus"] = "active";
+	let memoryStatusReason: string | undefined;
 	const claims: ClaimLedgerEntry[] = [];
 	const steal: string[] = [];
 	const connections: string[] = [];
@@ -582,6 +622,10 @@ function parseIntakeSource(argv: string[]): CliCommand {
 			memoryStatus = parseMemoryStatus(requireOptionValue(argv[++i], arg));
 			continue;
 		}
+		if (arg === "--memory-status-reason") {
+			memoryStatusReason = requireOptionValue(argv[++i], arg);
+			continue;
+		}
 		if (arg === "--claim-json") {
 			claims.push(parseClaimJson(requireOptionValue(argv[++i], arg)));
 			continue;
@@ -610,6 +654,7 @@ function parseIntakeSource(argv: string[]): CliCommand {
 		read: requireNonBlank(read, "--read"),
 		take: requireNonBlank(take, "--take"),
 		memoryStatus,
+		...(memoryStatusReason ? { memoryStatusReason } : {}),
 		claims,
 		steal,
 		connections,
@@ -619,6 +664,97 @@ function parseIntakeSource(argv: string[]): CliCommand {
 		kind: "intake-source",
 		json,
 		data: { ...data, contentHash: intakeContentHash(data.sourceUrl, data.extracted) },
+	};
+}
+
+function parseJudgment(argv: string[]): CliCommand {
+	let json = false;
+	let noteId: string | undefined;
+	const fields: JudgmentFields = {};
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--note") {
+			noteId = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--attraction") {
+			fields.attraction = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--inferred-intent") {
+			fields.inferredIntent = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--choice") {
+			fields.choice = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--rejection") {
+			fields.rejection = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--hesitation") {
+			fields.hesitation = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--reason") {
+			fields.reason = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--outcome") {
+			fields.outcome = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--correction") {
+			fields.correction = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		throw new UsageError(`unknown judgment option: ${arg}`);
+	}
+	if (!noteId?.trim()) throw new UsageError("judgment requires --note <id>");
+	if (!Object.values(fields).some((value) => value?.trim())) {
+		throw new UsageError("judgment requires at least one judgment field");
+	}
+	return { kind: "judgment", fields, json, noteId };
+}
+
+function parseMemoryStatusCommand(argv: string[]): CliCommand {
+	let json = false;
+	let noteId: string | undefined;
+	let status: WorldNoteData["memoryStatus"] | undefined;
+	let reason: string | undefined;
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--note") {
+			noteId = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--status") {
+			status = parseMemoryStatus(requireOptionValue(argv[++i], arg));
+			continue;
+		}
+		if (arg === "--reason") {
+			reason = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		throw new UsageError(`unknown memory-status option: ${arg}`);
+	}
+	if (!noteId?.trim()) throw new UsageError("memory-status requires --note <id>");
+	if (!status) throw new UsageError("memory-status requires --status <active|archive_only|needs_deep_read>");
+	return {
+		kind: "memory-status",
+		json,
+		noteId,
+		reason: requireNonBlank(reason, "--reason"),
+		status,
 	};
 }
 
@@ -700,6 +836,18 @@ function renderCapture(payload: CliCapturePayload): string {
 	return [`Her memory captured: ${payload.result.id}`, "", renderStatus(payload)].join("\n");
 }
 
+function renderJudgment(payload: CliJudgmentPayload): string {
+	return [`Her judgment recorded for world note: ${payload.result.noteId}`, "", renderStatus(payload)].join("\n");
+}
+
+function renderMemoryStatus(payload: CliMemoryStatusPayload): string {
+	return [
+		`Her memory status set for world note: ${payload.result.noteId} -> ${payload.result.status}`,
+		"",
+		renderStatus(payload),
+	].join("\n");
+}
+
 function renderRecall(payload: CliRecallPayload): string {
 	const hits =
 		payload.result.length > 0
@@ -777,7 +925,9 @@ function usage(): string {
   her consolidate [--limit <n>] [--json]
   her decay [--older-than-days <days>] [--now <YYYY-MM-DD>] [--json]
   her ideas [--json]
-  her intake-source --title <title> --source-url <url> --source-type <kind> --extracted <text> --coverage <text> --read <text> --take <text> [--memory-status active|archive_only|needs_deep_read] [--claim-json <json>] [--steal <text>] [--connection <id>] [--possible-move <text>] [--json]
+  her intake-source --title <title> --source-url <url> --source-type <kind> --extracted <text> --coverage <text> --read <text> --take <text> [--memory-status active|archive_only|needs_deep_read] [--memory-status-reason <text>] [--claim-json <json>] [--steal <text>] [--connection <id>] [--possible-move <text>] [--json]
+  her judgment --note <id> [--choice <text>] [--correction <text>] [--reason <text>] [--attraction <text>] [--inferred-intent <text>] [--rejection <text>] [--hesitation <text>] [--outcome <text>] [--json]
+  her memory-status --note <id> --status active|archive_only|needs_deep_read --reason <text> [--json]
   her recall --query <text> [--k <n>] [--archive] [--json]
   her restore --semantic <key> [--now <YYYY-MM-DD>] [--json]
   her self-narrative [--json]
@@ -809,7 +959,7 @@ function requireOptionValue(value: string | undefined, option: string): string {
 
 function requireNonBlank(value: string | undefined, option: string): string {
 	const trimmed = value?.trim();
-	if (!trimmed) throw new UsageError(`intake-source requires ${option}`);
+	if (!trimmed) throw new UsageError(`${option} cannot be blank`);
 	return trimmed;
 }
 

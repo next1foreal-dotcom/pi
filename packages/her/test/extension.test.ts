@@ -626,6 +626,7 @@ test("extension memory tools write, recall, judge, and update status", async () 
 				sourceType: "article",
 				contentHash: "hash-789",
 				memoryStatus: "needs_deep_read",
+				memoryStatusReason: "Orientation read only; full source still needs a second pass.",
 				extracted: "Mirror should wait for the right time.",
 				coverage: "Orientation read.",
 				claims: [
