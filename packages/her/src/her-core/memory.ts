@@ -31,6 +31,7 @@ import {
 const execFileAsync = promisify(execFile);
 const UNIT_TYPES = new Set(["question", "concept", "opinion", "case", "solution"]);
 const RELATION_TYPES = new Set(["responds", "explains", "proves", "conflicts", "relates"]);
+const ACTIVE_MEMORY_TIERS = new Set(["exact", "summarizable", "rule", "decay"]);
 
 export const SEED_CONTEXT =
 	"# CONTEXT - Living Narrative / alive narrative\n\n*(empty - Samantha has not yet formed an understanding of Fei.)*\n";
@@ -294,7 +295,7 @@ export class Memory {
 		const key = slug(content.split(/\r?\n/, 1)[0] ?? "note");
 		await writeText(
 			join(this.paths.semantic, `${key}-${id}.md`),
-			`${frontmatter({ id, type, created: today() })}# ${key}\n\n${content.trim()}\n`,
+			`${frontmatter({ id, type, tier: "summarizable", created: today() })}# ${key}\n\n${content.trim()}\n`,
 		);
 		return id;
 	}
@@ -905,10 +906,12 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 		const incomingSources = Array.isArray(note.sources) ? note.sources.map(String) : [];
 		const sources = [...new Set([...existingSources, ...incomingSources])].sort();
 		const type = typeof note.type === "string" && UNIT_TYPES.has(note.type) ? note.type : "note";
+		const tier = normalizeActiveTier(note.tier, existing.data.tier);
 		const relations = normalizeRelations(note);
 		const fm = {
 			key,
 			type,
+			tier,
 			created: existing.data.created ?? today(),
 			updated: today(),
 			sources,
@@ -1404,6 +1407,12 @@ function normalizeRelations(note: Record<string, unknown>): Array<{ to: string; 
 		out.push({ to, rel: RELATION_TYPES.has(rawRel) ? rawRel : "relates" });
 	}
 	return out;
+}
+
+function normalizeActiveTier(value: unknown, fallback: unknown): string {
+	if (typeof value === "string" && ACTIVE_MEMORY_TIERS.has(value)) return value;
+	if (typeof fallback === "string" && ACTIVE_MEMORY_TIERS.has(fallback)) return fallback;
+	return "summarizable";
 }
 
 function timestampMinute(): string {

@@ -303,6 +303,7 @@ test("consolidate distills raw episodes into typed semantic notes and moments", 
 					{
 						key: "verification-over-reassurance",
 						type: "opinion",
+						tier: "rule",
 						title: "Verification over reassurance",
 						content: "Fei trusts machine truth more than soothing summaries.",
 						relations: [{ to: "agent-work-style", rel: "proves" }],
@@ -326,6 +327,7 @@ test("consolidate distills raw episodes into typed semantic notes and moments", 
 	const note = (await readText(join(store, "semantic", "verification-over-reassurance.md"))) ?? "";
 	const parsed = parseFrontmatter(note);
 	assert.equal(parsed.data.type, "opinion");
+	assert.equal(parsed.data.tier, "rule");
 	assert.deepEqual(parsed.data.sources, ["episode-1"]);
 	assert.deepEqual(parsed.data.relations, [{ to: "agent-work-style", rel: "proves" }]);
 	assert.match(parsed.body, /Fei trusts machine truth/);
