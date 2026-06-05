@@ -8,6 +8,7 @@ export interface UrlIntakeOptions {
 	fetcher?: typeof fetch;
 	lookup?: typeof dnsLookup;
 	maxBytes?: number;
+	maxRepoFiles?: number;
 }
 
 export interface UrlIntakeResult {
@@ -18,7 +19,20 @@ export interface UrlIntakeResult {
 }
 
 const DEFAULT_MAX_BYTES = 250_000;
+const DEFAULT_MAX_REPO_FILES = 4;
+const DEFAULT_REPO_FILE_BYTES = 40_000;
 const MAX_REDIRECTS = 3;
+
+interface GitHubRepoTarget {
+	owner: string;
+	repo: string;
+}
+
+interface GitHubTreeEntry {
+	path?: string;
+	size?: number;
+	type?: string;
+}
 
 export async function readUrlForWorldNote(sourceUrl: string, opts: UrlIntakeOptions = {}): Promise<UrlIntakeResult> {
 	const maxBytes = opts.maxBytes ?? DEFAULT_MAX_BYTES;
@@ -26,6 +40,15 @@ export async function readUrlForWorldNote(sourceUrl: string, opts: UrlIntakeOpti
 	const lookup = opts.lookup ?? dnsLookup;
 	const startUrl = normalizeSourceUrl(sourceUrl);
 	await assertSafeHttpUrl(startUrl, { allowLocal: opts.allowLocal, lookup });
+	const githubRepo = parseGithubRepoUrl(startUrl);
+	if (githubRepo) {
+		return readGithubRepoForWorldNote(startUrl.href, githubRepo, {
+			allowLocal: opts.allowLocal,
+			fetcher,
+			lookup,
+			...opts,
+		});
+	}
 	const response = await fetchWithSafeRedirects(startUrl, { allowLocal: opts.allowLocal, fetcher, lookup });
 	const contentType = response.headers.get("content-type") ?? "";
 	const finalUrl = response.url || startUrl.href;
@@ -116,6 +139,102 @@ export function failedUrlIntake(
 	};
 }
 
+async function readGithubRepoForWorldNote(
+	requestedUrl: string,
+	target: GitHubRepoTarget,
+	opts: UrlIntakeOptions,
+): Promise<UrlIntakeResult> {
+	const fetcher = opts.fetcher ?? fetch;
+	const lookup = opts.lookup ?? dnsLookup;
+	const maxRepoFiles = opts.maxRepoFiles ?? DEFAULT_MAX_REPO_FILES;
+	const repoUrl = `https://github.com/${target.owner}/${target.repo}`;
+	const apiUrl = new URL(`https://api.github.com/repos/${target.owner}/${target.repo}`);
+	await assertSafeHttpUrl(apiUrl, { allowLocal: opts.allowLocal, lookup });
+	const metadataResponse = await fetchWithSafeRedirects(apiUrl, { allowLocal: opts.allowLocal, fetcher, lookup });
+	if (!metadataResponse.ok) {
+		return failedUrlIntake(requestedUrl, repoUrl, "repo", `GitHub metadata HTTP ${metadataResponse.status}`);
+	}
+	const metadata = await readJsonResponse(metadataResponse);
+	const defaultBranch = stringValue(metadata, "default_branch") ?? "main";
+	const description = stringValue(metadata, "description");
+	const treeUrl = new URL(
+		`https://api.github.com/repos/${target.owner}/${target.repo}/git/trees/${encodeURIComponent(defaultBranch)}`,
+	);
+	treeUrl.searchParams.set("recursive", "1");
+	await assertSafeHttpUrl(treeUrl, { allowLocal: opts.allowLocal, lookup });
+	const treeResponse = await fetchWithSafeRedirects(treeUrl, { allowLocal: opts.allowLocal, fetcher, lookup });
+	if (!treeResponse.ok) {
+		return failedUrlIntake(requestedUrl, repoUrl, "repo", `GitHub tree HTTP ${treeResponse.status}`);
+	}
+	const tree = await readJsonResponse(treeResponse);
+	const entries = Array.isArray(tree.tree) ? (tree.tree as GitHubTreeEntry[]) : [];
+	const candidates = chooseRepoFiles(entries, maxRepoFiles);
+	const files: Array<{ bytesRead: number; path: string; text: string; truncated: boolean }> = [];
+	let bytesRead = 0;
+	let truncated = false;
+
+	for (const entry of candidates) {
+		if (!entry.path) continue;
+		const rawUrl = githubRawFileUrl(target, defaultBranch, entry.path);
+		await assertSafeHttpUrl(rawUrl, { allowLocal: opts.allowLocal, lookup });
+		const response = await fetchWithSafeRedirects(rawUrl, { allowLocal: opts.allowLocal, fetcher, lookup });
+		if (!response.ok) continue;
+		const read = await readResponseText(
+			response,
+			Math.min(opts.maxBytes ?? DEFAULT_MAX_BYTES, DEFAULT_REPO_FILE_BYTES),
+		);
+		const text = normalizeExtractedText(read.text);
+		files.push({ bytesRead: read.bytesRead, path: entry.path, text, truncated: read.truncated });
+		bytesRead += read.bytesRead;
+		truncated = truncated || read.truncated;
+	}
+
+	const symbols = files.flatMap((file) =>
+		extractCodeSymbols(file.path, file.text).map((symbol) => `${file.path}: ${symbol}`),
+	);
+	const memoryStatus = files.length >= 2 && symbols.length > 0 ? "active" : "needs_deep_read";
+	const memoryStatusReason =
+		memoryStatus === "active"
+			? undefined
+			: `Repository intake read ${files.length} file(s) and detected ${symbols.length} code symbol(s); needs deeper repo reader.`;
+	const coverage = [
+		`Read ${files.length} repository files from ${repoUrl} on branch ${defaultBranch}.`,
+		files.length > 0
+			? `Files read: ${files.map((file) => file.path).join(", ")}.`
+			: "No readable files were fetched.",
+		symbols.length > 0 ? `Detected real code symbols: ${symbols.join("; ")}.` : "No code symbols detected.",
+		truncated
+			? "At least one file was truncated to keep minimal intake bounded."
+			: "Selected files were read within the minimal repo intake budget.",
+	].join(" ");
+	const extracted = renderRepoExtracted(target, defaultBranch, description, files, symbols);
+	const data: WorldNoteData = {
+		title: `${target.owner}/${target.repo} repository`,
+		sourceUrl: repoUrl,
+		sourceType: "repo",
+		contentHash: intakeContentHash(repoUrl, extracted || coverage),
+		memoryStatus,
+		...(memoryStatusReason ? { memoryStatusReason } : {}),
+		extracted: extracted || "(no readable repository files extracted)",
+		coverage,
+		read:
+			memoryStatus === "active"
+				? "Samantha read selected repository files and identified concrete code symbols for later recall."
+				: "Samantha only has a bounded repository orientation stub.",
+		steal: symbols.slice(0, 3),
+		connections: [],
+		take:
+			memoryStatus === "active"
+				? "This repo can now be recalled by actual files and methods, not only by its README or directory shape."
+				: "Keep this repo stub and run a deeper repo reader before relying on implementation claims.",
+		possibleMoves:
+			memoryStatus === "active"
+				? ["Run a deeper repo sweep when a task needs architecture-level confidence."]
+				: ["Retry with deep-reader or a local clone for broader repository coverage."],
+	};
+	return { data, bytesRead, finalUrl: repoUrl, truncated };
+}
+
 async function fetchWithSafeRedirects(
 	url: URL,
 	opts: Required<Pick<UrlIntakeOptions, "fetcher" | "lookup">> & Pick<UrlIntakeOptions, "allowLocal">,
@@ -184,6 +303,19 @@ function normalizeSourceUrl(sourceUrl: string): URL {
 	return new URL(/^www\./i.test(trimmed) ? `https://${trimmed}` : trimmed);
 }
 
+function parseGithubRepoUrl(url: URL): GitHubRepoTarget | undefined {
+	if (url.hostname.toLowerCase() !== "github.com") return undefined;
+	const [owner, repo] = url.pathname
+		.split("/")
+		.filter(Boolean)
+		.map((part) => part.trim());
+	if (!owner || !repo) return undefined;
+	const normalizedRepo = repo.replace(/\.git$/i, "");
+	const valid = /^[A-Za-z0-9_.-]+$/;
+	if (!valid.test(owner) || !valid.test(normalizedRepo)) return undefined;
+	return { owner, repo: normalizedRepo };
+}
+
 function detectSourceType(url: string, contentType: string): string {
 	const lowerUrl = url.toLowerCase();
 	const lowerType = contentType.toLowerCase();
@@ -238,6 +370,106 @@ function titleFromUrl(url: string): string {
 
 function intakeContentHash(sourceUrl: string, extracted: string): string {
 	return createHash("sha256").update(`${sourceUrl}\n${extracted}`).digest("hex");
+}
+
+async function readJsonResponse(response: Response): Promise<Record<string, unknown>> {
+	const text = await response.text();
+	const parsed = JSON.parse(text) as unknown;
+	return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+}
+
+function stringValue(record: Record<string, unknown>, key: string): string | undefined {
+	const value = record[key];
+	return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function chooseRepoFiles(entries: GitHubTreeEntry[], maxFiles: number): GitHubTreeEntry[] {
+	return entries
+		.filter((entry) => entry.type === "blob" && entry.path && isReadableRepoFile(entry.path, entry.size))
+		.map((entry) => ({ ...entry, score: repoFileScore(entry.path ?? "") }))
+		.sort((a, b) => b.score - a.score || String(a.path).localeCompare(String(b.path)))
+		.slice(0, maxFiles)
+		.map(({ score: _score, ...entry }) => entry);
+}
+
+function isReadableRepoFile(path: string, size = 0): boolean {
+	const normalized = path.replace(/\\/g, "/");
+	if (size > 250_000) return false;
+	if (/(^|\/)(\.git|node_modules|vendor|dist|build|coverage|target|__pycache__)\//i.test(normalized)) return false;
+	if (/(^|\/)(package-lock|npm-shrinkwrap|pnpm-lock|yarn\.lock|bun\.lockb)$/i.test(normalized)) return false;
+	return /\.(md|mdx|txt|ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|kt|rb|php|json|toml|ya?ml)$/i.test(normalized);
+}
+
+function repoFileScore(path: string): number {
+	const normalized = path.replace(/\\/g, "/");
+	const name = normalized.split("/").at(-1) ?? normalized;
+	if (/^README(\..*)?$/i.test(name)) return 100;
+	if (/^(package\.json|pyproject\.toml|go\.mod|Cargo\.toml|deno\.json|tsconfig\.json)$/i.test(name)) return 92;
+	if (
+		/^(src|lib|app|packages)\//i.test(normalized) &&
+		/\.(ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|kt|rb|php)$/i.test(name)
+	) {
+		return /(?:index|main|app|server|extension|cli)\.[^.]+$/i.test(name) ? 88 : 78;
+	}
+	if (/\.(ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|kt|rb|php)$/i.test(name)) return 64;
+	if (/^(docs|documentation)\//i.test(normalized)) return 30;
+	return 20;
+}
+
+function githubRawFileUrl(target: GitHubRepoTarget, branch: string, path: string): URL {
+	const encodedPath = path
+		.split("/")
+		.filter(Boolean)
+		.map((part) => encodeURIComponent(part))
+		.join("/");
+	return new URL(
+		`https://raw.githubusercontent.com/${encodeURIComponent(target.owner)}/${encodeURIComponent(target.repo)}/${encodeURIComponent(branch)}/${encodedPath}`,
+	);
+}
+
+function renderRepoExtracted(
+	target: GitHubRepoTarget,
+	branch: string,
+	description: string | undefined,
+	files: Array<{ path: string; text: string; truncated: boolean }>,
+	symbols: string[],
+): string {
+	const fileSections = files.map((file) =>
+		[`## ${file.path}${file.truncated ? " (truncated)" : ""}`, "```", file.text, "```"].join("\n"),
+	);
+	return normalizeExtractedText(
+		[
+			`# ${target.owner}/${target.repo}`,
+			description ? `Description: ${description}` : "",
+			`Default branch: ${branch}`,
+			files.length > 0 ? `Files read: ${files.map((file) => file.path).join(", ")}` : "Files read: (none)",
+			symbols.length > 0 ? `Code symbols: ${symbols.join("; ")}` : "Code symbols: (none)",
+			...fileSections,
+		]
+			.filter(Boolean)
+			.join("\n\n"),
+	);
+}
+
+function extractCodeSymbols(path: string, text: string): string[] {
+	if (!/\.(ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|kt|rb|php)$/i.test(path)) return [];
+	const patterns = [
+		/\b(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/g,
+		/\b(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\(/g,
+		/\bclass\s+([A-Za-z_$][\w$]*)\b/g,
+		/\bdef\s+([A-Za-z_][\w]*)\s*\(/g,
+		/\bfunc\s+([A-Za-z_][\w]*)\s*\(/g,
+		/\bfn\s+([A-Za-z_][\w]*)\s*\(/g,
+	];
+	const symbols: string[] = [];
+	for (const pattern of patterns) {
+		for (const match of text.matchAll(pattern)) {
+			const symbol = match[1];
+			if (symbol && !symbols.includes(symbol)) symbols.push(symbol);
+			if (symbols.length >= 5) return symbols;
+		}
+	}
+	return symbols;
 }
 
 function unreadableUrlIntake(

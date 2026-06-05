@@ -35,6 +35,7 @@ Current status:
 - Tools are registered for recall, remember, world notes, judgments, memory status, idea capture, evolution synthesis, and context review/keep/revert.
 - Context digest follow-ups report due unreviewed context changes before Mirror, and both suppress themselves while `pi-codex-goal` owns an active continuation.
 - `/her-intake <url-or-path>` is a slash prompt for the Stage 2 minimal chain: `fetch_content` -> `her_intake_source`/`her_world_note` or `her_remember` -> recall verification. `deep-reader` stays quarantined from memory writes; `claim-verifier` checks claim ledgers; `her-batch-intake` coordinates multi-source workflow fan-out before the parent trusted writer persists memory.
+- `her intake-url --url <url>` reads ordinary article/text URLs and GitHub repository URLs. Repo intake uses GitHub metadata/tree/raw file reads, records the actual files and code symbols read, and marks weak coverage as `needs_deep_read`.
 - World notes now require a `memoryStatusReason` when they are written as `archive_only` or `needs_deep_read`; the CLI also exposes `judgment` and `memory-status` so GUI/RPC shells can update Judgment Trail and status through TS her-core instead of editing markdown by hand.
 - Her project subagents live in `.pi/agents` and mirror `pi-package/agents`; they must use append/fork context inheritance.
 - Phase 7 migration keeps legacy Python capture adapters and the TS pi extension writing the same independent `D:/@Her/her-memory` git repo; all growth writes belong to TS.
