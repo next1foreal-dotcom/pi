@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
@@ -11,6 +12,7 @@ import {
 	type MemorySyncStatus,
 	OpenAICompatibleModel,
 	type SelfNarrativeUpdateResult,
+	type WorldNoteData,
 } from "./her-core/index.ts";
 import { createSummaryModel } from "./summary-model.ts";
 
@@ -24,6 +26,7 @@ type CliCommand =
 	| { kind: "decay"; json: boolean; olderThanDays?: number; now?: string }
 	| { kind: "help" }
 	| { kind: "ideas"; json: boolean }
+	| { kind: "intake-source"; data: WorldNoteData; json: boolean }
 	| { kind: "restore"; json: boolean; semanticKey: string; now?: string }
 	| { kind: "self-narrative"; json: boolean }
 	| { kind: "synthesize"; json: boolean; ifDue: boolean }
@@ -87,6 +90,14 @@ interface CliSelfNarrativePayload extends CliStatusPayload {
 	result: SelfNarrativeUpdateResult;
 }
 
+interface CliIntakeSourcePayload extends CliStatusPayload {
+	result: {
+		noteId: string;
+		contentHash: string;
+		recall: Array<{ id: string; kind: string; path: string }>;
+	};
+}
+
 interface CliIo {
 	stdout: NodeJS.WritableStream;
 	stderr: NodeJS.WritableStream;
@@ -103,6 +114,7 @@ export function parseArgs(argv: string[]): CliCommand {
 	if (command === "consolidate") return parseConsolidate(rest);
 	if (command === "decay") return parseDecay(rest);
 	if (command === "ideas") return parseJsonOnly("ideas", rest);
+	if (command === "intake-source") return parseIntakeSource(rest);
 	if (command === "restore") return parseRestore(rest);
 	if (command === "self-narrative") return parseJsonOnly("self-narrative", rest);
 	if (command === "synthesize") return parseSynthesize(rest);
@@ -210,6 +222,23 @@ export async function runHerCli(
 		const result = await memory.generateIdeas();
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderIdeas);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "intake-source") {
+		const noteId = await memory.writeWorldNote(command.data);
+		const recall = await memory.recall(`${command.data.title} ${command.data.sourceUrl} ${command.data.take}`, {
+			k: 3,
+		});
+		const payload = {
+			...(await buildStatusPayload(memoryDir, memory)),
+			result: {
+				noteId,
+				contentHash: command.data.contentHash,
+				recall: recall.map((note) => ({ id: note.id, kind: note.kind, path: note.path })),
+			},
+		};
+		writePayload(io.stdout, payload, command.json, renderIntakeSource);
 		return payload.status.status === "unknown" ? 1 : 0;
 	}
 
@@ -455,6 +484,93 @@ function parseRestore(argv: string[]): CliCommand {
 	return { kind: "restore", json, semanticKey, now };
 }
 
+function parseIntakeSource(argv: string[]): CliCommand {
+	let json = false;
+	let title: string | undefined;
+	let sourceUrl: string | undefined;
+	let sourceType: string | undefined;
+	let extracted: string | undefined;
+	let coverage: string | undefined;
+	let read: string | undefined;
+	let take: string | undefined;
+	let memoryStatus: WorldNoteData["memoryStatus"] = "active";
+	const steal: string[] = [];
+	const connections: string[] = [];
+	const possibleMoves: string[] = [];
+
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--title") {
+			title = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--source-url") {
+			sourceUrl = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--source-type") {
+			sourceType = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--extracted") {
+			extracted = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--coverage") {
+			coverage = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--read") {
+			read = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--take") {
+			take = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--memory-status") {
+			memoryStatus = parseMemoryStatus(requireOptionValue(argv[++i], arg));
+			continue;
+		}
+		if (arg === "--steal") {
+			steal.push(requireOptionValue(argv[++i], arg));
+			continue;
+		}
+		if (arg === "--connection") {
+			connections.push(requireOptionValue(argv[++i], arg));
+			continue;
+		}
+		if (arg === "--possible-move") {
+			possibleMoves.push(requireOptionValue(argv[++i], arg));
+			continue;
+		}
+		throw new UsageError(`unknown intake-source option: ${arg}`);
+	}
+
+	const data = {
+		title: requireNonBlank(title, "--title"),
+		sourceUrl: requireNonBlank(sourceUrl, "--source-url"),
+		sourceType: requireNonBlank(sourceType, "--source-type"),
+		extracted: requireNonBlank(extracted, "--extracted"),
+		coverage: requireNonBlank(coverage, "--coverage"),
+		read: requireNonBlank(read, "--read"),
+		take: requireNonBlank(take, "--take"),
+		memoryStatus,
+		steal,
+		connections,
+		possibleMoves,
+	} satisfies Omit<WorldNoteData, "contentHash">;
+	return {
+		kind: "intake-source",
+		json,
+		data: { ...data, contentHash: intakeContentHash(data.sourceUrl, data.extracted) },
+	};
+}
+
 async function buildStatusPayload(memoryDir: string, memory: Memory): Promise<CliStatusPayload> {
 	const status = await memory.syncStatus();
 	const lastSync = await readLastSyncedAt(memoryDir);
@@ -558,6 +674,16 @@ function renderIdeas(
 	return [`Her ideas written: ${written}`, "", renderStatus(payload)].join("\n");
 }
 
+function renderIntakeSource(payload: CliIntakeSourcePayload): string {
+	return [
+		`Her intake source saved: ${payload.result.noteId}`,
+		`content hash: ${payload.result.contentHash}`,
+		`recall hits: ${payload.result.recall.map((note) => note.id).join(", ") || "(none)"}`,
+		"",
+		renderStatus(payload),
+	].join("\n");
+}
+
 function renderChoiceModel(payload: CliChoiceModelPayload): string {
 	return [`Her choice model synthesized: ${payload.result.commit}`, "", renderStatus(payload)].join("\n");
 }
@@ -587,6 +713,7 @@ function usage(): string {
   her consolidate [--limit <n>] [--json]
   her decay [--older-than-days <days>] [--now <YYYY-MM-DD>] [--json]
   her ideas [--json]
+  her intake-source --title <title> --source-url <url> --source-type <kind> --extracted <text> --coverage <text> --read <text> --take <text> [--memory-status active|archive_only|needs_deep_read] [--steal <text>] [--connection <id>] [--possible-move <text>] [--json]
   her restore --semantic <key> [--now <YYYY-MM-DD>] [--json]
   her self-narrative [--json]
   her synthesize [--if-due] [--json]
@@ -608,6 +735,26 @@ function parsePositiveNumber(value: string, option: string): number {
 	const parsed = Number(value);
 	if (!Number.isFinite(parsed) || parsed <= 0) throw new UsageError(`${option} must be a positive number`);
 	return parsed;
+}
+
+function requireOptionValue(value: string | undefined, option: string): string {
+	if (!value) throw new UsageError(`${option} requires a value`);
+	return value;
+}
+
+function requireNonBlank(value: string | undefined, option: string): string {
+	const trimmed = value?.trim();
+	if (!trimmed) throw new UsageError(`intake-source requires ${option}`);
+	return trimmed;
+}
+
+function parseMemoryStatus(value: string): WorldNoteData["memoryStatus"] {
+	if (value === "active" || value === "archive_only" || value === "needs_deep_read") return value;
+	throw new UsageError("--memory-status must be active, archive_only, or needs_deep_read");
+}
+
+function intakeContentHash(sourceUrl: string, extracted: string): string {
+	return createHash("sha256").update(`${sourceUrl}\n${extracted}`).digest("hex");
 }
 
 const invokedUrl = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : "";

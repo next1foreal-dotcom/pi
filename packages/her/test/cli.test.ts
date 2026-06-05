@@ -170,6 +170,53 @@ test("CLI captures a UI message through TS her-core as JSON", async () => {
 	);
 });
 
+test("CLI persists an intake source with recall verification as JSON", async () => {
+	const { store } = await gitBackedStore();
+
+	const result = await runCli(
+		[
+			"intake-source",
+			"--title",
+			"Agent Intake Patterns",
+			"--source-url",
+			"https://example.com/intake",
+			"--source-type",
+			"article",
+			"--extracted",
+			"A complete short article about source intake and recall verification.",
+			"--coverage",
+			"Read full short article; no sections skipped.",
+			"--read",
+			"The useful pattern is letting the trusted writer compute content hashes.",
+			"--steal",
+			"Compute content hashes in the trusted write tool",
+			"--connection",
+			"mirror",
+			"--take",
+			"This tightens the Stage 2 intake chain.",
+			"--possible-move",
+			"Use her intake-source from RPC shells.",
+			"--memory-status",
+			"needs_deep_read",
+			"--json",
+		],
+		store,
+	);
+	const payload = JSON.parse(result.stdout);
+
+	assert.match(payload.result.noteId, /^[0-9a-f]{8}$/);
+	assert.match(payload.result.contentHash, /^[0-9a-f]{64}$/);
+	assert.ok(payload.result.recall.some((note: { id: string }) => note.id === "world/agent-intake-patterns"));
+	assert.equal(payload.status.status, "unsynced");
+
+	const world = await readFile(join(store, "world", "agent-intake-patterns.md"), "utf8");
+	assert.match(world, /memory_status: needs_deep_read/);
+	assert.match(world, /recall verification/);
+	assert.match(world, /\[\[mirror\]\]/);
+	const seen = JSON.parse(await readFile(join(store, ".her", "seen.json"), "utf8"));
+	assert.equal(seen[payload.result.contentHash], payload.result.noteId);
+});
+
 test("CLI runs TS growth maintenance commands as JSON", async () => {
 	const { store } = await gitBackedStore();
 	await writeFile(join(store, "narrative", "FACTS.md"), "Fei is the owner.\n", "utf8");
