@@ -22,6 +22,8 @@ Current status:
 - `her-sync` is published through `ctx.ui.setStatus()` and promoted by `pi-powerline-footer` as the Her memory sync indicator.
 - `packages/her/src/cli.ts` exposes the same sync surface for operators:
   `node --import tsx packages/her/src/cli.ts sync --status` or `node packages/her/bin/her.mjs sync --status`.
+- The same CLI exposes the governed archive sweep:
+  `node packages/her/bin/her.mjs decay --older-than-days 180 --json`.
 - `synthesize()` autonomously writes `CONTEXT.md` through a reviewable git-backed `context-log.md`; `FACTS.md` remains read-only to the growth loop.
 - `synthesizeDue()` gates narrative proposals on configured semantic-note volume, new conflict relations, or stale `last_synthesize`.
 - `decaySweep()` moves old `tier: decay` semantic notes into `archive/semantic`; `tier: exact` is never swept and archive recall is explicit.

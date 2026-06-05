@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -76,4 +76,29 @@ test("CLI sync commits and pushes dirty Her memory", async () => {
 	assert.equal(payload.status.pending, 0);
 	assert.equal((await git(store, "status", "--porcelain")).stdout.trim(), "");
 	assert.match((await git(remote, "log", "--oneline", "-1")).stdout, /memory\(sync\): cli test/);
+});
+
+test("CLI runs governed archive sweep as JSON", async () => {
+	const { store } = await gitBackedStore();
+	await writeFile(
+		join(store, "semantic", "old-noise.md"),
+		"---\ntier: decay\nupdated: 2020-01-01\n---\n# Old noise\n\nStale low-value memory.\n",
+		"utf8",
+	);
+	await writeFile(
+		join(store, "semantic", "identity.md"),
+		"---\ntier: exact\nupdated: 2020-01-01\n---\n# Identity\n\nNever archive exact memory.\n",
+		"utf8",
+	);
+
+	const result = await runCli(["decay", "--older-than-days", "30", "--now", "2026-06-05", "--json"], store);
+	const payload = JSON.parse(result.stdout);
+
+	assert.equal(payload.memoryDir, store);
+	assert.deepEqual(payload.result.archivedKeys, ["old-noise"]);
+	assert.equal(payload.result.archived, 1);
+	assert.match(await readFile(join(store, "archive", "semantic", "old-noise.md"), "utf8"), /archived_at: 2026-06-05/);
+	assert.match(await readFile(join(store, "semantic", "identity.md"), "utf8"), /Never archive exact memory/);
+	assert.equal(payload.status.status, "unsynced");
+	assert.ok(payload.status.dirtyFiles >= 1);
 });
