@@ -1416,7 +1416,7 @@ function normalizeActiveTier(value: unknown, fallback: unknown): string {
 }
 
 function timestampMinute(): string {
-	return new Date().toISOString().slice(0, 16).replace(/[-:]/g, "").replace("T", "T");
+	return new Date().toISOString().slice(0, 16);
 }
 
 function snakeCase(text: string): string {

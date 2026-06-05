@@ -28,6 +28,7 @@ type CliCommand =
 	| { kind: "help" }
 	| { kind: "ideas"; json: boolean }
 	| { kind: "intake-source"; data: WorldNoteData; json: boolean }
+	| { kind: "recall"; archive: boolean; json: boolean; k?: number; query: string }
 	| { kind: "restore"; json: boolean; semanticKey: string; now?: string }
 	| { kind: "self-narrative"; json: boolean }
 	| { kind: "synthesize"; json: boolean; ifDue: boolean }
@@ -99,6 +100,10 @@ interface CliIntakeSourcePayload extends CliStatusPayload {
 	};
 }
 
+interface CliRecallPayload extends CliStatusPayload {
+	result: Awaited<ReturnType<Memory["recall"]>>;
+}
+
 interface CliIo {
 	stdout: NodeJS.WritableStream;
 	stderr: NodeJS.WritableStream;
@@ -116,6 +121,7 @@ export function parseArgs(argv: string[]): CliCommand {
 	if (command === "decay") return parseDecay(rest);
 	if (command === "ideas") return parseJsonOnly("ideas", rest);
 	if (command === "intake-source") return parseIntakeSource(rest);
+	if (command === "recall") return parseRecall(rest);
 	if (command === "restore") return parseRestore(rest);
 	if (command === "self-narrative") return parseJsonOnly("self-narrative", rest);
 	if (command === "synthesize") return parseSynthesize(rest);
@@ -194,6 +200,15 @@ export async function runHerCli(
 		});
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result: { id } };
 		writePayload(io.stdout, payload, command.json, renderCapture);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "recall") {
+		const result = command.archive
+			? await memory.recallArchive(command.query, { k: command.k })
+			: await memory.recall(command.query, { k: command.k });
+		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
+		writePayload(io.stdout, payload, command.json, renderRecall);
 		return payload.status.status === "unknown" ? 1 : 0;
 	}
 
@@ -485,6 +500,35 @@ function parseRestore(argv: string[]): CliCommand {
 	return { kind: "restore", json, semanticKey, now };
 }
 
+function parseRecall(argv: string[]): CliCommand {
+	let archive = false;
+	let json = false;
+	let k: number | undefined;
+	let query: string | undefined;
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		if (arg === "--archive") {
+			archive = true;
+			continue;
+		}
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--k") {
+			k = parsePositiveNumber(requireOptionValue(argv[++i], arg), arg);
+			continue;
+		}
+		if (arg === "--query") {
+			query = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		throw new UsageError(`unknown recall option: ${arg}`);
+	}
+	if (!query?.trim()) throw new UsageError("recall requires --query <text>");
+	return { kind: "recall", archive, json, k, query };
+}
+
 function parseIntakeSource(argv: string[]): CliCommand {
 	let json = false;
 	let title: string | undefined;
@@ -656,6 +700,19 @@ function renderCapture(payload: CliCapturePayload): string {
 	return [`Her memory captured: ${payload.result.id}`, "", renderStatus(payload)].join("\n");
 }
 
+function renderRecall(payload: CliRecallPayload): string {
+	const hits =
+		payload.result.length > 0
+			? payload.result
+					.map((note, index) => {
+						const excerpt = note.text.trim().replace(/\s+/g, " ").slice(0, 500);
+						return `${index + 1}. ${note.id} (${note.kind}, score=${note.score.toFixed(4)})\n${excerpt}`;
+					})
+					.join("\n\n")
+			: "(none)";
+	return [`Her recall hits: ${payload.result.length}`, hits, "", renderStatus(payload)].join("\n");
+}
+
 function renderSynthesize(payload: CliSynthesizePayload): string {
 	const result =
 		payload.result.proposalId === null
@@ -721,6 +778,7 @@ function usage(): string {
   her decay [--older-than-days <days>] [--now <YYYY-MM-DD>] [--json]
   her ideas [--json]
   her intake-source --title <title> --source-url <url> --source-type <kind> --extracted <text> --coverage <text> --read <text> --take <text> [--memory-status active|archive_only|needs_deep_read] [--claim-json <json>] [--steal <text>] [--connection <id>] [--possible-move <text>] [--json]
+  her recall --query <text> [--k <n>] [--archive] [--json]
   her restore --semantic <key> [--now <YYYY-MM-DD>] [--json]
   her self-narrative [--json]
   her synthesize [--if-due] [--json]

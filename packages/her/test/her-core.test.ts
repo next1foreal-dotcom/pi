@@ -88,6 +88,16 @@ test("capture never overwrites an existing raw episode with the same timestamp a
 	assert.match(daily, /\[\[episodic\/raw\/2026-06-02T2330--sess01--dup-1\]\]/);
 });
 
+test("capture default timestamp writes the daily episode under an ISO date", async () => {
+	const store = await tempStore();
+	await new Memory(store, fakeModel).capture("Default timestamp should keep ISO date boundaries.");
+
+	const today = new Date().toISOString().slice(0, 10);
+	const dailyFiles = (await readdir(join(store, "episodic"))).filter((file) => file.endsWith(".md"));
+	assert.ok(dailyFiles.includes(`${today}.md`));
+	assert.doesNotMatch(dailyFiles.join("\n"), /\d{8}T\d\.md/);
+});
+
 test("capture redacts secrets before writing raw or summarizing", async () => {
 	const store = await tempStore();
 	let prompt = "";

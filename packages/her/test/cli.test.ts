@@ -228,6 +228,29 @@ test("CLI persists an intake source with recall verification as JSON", async () 
 	assert.equal(seen[payload.result.contentHash], payload.result.noteId);
 });
 
+test("CLI recalls active and archived memory as JSON", async () => {
+	const { store } = await gitBackedStore();
+	await new Memory(store).remember("Harness memory should answer Samantha UI chat.", "note");
+	await writeFile(
+		join(store, "archive", "semantic", "old-noise.md"),
+		"---\ntier: archive\n---\n# Old noise\n\nRecoverable archive memory for later review.\n",
+		"utf8",
+	);
+
+	let result = await runCli(["recall", "--query", "Samantha UI chat", "--k", "2", "--json"], store);
+	let payload = JSON.parse(result.stdout);
+	assert.equal(payload.memoryDir, store);
+	assert.equal(payload.result[0].kind, "semantic");
+	assert.match(payload.result[0].id, /^semantic\//);
+	assert.match(payload.result[0].text, /Samantha UI chat/);
+
+	result = await runCli(["recall", "--query", "Recoverable archive", "--archive", "--json"], store);
+	payload = JSON.parse(result.stdout);
+	assert.equal(payload.result[0].id, "archive/semantic/old-noise");
+	assert.equal(payload.result[0].kind, "archive/semantic");
+	assert.match(payload.result[0].text, /Recoverable archive memory/);
+});
+
 test("CLI runs TS growth maintenance commands as JSON", async () => {
 	const { store } = await gitBackedStore();
 	await writeFile(join(store, "narrative", "FACTS.md"), "Fei is the owner.\n", "utf8");
