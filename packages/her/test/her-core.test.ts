@@ -7,6 +7,7 @@ import test from "node:test";
 import { promisify } from "node:util";
 import {
 	checkpointLongTask,
+	claimNextLongTask,
 	completeLongTask,
 	initStore,
 	listLongTasks,
@@ -311,6 +312,75 @@ test("long task ledger persists checkpoints and completion without losing state"
 	assert.match(text, /## Checkpoint - 2026-06-06T10:30:00.000Z/);
 	assert.match(text, /## Completed - 2026-06-06T11:00:00.000Z/);
 	assert.match(text, /Durable memory writeback/);
+});
+
+test("long task claims provide a crash-resumable lease", async () => {
+	const store = await tempStore();
+	await startLongTask(store, {
+		id: "goal-lease",
+		objective: "Resume after a crashed runner",
+		nextContinuation: "Pick up the next durable step.",
+		now: "2026-06-06T10:00:00.000Z",
+	});
+
+	const first = await claimNextLongTask(store, {
+		runner: "runner-a",
+		leaseMinutes: 15,
+		now: "2026-06-06T10:05:00.000Z",
+	});
+	assert.equal(first?.id, "goal-lease");
+	assert.equal(first?.claimedBy, "runner-a");
+	assert.equal(first?.claimExpiresAt, "2026-06-06T10:20:00.000Z");
+
+	assert.equal(
+		await claimNextLongTask(store, {
+			runner: "runner-b",
+			leaseMinutes: 15,
+			now: "2026-06-06T10:10:00.000Z",
+		}),
+		undefined,
+	);
+
+	const reclaimed = await claimNextLongTask(store, {
+		runner: "runner-b",
+		leaseMinutes: 10,
+		now: "2026-06-06T10:21:00.000Z",
+	});
+	assert.equal(reclaimed?.claimedBy, "runner-b");
+	assert.equal(reclaimed?.claimExpiresAt, "2026-06-06T10:31:00.000Z");
+
+	const checkpointed = await checkpointLongTask(store, "goal-lease", {
+		summary: "Runner recovered the task.",
+		nextContinuation: "Continue from the recovered checkpoint.",
+		now: "2026-06-06T10:22:00.000Z",
+	});
+	assert.equal(checkpointed.claimedBy, undefined);
+	assert.equal(checkpointed.claimExpiresAt, undefined);
+	assert.equal(checkpointed.nextContinuation, "Continue from the recovered checkpoint.");
+
+	const next = await claimNextLongTask(store, {
+		runner: "runner-c",
+		leaseMinutes: 5,
+		now: "2026-06-06T10:23:00.000Z",
+	});
+	assert.equal(next?.claimedBy, "runner-c");
+
+	await completeLongTask(store, "goal-lease", {
+		outcome: "Completed after recovery.",
+		now: "2026-06-06T10:24:00.000Z",
+	});
+	assert.equal(
+		await claimNextLongTask(store, {
+			runner: "runner-d",
+			now: "2026-06-06T10:25:00.000Z",
+		}),
+		undefined,
+	);
+	const text = (await readText(join(store, "goals", "goal-lease.md"))) ?? "";
+	assert.match(text, /## Claimed - 2026-06-06T10:05:00.000Z/);
+	assert.match(text, /runner: runner-b/);
+	assert.match(text, /^claimed_by: null$/m);
+	assert.match(text, /^claim_expires_at: null$/m);
 });
 
 test("sync commits and pushes memory changes", async () => {

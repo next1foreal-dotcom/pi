@@ -6,6 +6,7 @@ import {
 	type ClaimLedgerEntry,
 	type ConsolidateResult,
 	checkpointLongTask,
+	claimNextLongTask,
 	completeLongTask,
 	createEmbeddingSearch,
 	type DecaySweepResult,
@@ -42,6 +43,7 @@ type CliCommand =
 	  }
 	| { kind: "goal-complete"; id: string; json: boolean; outcome: string; remember?: string }
 	| { kind: "goal-list"; json: boolean; status?: LongTaskStatus }
+	| { kind: "goal-next"; json: boolean; leaseMinutes?: number; now?: string; runner?: string }
 	| {
 			kind: "goal-start";
 			json: boolean;
@@ -181,6 +183,10 @@ interface CliGoalListPayload extends CliStatusPayload {
 	result: LongTaskRecord[];
 }
 
+interface CliGoalNextPayload extends CliStatusPayload {
+	result: LongTaskRecord | null;
+}
+
 interface CliRecallPayload extends CliStatusPayload {
 	result: Awaited<ReturnType<Memory["recall"]>>;
 }
@@ -203,6 +209,7 @@ export function parseArgs(argv: string[]): CliCommand {
 	if (command === "goal-checkpoint") return parseGoalCheckpoint(rest);
 	if (command === "goal-complete") return parseGoalComplete(rest);
 	if (command === "goal-list") return parseGoalList(rest);
+	if (command === "goal-next") return parseGoalNext(rest);
 	if (command === "goal-start") return parseGoalStart(rest);
 	if (command === "ideas") return parseJsonOnly("ideas", rest);
 	if (command === "intake-source") return parseIntakeSource(rest);
@@ -299,6 +306,13 @@ export async function runHerCli(
 		const result = await listLongTasks(memoryDir, command.status);
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderGoalList);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "goal-next") {
+		const result = (await claimNextLongTask(memoryDir, command)) ?? null;
+		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
+		writePayload(io.stdout, payload, command.json, renderGoalNext);
 		return payload.status.status === "unknown" ? 1 : 0;
 	}
 
@@ -808,6 +822,40 @@ function parseGoalList(argv: string[]): CliCommand {
 	return { kind: "goal-list", json, ...(status ? { status } : {}) };
 }
 
+function parseGoalNext(argv: string[]): CliCommand {
+	let json = false;
+	let leaseMinutes: number | undefined;
+	let now: string | undefined;
+	let runner: string | undefined;
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--lease-minutes") {
+			leaseMinutes = parsePositiveNumber(requireOptionValue(argv[++i], arg), arg);
+			continue;
+		}
+		if (arg === "--now") {
+			now = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--runner") {
+			runner = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		throw new UsageError(`unknown goal-next option: ${arg}`);
+	}
+	return {
+		kind: "goal-next",
+		json,
+		...(leaseMinutes ? { leaseMinutes } : {}),
+		...(now ? { now } : {}),
+		...(runner ? { runner } : {}),
+	};
+}
+
 function parseRecall(argv: string[]): CliCommand {
 	let archive = false;
 	let json = false;
@@ -1172,6 +1220,20 @@ function renderGoalList(payload: CliGoalListPayload): string {
 	].join("\n");
 }
 
+function renderGoalNext(payload: CliGoalNextPayload): string {
+	if (!payload.result) return [`Her long task next: (none)`, "", renderStatus(payload)].join("\n");
+	return [
+		`Her long task claimed: ${payload.result.id}`,
+		`objective: ${payload.result.objective}`,
+		`next: ${payload.result.nextContinuation ?? "(none)"}`,
+		`claimed by: ${payload.result.claimedBy ?? "(unknown)"}`,
+		`lease until: ${payload.result.claimExpiresAt ?? "(unknown)"}`,
+		`path: ${payload.result.path}`,
+		"",
+		renderStatus(payload),
+	].join("\n");
+}
+
 function renderApprove(payload: CliApprovePayload): string {
 	return [`Her proposal approved: ${payload.result.proposalId}`, "", renderStatus(payload)].join("\n");
 }
@@ -1295,6 +1357,7 @@ function usage(): string {
   her goal-checkpoint --id <id> --summary <text> [--status active|blocked] [--next <text>] [--evidence <ref>] [--json]
   her goal-complete --id <id> --outcome <text> [--remember <text>] [--json]
   her goal-list [--status active|blocked|completed|cancelled] [--json]
+  her goal-next [--runner <id>] [--lease-minutes <n>] [--now <ISO>] [--json]
   her ideas [--json]
   her intake-source --title <title> --source-url <url> --source-type <kind> --extracted <text> --coverage <text> --read <text> --take <text> [--memory-status active|archive_only|needs_deep_read] [--memory-status-reason <text>] [--claim-json <json>] [--steal <text>] [--connection <id>] [--possible-move <text>] [--update-surfaces] [--json]
   her intake-url --url <url> [--max-bytes <n>] [--update-surfaces] [--json]

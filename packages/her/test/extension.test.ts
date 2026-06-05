@@ -7,7 +7,7 @@ import test from "node:test";
 import { promisify } from "node:util";
 import type { ExtensionAPI, ExtensionContext, ProviderConfig, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import her from "../src/extension.ts";
-import { initStore, Memory, readJson, readText, writeText } from "../src/her-core/index.ts";
+import { initStore, Memory, readJson, readText, startLongTask, writeText } from "../src/her-core/index.ts";
 
 type Handler = (event: unknown, ctx: ExtensionContext) => Promise<unknown> | unknown;
 const execFileAsync = promisify(execFile);
@@ -317,6 +317,88 @@ test("extension mirror does not compete with an active pi-codex-goal follow-up",
 			fake.entries.some((entry) => entry.customType === "her-state" && entryStatus(entry) === "mirror-sent"),
 			false,
 		);
+	});
+});
+
+test("extension claims a Her long task and triggers an idle continuation before Mirror", async () => {
+	const store = await tempStore();
+	await startLongTask(store, {
+		id: "goal-extension",
+		objective: "Continue a durable Her goal",
+		nextContinuation: "Run the next focused implementation step.",
+		now: "2026-06-06T10:00:00.000Z",
+	});
+	await writeText(join(store, "semantic", "mirror.md"), "# Mirror\n\nMirror should wait behind goal continuation.\n");
+	const ctx = createContext(store);
+
+	await withEnv({ HER_MEMORY_DIR: store, HER_GOAL_LEASE_MINUTES: "10" }, async () => {
+		const fake = createFakePi();
+		her(fake.pi);
+
+		const turnEnd = fake.handlers.get("turn_end")?.[0];
+		assert.ok(turnEnd);
+		await turnEnd(
+			{
+				type: "turn_end",
+				turnIndex: 1,
+				message: { role: "assistant", content: [{ type: "text", text: "Ready for next goal step." }] },
+				toolResults: [],
+			},
+			ctx,
+		);
+
+		const sent = fake.messages.at(-1);
+		const message = sent?.message as { customType?: string; content?: string; details?: Record<string, unknown> };
+		assert.equal(message.customType, "her-goal-continuation");
+		assert.match(message.content ?? "", /Run the next focused implementation step/);
+		assert.equal(message.details?.goalId, "goal-extension");
+		assert.deepEqual(sent?.options, { deliverAs: "followUp", triggerTurn: true });
+		assert.equal(
+			fake.entries.some(
+				(entry) => entry.customType === "her-state" && entryStatus(entry) === "goal-continuation-sent",
+			),
+			true,
+		);
+		assert.equal(
+			fake.entries.some((entry) => entry.customType === "her-state" && entryStatus(entry) === "mirror-sent"),
+			false,
+		);
+
+		const goal = (await readText(join(store, "goals", "goal-extension.md"))) ?? "";
+		assert.match(goal, /^claimed_by: pi:session-1$/m);
+		assert.match(goal, /^claim_expires_at: /m);
+	});
+});
+
+test("extension Her long task continuation yields to an active pi-codex-goal", async () => {
+	const store = await tempStore();
+	await startLongTask(store, {
+		id: "goal-yield",
+		objective: "Yield while pi-codex-goal is active",
+		nextContinuation: "This should not be sent yet.",
+		now: "2026-06-06T10:00:00.000Z",
+	});
+	const ctx = createContext(store, [
+		{
+			customType: "pi-codex-goal",
+			data: { kind: "set", goal: { status: "active" } },
+		},
+	]);
+
+	await withMemoryDir(store, async () => {
+		const fake = createFakePi();
+		her(fake.pi);
+
+		const turnEnd = fake.handlers.get("turn_end")?.[0];
+		assert.ok(turnEnd);
+		await turnEnd(
+			{ type: "turn_end", turnIndex: 1, message: { role: "assistant", content: [] }, toolResults: [] },
+			ctx,
+		);
+
+		assert.equal(fake.messages.length, 0);
+		const goal = (await readText(join(store, "goals", "goal-yield.md"))) ?? "";
+		assert.match(goal, /^claimed_by: null$/m);
 	});
 });
 
@@ -702,10 +784,12 @@ test("extension long task tools persist checkpoints and completion writeback", a
 		her(fake.pi);
 
 		const start = fake.tools.get("her_goal_start");
+		const next = fake.tools.get("her_goal_next");
 		const checkpoint = fake.tools.get("her_goal_checkpoint");
 		const complete = fake.tools.get("her_goal_complete");
 		const list = fake.tools.get("her_goal_list");
 		assert.ok(start);
+		assert.ok(next);
 		assert.ok(checkpoint);
 		assert.ok(complete);
 		assert.ok(list);
@@ -722,6 +806,12 @@ test("extension long task tools persist checkpoints and completion writeback", a
 		const id = (started.details as { id?: string }).id ?? "";
 		assert.match(id, /^goal-/);
 		assert.match(firstText(started), /started/);
+
+		const claimed = await executeTool(next, { runner: "extension-test", leaseMinutes: 10 }, ctx);
+		const claimDetails = claimed.details as { task?: { id?: string; claimedBy?: string } };
+		assert.equal(claimDetails.task?.id, id);
+		assert.equal(claimDetails.task?.claimedBy, "extension-test");
+		assert.match(firstText(claimed), /Write the first checkpoint/);
 
 		await executeTool(
 			checkpoint,

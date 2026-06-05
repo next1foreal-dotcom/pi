@@ -5,6 +5,7 @@ export type { UrlIntakeOptions, UrlIntakeResult } from "./intake.ts";
 export { readUrlForWorldNote } from "./intake.ts";
 export type {
 	LongTaskCheckpointOptions,
+	LongTaskClaimOptions,
 	LongTaskCompleteOptions,
 	LongTaskRecord,
 	LongTaskStartOptions,
@@ -12,6 +13,7 @@ export type {
 } from "./long-task.ts";
 export {
 	checkpointLongTask,
+	claimNextLongTask,
 	completeLongTask,
 	listLongTasks,
 	longTaskStatuses,

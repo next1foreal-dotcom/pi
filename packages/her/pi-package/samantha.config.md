@@ -19,7 +19,7 @@ Current status:
 - CONTEXT/FACTS/SAMANTHA/CHOICE-MODEL injection, turn capture, durable recall, remember, world-note, judgment, and memory-status tools are wired.
 - `/her-intake` is the rich conversational intake path.
 - `her-batch-intake` uses the workflow organ for multi-source fan-out, requires claim-ledger verification through `claim-verifier`, and keeps final persistence in the parent trusted Her writer.
-- Her long-task state is durable in `goals/*.md` via `her_goal_start`, `her_goal_checkpoint`, `her_goal_complete`, and `her_goal_list`; this is the resume substrate for Stage 4, not a claim that unattended autonomous running is finished.
-- Mirror is active and suppresses itself when an active `pi-codex-goal` entry owns the next continuation.
+- Her long-task state is durable in `goals/*.md` via `her_goal_start`, `her_goal_checkpoint`, `her_goal_complete`, and `her_goal_list`; idle continuation is claimed through the `goal-next` lease path and sent as a `her-goal-continuation` follow-up.
+- Mirror is active and suppresses itself when an active `pi-codex-goal` entry or a Her long-task continuation owns the next turn.
 - `pi-oracle` may be used for external analysis, but returned analysis is not durable until written through Her memory tools.
 - `agent-eval@0.0.1` is pinned as a placeholder; current critical eval coverage is repo-local node tests.

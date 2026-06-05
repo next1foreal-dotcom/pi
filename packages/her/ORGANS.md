@@ -41,7 +41,7 @@ Selected Her path:
 
 - T2 adversarial CONTEXT checks can use `pi-dynamic-workflows` directly: candidate agent -> skeptic agent -> structured keep/drop result.
 - Stage 3 quarantine and heavy intake use parent-only persistence: workflow/subagent results are staging only; the parent turn writes accepted durable notes through `her_world_note`, `her_judgment`, or future Her-only tools.
-- For true quarantine, worktree isolation, or resumable long jobs, use `pi-subagents` capabilities or a thin Her orchestrator that spawns restricted children, records state, and resumes deterministically. The first Her-owned long-task base now records durable `goals/*.md` ledgers through `her_goal_start`, `her_goal_checkpoint`, `her_goal_complete`, and `her_goal_list`; it is a state/resume substrate, not a full autonomous runner yet. Do not fake stronger guarantees with `pi-dynamic-workflows` prompt wording alone.
+- For true quarantine or worktree isolation, use `pi-subagents` capabilities or a thin Her orchestrator that spawns restricted children, records state, and resumes deterministically. The first Her-owned long-task runner now records durable `goals/*.md` ledgers through `her_goal_start`, `her_goal_checkpoint`, `her_goal_complete`, and `her_goal_list`, and claims idle continuations through the `goal-next` lease path. This is crash-resumable single-session continuation, not a full workflow manager or permission sandbox. Do not fake stronger guarantees with `pi-dynamic-workflows` prompt wording alone.
 
 ## Growth-loop ownership
 

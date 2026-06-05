@@ -804,6 +804,22 @@ test("CLI persists Her long task checkpoints and completion writeback", async ()
 	assert.equal(payload.result.path, `goals/${id}.md`);
 
 	result = await runCli(
+		["goal-next", "--runner", "cli-test", "--lease-minutes", "10", "--now", "2026-06-06T10:00:00.000Z", "--json"],
+		store,
+	);
+	payload = JSON.parse(result.stdout);
+	assert.equal(payload.result.id, id);
+	assert.equal(payload.result.claimedBy, "cli-test");
+	assert.equal(payload.result.claimExpiresAt, "2026-06-06T10:10:00.000Z");
+
+	result = await runCli(
+		["goal-next", "--runner", "cli-test-2", "--lease-minutes", "10", "--now", "2026-06-06T10:05:00.000Z", "--json"],
+		store,
+	);
+	payload = JSON.parse(result.stdout);
+	assert.equal(payload.result, null);
+
+	result = await runCli(
 		[
 			"goal-checkpoint",
 			"--id",

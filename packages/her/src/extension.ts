@@ -8,10 +8,12 @@ import type { ExtensionAPI, ExtensionContext, ProviderConfig } from "@earendil-w
 import { Type } from "typebox";
 import {
 	checkpointLongTask,
+	claimNextLongTask,
 	completeLongTask,
 	createEmbeddingSearch,
 	type IdeaData,
 	type JudgmentFields,
+	type LongTaskRecord,
 	listLongTasks,
 	longTaskStatuses,
 	Memory,
@@ -233,6 +235,19 @@ function renderMirror(note: NonNullable<Awaited<ReturnType<Memory["surface"]>>>)
 	return `A memory surfaced: ${note.id}\n\n${excerpt}`;
 }
 
+function renderGoalContinuation(task: LongTaskRecord): string {
+	return [
+		`Her long task continuation: ${task.id}`,
+		"",
+		`Objective: ${task.objective}`,
+		"",
+		"Next continuation:",
+		task.nextContinuation ?? "(none)",
+		"",
+		"Before stopping, call her_goal_checkpoint with progress, evidence, status, and the next continuation; or call her_goal_complete with the final outcome and any durable memory writeback.",
+	].join("\n");
+}
+
 function turnToRaw(event: { turnIndex: number; message: unknown; toolResults: unknown }, session: SessionMeta): string {
 	return `# Pi Turn ${event.turnIndex}
 
@@ -286,6 +301,12 @@ function syncDebounceMs(): number {
 	const parsed = Number(process.env.HER_SYNC_DEBOUNCE_MS);
 	if (Number.isFinite(parsed) && parsed >= 0) return parsed;
 	return 5 * 60 * 1000;
+}
+
+function goalLeaseMinutes(): number {
+	const parsed = Number(process.env.HER_GOAL_LEASE_MINUTES);
+	if (Number.isFinite(parsed) && parsed > 0) return parsed;
+	return 30;
 }
 
 function errorMessage(error: unknown): string {
@@ -393,6 +414,33 @@ export default function her(pi: ExtensionAPI): void {
 		});
 		try {
 			if (!ctx.isIdle() || ctx.hasPendingMessages() || hasActiveGoal(ctx)) return;
+			const task = await claimNextLongTask(memoryDir, {
+				leaseMinutes: goalLeaseMinutes(),
+				runner: `pi:${sessionId}`,
+			});
+			if (task) {
+				pi.sendMessage(
+					{
+						customType: "her-goal-continuation",
+						content: renderGoalContinuation(task),
+						display: true,
+						details: {
+							goalId: task.id,
+							claimExpiresAt: task.claimExpiresAt,
+							pinned: true,
+						},
+					},
+					{ deliverAs: "followUp", triggerTurn: true },
+				);
+				pi.appendEntry("her-state", {
+					phase: "4",
+					status: "goal-continuation-sent",
+					goalId: task.id,
+					claimExpiresAt: task.claimExpiresAt,
+					memoryDir,
+				});
+				return;
+			}
 			const digest = await mem.contextDigestDue();
 			if (digest.length > 0) {
 				pi.sendMessage(
@@ -514,6 +562,30 @@ export default function her(pi: ExtensionAPI): void {
 				...(params.nextContinuation ? { nextContinuation: params.nextContinuation } : {}),
 			});
 			return textResult(`Her long task started: ${result.id}`, { phase: "4", ...result, memoryDir });
+		},
+	});
+
+	pi.registerTool({
+		name: "her_goal_next",
+		label: "Her Goal Next",
+		description: "Claim the next active Her long-task continuation with a resumable lease.",
+		parameters: Type.Object({
+			runner: Type.Optional(Type.String()),
+			leaseMinutes: Type.Optional(Type.Number()),
+		}),
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			const task = await claimNextLongTask(memoryDir, {
+				leaseMinutes: params.leaseMinutes,
+				runner: params.runner ?? `tool:${ctx.sessionManager.getSessionId()}`,
+			});
+			if (!task) {
+				return textResult("No claimable Her long task.", { phase: "4", task: null, memoryDir });
+			}
+			return textResult(`Her long task claimed: ${task.id}\n\n${renderGoalContinuation(task)}`, {
+				phase: "4",
+				task,
+				memoryDir,
+			});
 		},
 	});
 
