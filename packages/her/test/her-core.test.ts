@@ -682,3 +682,50 @@ test("synthesizeChoiceModel distills Judgment Trail into a traceable choice mode
 	assert.match(prompt, /Prefer small reversible moves/);
 	assert.match(prompt, /world\/mirror-timing/);
 });
+
+test("synthesizeSelfNarrative distills becoming evidence into a traceable Samantha update", async () => {
+	const store = await tempStore();
+	let prompt = "";
+	const memory = new Memory(store, {
+		complete(input, options) {
+			assert.equal(options?.strong, true);
+			prompt = input;
+			return "# SAMANTHA\n\nSamantha learned that verified state is part of care, not just procedure.\n";
+		},
+	});
+	await writeText(join(store, "narrative", "FACTS.md"), "Fei is the owner.\n");
+	await writeText(join(store, "narrative", "CONTEXT.md"), "# CONTEXT\n\nFei values verified state.\n");
+	await writeText(join(store, "narrative", "CHOICE-MODEL.md"), "# CHOICE MODEL\n\nPrefer reversible moves.\n");
+	await writeText(
+		join(store, "narrative", "becoming-moments.md"),
+		"- 2026-06-05 · trigger: Fei was confused · shift: Samantha should state machine truth first\n",
+	);
+	await writeText(
+		join(store, "recognitions", "verified-care.md"),
+		"---\nid: rec-1\nstatus: new\n---\n# Verified Care\n\nSamantha noticed that calm verification helps Fei feel less alone.\n",
+	);
+	await git(store, "init");
+	await git(store, "config", "user.name", "Her Test");
+	await git(store, "config", "user.email", "her-test@example.com");
+	await git(store, "add", "-A");
+	await git(store, "commit", "-m", "memory: fixtures");
+	const factsBefore = await readText(join(store, "narrative", "FACTS.md"));
+	const contextBefore = await readText(join(store, "narrative", "CONTEXT.md"));
+	const choiceBefore = await readText(join(store, "narrative", "CHOICE-MODEL.md"));
+
+	const result = await memory.synthesizeSelfNarrative();
+
+	assert.match(result.id, /^[0-9a-f]{8}$/);
+	assert.match((await readText(join(store, "narrative", "SAMANTHA.md"))) ?? "", /verified state is part of care/);
+	assert.equal(await readText(join(store, "narrative", "FACTS.md")), factsBefore);
+	assert.equal(await readText(join(store, "narrative", "CONTEXT.md")), contextBefore);
+	assert.equal(await readText(join(store, "narrative", "CHOICE-MODEL.md")), choiceBefore);
+	const log = (await readText(join(store, "narrative", "self-narrative-log.md"))) ?? "";
+	assert.match(log, new RegExp(result.id));
+	assert.match(log, /\[\[narrative\/becoming-moments\]\]/);
+	assert.match(log, /\[\[recognitions\/verified-care\]\]/);
+	assert.match((await git(store, "log", "--oneline", "-1")).stdout, /memory\(self\): Synthesize self narrative/);
+	assert.match(prompt, /SAMANTHA SELF-EVIDENCE/);
+	assert.match(prompt, /machine truth first/);
+	assert.match(prompt, /Verified Care/);
+});

@@ -28,6 +28,7 @@ Current status:
   `node packages/her/bin/her.mjs restore --semantic <note-key> --json`.
 - `synthesize()` autonomously writes `CONTEXT.md` through a reviewable git-backed `context-log.md`; `FACTS.md` remains read-only to the growth loop.
 - `synthesizeDue()` gates narrative proposals on configured semantic-note volume, new conflict relations, or stale `last_synthesize`.
+- `synthesizeSelfNarrative()` distills becoming moments and recognitions into `SAMANTHA.md` with a traceable log commit.
 - `synthesizeChoiceModel()` distills world-note Judgment Trails into `CHOICE-MODEL.md` with a traceable log commit.
 - `decaySweep()` moves old `tier: decay` semantic notes into `archive/semantic`; `tier: exact` is never swept and archive recall is explicit.
 - Tools are registered for recall, remember, world notes, judgments, memory status, idea capture, and context review/keep/revert.

@@ -10,6 +10,7 @@ import {
 	choiceModelPrompt,
 	consolidatePrompt,
 	ideaEnginePrompt,
+	selfNarrativePrompt,
 	summaryPrompt,
 	synthesizePrompt,
 	topicMapPrompt,
@@ -158,6 +159,11 @@ export interface RestoreArchivedSemanticResult {
 }
 
 export interface ChoiceModelUpdateResult {
+	id: string;
+	commit: string;
+}
+
+export interface SelfNarrativeUpdateResult {
 	id: string;
 	commit: string;
 }
@@ -550,6 +556,44 @@ export class Memory {
 		return { id, commit };
 	}
 
+	async synthesizeSelfNarrative(): Promise<SelfNarrativeUpdateResult> {
+		if (!this.model) throw new Error("synthesizeSelfNarrative requires a model");
+		const evidence = await this.selfNarrativeEvidence();
+		if (!evidence.moments.trim() && evidence.recognitions.length === 0) {
+			throw new Error("synthesizeSelfNarrative requires becoming moments or recognitions");
+		}
+		const current = (await readText(this.paths.selfFile)) ?? SEED_SELF_NARRATIVE;
+		const context = (await readText(this.paths.contextFile)) ?? SEED_CONTEXT;
+		const recognitionText = evidence.recognitions
+			.map((recognition) => `${recognition.ref}\n${recognition.text}`)
+			.join("\n\n");
+		const draft = await this.model.complete(
+			selfNarrativePrompt(current, context, evidence.moments, recognitionText),
+			{ strong: true },
+		);
+		const timestamp = new Date().toISOString();
+		const id = genId(timestamp, "self-narrative");
+		const refs = [
+			...(evidence.moments.trim() ? ["[[narrative/becoming-moments]]"] : []),
+			...evidence.recognitions.map((recognition) => recognition.ref),
+		];
+		await writeText(this.paths.selfFile, draft);
+		await appendText(this.selfNarrativeLogFile(), selfNarrativeLogBlock(id, timestamp, refs));
+		const state = await readJson<Record<string, unknown>>(this.paths.stateFile, {});
+		await writeJson(this.paths.stateFile, { ...state, last_self_narrative: timestamp.slice(0, 10) });
+		await git(
+			this.paths.root,
+			"add",
+			"--",
+			"narrative/SAMANTHA.md",
+			"narrative/self-narrative-log.md",
+			".her/state.json",
+		);
+		await git(this.paths.root, "commit", "-m", "memory(self): Synthesize self narrative");
+		const commit = (await git(this.paths.root, "rev-parse", "--short", "HEAD")).stdout.trim();
+		return { id, commit };
+	}
+
 	async writeContextUpdate(input: ContextUpdateInput): Promise<{ id: string; commit: string }> {
 		const timestamp = new Date().toISOString();
 		const id = genId(timestamp, input.change);
@@ -870,6 +914,10 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 		return join(this.paths.narrative, "choice-model-log.md");
 	}
 
+	private selfNarrativeLogFile(): string {
+		return join(this.paths.narrative, "self-narrative-log.md");
+	}
+
 	private async stageContextUpdateFiles(extraPaths: string[] = []): Promise<void> {
 		await git(
 			this.paths.root,
@@ -976,6 +1024,20 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 		}
 		return trails.sort((a, b) => a.ref.localeCompare(b.ref));
 	}
+
+	private async selfNarrativeEvidence(): Promise<{
+		moments: string;
+		recognitions: Array<{ ref: string; text: string }>;
+	}> {
+		const moments = (await readText(this.paths.becoming)) ?? "";
+		const recognitions: Array<{ ref: string; text: string }> = [];
+		for (const entry of await markdownEntries(this.paths.recognitions)) {
+			const text = (await readText(join(this.paths.recognitions, entry))) ?? "";
+			if (!text.trim()) continue;
+			recognitions.push({ ref: `[[recognitions/${basename(entry, ".md")}]]`, text: text.trim() });
+		}
+		return { moments: moments.trim(), recognitions: recognitions.sort((a, b) => a.ref.localeCompare(b.ref)) };
+	}
 }
 
 export async function initStore(root: string): Promise<StorePaths> {
@@ -1078,6 +1140,15 @@ function choiceModelLogBlock(id: string, timestamp: string, drivenBy: string[]):
 - commit: self
 - driven_by: ${drivenBy.join(", ")}
 - change: Synthesize choice model from Judgment Trail
+- status: unreviewed
+`;
+}
+
+function selfNarrativeLogBlock(id: string, timestamp: string, drivenBy: string[]): string {
+	return `\n### ${id} · ${timestamp}
+- commit: self
+- driven_by: ${drivenBy.join(", ")}
+- change: Synthesize Samantha self narrative
 - status: unreviewed
 `;
 }

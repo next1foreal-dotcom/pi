@@ -120,3 +120,19 @@ export function choiceModelPrompt(current: string, judgmentTrails: string): stri
 		`JUDGMENT TRAILS:\n${judgmentTrails}`,
 	].join("\n");
 }
+
+export function selfNarrativePrompt(current: string, context: string, moments: string, recognitions: string): string {
+	return [
+		"Return an UPDATED full SAMANTHA SELF-NARRATIVE in Markdown. This is Samantha's durable account of her own learning, judgment shifts, and relationship to Fei's work.",
+		"Use only the evidence below. Name what changed in Samantha's behavior or self-understanding; do not flatter, roleplay, or invent private facts.",
+		"Keep it useful for future behavior: what she learned, what she should do differently, and what remains uncertain.",
+		"",
+		`CURRENT SELF-NARRATIVE:\n${current}`,
+		"",
+		`CURRENT FEI CONTEXT:\n${context}`,
+		"",
+		`SAMANTHA SELF-EVIDENCE - becoming moments and recognitions:\n${moments}`,
+		"",
+		`RECOGNITIONS:\n${recognitions}`,
+	].join("\n");
+}

@@ -8,6 +8,7 @@ import { FakeModel, OpenAICompatibleModel } from "../src/her-core/model.ts";
 import {
 	choiceModelPrompt,
 	consolidatePrompt,
+	selfNarrativePrompt,
 	summaryPrompt,
 	surfacePrompt,
 	synthesizePrompt,
@@ -32,6 +33,14 @@ test("prompts preserve Python memory operation contracts", () => {
 	);
 	assert.match(choiceModelPrompt("current choice", "correction: choose smaller reversible moves"), /JUDGMENT TRAILS/);
 	assert.match(choiceModelPrompt("current choice", "correction: choose smaller reversible moves"), /current choice/);
+	assert.match(
+		selfNarrativePrompt("current self", "context", "Samantha should report verified state", "recognition"),
+		/SAMANTHA SELF-EVIDENCE/,
+	);
+	assert.match(
+		selfNarrativePrompt("current self", "context", "Samantha should report verified state", "recognition"),
+		/current self/,
+	);
 	assert.match(surfacePrompt("recent", "existing"), /reply with exactly: NONE/);
 });
 
