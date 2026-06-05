@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -287,6 +287,77 @@ test("CLI persists an intake source with recall verification as JSON", async () 
 	assert.match(world, /\[\[mirror\]\]/);
 	const seen = JSON.parse(await readFile(join(store, ".her", "seen.json"), "utf8"));
 	assert.equal(seen[payload.result.contentHash], payload.result.noteId);
+});
+
+test("CLI intake-source can update related topics and ideas immediately", async () => {
+	const { store } = await gitBackedStore();
+
+	await withLocalChatModel(
+		(prompt) => {
+			if (prompt.includes("Group these knowledge units")) {
+				assert.match(prompt, /agent-intake-patterns/);
+				return JSON.stringify({
+					maps: [
+						{
+							theme: "Intake Practice",
+							summary: "Trusted source intake with recall verification.",
+							members: ["agent-intake-patterns"],
+						},
+					],
+				});
+			}
+			if (prompt.includes("Idea Engine")) {
+				assert.match(prompt, /Intake Practice/);
+				return JSON.stringify({
+					ideas: [
+						{
+							title: "Intake as graph ignition",
+							connects: ["agent-intake-patterns"],
+							insight: "A source should update live connection surfaces when it enters memory.",
+							spark: "Use intake as the trigger for local topic and idea refreshes.",
+							kind: "world-x-system",
+						},
+					],
+				});
+			}
+			throw new Error(`unexpected prompt: ${prompt.slice(0, 80)}`);
+		},
+		async (modelEnv, prompts) => {
+			const result = await runCli(
+				[
+					"intake-source",
+					"--title",
+					"Agent Intake Patterns",
+					"--source-url",
+					"https://example.com/intake-surfaces",
+					"--source-type",
+					"article",
+					"--extracted",
+					"A complete source about intake as the moment to update topics and ideas.",
+					"--coverage",
+					"Read full short article; no sections skipped.",
+					"--read",
+					"Intake should refresh live connection surfaces.",
+					"--take",
+					"This tightens Stage 3 graph ignition.",
+					"--update-surfaces",
+					"--json",
+				],
+				store,
+				modelEnv,
+			);
+			const payload = JSON.parse(result.stdout);
+
+			assert.equal(payload.result.surfaces.status, "updated");
+			assert.deepEqual(payload.result.surfaces.topicMaps, ["intake-practice"]);
+			assert.equal(payload.result.surfaces.ideas[0].title, "Intake as graph ignition");
+			assert.match(await readFile(join(store, "topics", "intake-practice.md"), "utf8"), /Trusted source intake/);
+			const ideaFiles = await readdir(join(store, "ideas"));
+			assert.equal(ideaFiles.length, 1);
+			assert.match(await readFile(join(store, "ideas", ideaFiles[0]), "utf8"), /graph ignition/);
+			assert.equal(prompts.length, 2);
+		},
+	);
 });
 
 test("CLI intakes an ordinary URL as a world note", async () => {

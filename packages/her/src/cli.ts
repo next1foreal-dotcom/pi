@@ -26,8 +26,8 @@ type CliCommand =
 	| { kind: "decay"; json: boolean; olderThanDays?: number; now?: string }
 	| { kind: "help" }
 	| { kind: "ideas"; json: boolean }
-	| { kind: "intake-source"; data: WorldNoteData; json: boolean }
-	| { kind: "intake-url"; json: boolean; maxBytes?: number; url: string }
+	| { kind: "intake-source"; data: WorldNoteData; json: boolean; updateSurfaces: boolean }
+	| { kind: "intake-url"; json: boolean; maxBytes?: number; updateSurfaces: boolean; url: string }
 	| { kind: "judgment"; fields: JudgmentFields; json: boolean; noteId: string }
 	| { kind: "memory-status"; json: boolean; noteId: string; reason: string; status: WorldNoteData["memoryStatus"] }
 	| { kind: "recall"; archive: boolean; json: boolean; k?: number; query: string }
@@ -99,6 +99,7 @@ interface CliIntakeSourcePayload extends CliStatusPayload {
 		noteId: string;
 		contentHash: string;
 		recall: Array<{ id: string; kind: string; path: string }>;
+		surfaces: CliSurfaceUpdateResult;
 	};
 }
 
@@ -113,7 +114,16 @@ interface CliIntakeUrlPayload extends CliStatusPayload {
 		sourceUrl: string;
 		title: string;
 		truncated: boolean;
+		surfaces: CliSurfaceUpdateResult;
 	};
+}
+
+interface CliSurfaceUpdateResult {
+	status: "skipped" | "updated" | "failed";
+	topicMaps: string[];
+	ideas: Array<{ id: string; title: string; kind: string }>;
+	error?: string;
+	reason?: string;
 }
 
 interface CliJudgmentPayload extends CliStatusPayload {
@@ -279,12 +289,14 @@ export async function runHerCli(
 		const recall = await memory.recall(`${command.data.title} ${command.data.sourceUrl} ${command.data.take}`, {
 			k: 3,
 		});
+		const surfaces = await updateSurfaces(memory, command.updateSurfaces);
 		const payload = {
 			...(await buildStatusPayload(memoryDir, memory)),
 			result: {
 				noteId,
 				contentHash: command.data.contentHash,
 				recall: recall.map((note) => ({ id: note.id, kind: note.kind, path: note.path })),
+				surfaces,
 			},
 		};
 		writePayload(io.stdout, payload, command.json, renderIntakeSource);
@@ -300,6 +312,7 @@ export async function runHerCli(
 		const recall = await memory.recall(`${intake.data.title} ${intake.data.sourceUrl} ${intake.data.take}`, {
 			k: 3,
 		});
+		const surfaces = await updateSurfaces(memory, command.updateSurfaces);
 		const payload = {
 			...(await buildStatusPayload(memoryDir, memory)),
 			result: {
@@ -312,6 +325,7 @@ export async function runHerCli(
 				sourceUrl: intake.data.sourceUrl,
 				title: intake.data.title,
 				truncated: intake.truncated,
+				surfaces,
 			},
 		};
 		writePayload(io.stdout, payload, command.json, renderIntakeUrl);
@@ -611,6 +625,7 @@ function parseRecall(argv: string[]): CliCommand {
 
 function parseIntakeSource(argv: string[]): CliCommand {
 	let json = false;
+	let updateSurfaces = false;
 	let title: string | undefined;
 	let sourceUrl: string | undefined;
 	let sourceType: string | undefined;
@@ -629,6 +644,10 @@ function parseIntakeSource(argv: string[]): CliCommand {
 		const arg = argv[i];
 		if (arg === "--json") {
 			json = true;
+			continue;
+		}
+		if (arg === "--update-surfaces") {
+			updateSurfaces = true;
 			continue;
 		}
 		if (arg === "--title") {
@@ -704,6 +723,7 @@ function parseIntakeSource(argv: string[]): CliCommand {
 	return {
 		kind: "intake-source",
 		json,
+		updateSurfaces,
 		data: { ...data, contentHash: intakeContentHash(data.sourceUrl, data.extracted) },
 	};
 }
@@ -711,12 +731,17 @@ function parseIntakeSource(argv: string[]): CliCommand {
 function parseIntakeUrl(argv: string[]): CliCommand {
 	let json = false;
 	let maxBytes: number | undefined;
+	let updateSurfaces = false;
 	let url: string | undefined;
 
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i];
 		if (arg === "--json") {
 			json = true;
+			continue;
+		}
+		if (arg === "--update-surfaces") {
+			updateSurfaces = true;
 			continue;
 		}
 		if (arg === "--url") {
@@ -730,7 +755,7 @@ function parseIntakeUrl(argv: string[]): CliCommand {
 		throw new UsageError(`unknown intake-url option: ${arg}`);
 	}
 
-	return { kind: "intake-url", json, maxBytes, url: requireNonBlank(url, "--url") };
+	return { kind: "intake-url", json, maxBytes, updateSurfaces, url: requireNonBlank(url, "--url") };
 }
 
 function parseJudgment(argv: string[]): CliCommand {
@@ -832,6 +857,25 @@ async function buildStatusPayload(memoryDir: string, memory: Memory): Promise<Cl
 		lastSyncedAt: status.lastSyncedAt ?? null,
 		lastSyncedAtError: status.lastSyncedAtError,
 	};
+}
+
+async function updateSurfaces(memory: Memory, enabled: boolean): Promise<CliSurfaceUpdateResult> {
+	if (!enabled) {
+		return {
+			status: "skipped",
+			topicMaps: [],
+			ideas: [],
+			reason: "pass --update-surfaces to refresh related topics and ideas after intake",
+		};
+	}
+	const topicMaps: string[] = [];
+	try {
+		topicMaps.push(...(await memory.buildTopicMaps()));
+		const ideas = await memory.generateIdeas();
+		return { status: "updated", topicMaps, ideas };
+	} catch (error) {
+		return { status: "failed", topicMaps, ideas: [], error: errorMessage(error) };
+	}
 }
 
 function renderStatus(payload: CliStatusPayload): string {
@@ -946,6 +990,7 @@ function renderIntakeSource(payload: CliIntakeSourcePayload): string {
 		`Her intake source saved: ${payload.result.noteId}`,
 		`content hash: ${payload.result.contentHash}`,
 		`recall hits: ${payload.result.recall.map((note) => note.id).join(", ") || "(none)"}`,
+		renderSurfaceUpdate(payload.result.surfaces),
 		"",
 		renderStatus(payload),
 	].join("\n");
@@ -960,9 +1005,17 @@ function renderIntakeUrl(payload: CliIntakeUrlPayload): string {
 		`bytes read: ${payload.result.bytesRead}${payload.result.truncated ? " (truncated)" : ""}`,
 		`content hash: ${payload.result.contentHash}`,
 		`recall hits: ${payload.result.recall.map((note) => note.id).join(", ") || "(none)"}`,
+		renderSurfaceUpdate(payload.result.surfaces),
 		"",
 		renderStatus(payload),
 	].join("\n");
+}
+
+function renderSurfaceUpdate(result: CliSurfaceUpdateResult): string {
+	const topics = result.topicMaps.length > 0 ? result.topicMaps.join(", ") : "(none)";
+	const ideas = result.ideas.length > 0 ? result.ideas.map((idea) => idea.title).join(", ") : "(none)";
+	const detail = result.error ? `; error: ${result.error}` : result.reason ? `; ${result.reason}` : "";
+	return `surface update: ${result.status}; topics: ${topics}; ideas: ${ideas}${detail}`;
 }
 
 function renderChoiceModel(payload: CliChoiceModelPayload): string {
@@ -994,8 +1047,8 @@ function usage(): string {
   her consolidate [--limit <n>] [--json]
   her decay [--older-than-days <days>] [--now <YYYY-MM-DD>] [--json]
   her ideas [--json]
-  her intake-source --title <title> --source-url <url> --source-type <kind> --extracted <text> --coverage <text> --read <text> --take <text> [--memory-status active|archive_only|needs_deep_read] [--memory-status-reason <text>] [--claim-json <json>] [--steal <text>] [--connection <id>] [--possible-move <text>] [--json]
-  her intake-url --url <url> [--max-bytes <n>] [--json]
+  her intake-source --title <title> --source-url <url> --source-type <kind> --extracted <text> --coverage <text> --read <text> --take <text> [--memory-status active|archive_only|needs_deep_read] [--memory-status-reason <text>] [--claim-json <json>] [--steal <text>] [--connection <id>] [--possible-move <text>] [--update-surfaces] [--json]
+  her intake-url --url <url> [--max-bytes <n>] [--update-surfaces] [--json]
   her judgment --note <id> [--choice <text>] [--correction <text>] [--reason <text>] [--attraction <text>] [--inferred-intent <text>] [--rejection <text>] [--hesitation <text>] [--outcome <text>] [--json]
   her memory-status --note <id> --status active|archive_only|needs_deep_read --reason <text> [--json]
   her recall --query <text> [--k <n>] [--archive] [--json]
