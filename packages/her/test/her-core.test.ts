@@ -14,6 +14,7 @@ import {
 	SEED_CHOICE_MODEL,
 	SEED_CONTEXT,
 	SEED_SELF_NARRATIVE,
+	writeJson,
 	writeText,
 } from "../src/her-core/index.ts";
 
@@ -160,33 +161,60 @@ test("recall searches markdown corpus", async () => {
 	await writeText(join(store, "semantic", "own-memory.md"), "# Own memory\n\nBorrow the harness, own memory.\n");
 	const hits = await new Memory(store).recall("harness memory");
 	assert.equal(hits[0]?.id, "semantic/own-memory");
+	const state = await readJson<{ access?: Record<string, { count?: number }> }>(join(store, ".her", "state.json"), {});
+	assert.equal(state.access?.["semantic/own-memory"]?.count, 1);
 });
 
-test("decaySweep archives only old decay-tier semantic notes and keeps them recoverable", async () => {
+test("decaySweep archives only old unaccessed decay-tier semantic notes and keeps them recoverable", async () => {
 	const store = await tempStore();
 	await writeText(
 		join(store, "semantic", "old-noise.md"),
 		"---\ntier: decay\nupdated: 2020-01-01\n---\n# Old noise\n\nA stale low-value note that should leave the main surface.\n",
 	);
 	await writeText(
+		join(store, "semantic", "old-useful.md"),
+		"---\ntier: decay\nupdated: 2020-01-01\n---\n# Old useful\n\nA stale but repeatedly useful memory.\n",
+	);
+	await writeText(
 		join(store, "semantic", "identity.md"),
 		"---\ntier: exact\nupdated: 2020-01-01\n---\n# Identity\n\nExact memory should never decay.\n",
 	);
 
+	assert.equal((await new Memory(store).recall("repeatedly useful"))[0]?.id, "semantic/old-useful");
 	const result = await new Memory(store).decaySweep({ olderThanDays: 30, now: "2026-06-05" });
 
 	assert.deepEqual(result.archivedKeys, ["old-noise"]);
 	assert.equal(await readText(join(store, "semantic", "old-noise.md")), undefined);
+	assert.match((await readText(join(store, "semantic", "old-useful.md"))) ?? "", /repeatedly useful memory/);
 	assert.match((await readText(join(store, "semantic", "identity.md"))) ?? "", /Exact memory should never decay/);
 	const archived = (await readText(join(store, "archive", "semantic", "old-noise.md"))) ?? "";
 	const parsed = parseFrontmatter(archived);
 	assert.equal(parsed.data.tier, "archive");
 	assert.equal(parsed.data.archived_at, "2026-06-05");
-	assert.match(String(parsed.data.archive_reason ?? ""), /older than 30 days/);
+	assert.equal(parsed.data.access_count, 0);
+	assert.match(String(parsed.data.archive_reason ?? ""), /effective age/);
 	assert.match(parsed.body, /stale low-value note/);
 
-	assert.equal((await new Memory(store).recall("stale low-value")).length, 0);
-	assert.equal((await new Memory(store).recallArchive("stale low-value"))[0]?.id, "archive/semantic/old-noise");
+	assert.equal((await new Memory(store).recallArchive("low-value note"))[0]?.id, "archive/semantic/old-noise");
+});
+
+test("decaySweep gives frequently accessed old memory an age boost", async () => {
+	const store = await tempStore();
+	await writeText(
+		join(store, "semantic", "resurfaced.md"),
+		"---\ntier: decay\nupdated: 2025-10-01\n---\n# Resurfaced\n\nAn older note still useful enough to keep.\n",
+	);
+	await writeJson(join(store, ".her", "state.json"), {
+		access: {
+			"semantic/resurfaced": { count: 5, lastAt: "2025-01-01T00:00:00.000Z" },
+		},
+	});
+
+	const result = await new Memory(store).decaySweep({ olderThanDays: 180, now: "2026-06-05" });
+
+	assert.deepEqual(result.archivedKeys, []);
+	assert.match((await readText(join(store, "semantic", "resurfaced.md"))) ?? "", /still useful/);
+	assert.equal(await readText(join(store, "archive", "semantic", "resurfaced.md")), undefined);
 });
 
 test("restoreArchivedSemantic returns an archived note to the main semantic namespace", async () => {

@@ -150,6 +150,9 @@ export interface SynthesizeDueResult {
 export interface DecaySweepOptions {
 	olderThanDays?: number;
 	now?: string;
+	accessBoostDays?: number;
+	maxAccessBoostDays?: number;
+	recentAccessGraceDays?: number;
 }
 
 export interface DecaySweepResult {
@@ -238,7 +241,9 @@ export class Memory {
 	}
 
 	async recall(query: string, opts: { k?: number } = {}): Promise<Note[]> {
-		return lexicalSearch(query, await this.corpus(), opts.k ?? 5);
+		const hits = lexicalSearch(query, await this.corpus(), opts.k ?? 5);
+		await this.recordAccess(hits.map((hit) => hit.id));
+		return hits;
 	}
 
 	async recallArchive(query: string, opts: { k?: number } = {}): Promise<Note[]> {
@@ -280,6 +285,7 @@ export class Memory {
 				},
 			},
 		});
+		await this.recordAccess([hit.id]);
 		return hit;
 	}
 
@@ -413,8 +419,15 @@ export class Memory {
 
 	async decaySweep(opts: DecaySweepOptions = {}): Promise<DecaySweepResult> {
 		const olderThanDays = opts.olderThanDays ?? 180;
+		const accessBoostDays = opts.accessBoostDays ?? 30;
+		const maxAccessBoostDays = opts.maxAccessBoostDays ?? 120;
+		const recentAccessGraceDays = opts.recentAccessGraceDays ?? 30;
 		const nowText = opts.now ?? today();
 		const nowTime = parseDate(nowText) ?? Date.now();
+		const state = await readJson<{ access?: Record<string, { count?: unknown; lastAt?: unknown }> }>(
+			this.paths.stateFile,
+			{},
+		);
 		const archivedKeys: string[] = [];
 		let kept = 0;
 
@@ -427,16 +440,38 @@ export class Memory {
 				continue;
 			}
 			const noteTime = parseDate(String(parsed.data.updated ?? parsed.data.created ?? ""));
-			if (noteTime === undefined || Math.floor((nowTime - noteTime) / 86400000) <= olderThanDays) {
+			const ageDays = noteTime === undefined ? undefined : Math.floor((nowTime - noteTime) / 86400000);
+			if (ageDays === undefined || ageDays <= olderThanDays) {
 				kept++;
 				continue;
 			}
 
 			const key = basename(entry, ".md");
+			const noteId = `semantic/${key}`;
+			const access = state.access?.[noteId];
+			const accessCount = Math.max(0, Math.floor(Number(access?.count) || 0));
+			const lastAccessedAt = typeof access?.lastAt === "string" ? access.lastAt : undefined;
+			const lastAccessedTime = parseDate(lastAccessedAt);
+			const daysSinceAccess =
+				lastAccessedTime === undefined ? undefined : Math.floor((nowTime - lastAccessedTime) / 86400000);
+			if (daysSinceAccess !== undefined && recentAccessGraceDays > 0 && daysSinceAccess <= recentAccessGraceDays) {
+				kept++;
+				continue;
+			}
+			const accessBoost = Math.min(accessCount * accessBoostDays, maxAccessBoostDays);
+			const effectiveAgeDays = Math.max(0, ageDays - accessBoost);
+			if (effectiveAgeDays <= olderThanDays) {
+				kept++;
+				continue;
+			}
+
 			parsed.data.pre_archive_tier = tier;
 			parsed.data.tier = "archive";
 			parsed.data.archived_at = nowText.slice(0, 10);
-			parsed.data.archive_reason = `decay-tier semantic note older than ${olderThanDays} days`;
+			parsed.data.access_count = accessCount;
+			if (lastAccessedAt) parsed.data.last_accessed_at = lastAccessedAt;
+			parsed.data.decay_effective_age_days = effectiveAgeDays;
+			parsed.data.archive_reason = `decay-tier semantic note effective age ${effectiveAgeDays} days older than ${olderThanDays} days`;
 			await writeText(join(this.paths.archiveSemantic, entry), `${frontmatter(parsed.data)}${parsed.body}`);
 			await unlink(sourcePath);
 			archivedKeys.push(key);
@@ -792,6 +827,25 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 		await this.addFileDoc(docs, this.paths.becoming, "becoming");
 		await this.addDirDocs(docs, this.paths.recognitions, "recognition");
 		return docs;
+	}
+
+	private async recordAccess(noteIds: string[]): Promise<void> {
+		const uniqueIds = [...new Set(noteIds)].filter(Boolean);
+		if (uniqueIds.length === 0) return;
+		const state = await readJson<{ access?: Record<string, { count?: number; lastAt?: string }> }>(
+			this.paths.stateFile,
+			{},
+		);
+		const at = new Date().toISOString();
+		const access = { ...(state.access ?? {}) };
+		for (const id of uniqueIds) {
+			const current = access[id];
+			access[id] = {
+				count: Math.max(0, Math.floor(Number(current?.count) || 0)) + 1,
+				lastAt: at,
+			};
+		}
+		await writeJson(this.paths.stateFile, { ...state, access });
 	}
 
 	private async archiveCorpus(): Promise<CorpusDoc[]> {
