@@ -13,6 +13,7 @@ import {
 	Memory,
 	type MemorySyncStatus,
 	OpenAICompatibleModel,
+	readUrlForWorldNote,
 	type SelfNarrativeUpdateResult,
 	type WorldNoteData,
 } from "./her-core/index.ts";
@@ -29,6 +30,7 @@ type CliCommand =
 	| { kind: "help" }
 	| { kind: "ideas"; json: boolean }
 	| { kind: "intake-source"; data: WorldNoteData; json: boolean }
+	| { kind: "intake-url"; json: boolean; maxBytes?: number; url: string }
 	| { kind: "judgment"; fields: JudgmentFields; json: boolean; noteId: string }
 	| { kind: "memory-status"; json: boolean; noteId: string; reason: string; status: WorldNoteData["memoryStatus"] }
 	| { kind: "recall"; archive: boolean; json: boolean; k?: number; query: string }
@@ -103,6 +105,20 @@ interface CliIntakeSourcePayload extends CliStatusPayload {
 	};
 }
 
+interface CliIntakeUrlPayload extends CliStatusPayload {
+	result: {
+		bytesRead: number;
+		contentHash: string;
+		memoryStatus: WorldNoteData["memoryStatus"];
+		noteId: string;
+		recall: Array<{ id: string; kind: string; path: string }>;
+		sourceType: string;
+		sourceUrl: string;
+		title: string;
+		truncated: boolean;
+	};
+}
+
 interface CliJudgmentPayload extends CliStatusPayload {
 	result: {
 		noteId: string;
@@ -138,6 +154,7 @@ export function parseArgs(argv: string[]): CliCommand {
 	if (command === "decay") return parseDecay(rest);
 	if (command === "ideas") return parseJsonOnly("ideas", rest);
 	if (command === "intake-source") return parseIntakeSource(rest);
+	if (command === "intake-url") return parseIntakeUrl(rest);
 	if (command === "judgment") return parseJudgment(rest);
 	if (command === "memory-status") return parseMemoryStatusCommand(rest);
 	if (command === "recall") return parseRecall(rest);
@@ -274,6 +291,33 @@ export async function runHerCli(
 			},
 		};
 		writePayload(io.stdout, payload, command.json, renderIntakeSource);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "intake-url") {
+		const intake = await readUrlForWorldNote(command.url, {
+			allowLocal: env.HER_ALLOW_LOCAL_URLS === "1" || env.HER_ALLOW_LOCAL_INTAKE === "1",
+			maxBytes: command.maxBytes,
+		});
+		const noteId = await memory.writeWorldNote(intake.data);
+		const recall = await memory.recall(`${intake.data.title} ${intake.data.sourceUrl} ${intake.data.take}`, {
+			k: 3,
+		});
+		const payload = {
+			...(await buildStatusPayload(memoryDir, memory)),
+			result: {
+				bytesRead: intake.bytesRead,
+				contentHash: intake.data.contentHash,
+				memoryStatus: intake.data.memoryStatus,
+				noteId,
+				recall: recall.map((note) => ({ id: note.id, kind: note.kind, path: note.path })),
+				sourceType: intake.data.sourceType,
+				sourceUrl: intake.data.sourceUrl,
+				title: intake.data.title,
+				truncated: intake.truncated,
+			},
+		};
+		writePayload(io.stdout, payload, command.json, renderIntakeUrl);
 		return payload.status.status === "unknown" ? 1 : 0;
 	}
 
@@ -667,6 +711,31 @@ function parseIntakeSource(argv: string[]): CliCommand {
 	};
 }
 
+function parseIntakeUrl(argv: string[]): CliCommand {
+	let json = false;
+	let maxBytes: number | undefined;
+	let url: string | undefined;
+
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--url") {
+			url = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--max-bytes") {
+			maxBytes = parsePositiveNumber(requireOptionValue(argv[++i], arg), arg);
+			continue;
+		}
+		throw new UsageError(`unknown intake-url option: ${arg}`);
+	}
+
+	return { kind: "intake-url", json, maxBytes, url: requireNonBlank(url, "--url") };
+}
+
 function parseJudgment(argv: string[]): CliCommand {
 	let json = false;
 	let noteId: string | undefined;
@@ -896,6 +965,20 @@ function renderIntakeSource(payload: CliIntakeSourcePayload): string {
 	].join("\n");
 }
 
+function renderIntakeUrl(payload: CliIntakeUrlPayload): string {
+	return [
+		`Her intake URL saved: ${payload.result.noteId}`,
+		`title: ${payload.result.title}`,
+		`source: ${payload.result.sourceUrl}`,
+		`memory status: ${payload.result.memoryStatus}`,
+		`bytes read: ${payload.result.bytesRead}${payload.result.truncated ? " (truncated)" : ""}`,
+		`content hash: ${payload.result.contentHash}`,
+		`recall hits: ${payload.result.recall.map((note) => note.id).join(", ") || "(none)"}`,
+		"",
+		renderStatus(payload),
+	].join("\n");
+}
+
 function renderChoiceModel(payload: CliChoiceModelPayload): string {
 	return [`Her choice model synthesized: ${payload.result.commit}`, "", renderStatus(payload)].join("\n");
 }
@@ -926,6 +1009,7 @@ function usage(): string {
   her decay [--older-than-days <days>] [--now <YYYY-MM-DD>] [--json]
   her ideas [--json]
   her intake-source --title <title> --source-url <url> --source-type <kind> --extracted <text> --coverage <text> --read <text> --take <text> [--memory-status active|archive_only|needs_deep_read] [--memory-status-reason <text>] [--claim-json <json>] [--steal <text>] [--connection <id>] [--possible-move <text>] [--json]
+  her intake-url --url <url> [--max-bytes <n>] [--json]
   her judgment --note <id> [--choice <text>] [--correction <text>] [--reason <text>] [--attraction <text>] [--inferred-intent <text>] [--rejection <text>] [--hesitation <text>] [--outcome <text>] [--json]
   her memory-status --note <id> --status active|archive_only|needs_deep_read --reason <text> [--json]
   her recall --query <text> [--k <n>] [--archive] [--json]

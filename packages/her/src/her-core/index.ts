@@ -1,5 +1,7 @@
 export type { HerConfig } from "./config.ts";
 export { DEFAULT_CONFIG, loadConfig, renderConfig } from "./config.ts";
+export type { UrlIntakeOptions, UrlIntakeResult } from "./intake.ts";
+export { readUrlForWorldNote } from "./intake.ts";
 export type {
 	CaptureMeta,
 	ChoiceModelUpdateResult,

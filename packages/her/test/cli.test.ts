@@ -94,6 +94,25 @@ async function withLocalChatModel<T>(
 	}
 }
 
+async function withLocalSource<T>(
+	response: { body: string; contentType?: string; path?: string },
+	fn: (url: string) => Promise<T>,
+): Promise<T> {
+	const server = createServer((_req, res) => {
+		res.writeHead(200, { "content-type": response.contentType ?? "text/html; charset=utf-8" });
+		res.end(response.body);
+	});
+	await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+	const { port } = server.address() as AddressInfo;
+	try {
+		return await fn(`http://127.0.0.1:${port}${response.path ?? "/source"}`);
+	} finally {
+		await new Promise<void>((resolveClose, reject) =>
+			server.close((error) => (error ? reject(error) : resolveClose())),
+		);
+	}
+}
+
 test("CLI reports Her memory sync status as JSON", async () => {
 	const { store } = await gitBackedStore();
 
@@ -230,6 +249,75 @@ test("CLI persists an intake source with recall verification as JSON", async () 
 	assert.match(world, /\[\[mirror\]\]/);
 	const seen = JSON.parse(await readFile(join(store, ".her", "seen.json"), "utf8"));
 	assert.equal(seen[payload.result.contentHash], payload.result.noteId);
+});
+
+test("CLI intakes an ordinary URL as a world note", async () => {
+	const { store } = await gitBackedStore();
+
+	await withLocalSource(
+		{
+			body: `<!doctype html>
+				<html>
+					<head><title>Readable Source</title><script>window.secret = "drop me";</script></head>
+					<body>
+						<article>
+							<h1>Readable Source</h1>
+							<p>Readable source content for Her URL intake recall verification.</p>
+						</article>
+					</body>
+				</html>`,
+		},
+		async (url) => {
+			const result = await runCli(["intake-url", "--url", url, "--json"], store, { HER_ALLOW_LOCAL_URLS: "1" });
+			const payload = JSON.parse(result.stdout);
+
+			assert.match(payload.result.noteId, /^[0-9a-f]{8}$/);
+			assert.match(payload.result.contentHash, /^[0-9a-f]{64}$/);
+			assert.equal(payload.result.sourceType, "article");
+			assert.equal(payload.result.memoryStatus, "active");
+			assert.equal(payload.result.truncated, false);
+			assert.ok(payload.result.bytesRead > 0);
+			assert.ok(payload.result.recall.some((note: { id: string }) => note.id === "world/readable-source"));
+			assert.equal(payload.status.status, "unsynced");
+
+			const world = await readFile(join(store, "world", "readable-source.md"), "utf8");
+			assert.match(world, /memory_status: active/);
+			assert.match(world, /Readable source content for Her URL intake recall verification\./);
+			assert.match(world, /Read full fetched article text/);
+			assert.doesNotMatch(world, /window\.secret/);
+			assert.doesNotMatch(world, /<script>/);
+		},
+	);
+});
+
+test("CLI saves oversized URL intake as needs_deep_read", async () => {
+	const { store } = await gitBackedStore();
+	const longBody = `# Long URL Fixture\n\n${"This source is longer than the minimal intake byte budget. ".repeat(20)}`;
+
+	await withLocalSource(
+		{
+			body: longBody,
+			contentType: "text/markdown; charset=utf-8",
+			path: "/long-url-fixture",
+		},
+		async (url) => {
+			const result = await runCli(["intake-url", "--url", url, "--max-bytes", "80", "--json"], store, {
+				HER_ALLOW_LOCAL_URLS: "1",
+			});
+			const payload = JSON.parse(result.stdout);
+
+			assert.match(payload.result.noteId, /^[0-9a-f]{8}$/);
+			assert.equal(payload.result.sourceType, "text");
+			assert.equal(payload.result.memoryStatus, "needs_deep_read");
+			assert.equal(payload.result.truncated, true);
+			assert.equal(payload.result.bytesRead, 80);
+
+			const world = await readFile(join(store, "world", "long-url-fixture.md"), "utf8");
+			assert.match(world, /memory_status: needs_deep_read/);
+			assert.match(world, /memory_status_reason: Fetched text exceeded 80 bytes/);
+			assert.match(world, /Orientation only: read first 80 bytes/);
+		},
+	);
 });
 
 test("CLI records judgment and memory status through TS her-core", async () => {
