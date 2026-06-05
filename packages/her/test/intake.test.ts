@@ -69,3 +69,19 @@ test("URL intake deep reads selected GitHub repository files", async () => {
 	assert.equal(result.truncated, false);
 	assert.ok(result.bytesRead > 0);
 });
+
+test("URL intake marks X threads as needs_deep_read without fetching login walls", async () => {
+	const fetcher: typeof fetch = async () => {
+		throw new Error("X thread intake should not fetch unauthenticated HTML");
+	};
+	const lookup = (async () => [{ address: "104.244.42.1", family: 4 }]) as unknown as typeof dnsLookup;
+
+	const result = await readUrlForWorldNote("https://x.com/example/status/1234567890", { fetcher, lookup });
+
+	assert.equal(result.data.sourceType, "x-thread");
+	assert.equal(result.data.memoryStatus, "needs_deep_read");
+	assert.match(result.data.memoryStatusReason ?? "", /browser-native or authenticated reading/);
+	assert.match(result.data.coverage, /minimal URL intake did not fetch login-wall HTML/);
+	assert.equal(result.bytesRead, 0);
+	assert.equal(result.truncated, false);
+});

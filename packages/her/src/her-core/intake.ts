@@ -40,6 +40,15 @@ export async function readUrlForWorldNote(sourceUrl: string, opts: UrlIntakeOpti
 	const lookup = opts.lookup ?? dnsLookup;
 	const startUrl = normalizeSourceUrl(sourceUrl);
 	await assertSafeHttpUrl(startUrl, { allowLocal: opts.allowLocal, lookup });
+	if (isXThreadUrl(startUrl)) {
+		return failedUrlIntake(
+			startUrl.href,
+			startUrl.href,
+			"x-thread",
+			"X/Twitter sources require browser-native or authenticated reading; minimal URL intake did not fetch login-wall HTML.",
+			maxBytes,
+		);
+	}
 	const githubRepo = parseGithubRepoUrl(startUrl);
 	if (githubRepo) {
 		return readGithubRepoForWorldNote(startUrl.href, githubRepo, {
@@ -314,6 +323,12 @@ function parseGithubRepoUrl(url: URL): GitHubRepoTarget | undefined {
 	const valid = /^[A-Za-z0-9_.-]+$/;
 	if (!valid.test(owner) || !valid.test(normalizedRepo)) return undefined;
 	return { owner, repo: normalizedRepo };
+}
+
+function isXThreadUrl(url: URL): boolean {
+	const host = url.hostname.toLowerCase();
+	if (host !== "x.com" && host !== "www.x.com" && host !== "twitter.com" && host !== "www.twitter.com") return false;
+	return /\/status(?:es)?\/\d+/i.test(url.pathname) || /\/i\/web\/status\/\d+/i.test(url.pathname);
 }
 
 function detectSourceType(url: string, contentType: string): string {
