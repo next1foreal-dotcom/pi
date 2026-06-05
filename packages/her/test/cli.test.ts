@@ -186,6 +186,14 @@ test("CLI persists an intake source with recall verification as JSON", async () 
 			"A complete short article about source intake and recall verification.",
 			"--coverage",
 			"Read full short article; no sections skipped.",
+			"--claim-json",
+			JSON.stringify({
+				claim: "Trusted writer computes content hashes.",
+				verdict: "supported",
+				evidence: "The fixture source describes trusted writer hash computation.",
+				sourceQuality: "primary",
+				caveats: "Synthetic fixture.",
+			}),
 			"--read",
 			"The useful pattern is letting the trusted writer compute content hashes.",
 			"--steal",
@@ -211,6 +219,9 @@ test("CLI persists an intake source with recall verification as JSON", async () 
 
 	const world = await readFile(join(store, "world", "agent-intake-patterns.md"), "utf8");
 	assert.match(world, /memory_status: needs_deep_read/);
+	assert.match(world, /claim_count: 1/);
+	assert.match(world, /claim: Trusted writer computes content hashes/);
+	assert.match(world, /verdict: supported/);
 	assert.match(world, /recall verification/);
 	assert.match(world, /\[\[mirror\]\]/);
 	const seen = JSON.parse(await readFile(join(store, ".her", "seen.json"), "utf8"));

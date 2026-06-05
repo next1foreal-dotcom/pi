@@ -24,6 +24,17 @@ const herPromptPath = resolve(promptsDir, "her.md");
 
 const zeroCost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 const memoryStatusValues = ["active", "archive_only", "needs_deep_read"] as const;
+const claimVerdictValues = ["supported", "contradicted", "insufficient_evidence"] as const;
+const sourceQualityValues = ["primary", "secondary", "weak", "unavailable", "blocked"] as const;
+const claimLedgerSchema = Type.Array(
+	Type.Object({
+		claim: Type.String(),
+		verdict: StringEnum(claimVerdictValues),
+		evidence: Type.String(),
+		sourceQuality: StringEnum(sourceQualityValues),
+		caveats: Type.Optional(Type.String()),
+	}),
+);
 
 interface SessionMeta {
 	sessionId: string;
@@ -558,6 +569,7 @@ export default function her(pi: ExtensionAPI): void {
 			memoryStatus: StringEnum(memoryStatusValues),
 			extracted: Type.String(),
 			coverage: Type.String(),
+			claims: Type.Optional(claimLedgerSchema),
 			read: Type.String(),
 			steal: Type.Array(Type.String()),
 			connections: Type.Array(Type.String()),
@@ -581,6 +593,7 @@ export default function her(pi: ExtensionAPI): void {
 			sourceType: Type.String(),
 			extracted: Type.String(),
 			coverage: Type.String(),
+			claims: Type.Optional(claimLedgerSchema),
 			read: Type.String(),
 			steal: Type.Optional(Type.Array(Type.String())),
 			connections: Type.Optional(Type.Array(Type.String())),
@@ -597,6 +610,7 @@ export default function her(pi: ExtensionAPI): void {
 				memoryStatus: params.memoryStatus ?? "active",
 				extracted: requireNonBlank(params.extracted, "extracted"),
 				coverage: requireNonBlank(params.coverage, "coverage"),
+				claims: params.claims ?? [],
 				read: requireNonBlank(params.read, "read"),
 				steal: params.steal ?? [],
 				connections: params.connections ?? [],

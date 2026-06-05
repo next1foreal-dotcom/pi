@@ -32,6 +32,7 @@ test("her-intake skill encodes the universal inbox contract", async () => {
 		"her_judgment",
 		"contentHash",
 		"memoryStatus",
+		"claims",
 		"Coverage",
 		"Spec §16 Checklist",
 		"No secret, cookie, token, or private browser credential",
@@ -72,6 +73,7 @@ test("/her-intake prompt encodes the minimal source-to-memory chain", async () =
 		"her_remember",
 		"contentHash",
 		"memoryStatus",
+		"claims",
 		"recall verification",
 	]) {
 		assert.match(body, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
@@ -154,7 +156,7 @@ test("claim-verifier subagent verifies claims without Her memory writes", async 
 	assert.match(body, /independent claim verifier/);
 	assert.match(body, /claim ledger/);
 	assert.match(body, /supported, contradicted, or insufficient_evidence/);
-	assert.match(body, /source_quality/);
+	assert.match(body, /sourceQuality/);
 	assert.match(body, /parent should persist uncertainty as coverage\/caveat/);
 });
 

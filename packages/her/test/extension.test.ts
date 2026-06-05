@@ -628,6 +628,15 @@ test("extension memory tools write, recall, judge, and update status", async () 
 				memoryStatus: "needs_deep_read",
 				extracted: "Mirror should wait for the right time.",
 				coverage: "Orientation read.",
+				claims: [
+					{
+						claim: "Mirror should wait for the right time.",
+						verdict: "supported",
+						evidence: "The source explicitly says timing matters.",
+						sourceQuality: "primary",
+						caveats: "Short fixture.",
+					},
+				],
 				read: "Timing matters.",
 				steal: ["Rate limit Mirror"],
 				connections: ["mirror"],
@@ -644,6 +653,8 @@ test("extension memory tools write, recall, judge, and update status", async () 
 		await executeTool(memoryStatus, { noteId, status: "active", reason: "Feeds Phase 5 Mirror gating." }, ctx);
 
 		const world = (await readText(join(store, "world", "mirror-timing.md"))) ?? "";
+		assert.match(world, /claim: Mirror should wait for the right time/);
+		assert.match(world, /source_quality: primary/);
 		assert.match(world, /correction: Mirror must not interrupt active work/);
 		assert.match(world, /memory_status: active/);
 		assert.match(world, /reason: Feeds Phase 5 Mirror gating/);
@@ -656,6 +667,14 @@ test("extension memory tools write, recall, judge, and update status", async () 
 				sourceType: "article",
 				extracted: "A complete short article about source intake and recall verification.",
 				coverage: "Read full short article; no sections skipped.",
+				claims: [
+					{
+						claim: "Trusted writer computes hashes.",
+						verdict: "supported",
+						evidence: "The source names trusted writer hash computation.",
+						sourceQuality: "primary",
+					},
+				],
 				read: "The useful pattern is letting the trusted writer compute content hashes.",
 				steal: ["Compute content hashes in the trusted write tool"],
 				connections: ["mirror"],
@@ -667,7 +686,9 @@ test("extension memory tools write, recall, judge, and update status", async () 
 		const intakeDetails = intake.details as { contentHash?: string; recall?: Array<{ id: string }> };
 		assert.match(intakeDetails.contentHash ?? "", /^[0-9a-f]{64}$/);
 		assert.ok((intakeDetails.recall ?? []).some((note) => note.id === "world/agent-intake-patterns"));
-		assert.match((await readText(join(store, "world", "agent-intake-patterns.md"))) ?? "", /recall verification/);
+		const intakeWorld = (await readText(join(store, "world", "agent-intake-patterns.md"))) ?? "";
+		assert.match(intakeWorld, /recall verification/);
+		assert.match(intakeWorld, /claim: Trusted writer computes hashes/);
 	});
 });
 

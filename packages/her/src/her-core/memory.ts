@@ -56,11 +56,20 @@ export interface WorldNoteData {
 	memoryStatus: "active" | "archive_only" | "needs_deep_read";
 	extracted: string;
 	coverage: string;
+	claims?: ClaimLedgerEntry[];
 	read: string;
 	steal: string[];
 	connections: string[];
 	take: string;
 	possibleMoves: string[];
+}
+
+export interface ClaimLedgerEntry {
+	claim: string;
+	verdict: "supported" | "contradicted" | "insufficient_evidence";
+	evidence: string;
+	sourceQuality: "primary" | "secondary" | "weak" | "unavailable" | "blocked";
+	caveats?: string;
 }
 
 export interface IdeaData {
@@ -702,6 +711,9 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 			content_hash: data.contentHash,
 			status: "captured",
 			memory_status: data.memoryStatus,
+			claim_count: data.claims?.length ?? 0,
+			supported_claims: data.claims?.filter((claim) => claim.verdict === "supported").length ?? 0,
+			insufficient_claims: data.claims?.filter((claim) => claim.verdict === "insufficient_evidence").length ?? 0,
 			response_version: 1,
 		};
 		await writeText(path, `${frontmatter(fm)}${worldBody(data)}`);
@@ -1088,6 +1100,10 @@ ${data.extracted}
 
 ${data.coverage}
 
+## Claim Ledger
+
+${claimLedgerBody(data.claims ?? [])}
+
 ## Samantha's Read
 
 ${data.read}
@@ -1111,6 +1127,23 @@ ${data.possibleMoves.map((item) => `- ${item}`).join("\n")}
 ## Judgment Trail
 
 `;
+}
+
+function claimLedgerBody(claims: ClaimLedgerEntry[]): string {
+	if (claims.length === 0) return "(none recorded)";
+	return claims
+		.map((claim) =>
+			[
+				`- claim: ${claim.claim}`,
+				`  verdict: ${claim.verdict}`,
+				`  evidence: ${claim.evidence}`,
+				`  source_quality: ${claim.sourceQuality}`,
+				claim.caveats ? `  caveats: ${claim.caveats}` : undefined,
+			]
+				.filter(Boolean)
+				.join("\n"),
+		)
+		.join("\n");
 }
 
 function appendJudgment(body: string, fields: JudgmentFields): string {

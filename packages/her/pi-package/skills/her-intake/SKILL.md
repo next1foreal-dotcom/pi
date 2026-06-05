@@ -43,6 +43,7 @@ When running in a single-agent fallback, keep the same boundary explicitly: fetc
    - Possible Moves
 5. Persist:
    - Source/world material: call `her_intake_source` when available; it computes `contentHash`, writes the world note, and returns recall verification. If unavailable, call `her_world_note`.
+   - For research, repo, paper, or synthesis claims, include `claims`: each claim plus verifier verdict, evidence, source quality, and caveats.
    - Fei's raw thought or stable self-knowledge: call `her_remember`.
    - If the item is incomplete but worth keeping, still persist it with `memoryStatus: "needs_deep_read"` or `"archive_only"` and a precise coverage note.
 6. Update surfaces when a real edge appears:
@@ -62,6 +63,7 @@ Call `her_intake_source` when available, or `her_world_note` as the fallback, wi
 - `memoryStatus`: `active`, `archive_only`, or `needs_deep_read`
 - `extracted`
 - `coverage`
+- `claims` when the source makes material research/synthesis claims; each item contains `claim`, `verdict`, `evidence`, `sourceQuality`, and optional `caveats`
 - `read`
 - `steal`
 - `connections`

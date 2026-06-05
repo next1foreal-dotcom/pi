@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
 	type ChoiceModelUpdateResult,
+	type ClaimLedgerEntry,
 	type ConsolidateResult,
 	type DecaySweepResult,
 	loadConfig,
@@ -494,6 +495,7 @@ function parseIntakeSource(argv: string[]): CliCommand {
 	let read: string | undefined;
 	let take: string | undefined;
 	let memoryStatus: WorldNoteData["memoryStatus"] = "active";
+	const claims: ClaimLedgerEntry[] = [];
 	const steal: string[] = [];
 	const connections: string[] = [];
 	const possibleMoves: string[] = [];
@@ -536,6 +538,10 @@ function parseIntakeSource(argv: string[]): CliCommand {
 			memoryStatus = parseMemoryStatus(requireOptionValue(argv[++i], arg));
 			continue;
 		}
+		if (arg === "--claim-json") {
+			claims.push(parseClaimJson(requireOptionValue(argv[++i], arg)));
+			continue;
+		}
 		if (arg === "--steal") {
 			steal.push(requireOptionValue(argv[++i], arg));
 			continue;
@@ -560,6 +566,7 @@ function parseIntakeSource(argv: string[]): CliCommand {
 		read: requireNonBlank(read, "--read"),
 		take: requireNonBlank(take, "--take"),
 		memoryStatus,
+		claims,
 		steal,
 		connections,
 		possibleMoves,
@@ -713,7 +720,7 @@ function usage(): string {
   her consolidate [--limit <n>] [--json]
   her decay [--older-than-days <days>] [--now <YYYY-MM-DD>] [--json]
   her ideas [--json]
-  her intake-source --title <title> --source-url <url> --source-type <kind> --extracted <text> --coverage <text> --read <text> --take <text> [--memory-status active|archive_only|needs_deep_read] [--steal <text>] [--connection <id>] [--possible-move <text>] [--json]
+  her intake-source --title <title> --source-url <url> --source-type <kind> --extracted <text> --coverage <text> --read <text> --take <text> [--memory-status active|archive_only|needs_deep_read] [--claim-json <json>] [--steal <text>] [--connection <id>] [--possible-move <text>] [--json]
   her restore --semantic <key> [--now <YYYY-MM-DD>] [--json]
   her self-narrative [--json]
   her synthesize [--if-due] [--json]
@@ -751,6 +758,46 @@ function requireNonBlank(value: string | undefined, option: string): string {
 function parseMemoryStatus(value: string): WorldNoteData["memoryStatus"] {
 	if (value === "active" || value === "archive_only" || value === "needs_deep_read") return value;
 	throw new UsageError("--memory-status must be active, archive_only, or needs_deep_read");
+}
+
+function parseClaimJson(value: string): ClaimLedgerEntry {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(value);
+	} catch (error) {
+		throw new UsageError(`--claim-json must be valid JSON: ${errorMessage(error)}`);
+	}
+	if (!parsed || typeof parsed !== "object") throw new UsageError("--claim-json must be a JSON object");
+	const record = parsed as Record<string, unknown>;
+	const verdict = record.verdict;
+	const sourceQuality = record.sourceQuality;
+	if (verdict !== "supported" && verdict !== "contradicted" && verdict !== "insufficient_evidence") {
+		throw new UsageError("--claim-json verdict must be supported, contradicted, or insufficient_evidence");
+	}
+	if (
+		sourceQuality !== "primary" &&
+		sourceQuality !== "secondary" &&
+		sourceQuality !== "weak" &&
+		sourceQuality !== "unavailable" &&
+		sourceQuality !== "blocked"
+	) {
+		throw new UsageError("--claim-json sourceQuality must be primary, secondary, weak, unavailable, or blocked");
+	}
+	const claim = requireNonBlank(stringField(record, "claim"), "claim");
+	const evidence = requireNonBlank(stringField(record, "evidence"), "evidence");
+	const caveats = stringField(record, "caveats")?.trim();
+	return {
+		claim,
+		verdict,
+		evidence,
+		sourceQuality,
+		...(caveats ? { caveats } : {}),
+	};
+}
+
+function stringField(record: Record<string, unknown>, field: string): string | undefined {
+	const value = record[field];
+	return typeof value === "string" ? value : undefined;
 }
 
 function intakeContentHash(sourceUrl: string, extracted: string): string {

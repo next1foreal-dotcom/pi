@@ -579,6 +579,15 @@ test("writeWorldNote writes contract sections and dedupes by content hash", asyn
 		memoryStatus: "active" as const,
 		extracted: "Agents call tools often.",
 		coverage: "Read full article. Nothing skipped.",
+		claims: [
+			{
+				claim: "Agents call tools often.",
+				verdict: "supported" as const,
+				evidence: "Source says agents call tools often.",
+				sourceQuality: "primary" as const,
+				caveats: "Fixture article only.",
+			},
+		],
 		read: "The useful point is tool-call overhead.",
 		steal: ["Measure per-call overhead"],
 		connections: ["own-memory"],
@@ -594,6 +603,13 @@ test("writeWorldNote writes contract sections and dedupes by content hash", asyn
 	const files = await import("node:fs/promises").then((fs) => fs.readdir(join(store, "world")));
 	assert.equal(files.length, 1);
 	const text = (await readText(join(store, "world", files[0]))) ?? "";
+	const parsed = parseFrontmatter(text);
+	assert.equal(parsed.data.claim_count, 1);
+	assert.equal(parsed.data.supported_claims, 1);
+	assert.match(text, /## Claim Ledger/);
+	assert.match(text, /claim: Agents call tools often/);
+	assert.match(text, /verdict: supported/);
+	assert.match(text, /source_quality: primary/);
 	assert.match(text, /## Coverage/);
 	assert.match(text, /Nothing skipped/);
 	assert.match(text, /## Judgment Trail/);

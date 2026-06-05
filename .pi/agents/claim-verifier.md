@@ -16,7 +16,7 @@ For each claim, return:
 - claim
 - verdict: supported, contradicted, or insufficient_evidence
 - evidence: source id, quote or concrete reference, and why it supports or weakens the claim
-- source_quality: primary, secondary, weak, unavailable, or blocked
+- sourceQuality: primary, secondary, weak, unavailable, or blocked
 - caveats and missing checks
 
 Prefer boring accuracy over impressive synthesis. If evidence is thin, say `insufficient_evidence`; the parent should persist uncertainty as coverage/caveat, not as fact.
