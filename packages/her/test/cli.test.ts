@@ -128,6 +128,125 @@ test("CLI sync commits and pushes dirty Her memory", async () => {
 	assert.match((await git(remote, "log", "--oneline", "-1")).stdout, /memory\(sync\): cli test/);
 });
 
+test("CLI runs TS growth maintenance commands as JSON", async () => {
+	const { store } = await gitBackedStore();
+	await writeFile(join(store, "narrative", "FACTS.md"), "Fei is the owner.\n", "utf8");
+	await writeFile(
+		join(store, "narrative", "SAMANTHA.md"),
+		"# SAMANTHA\n\nSamantha verifies before closing.\n",
+		"utf8",
+	);
+	await writeFile(join(store, "narrative", "CHOICE-MODEL.md"), "# CHOICE MODEL\n\nFei chooses proven work.\n", "utf8");
+	await new Memory(store).capture("Fei prefers exact verification before reassurance.", {
+		timestamp: "2026-06-05T0900",
+		sessionId: "episode-cli",
+		project: "her",
+	});
+
+	await withLocalChatModel(
+		(prompt) => {
+			if (prompt.includes("TYPED units")) {
+				assert.match(prompt, /episode-cli/);
+				return JSON.stringify({
+					notes: [
+						{
+							key: "verification-over-reassurance",
+							type: "opinion",
+							title: "Verification over reassurance",
+							content: "Fei trusts exact verification before reassurance.",
+							relations: [{ to: "agent-work-style", rel: "proves" }],
+							sources: ["episode-cli"],
+						},
+					],
+					moments: [{ trigger: "completion report", shift: "Samantha should verify before reassurance" }],
+				});
+			}
+			if (prompt.includes("Produce an UPDATED full narrative")) {
+				assert.match(prompt, /GROUND-TRUTH FACTS/);
+				assert.match(prompt, /SAMANTHA SELF-NARRATIVE/);
+				assert.match(prompt, /CHOICE MODEL/);
+				return "# CONTEXT\n\nFei values exact verification before reassurance.\n";
+			}
+			if (prompt.includes("Idea Engine")) {
+				assert.match(prompt, /Verification Practice/);
+				return JSON.stringify({
+					ideas: [
+						{
+							title: "Verification as care",
+							connects: ["verification-over-reassurance"],
+							insight: "Reliable close-outs can be relational care.",
+							spark: "Make every completion report show evidence first.",
+							kind: "self-x-world",
+						},
+					],
+				});
+			}
+			if (prompt.includes("Group these knowledge units")) {
+				assert.match(prompt, /verification-over-reassurance/);
+				return JSON.stringify({
+					maps: [
+						{
+							theme: "Verification Practice",
+							summary: "Machine truth before closure.",
+							members: ["verification-over-reassurance"],
+						},
+					],
+				});
+			}
+			throw new Error(`unexpected prompt: ${prompt.slice(0, 80)}`);
+		},
+		async (modelEnv, prompts) => {
+			let result = await runCli(["consolidate", "--limit", "1", "--json"], store, modelEnv);
+			let payload = JSON.parse(result.stdout);
+			assert.deepEqual(payload.result, { episodes: 1, notesTouched: 1, moments: 1 });
+			assert.match(
+				await readFile(join(store, "semantic", "verification-over-reassurance.md"), "utf8"),
+				/exact verification/,
+			);
+
+			result = await runCli(["synthesize", "--json"], store, modelEnv);
+			payload = JSON.parse(result.stdout);
+			assert.match(payload.result.proposalId, /^\d{4}-\d{2}-\d{2}-narrative-update$/);
+			assert.match(await readFile(join(store, "narrative", "CONTEXT.md"), "utf8"), /exact verification/);
+
+			result = await runCli(["topic-maps", "--json"], store, modelEnv);
+			payload = JSON.parse(result.stdout);
+			assert.deepEqual(payload.result, ["verification-practice"]);
+			assert.match(await readFile(join(store, "topics", "verification-practice.md"), "utf8"), /Machine truth/);
+
+			result = await runCli(["ideas", "--json"], store, modelEnv);
+			payload = JSON.parse(result.stdout);
+			assert.equal(payload.result[0].title, "Verification as care");
+			assert.equal(payload.result[0].kind, "self-x-world");
+			assert.equal(prompts.length, 4);
+		},
+	);
+});
+
+test("CLI reports synthesize due and approves a proposal as JSON", async () => {
+	const { store } = await gitBackedStore();
+	await writeFile(join(store, ".her", "state.json"), JSON.stringify({ last_synthesize: "2026-06-01" }), "utf8");
+	await writeFile(
+		join(store, "semantic", "new-signal.md"),
+		'---\nupdated: 2026-06-02\nrelations:\n  - {"to":"old-rule","rel":"conflicts"}\n---\n# New Signal\n\nA conflict should trigger synthesis.\n',
+		"utf8",
+	);
+	await writeFile(join(store, "proposals", "manual.md"), "# CONTEXT\n\nManual proposal from CLI.\n", "utf8");
+	await git(store, "add", "-A");
+	await git(store, "commit", "-m", "memory: due and proposal fixtures");
+
+	let result = await runCli(["synthesize-due", "--json"], store);
+	let payload = JSON.parse(result.stdout);
+	assert.equal(payload.result.due, true);
+	assert.equal(payload.result.reason, "conflict");
+
+	result = await runCli(["approve", "--proposal", "manual", "--json"], store);
+	payload = JSON.parse(result.stdout);
+	assert.deepEqual(payload.result, { proposalId: "manual", approved: true });
+	assert.match(await readFile(join(store, "narrative", "CONTEXT.md"), "utf8"), /Manual proposal from CLI/);
+	assert.match((await git(store, "log", "--oneline", "-1")).stdout, /memory\(context\): Approve proposal manual/);
+});
+
 test("CLI runs governed archive sweep as JSON", async () => {
 	const { store } = await gitBackedStore();
 	await writeFile(

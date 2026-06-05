@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
 	type ChoiceModelUpdateResult,
+	type ConsolidateResult,
 	type DecaySweepResult,
 	loadConfig,
 	Memory,
@@ -16,13 +17,19 @@ import { createSummaryModel } from "./summary-model.ts";
 const execFileAsync = promisify(execFile);
 
 type CliCommand =
+	| { kind: "approve"; json: boolean; proposalId: string }
 	| { kind: "choice-model"; json: boolean }
+	| { kind: "consolidate"; json: boolean; limit?: number }
 	| { kind: "decay"; json: boolean; olderThanDays?: number; now?: string }
 	| { kind: "help" }
+	| { kind: "ideas"; json: boolean }
 	| { kind: "restore"; json: boolean; semanticKey: string; now?: string }
 	| { kind: "self-narrative"; json: boolean }
+	| { kind: "synthesize"; json: boolean; ifDue: boolean }
+	| { kind: "synthesize-due"; json: boolean }
 	| { kind: "status"; json: boolean }
-	| { kind: "sync"; json: boolean; message?: string };
+	| { kind: "sync"; json: boolean; message?: string }
+	| { kind: "topic-maps"; json: boolean };
 
 interface CliStatusPayload {
 	memoryDir: string;
@@ -39,8 +46,30 @@ interface CliDecayPayload extends CliStatusPayload {
 	result: DecaySweepResult;
 }
 
+interface CliConsolidatePayload extends CliStatusPayload {
+	result: ConsolidateResult;
+}
+
 interface CliRestorePayload extends CliStatusPayload {
 	result: Awaited<ReturnType<Memory["restoreArchivedSemantic"]>>;
+}
+
+interface CliApprovePayload extends CliStatusPayload {
+	result: {
+		proposalId: string;
+		approved: true;
+	};
+}
+
+interface CliSynthesizePayload extends CliStatusPayload {
+	result: {
+		proposalId: string | null;
+		due?: Awaited<ReturnType<Memory["synthesizeDue"]>>;
+	};
+}
+
+interface CliSynthesizeDuePayload extends CliStatusPayload {
+	result: Awaited<ReturnType<Memory["synthesizeDue"]>>;
 }
 
 interface CliChoiceModelPayload extends CliStatusPayload {
@@ -61,12 +90,18 @@ class UsageError extends Error {}
 export function parseArgs(argv: string[]): CliCommand {
 	const [command, ...rest] = argv;
 	if (!command || command === "help" || command === "--help" || command === "-h") return { kind: "help" };
+	if (command === "approve") return parseApprove(rest);
 	if (command === "choice-model") return parseJsonOnly("choice-model", rest);
+	if (command === "consolidate") return parseConsolidate(rest);
 	if (command === "decay") return parseDecay(rest);
+	if (command === "ideas") return parseJsonOnly("ideas", rest);
 	if (command === "restore") return parseRestore(rest);
 	if (command === "self-narrative") return parseJsonOnly("self-narrative", rest);
+	if (command === "synthesize") return parseSynthesize(rest);
+	if (command === "synthesize-due") return parseJsonOnly("synthesize-due", rest);
 	if (command === "status") return parseStatus(rest);
 	if (command === "sync") return parseSync(rest);
+	if (command === "topic-maps") return parseJsonOnly("topic-maps", rest);
 	throw new UsageError(`unknown Her command: ${command}`);
 }
 
@@ -99,6 +134,13 @@ export async function runHerCli(
 		return payload.status.status === "unknown" ? 1 : 0;
 	}
 
+	if (command.kind === "consolidate") {
+		const result = await memory.consolidate(command.limit);
+		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
+		writePayload(io.stdout, payload, command.json, renderConsolidate);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
 	if (command.kind === "decay") {
 		const result = await memory.decaySweep({ olderThanDays: command.olderThanDays, now: command.now });
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
@@ -110,6 +152,45 @@ export async function runHerCli(
 		const result = await memory.restoreArchivedSemantic(command.semanticKey, { now: command.now });
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderRestore);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "approve") {
+		await memory.approve(command.proposalId);
+		const payload = {
+			...(await buildStatusPayload(memoryDir, memory)),
+			result: { proposalId: command.proposalId, approved: true as const },
+		};
+		writePayload(io.stdout, payload, command.json, renderApprove);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "synthesize-due") {
+		const result = await memory.synthesizeDue();
+		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
+		writePayload(io.stdout, payload, command.json, renderSynthesizeDue);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "synthesize") {
+		const due = command.ifDue ? await memory.synthesizeDue() : undefined;
+		const proposalId = due?.due === false ? null : await memory.synthesize();
+		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result: { proposalId, due } };
+		writePayload(io.stdout, payload, command.json, renderSynthesize);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "topic-maps") {
+		const result = await memory.buildTopicMaps();
+		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
+		writePayload(io.stdout, payload, command.json, renderTopicMaps);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "ideas") {
+		const result = await memory.generateIdeas();
+		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
+		writePayload(io.stdout, payload, command.json, renderIdeas);
 		return payload.status.status === "unknown" ? 1 : 0;
 	}
 
@@ -148,7 +229,10 @@ function createCliMemory(memoryDir: string, env: NodeJS.ProcessEnv): Memory {
 	return new Memory(memoryDir, model);
 }
 
-function parseJsonOnly(kind: "choice-model" | "self-narrative", argv: string[]): CliCommand {
+function parseJsonOnly(
+	kind: "choice-model" | "ideas" | "self-narrative" | "synthesize-due" | "topic-maps",
+	argv: string[],
+): CliCommand {
 	let json = false;
 	for (const arg of argv) {
 		if (arg === "--json") {
@@ -158,6 +242,64 @@ function parseJsonOnly(kind: "choice-model" | "self-narrative", argv: string[]):
 		throw new UsageError(`unknown ${kind} option: ${arg}`);
 	}
 	return { kind, json };
+}
+
+function parseApprove(argv: string[]): CliCommand {
+	let json = false;
+	let proposalId: string | undefined;
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--proposal") {
+			const value = argv[++i];
+			if (!value) throw new UsageError(`${arg} requires a value`);
+			proposalId = value;
+			continue;
+		}
+		throw new UsageError(`unknown approve option: ${arg}`);
+	}
+	if (!proposalId) throw new UsageError("approve requires --proposal <id>");
+	return { kind: "approve", json, proposalId };
+}
+
+function parseConsolidate(argv: string[]): CliCommand {
+	let json = false;
+	let limit: number | undefined;
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--limit") {
+			const value = argv[++i];
+			if (!value) throw new UsageError(`${arg} requires a value`);
+			limit = parsePositiveNumber(value, arg);
+			continue;
+		}
+		throw new UsageError(`unknown consolidate option: ${arg}`);
+	}
+	return { kind: "consolidate", json, limit };
+}
+
+function parseSynthesize(argv: string[]): CliCommand {
+	let json = false;
+	let ifDue = false;
+	for (const arg of argv) {
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--if-due") {
+			ifDue = true;
+			continue;
+		}
+		throw new UsageError(`unknown synthesize option: ${arg}`);
+	}
+	return { kind: "synthesize", json, ifDue };
 }
 
 function parseStatus(argv: string[]): CliCommand {
@@ -297,6 +439,16 @@ function renderSync(payload: CliSyncPayload): string {
 	return `${result}\n\n${renderStatus(payload)}`;
 }
 
+function renderConsolidate(payload: CliConsolidatePayload): string {
+	return [
+		`Her memory consolidated ${payload.result.episodes} episode(s).`,
+		`notes touched: ${payload.result.notesTouched}`,
+		`becoming moments: ${payload.result.moments}`,
+		"",
+		renderStatus(payload),
+	].join("\n");
+}
+
 function renderDecay(payload: CliDecayPayload): string {
 	const archived = payload.result.archivedKeys.length > 0 ? payload.result.archivedKeys.join(", ") : "(none archived)";
 	return [
@@ -310,6 +462,35 @@ function renderDecay(payload: CliDecayPayload): string {
 
 function renderRestore(payload: CliRestorePayload): string {
 	return [`Her memory restored archived semantic note: ${payload.result.key}`, "", renderStatus(payload)].join("\n");
+}
+
+function renderApprove(payload: CliApprovePayload): string {
+	return [`Her proposal approved: ${payload.result.proposalId}`, "", renderStatus(payload)].join("\n");
+}
+
+function renderSynthesize(payload: CliSynthesizePayload): string {
+	const result =
+		payload.result.proposalId === null
+			? "Her synthesize skipped: not due."
+			: `Her narrative synthesized: ${payload.result.proposalId}`;
+	return [result, "", renderStatus(payload)].join("\n");
+}
+
+function renderSynthesizeDue(payload: CliSynthesizeDuePayload): string {
+	const reason = payload.result.due ? ` (${payload.result.reason})` : "";
+	return [`Her synthesize due: ${payload.result.due}${reason}`, "", renderStatus(payload)].join("\n");
+}
+
+function renderTopicMaps(payload: { result: string[] } & CliStatusPayload): string {
+	const written = payload.result.length > 0 ? payload.result.join(", ") : "(none)";
+	return [`Her topic maps written: ${written}`, "", renderStatus(payload)].join("\n");
+}
+
+function renderIdeas(
+	payload: { result: Array<{ id: string; title: string; kind: string }> } & CliStatusPayload,
+): string {
+	const written = payload.result.length > 0 ? payload.result.map((idea) => idea.title).join(", ") : "(none)";
+	return [`Her ideas written: ${written}`, "", renderStatus(payload)].join("\n");
 }
 
 function renderChoiceModel(payload: CliChoiceModelPayload): string {
@@ -335,13 +516,19 @@ function writeLine(stream: NodeJS.WritableStream, text: string): void {
 
 function usage(): string {
 	return `Usage:
+  her approve --proposal <id> [--json]
   her choice-model [--json]
+  her consolidate [--limit <n>] [--json]
   her decay [--older-than-days <days>] [--now <YYYY-MM-DD>] [--json]
+  her ideas [--json]
   her restore --semantic <key> [--now <YYYY-MM-DD>] [--json]
   her self-narrative [--json]
+  her synthesize [--if-due] [--json]
+  her synthesize-due [--json]
   her sync --status [--json]
   her sync [--message <message>] [--json]
   her status [--json]
+  her topic-maps [--json]
 
 Memory root:
   HER_MEMORY_DIR, defaulting to ../her-memory from the current working directory.`;

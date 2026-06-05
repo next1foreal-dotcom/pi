@@ -3,6 +3,7 @@ export { DEFAULT_CONFIG, loadConfig, renderConfig } from "./config.ts";
 export type {
 	CaptureMeta,
 	ChoiceModelUpdateResult,
+	ConsolidateResult,
 	DecaySweepOptions,
 	DecaySweepResult,
 	IdeaData,
