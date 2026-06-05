@@ -7,6 +7,7 @@ import { anthropicOAuthProvider, openaiCodexOAuthProvider } from "@earendil-work
 import type { ExtensionAPI, ExtensionContext, ProviderConfig } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import {
+	createEmbeddingSearch,
 	type IdeaData,
 	type JudgmentFields,
 	Memory,
@@ -282,7 +283,7 @@ function errorMessage(error: unknown): string {
 
 export default function her(pi: ExtensionAPI): void {
 	const memoryDir = getMemoryDir();
-	const mem = new Memory(memoryDir, createSummaryModel());
+	const mem = new Memory(memoryDir, { model: createSummaryModel(), semanticSearch: createEmbeddingSearch() });
 	let syncTimer: ReturnType<typeof setTimeout> | undefined;
 	registerProviderPool(pi);
 

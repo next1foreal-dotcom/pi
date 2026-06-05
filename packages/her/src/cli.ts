@@ -7,6 +7,7 @@ import {
 	type ChoiceModelUpdateResult,
 	type ClaimLedgerEntry,
 	type ConsolidateResult,
+	createEmbeddingSearch,
 	type DecaySweepResult,
 	type JudgmentFields,
 	loadConfig,
@@ -373,7 +374,7 @@ export function getMemoryDir(env: NodeJS.ProcessEnv = process.env, cwd = process
 function createCliMemory(memoryDir: string, env: NodeJS.ProcessEnv): Memory {
 	const model =
 		createSummaryModel(env) ?? new OpenAICompatibleModel(loadConfig(join(memoryDir, ".her", "config.yaml")), env);
-	return new Memory(memoryDir, model);
+	return new Memory(memoryDir, { model, semanticSearch: createEmbeddingSearch(env) });
 }
 
 function parseJsonOnly(

@@ -113,6 +113,42 @@ async function withLocalSource<T>(
 	}
 }
 
+async function withLocalEmbeddings<T>(fn: (env: Record<string, string>, inputs: string[][]) => Promise<T>): Promise<T> {
+	const inputs: string[][] = [];
+	const server = createServer((req, res) => {
+		let body = "";
+		req.setEncoding("utf8");
+		req.on("data", (chunk) => {
+			body += chunk;
+		});
+		req.on("end", () => {
+			const parsed = JSON.parse(body) as { input?: string[] };
+			const requestInputs = parsed.input ?? [];
+			inputs.push(requestInputs);
+			const data = requestInputs.map((text) => ({
+				embedding: text.includes("latent") || text.includes("unspoken") ? [1, 0] : [0, 1],
+			}));
+			res.writeHead(200, { "content-type": "application/json" });
+			res.end(JSON.stringify({ data }));
+		});
+	});
+	await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+	const { port } = server.address() as AddressInfo;
+	try {
+		return await fn(
+			{
+				HER_EMBEDDINGS_BASE_URL: `http://127.0.0.1:${port}/v1`,
+				HER_EMBEDDINGS_MODEL: "her-test-embeddings",
+			},
+			inputs,
+		);
+	} finally {
+		await new Promise<void>((resolveClose, reject) =>
+			server.close((error) => (error ? reject(error) : resolveClose())),
+		);
+	}
+}
+
 test("CLI reports Her memory sync status as JSON", async () => {
 	const { store } = await gitBackedStore();
 
@@ -400,6 +436,28 @@ test("CLI recalls active and archived memory as JSON", async () => {
 	assert.equal(payload.result[0].id, "archive/semantic/old-noise");
 	assert.equal(payload.result[0].kind, "archive/semantic");
 	assert.match(payload.result[0].text, /Recoverable archive memory/);
+});
+
+test("CLI recall can use configured embedding search for semantic hits", async () => {
+	const { store } = await gitBackedStore();
+	await writeFile(
+		join(store, "world", "latent.md"),
+		"# Latent\n\nA latent concept note without exact query words.\n",
+		"utf8",
+	);
+
+	await withLocalEmbeddings(async (embeddingEnv, inputs) => {
+		const result = await runCli(
+			["recall", "--query", "unspoken association", "--k", "1", "--json"],
+			store,
+			embeddingEnv,
+		);
+		const payload = JSON.parse(result.stdout);
+
+		assert.equal(payload.result[0].id, "world/latent");
+		assert.ok(inputs[0].includes("unspoken association"));
+		assert.ok(inputs[0].some((input) => input.includes("id: world/latent")));
+	});
 });
 
 test("CLI runs TS growth maintenance commands as JSON", async () => {

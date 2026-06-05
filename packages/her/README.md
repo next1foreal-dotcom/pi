@@ -20,7 +20,7 @@ Current status:
 - `turn_end` captures raw episodes into `her-memory/episodic/raw`.
 - `her_sync` commits and pushes dirty memory; capture schedules the same sync after `HER_SYNC_DEBOUNCE_MS` (default 5 minutes).
 - `her-sync` is published through `ctx.ui.setStatus()` and promoted by `pi-powerline-footer` as the Her memory sync indicator.
-- `recall()` and Mirror `surface()` use Reciprocal Rank Fusion over lexical search plus an injectable semantic backend. Without a semantic backend they degrade to lexical-only ranking; the `@howaboua/pi-semantic-grep` organ remains pinned for the embedding-backed signal.
+- `recall()` and Mirror `surface()` use Reciprocal Rank Fusion over lexical search plus an injectable semantic backend. Set `HER_EMBEDDINGS_BASE_URL` + `HER_EMBEDDINGS_MODEL` (optional `HER_EMBEDDINGS_API_KEY`) to add an OpenAI-compatible embedding signal; otherwise Her degrades to lexical-only ranking. The `@howaboua/pi-semantic-grep` organ remains pinned for repo-local embedding indexes.
 - `packages/her/src/cli.ts` exposes the same sync surface for operators:
   `node --import tsx packages/her/src/cli.ts sync --status` or `node packages/her/bin/her.mjs sync --status`.
 - The same CLI exposes the governed archive sweep:

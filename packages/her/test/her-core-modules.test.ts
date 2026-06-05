@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { loadConfig } from "../src/her-core/config.ts";
+import { createEmbeddingSearch } from "../src/her-core/embedding-search.ts";
 import { FakeModel, OpenAICompatibleModel } from "../src/her-core/model.ts";
 import {
 	choiceModelPrompt,
@@ -116,4 +117,47 @@ test("OpenAICompatibleModel uses fast or strong configured model", async () => {
 	assert.equal(requests[0].body.model, "fast-model");
 	assert.equal(requests[1].body.model, "strong-model");
 	assert.equal(requests[0].authorization, "Bearer secret");
+});
+
+test("embedding search ranks docs through an OpenAI-compatible embeddings endpoint", async () => {
+	const requests: Array<{ authorization: string | null; body: Record<string, unknown>; url: string }> = [];
+	const fetcher = (async (input, init) => {
+		const body = JSON.parse(String(init?.body ?? "{}")) as { input?: string[] };
+		requests.push({
+			authorization: init?.headers instanceof Headers ? init.headers.get("authorization") : null,
+			body: body as Record<string, unknown>,
+			url: String(input),
+		});
+		const data = (body.input ?? []).map((text) => ({
+			embedding: text.includes("latent") || text.includes("unspoken") ? [1, 0] : [0, 1],
+		}));
+		return new Response(JSON.stringify({ data }), { headers: { "content-type": "application/json" } });
+	}) as typeof fetch;
+	const search = createEmbeddingSearch(
+		{
+			HER_EMBEDDINGS_API_KEY: "embed-key",
+			HER_EMBEDDINGS_BASE_URL: "https://embeddings.example/v1",
+			HER_EMBEDDINGS_MODEL: "embed-model",
+		},
+		fetcher,
+	);
+
+	const hits = await search?.(
+		"unspoken association",
+		[
+			{ id: "semantic/literal", kind: "semantic", path: "literal.md", text: "literal exact words" },
+			{ id: "world/latent", kind: "world", path: "latent.md", text: "latent concept" },
+		],
+		1,
+	);
+
+	assert.equal(hits?.[0]?.id, "world/latent");
+	assert.equal(requests[0].url, "https://embeddings.example/v1/embeddings");
+	assert.equal(requests[0].authorization, "Bearer embed-key");
+	assert.equal(requests[0].body.model, "embed-model");
+	assert.deepEqual(requests[0].body.input, [
+		"unspoken association",
+		"id: semantic/literal\nkind: semantic\nliteral exact words",
+		"id: world/latent\nkind: world\nlatent concept",
+	]);
 });
