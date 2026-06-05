@@ -11,6 +11,7 @@ export type {
 	DecaySweepResult,
 	IdeaData,
 	JudgmentFields,
+	MemoryOptions,
 	MemorySyncResult,
 	MemorySyncStatus,
 	RestoreArchivedSemanticOptions,
@@ -36,4 +37,5 @@ export {
 	synthesizePrompt,
 	topicMapPrompt,
 } from "./prompts.ts";
+export type { SearchBackend } from "./retrieval.ts";
 export { frontmatter, parseFrontmatter, readJson, readText, writeJson, writeText } from "./store.ts";

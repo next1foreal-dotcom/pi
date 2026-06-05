@@ -14,6 +14,7 @@ import {
 	SEED_CHOICE_MODEL,
 	SEED_CONTEXT,
 	SEED_SELF_NARRATIVE,
+	type SearchBackend,
 	writeJson,
 	writeText,
 } from "../src/her-core/index.ts";
@@ -173,6 +174,24 @@ test("recall searches markdown corpus", async () => {
 	assert.equal(hits[0]?.id, "semantic/own-memory");
 	const state = await readJson<{ access?: Record<string, { count?: number }> }>(join(store, ".her", "state.json"), {});
 	assert.equal(state.access?.["semantic/own-memory"]?.count, 1);
+});
+
+test("recall fuses lexical and injected semantic rankings with RRF", async () => {
+	const store = await tempStore();
+	await writeText(join(store, "semantic", "literal.md"), "# Literal\n\nA literal-anchor memory for exact search.\n");
+	await writeText(
+		join(store, "world", "conceptual.md"),
+		"# Conceptual\n\nA durable moat note without the literal query token.\n",
+	);
+	const semanticSearch: SearchBackend = async (_query, docs) =>
+		docs.filter((doc) => doc.id === "world/conceptual").map((doc) => ({ ...doc, score: 0.9 }));
+
+	const hits = await new Memory(store, { semanticSearch }).recall("literal-anchor", { k: 2 });
+
+	assert.deepEqual(hits.map((hit) => hit.id).sort(), ["semantic/literal", "world/conceptual"]);
+	const state = await readJson<{ access?: Record<string, { count?: number }> }>(join(store, ".her", "state.json"), {});
+	assert.equal(state.access?.["semantic/literal"]?.count, 1);
+	assert.equal(state.access?.["world/conceptual"]?.count, 1);
 });
 
 test("decaySweep archives only old unaccessed decay-tier semantic notes and keeps them recoverable", async () => {
@@ -606,6 +625,23 @@ test("surface returns relevant memory with per-session cooldown and dedupe", asy
 	const blocked = await memory.surface({ query: "Memory", sessionId: "s2", cooldownMinutes: 30 });
 	assert.ok(blocked);
 	assert.equal(await memory.surface({ query: "Mirror", sessionId: "s2", cooldownMinutes: 30 }), undefined);
+});
+
+test("surface can use injected semantic rankings when lexical search is silent", async () => {
+	const store = await tempStore();
+	await writeText(
+		join(store, "world", "latent.md"),
+		"# Latent\n\nThis note is conceptually relevant but lexically distant.\n",
+	);
+	const semanticSearch: SearchBackend = async (_query, docs) =>
+		docs.filter((doc) => doc.id === "world/latent").map((doc) => ({ ...doc, score: 1 }));
+	const memory = new Memory(store, { semanticSearch });
+
+	const hit = await memory.surface({ query: "unspoken association", sessionId: "semantic", cooldownMinutes: 0 });
+
+	assert.equal(hit?.id, "world/latent");
+	const state = await readJson<{ access?: Record<string, { count?: number }> }>(join(store, ".her", "state.json"), {});
+	assert.equal(state.access?.["world/latent"]?.count, 1);
 });
 
 test("writeWorldNote writes contract sections and dedupes by content hash", async () => {

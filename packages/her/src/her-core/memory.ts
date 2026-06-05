@@ -15,7 +15,7 @@ import {
 	synthesizePrompt,
 	topicMapPrompt,
 } from "./prompts.ts";
-import { type CorpusDoc, lexicalSearch, type Note } from "./retrieval.ts";
+import { type CorpusDoc, lexicalSearch, type Note, rrfSearch, type SearchBackend } from "./retrieval.ts";
 import {
 	appendText,
 	frontmatter,
@@ -112,6 +112,12 @@ export interface MemorySyncStatus {
 	error?: string;
 }
 
+export interface MemoryOptions {
+	config?: HerConfig;
+	model?: ModelLike;
+	semanticSearch?: SearchBackend;
+}
+
 export interface ConsolidateResult {
 	episodes: number;
 	notesTouched: number;
@@ -186,11 +192,18 @@ export class Memory {
 	readonly paths: StorePaths;
 	private readonly model?: ModelLike;
 	private readonly config: HerConfig;
+	private readonly semanticSearch?: SearchBackend;
 
-	constructor(root: string, model?: ModelLike, config?: HerConfig) {
+	constructor(root: string, modelOrOptions?: ModelLike | MemoryOptions, config?: HerConfig) {
 		this.paths = new StorePaths(root);
-		this.model = model;
-		this.config = config ?? loadConfig(this.paths.configFile);
+		if (isMemoryOptions(modelOrOptions)) {
+			this.model = modelOrOptions.model;
+			this.config = modelOrOptions.config ?? loadConfig(this.paths.configFile);
+			this.semanticSearch = modelOrOptions.semanticSearch;
+		} else {
+			this.model = modelOrOptions;
+			this.config = config ?? loadConfig(this.paths.configFile);
+		}
 	}
 
 	async capture(raw: string, meta: CaptureMeta = {}): Promise<string> {
@@ -243,7 +256,7 @@ export class Memory {
 	}
 
 	async recall(query: string, opts: { k?: number } = {}): Promise<Note[]> {
-		const hits = lexicalSearch(query, await this.corpus(), opts.k ?? 5);
+		const hits = await rrfSearch(query, await this.corpus(), { k: opts.k ?? 5, semanticSearch: this.semanticSearch });
 		await this.recordAccess(hits.map((hit) => hit.id));
 		return hits;
 	}
@@ -267,7 +280,7 @@ export class Memory {
 		const surfaced = new Set(state.mirror?.surfacedBySession?.[sessionId] ?? []);
 		const corpus = await this.corpus();
 		const query = opts.query?.trim();
-		const ranked = query ? lexicalSearch(query, corpus, 20) : [];
+		const ranked = query ? await rrfSearch(query, corpus, { k: 20, semanticSearch: this.semanticSearch }) : [];
 		const candidates = ranked.length > 0 ? ranked : corpus.map((doc) => ({ ...doc, score: 0 }));
 		const hit = candidates.find((note) => !surfaced.has(note.id));
 		if (!hit) return undefined;
@@ -1111,6 +1124,15 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 		}
 		return { moments: moments.trim(), recognitions: recognitions.sort((a, b) => a.ref.localeCompare(b.ref)) };
 	}
+}
+
+function isMemoryOptions(value: ModelLike | MemoryOptions | undefined): value is MemoryOptions {
+	return Boolean(
+		value &&
+			typeof value === "object" &&
+			!("complete" in value) &&
+			("model" in value || "config" in value || "semanticSearch" in value),
+	);
 }
 
 export async function initStore(root: string): Promise<StorePaths> {
