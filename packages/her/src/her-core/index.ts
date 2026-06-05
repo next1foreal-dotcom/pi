@@ -2,6 +2,8 @@ export type { HerConfig } from "./config.ts";
 export { DEFAULT_CONFIG, loadConfig, renderConfig } from "./config.ts";
 export type {
 	CaptureMeta,
+	DecaySweepOptions,
+	DecaySweepResult,
 	IdeaData,
 	JudgmentFields,
 	MemorySyncResult,

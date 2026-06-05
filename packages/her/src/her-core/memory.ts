@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, readdir } from "node:fs/promises";
+import { mkdir, readdir, unlink } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
 import { type HerConfig, loadConfig, renderConfig } from "./config.ts";
@@ -130,6 +130,17 @@ export interface SynthesizeDueResult {
 	reason?: SynthesizeDueReason;
 }
 
+export interface DecaySweepOptions {
+	olderThanDays?: number;
+	now?: string;
+}
+
+export interface DecaySweepResult {
+	archived: number;
+	kept: number;
+	archivedKeys: string[];
+}
+
 export class Memory {
 	readonly paths: StorePaths;
 	private readonly model?: ModelLike;
@@ -192,6 +203,10 @@ export class Memory {
 
 	async recall(query: string, opts: { k?: number } = {}): Promise<Note[]> {
 		return lexicalSearch(query, await this.corpus(), opts.k ?? 5);
+	}
+
+	async recallArchive(query: string, opts: { k?: number } = {}): Promise<Note[]> {
+		return lexicalSearch(query, await this.archiveCorpus(), opts.k ?? 5);
 	}
 
 	async surface(opts: SurfaceOptions = {}): Promise<Note | undefined> {
@@ -358,6 +373,39 @@ export class Memory {
 			};
 		}
 		return { due: false, threshold, newSemanticNotes, hasConflict, lastSynthesize, daysSinceLastSynthesize };
+	}
+
+	async decaySweep(opts: DecaySweepOptions = {}): Promise<DecaySweepResult> {
+		const olderThanDays = opts.olderThanDays ?? 180;
+		const nowText = opts.now ?? today();
+		const nowTime = parseDate(nowText) ?? Date.now();
+		const archivedKeys: string[] = [];
+		let kept = 0;
+
+		for (const entry of await markdownEntries(this.paths.semantic)) {
+			const sourcePath = join(this.paths.semantic, entry);
+			const parsed = parseFrontmatter(await readText(sourcePath));
+			const tier = String(parsed.data.tier ?? "");
+			if (tier !== "decay") {
+				kept++;
+				continue;
+			}
+			const noteTime = parseDate(String(parsed.data.updated ?? parsed.data.created ?? ""));
+			if (noteTime === undefined || Math.floor((nowTime - noteTime) / 86400000) <= olderThanDays) {
+				kept++;
+				continue;
+			}
+
+			const key = basename(entry, ".md");
+			parsed.data.tier = "archive";
+			parsed.data.archived_at = nowText.slice(0, 10);
+			parsed.data.archive_reason = `decay-tier semantic note older than ${olderThanDays} days`;
+			await writeText(join(this.paths.archiveSemantic, entry), `${frontmatter(parsed.data)}${parsed.body}`);
+			await unlink(sourcePath);
+			archivedKeys.push(key);
+		}
+
+		return { archived: archivedKeys.length, kept, archivedKeys };
 	}
 
 	async approve(proposalId: string): Promise<void> {
@@ -615,6 +663,12 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 		return docs;
 	}
 
+	private async archiveCorpus(): Promise<CorpusDoc[]> {
+		const docs: CorpusDoc[] = [];
+		await this.addDirDocs(docs, this.paths.archiveSemantic, "archive/semantic");
+		return docs;
+	}
+
 	private async addDirDocs(docs: CorpusDoc[], dir: string, kind: string): Promise<void> {
 		let entries: string[];
 		try {
@@ -839,6 +893,7 @@ export async function initStore(root: string): Promise<StorePaths> {
 	for (const dir of [
 		paths.raw,
 		paths.semantic,
+		paths.archiveSemantic,
 		paths.narrative,
 		paths.recognitions,
 		paths.proposals,

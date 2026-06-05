@@ -19,6 +19,14 @@ export class StorePaths {
 		return join(this.root, "semantic");
 	}
 
+	get archive(): string {
+		return join(this.root, "archive");
+	}
+
+	get archiveSemantic(): string {
+		return join(this.archive, "semantic");
+	}
+
 	get narrative(): string {
 		return join(this.root, "narrative");
 	}

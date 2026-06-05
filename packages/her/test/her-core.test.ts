@@ -162,6 +162,33 @@ test("recall searches markdown corpus", async () => {
 	assert.equal(hits[0]?.id, "semantic/own-memory");
 });
 
+test("decaySweep archives only old decay-tier semantic notes and keeps them recoverable", async () => {
+	const store = await tempStore();
+	await writeText(
+		join(store, "semantic", "old-noise.md"),
+		"---\ntier: decay\nupdated: 2020-01-01\n---\n# Old noise\n\nA stale low-value note that should leave the main surface.\n",
+	);
+	await writeText(
+		join(store, "semantic", "identity.md"),
+		"---\ntier: exact\nupdated: 2020-01-01\n---\n# Identity\n\nExact memory should never decay.\n",
+	);
+
+	const result = await new Memory(store).decaySweep({ olderThanDays: 30, now: "2026-06-05" });
+
+	assert.deepEqual(result.archivedKeys, ["old-noise"]);
+	assert.equal(await readText(join(store, "semantic", "old-noise.md")), undefined);
+	assert.match((await readText(join(store, "semantic", "identity.md"))) ?? "", /Exact memory should never decay/);
+	const archived = (await readText(join(store, "archive", "semantic", "old-noise.md"))) ?? "";
+	const parsed = parseFrontmatter(archived);
+	assert.equal(parsed.data.tier, "archive");
+	assert.equal(parsed.data.archived_at, "2026-06-05");
+	assert.match(String(parsed.data.archive_reason ?? ""), /older than 30 days/);
+	assert.match(parsed.body, /stale low-value note/);
+
+	assert.equal((await new Memory(store).recall("stale low-value")).length, 0);
+	assert.equal((await new Memory(store).recallArchive("stale low-value"))[0]?.id, "archive/semantic/old-noise");
+});
+
 test("sync commits and pushes memory changes", async () => {
 	const store = await tempStore();
 	const remote = await mkdtemp(join(tmpdir(), "her-remote-"));
