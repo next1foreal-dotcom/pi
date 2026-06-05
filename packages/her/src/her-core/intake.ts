@@ -28,6 +28,19 @@ interface GitHubRepoTarget {
 	repo: string;
 }
 
+interface ArxivPaperTarget {
+	canonicalUrl: string;
+	id: string;
+}
+
+interface ArxivPaperEntry {
+	authors: string[];
+	categories: string[];
+	published?: string;
+	summary: string;
+	title: string;
+}
+
 interface GitHubTreeEntry {
 	path?: string;
 	size?: number;
@@ -41,11 +54,29 @@ export async function readUrlForWorldNote(sourceUrl: string, opts: UrlIntakeOpti
 	const startUrl = normalizeSourceUrl(sourceUrl);
 	await assertSafeHttpUrl(startUrl, { allowLocal: opts.allowLocal, lookup });
 	if (isXThreadUrl(startUrl)) {
-		return failedUrlIntake(
+		return blockedUrlIntake(
 			startUrl.href,
 			startUrl.href,
 			"x-thread",
 			"X/Twitter sources require browser-native or authenticated reading; minimal URL intake did not fetch login-wall HTML.",
+			maxBytes,
+		);
+	}
+	const arxivPaper = parseArxivPaperUrl(startUrl);
+	if (arxivPaper) {
+		return readArxivPaperForWorldNote(startUrl.href, arxivPaper, {
+			allowLocal: opts.allowLocal,
+			fetcher,
+			lookup,
+			...opts,
+		});
+	}
+	if (isVideoUrl(startUrl)) {
+		return blockedUrlIntake(
+			startUrl.href,
+			startUrl.href,
+			"video",
+			"Video sources require transcript extraction or browser-native reading; minimal URL intake did not fetch video HTML.",
 			maxBytes,
 		);
 	}
@@ -67,12 +98,12 @@ export async function readUrlForWorldNote(sourceUrl: string, opts: UrlIntakeOpti
 		return failedUrlIntake(startUrl.href, finalUrl, sourceType, `HTTP ${response.status}`, maxBytes);
 	}
 
-	if (sourceType === "pdf") {
+	if (sourceType === "pdf" || sourceType === "epub") {
 		return unreadableUrlIntake(
 			startUrl.href,
 			finalUrl,
 			sourceType,
-			"PDF fetched but not parsed by the minimal URL intake.",
+			`${sourceType.toUpperCase()} fetched but not parsed by the minimal URL intake.`,
 			maxBytes,
 		);
 	}
@@ -117,6 +148,37 @@ export async function readUrlForWorldNote(sourceUrl: string, opts: UrlIntakeOpti
 	return { data, bytesRead, finalUrl, truncated };
 }
 
+function blockedUrlIntake(
+	requestedUrl: string,
+	finalUrl: string,
+	sourceType: string,
+	reason: string,
+	maxBytes = DEFAULT_MAX_BYTES,
+): UrlIntakeResult {
+	const coverage = `Source was intentionally not fetched by minimal URL intake: ${reason}`;
+	const extracted = `Requested URL: ${requestedUrl}\nFinal URL: ${finalUrl}\nUnread reason: ${reason}`;
+	return {
+		data: {
+			title: `Unread source: ${titleFromUrl(finalUrl || requestedUrl)}`,
+			sourceUrl: finalUrl || requestedUrl,
+			sourceType,
+			contentHash: intakeContentHash(finalUrl || requestedUrl, extracted),
+			memoryStatus: "needs_deep_read",
+			memoryStatusReason: coverage,
+			extracted,
+			coverage,
+			read: "Samantha has not read this source yet; this note only preserves the intake request and the reader gap.",
+			steal: [],
+			connections: [],
+			take: "Keep this stub so the source can be routed to the correct deeper reader later.",
+			possibleMoves: ["Retry with browser-native, transcript extraction, web-access, or a logged-in/deeper reader."],
+		},
+		bytesRead: 0,
+		finalUrl,
+		truncated: maxBytes <= 0,
+	};
+}
+
 export function failedUrlIntake(
 	requestedUrl: string,
 	finalUrl: string,
@@ -146,6 +208,69 @@ export function failedUrlIntake(
 		finalUrl,
 		truncated: maxBytes <= 0,
 	};
+}
+
+async function readArxivPaperForWorldNote(
+	requestedUrl: string,
+	target: ArxivPaperTarget,
+	opts: UrlIntakeOptions,
+): Promise<UrlIntakeResult> {
+	const fetcher = opts.fetcher ?? fetch;
+	const lookup = opts.lookup ?? dnsLookup;
+	const apiUrl = arxivApiUrl(target.id);
+	await assertSafeHttpUrl(apiUrl, { allowLocal: opts.allowLocal, lookup });
+	const response = await fetchWithSafeRedirects(apiUrl, { allowLocal: opts.allowLocal, fetcher, lookup });
+	if (!response.ok) {
+		return failedUrlIntake(requestedUrl, target.canonicalUrl, "paper", `arXiv metadata HTTP ${response.status}`);
+	}
+	const read = await readResponseText(response, opts.maxBytes ?? DEFAULT_MAX_BYTES);
+	const entry = parseArxivEntry(read.text);
+	if (!entry) {
+		return failedUrlIntake(
+			requestedUrl,
+			target.canonicalUrl,
+			"paper",
+			"arXiv metadata response did not contain a readable paper entry",
+		);
+	}
+	const extracted = renderArxivExtracted(target, entry);
+	const coverage = [
+		`Orientation only: read arXiv metadata and abstract for ${target.id} via export API.`,
+		`${read.bytesRead} bytes read from ${apiUrl.href}.`,
+		"Full PDF body, methods, experiments, limitations, figures, and references were not read.",
+		read.truncated
+			? "The metadata response was truncated by the configured byte budget."
+			: "Metadata response fit within the configured byte budget.",
+	].join(" ");
+	const firstClaim = firstSentence(entry.summary);
+	const data: WorldNoteData = {
+		title: entry.title,
+		sourceUrl: target.canonicalUrl,
+		sourceType: "paper",
+		contentHash: intakeContentHash(target.canonicalUrl, extracted || coverage),
+		memoryStatus: "needs_deep_read",
+		memoryStatusReason:
+			"Only arXiv metadata and abstract were read; the full paper body/method/results/limitations still need deep reading.",
+		extracted,
+		coverage,
+		claims: firstClaim
+			? [
+					{
+						claim: `The paper abstract claims: ${firstClaim}`,
+						verdict: "insufficient_evidence",
+						evidence: `arXiv abstract metadata for ${target.id}; full paper body not read.`,
+						sourceQuality: "primary",
+						caveats: "This is the authors' abstract-level claim, not an independently verified finding.",
+					},
+				]
+			: [],
+		read: "Samantha read the arXiv metadata and abstract only. Method details, limitations, and evidence quality are still unread.",
+		steal: entry.categories.slice(0, 3).map((category) => `arXiv category: ${category}`),
+		connections: [],
+		take: "Keep this as a paper orientation note, not as a settled research conclusion.",
+		possibleMoves: ["Run a full-paper/PDF deep reader to extract methods, limitations, and verified claims."],
+	};
+	return { data, bytesRead: read.bytesRead, finalUrl: target.canonicalUrl, truncated: read.truncated };
 }
 
 async function readGithubRepoForWorldNote(
@@ -325,16 +450,41 @@ function parseGithubRepoUrl(url: URL): GitHubRepoTarget | undefined {
 	return { owner, repo: normalizedRepo };
 }
 
+function parseArxivPaperUrl(url: URL): ArxivPaperTarget | undefined {
+	const host = url.hostname.toLowerCase();
+	if (host !== "arxiv.org" && host !== "www.arxiv.org") return undefined;
+	const [kind, ...idParts] = url.pathname.split("/").filter(Boolean);
+	const rawId = idParts.join("/");
+	if (kind !== "abs" && kind !== "pdf") return undefined;
+	const id = rawId?.replace(/\.pdf$/i, "");
+	if (!id || !/^(?:[a-z-]+\/\d{7}|\d{4}\.\d{4,5})(?:v\d+)?$/i.test(id)) return undefined;
+	return { canonicalUrl: `https://arxiv.org/abs/${id}`, id };
+}
+
 function isXThreadUrl(url: URL): boolean {
 	const host = url.hostname.toLowerCase();
 	if (host !== "x.com" && host !== "www.x.com" && host !== "twitter.com" && host !== "www.twitter.com") return false;
 	return /\/status(?:es)?\/\d+/i.test(url.pathname) || /\/i\/web\/status\/\d+/i.test(url.pathname);
 }
 
+function isVideoUrl(url: URL): boolean {
+	const host = url.hostname.toLowerCase();
+	return (
+		host === "youtu.be" ||
+		host === "youtube.com" ||
+		host.endsWith(".youtube.com") ||
+		host === "vimeo.com" ||
+		host.endsWith(".vimeo.com") ||
+		host === "bilibili.com" ||
+		host.endsWith(".bilibili.com")
+	);
+}
+
 function detectSourceType(url: string, contentType: string): string {
 	const lowerUrl = url.toLowerCase();
 	const lowerType = contentType.toLowerCase();
 	if (lowerUrl.endsWith(".pdf") || lowerType.includes("application/pdf")) return "pdf";
+	if (lowerUrl.endsWith(".epub") || lowerType.includes("application/epub+zip")) return "epub";
 	if (lowerType.includes("text/html")) return "article";
 	if (lowerType.includes("text/plain") || lowerType.includes("text/markdown")) return "text";
 	return "article";
@@ -374,7 +524,14 @@ function decodeHtmlEntities(text: string): string {
 		.replace(/&lt;/gi, "<")
 		.replace(/&gt;/gi, ">")
 		.replace(/&quot;/gi, '"')
-		.replace(/&#39;/gi, "'");
+		.replace(/&#39;/gi, "'")
+		.replace(/&#x([0-9a-f]+);/gi, (_match, hex: string) => decodeNumericEntity(hex, 16))
+		.replace(/&#(\d+);/g, (_match, code: string) => decodeNumericEntity(code, 10));
+}
+
+function decodeNumericEntity(value: string, radix: number): string {
+	const point = Number.parseInt(value, radix);
+	return Number.isFinite(point) && point >= 0 && point <= 0x10ffff ? String.fromCodePoint(point) : "";
 }
 
 function titleFromUrl(url: string): string {
@@ -442,6 +599,56 @@ function githubRawFileUrl(target: GitHubRepoTarget, branch: string, path: string
 	);
 }
 
+function arxivApiUrl(id: string): URL {
+	const url = new URL("https://export.arxiv.org/api/query");
+	url.searchParams.set("id_list", id);
+	return url;
+}
+
+function parseArxivEntry(xml: string): ArxivPaperEntry | undefined {
+	const entry = /<entry\b[\s\S]*?<\/entry>/i.exec(xml)?.[0];
+	if (!entry) return undefined;
+	const title = xmlTagText(entry, "title");
+	const summary = xmlTagText(entry, "summary");
+	if (!title || !summary) return undefined;
+	return {
+		authors: Array.from(entry.matchAll(/<author\b[^>]*>[\s\S]*?<name\b[^>]*>([\s\S]*?)<\/name>[\s\S]*?<\/author>/gi))
+			.map((match) => normalizeExtractedText(decodeHtmlEntities(match[1] ?? "")))
+			.filter(Boolean),
+		categories: Array.from(entry.matchAll(/<category\b[^>]*\bterm=(["'])(.*?)\1/gi))
+			.map((match) => normalizeExtractedText(decodeHtmlEntities(match[2] ?? "")))
+			.filter(Boolean),
+		published: xmlTagText(entry, "published"),
+		summary,
+		title,
+	};
+}
+
+function xmlTagText(xml: string, tag: string): string | undefined {
+	const match = new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)<\\/${tag}>`, "i").exec(xml);
+	const text = match?.[1];
+	return text ? normalizeExtractedText(decodeHtmlEntities(text)) : undefined;
+}
+
+function renderArxivExtracted(target: ArxivPaperTarget, entry: ArxivPaperEntry): string {
+	return normalizeExtractedText(
+		[
+			`# ${entry.title}`,
+			`arXiv ID: ${target.id}`,
+			`Canonical URL: ${target.canonicalUrl}`,
+			entry.authors.length > 0 ? `Authors: ${entry.authors.join(", ")}` : "",
+			entry.published ? `Published: ${entry.published}` : "",
+			entry.categories.length > 0 ? `Categories: ${entry.categories.join(", ")}` : "",
+			"## Abstract",
+			entry.summary,
+			"## Coverage Gap",
+			"Only metadata and abstract were read. Full paper body, method, limitations, figures, and references remain unread.",
+		]
+			.filter(Boolean)
+			.join("\n\n"),
+	);
+}
+
 function renderRepoExtracted(
 	target: GitHubRepoTarget,
 	branch: string,
@@ -494,7 +701,34 @@ function unreadableUrlIntake(
 	reason: string,
 	maxBytes: number,
 ): UrlIntakeResult {
-	return failedUrlIntake(requestedUrl, finalUrl, sourceType, reason, maxBytes);
+	const coverage = `Fetched source but did not parse body text: ${reason}`;
+	const extracted = `Requested URL: ${requestedUrl}\nFinal URL: ${finalUrl}\nUnread reason: ${reason}`;
+	return {
+		data: {
+			title: `Unread ${sourceType.toUpperCase()} source: ${titleFromUrl(finalUrl || requestedUrl)}`,
+			sourceUrl: finalUrl || requestedUrl,
+			sourceType,
+			contentHash: intakeContentHash(finalUrl || requestedUrl, extracted),
+			memoryStatus: "needs_deep_read",
+			memoryStatusReason: coverage,
+			extracted,
+			coverage,
+			read: `Samantha fetched the ${sourceType} URL but did not parse its body text in the minimal intake path.`,
+			steal: [],
+			connections: [],
+			take: "Keep this stub so the source can be routed to a full parser without losing the intake request.",
+			possibleMoves: [`Run a ${sourceType} parser or deep-reader to extract full text and coverage.`],
+		},
+		bytesRead: 0,
+		finalUrl,
+		truncated: maxBytes <= 0,
+	};
+}
+
+function firstSentence(text: string): string {
+	const normalized = normalizeExtractedText(text);
+	const match = /^(.+?[.!?])(?:\s|$)/.exec(normalized);
+	return (match?.[1] ?? normalized).slice(0, 300);
 }
 
 function isLocalHostname(hostname: string): boolean {

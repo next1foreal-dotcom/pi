@@ -11,6 +11,10 @@ function responseText(text: string): Response {
 	return new Response(text, { headers: { "content-type": "text/plain; charset=utf-8" } });
 }
 
+function responseTyped(text: string, contentType: string): Response {
+	return new Response(text, { headers: { "content-type": contentType } });
+}
+
 function inputUrl(input: Parameters<typeof fetch>[0]): string {
 	if (input instanceof Request) return input.url;
 	if (input instanceof URL) return input.href;
@@ -84,4 +88,90 @@ test("URL intake marks X threads as needs_deep_read without fetching login walls
 	assert.match(result.data.coverage, /minimal URL intake did not fetch login-wall HTML/);
 	assert.equal(result.bytesRead, 0);
 	assert.equal(result.truncated, false);
+});
+
+test("URL intake saves arXiv papers as abstract-only paper notes", async () => {
+	const fetcher: typeof fetch = async (input) => {
+		const url = inputUrl(input);
+		assert.equal(url, "https://export.arxiv.org/api/query?id_list=2401.12345v2");
+		return responseTyped(
+			`<?xml version="1.0" encoding="UTF-8"?>
+			<feed xmlns="http://www.w3.org/2005/Atom">
+				<entry>
+					<title>Her Memory Systems &amp; Durable Recall</title>
+					<id>http://arxiv.org/abs/2401.12345v2</id>
+					<published>2024-01-20T00:00:00Z</published>
+					<author><name>Ada Example</name></author>
+					<author><name>Grace Example</name></author>
+					<category term="cs.AI"/>
+					<category term="cs.CL"/>
+					<summary>
+						We present a memory system for long-lived agents. The method uses markdown as source of truth.
+					</summary>
+				</entry>
+			</feed>`,
+			"application/atom+xml; charset=utf-8",
+		);
+	};
+	const lookup = (async () => [{ address: "151.101.65.91", family: 4 }]) as unknown as typeof dnsLookup;
+
+	const result = await readUrlForWorldNote("https://arxiv.org/pdf/2401.12345v2.pdf", { fetcher, lookup });
+
+	assert.equal(result.data.sourceType, "paper");
+	assert.equal(result.data.sourceUrl, "https://arxiv.org/abs/2401.12345v2");
+	assert.equal(result.data.title, "Her Memory Systems & Durable Recall");
+	assert.equal(result.data.memoryStatus, "needs_deep_read");
+	assert.match(result.data.memoryStatusReason ?? "", /Only arXiv metadata and abstract were read/);
+	assert.match(result.data.coverage, /Orientation only: read arXiv metadata and abstract/);
+	assert.match(result.data.coverage, /Full PDF body, methods, experiments, limitations/);
+	assert.match(result.data.extracted, /Authors: Ada Example, Grace Example/);
+	assert.match(result.data.extracted, /Categories: cs\.AI, cs\.CL/);
+	assert.equal(result.data.claims?.[0]?.verdict, "insufficient_evidence");
+	assert.match(result.data.claims?.[0]?.claim ?? "", /We present a memory system/);
+	assert.ok(result.bytesRead > 0);
+});
+
+test("URL intake accepts legacy arXiv ids with category paths", async () => {
+	const fetcher: typeof fetch = async (input) => {
+		assert.equal(inputUrl(input), "https://export.arxiv.org/api/query?id_list=math%2F0309136");
+		return responseTyped(
+			`<feed><entry><title>Legacy arXiv Paper</title><summary>Legacy ids still resolve.</summary></entry></feed>`,
+			"application/atom+xml",
+		);
+	};
+	const lookup = (async () => [{ address: "151.101.65.91", family: 4 }]) as unknown as typeof dnsLookup;
+
+	const result = await readUrlForWorldNote("https://arxiv.org/abs/math/0309136", { fetcher, lookup });
+
+	assert.equal(result.data.sourceType, "paper");
+	assert.equal(result.data.sourceUrl, "https://arxiv.org/abs/math/0309136");
+	assert.equal(result.data.title, "Legacy arXiv Paper");
+});
+
+test("URL intake marks video URLs as transcript-needed stubs without fetching HTML", async () => {
+	const fetcher: typeof fetch = async () => {
+		throw new Error("video intake should not fetch script-heavy video HTML");
+	};
+	const lookup = (async () => [{ address: "142.250.72.206", family: 4 }]) as unknown as typeof dnsLookup;
+
+	const result = await readUrlForWorldNote("https://www.youtube.com/watch?v=abc123", { fetcher, lookup });
+
+	assert.equal(result.data.sourceType, "video");
+	assert.equal(result.data.memoryStatus, "needs_deep_read");
+	assert.match(result.data.coverage, /transcript extraction or browser-native reading/);
+	assert.match(result.data.read, /has not read this source yet/);
+	assert.equal(result.bytesRead, 0);
+});
+
+test("URL intake marks EPUB sources as parser-needed stubs with honest coverage", async () => {
+	const fetcher: typeof fetch = async () => responseTyped("epub bytes would be binary", "application/epub+zip");
+	const lookup = (async () => [{ address: "93.184.216.34", family: 4 }]) as unknown as typeof dnsLookup;
+
+	const result = await readUrlForWorldNote("https://example.com/book.epub", { fetcher, lookup });
+
+	assert.equal(result.data.sourceType, "epub");
+	assert.equal(result.data.memoryStatus, "needs_deep_read");
+	assert.match(result.data.coverage, /Fetched source but did not parse body text/);
+	assert.match(result.data.memoryStatusReason ?? "", /EPUB fetched but not parsed/);
+	assert.equal(result.bytesRead, 0);
 });
