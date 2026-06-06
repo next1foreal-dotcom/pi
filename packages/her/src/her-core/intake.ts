@@ -10,9 +10,24 @@ export interface UrlIntakeOptions {
 	allowLocal?: boolean;
 	fetcher?: typeof fetch;
 	lookup?: typeof dnsLookup;
+	markdownReader?: UrlMarkdownReader;
 	maxBytes?: number;
 	maxRepoFiles?: number;
 }
+
+export interface UrlMarkdownReadOptions {
+	maxBytes: number;
+	sourceType: string;
+}
+
+export interface UrlMarkdownReadResult {
+	finalUrl?: string;
+	markdown: string;
+	source?: string;
+	title?: string;
+}
+
+export type UrlMarkdownReader = (url: URL, opts: UrlMarkdownReadOptions) => Promise<UrlMarkdownReadResult | undefined>;
 
 export interface UrlIntakeResult {
 	data: WorldNoteData;
@@ -188,6 +203,11 @@ export async function readUrlForWorldNote(sourceUrl: string, opts: UrlIntakeOpti
 			...opts,
 		});
 	}
+	if (!opts.allowLocal) {
+		const markdownRead = await readUrlMarkdown(startUrl, opts.markdownReader, { maxBytes, sourceType: "article" });
+		if (markdownRead) return markdownUrlIntake(startUrl.href, markdownRead, maxBytes);
+	}
+
 	const response = await fetchWithSafeRedirects(startUrl, { allowLocal: opts.allowLocal, fetcher, lookup });
 	const contentType = response.headers.get("content-type") ?? "";
 	const finalUrl = response.url || startUrl.href;
@@ -245,6 +265,66 @@ export async function readUrlForWorldNote(sourceUrl: string, opts: UrlIntakeOpti
 				: ["Run /her-intake or deep-reader on this source for full coverage."],
 	};
 	return { data, bytesRead, finalUrl, truncated };
+}
+
+async function readUrlMarkdown(
+	url: URL,
+	reader: UrlMarkdownReader | undefined,
+	opts: UrlMarkdownReadOptions,
+): Promise<UrlMarkdownReadResult | undefined> {
+	if (!reader) return undefined;
+	try {
+		const result = await reader(url, opts);
+		return result?.markdown?.trim() ? result : undefined;
+	} catch {
+		// Optional markdown readers degrade to the existing safe URL fetch path.
+		return undefined;
+	}
+}
+
+function markdownUrlIntake(requestedUrl: string, result: UrlMarkdownReadResult, maxBytes: number): UrlIntakeResult {
+	const finalUrl = result.finalUrl || requestedUrl;
+	const normalized = normalizeExtractedText(result.markdown);
+	const bytes = Buffer.from(normalized, "utf8");
+	const truncated = bytes.byteLength > maxBytes;
+	const readBytes = truncated ? bytes.subarray(0, maxBytes) : bytes;
+	const extracted = normalizeExtractedText(readBytes.toString("utf8")) || "(no readable text extracted)";
+	const title = result.title?.trim() || extractTitle(extracted) || titleFromUrl(finalUrl);
+	const readerName = result.source?.trim() || "markdown reader";
+	const memoryStatus = truncated || extracted.length === 0 ? "needs_deep_read" : "active";
+	const memoryStatusReason = truncated
+		? `${readerName} markdown exceeded ${maxBytes} bytes; saved only the first chunk for orientation.`
+		: extracted.length === 0
+			? `${readerName} did not return readable markdown text.`
+			: undefined;
+	const coverage = truncated
+		? `Orientation only: read first ${readBytes.byteLength} bytes from ${finalUrl} through ${readerName} optimized markdown; source needs deep read.`
+		: `Read curl.md optimized markdown from ${finalUrl}; ${readBytes.byteLength} bytes read.`;
+	const data: WorldNoteData = {
+		title,
+		sourceUrl: finalUrl,
+		sourceType: "article",
+		contentHash: intakeContentHash(finalUrl, extracted || coverage),
+		memoryStatus,
+		...(memoryStatusReason ? { memoryStatusReason } : {}),
+		extracted,
+		coverage,
+		read:
+			memoryStatus === "active"
+				? `Samantha read optimized Markdown from ${readerName} and preserved it as evidence for later synthesis.`
+				: "Samantha only has an orientation stub for this source.",
+		steal: [],
+		connections: [],
+		take:
+			memoryStatus === "active"
+				? "Saved through URL-to-markdown intake so Samantha can recall and connect this source later."
+				: "Saved as a source stub because this needs a deeper reader before strong claims are made.",
+		possibleMoves:
+			memoryStatus === "active"
+				? ["Connect this markdown source to related topics during topic-map or idea maintenance."]
+				: ["Retry with browser-native, web-access, or a logged-in/deeper reader for full coverage."],
+	};
+	return { data, bytesRead: readBytes.byteLength, finalUrl, truncated };
 }
 
 function blockedUrlIntake(

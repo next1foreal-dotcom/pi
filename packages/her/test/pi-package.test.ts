@@ -175,6 +175,13 @@ test("Pi powerline promotes Her memory sync status", async () => {
 	assert.equal(item.prefix, "Her");
 });
 
+test("Pi project includes curl.md for public URL to markdown intake", async () => {
+	const settings = JSON.parse(await readFile(join(process.cwd(), ".pi", "settings.json"), "utf8")) as {
+		packages?: string[];
+	};
+	assert.ok(settings.packages?.includes("npm:@curl.md/pi@0.1.2"), "curl.md Pi extension must stay pinned");
+});
+
 test("Her subagents are project-discoverable and inherit memory context", async () => {
 	const packageAgentsRoot = join(herRoot, "pi-package", "agents");
 	const packageAgents = (await readdir(packageAgentsRoot)).filter((file) => file.endsWith(".md")).sort();

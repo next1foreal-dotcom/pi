@@ -1,6 +1,8 @@
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 import {
 	type ChoiceModelUpdateResult,
 	type ClaimLedgerEntry,
@@ -24,9 +26,12 @@ import {
 	readUrlForWorldNote,
 	type SelfNarrativeUpdateResult,
 	startLongTask,
+	type UrlMarkdownReader,
 	type WorldNoteData,
 } from "./her-core/index.ts";
 import { createSummaryModel } from "./summary-model.ts";
+
+const execFileAsync = promisify(execFile);
 
 type CliCommand =
 	| { kind: "approve"; json: boolean; proposalId: string }
@@ -492,6 +497,7 @@ export async function runHerCli(
 	if (command.kind === "intake-url") {
 		const intake = await readUrlForWorldNote(command.url, {
 			allowLocal: env.HER_ALLOW_LOCAL_URLS === "1" || env.HER_ALLOW_LOCAL_INTAKE === "1",
+			markdownReader: createCurlMdMarkdownReader(env),
 			maxBytes: command.maxBytes,
 		});
 		const noteId = await memory.writeWorldNote(intake.data);
@@ -571,6 +577,29 @@ function createCliMemory(memoryDir: string, env: NodeJS.ProcessEnv): Memory {
 	const model =
 		createSummaryModel(env) ?? new OpenAICompatibleModel(loadConfig(join(memoryDir, ".her", "config.yaml")), env);
 	return new Memory(memoryDir, { model, semanticSearch: createEmbeddingSearch(env) });
+}
+
+function createCurlMdMarkdownReader(env: NodeJS.ProcessEnv): UrlMarkdownReader | undefined {
+	if (env.HER_CURL_MD_ENABLED === "0") return undefined;
+	const explicitCommand = env.HER_CURL_MD_BIN?.trim();
+	const commands = explicitCommand ? [explicitCommand] : ["curl.md"];
+	return async (url, opts) => {
+		for (const command of commands) {
+			try {
+				const { stdout } = await execFileAsync(command, [url.href, "--mode", "smart"], {
+					env,
+					maxBuffer: Math.max(opts.maxBytes * 2, 256_000),
+					shell: process.platform === "win32",
+					timeout: 60_000,
+				});
+				const markdown = stdout.trim();
+				if (markdown) return { finalUrl: url.href, markdown, source: "curl.md" };
+			} catch {
+				// curl.md is an optional public-URL reader; failures fall through to Her's safe fetch path.
+			}
+		}
+		return undefined;
+	};
 }
 
 function parseJsonOnly(

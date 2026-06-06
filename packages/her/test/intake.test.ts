@@ -98,13 +98,61 @@ test("URL intake deep reads selected GitHub repository files", async () => {
 	assert.ok(result.bytesRead > 0);
 });
 
+test("URL intake can read ordinary public pages from curl.md optimized markdown", async () => {
+	const fetcher: typeof fetch = async () => {
+		throw new Error("curl.md reader should avoid the raw HTML fetch path");
+	};
+	const lookup = (async () => [{ address: "93.184.216.34", family: 4 }]) as unknown as typeof dnsLookup;
+	const markdownReader = async (url: URL) => ({
+		markdown: "# curl.md Docs\n\nTurn websites into optimized markdown for agents.",
+		finalUrl: `${url.href.replace(/\/$/, "")}/docs`,
+		source: "curl.md",
+	});
+
+	const result = await readUrlForWorldNote("https://example.com", { fetcher, lookup, markdownReader });
+
+	assert.equal(result.data.sourceType, "article");
+	assert.equal(result.data.sourceUrl, "https://example.com/docs");
+	assert.equal(result.data.title, "curl.md Docs");
+	assert.equal(result.data.memoryStatus, "active");
+	assert.match(result.data.coverage, /curl\.md optimized markdown/);
+	assert.match(result.data.extracted, /optimized markdown for agents/);
+	assert.equal(result.truncated, false);
+	assert.ok(result.bytesRead > 0);
+});
+
+test("URL intake keeps allow-local URLs on the local fetch path instead of curl.md", async () => {
+	const fetcher: typeof fetch = async () => responseText("# Local Debug Page\n\nLocal-only content stays local.");
+	const markdownReader = async () => ({
+		markdown: "# Leaked External Markdown\n\nThis should never be used for allow-local intake.",
+		source: "curl.md",
+	});
+
+	const result = await readUrlForWorldNote("http://localhost:3977/debug", {
+		allowLocal: true,
+		fetcher,
+		markdownReader,
+	});
+
+	assert.equal(result.data.title, "Local Debug Page");
+	assert.match(result.data.extracted, /Local-only content stays local/);
+	assert.doesNotMatch(result.data.extracted, /Leaked External Markdown/);
+});
+
 test("URL intake marks X threads as needs_deep_read without fetching login walls", async () => {
 	const fetcher: typeof fetch = async () => {
 		throw new Error("X thread intake should not fetch unauthenticated HTML");
 	};
 	const lookup = (async () => [{ address: "104.244.42.1", family: 4 }]) as unknown as typeof dnsLookup;
+	const markdownReader = async () => {
+		throw new Error("X thread intake should not send login-wall sources to curl.md");
+	};
 
-	const result = await readUrlForWorldNote("https://x.com/example/status/1234567890", { fetcher, lookup });
+	const result = await readUrlForWorldNote("https://x.com/example/status/1234567890", {
+		fetcher,
+		lookup,
+		markdownReader,
+	});
 
 	assert.equal(result.data.sourceType, "x-thread");
 	assert.equal(result.data.memoryStatus, "needs_deep_read");

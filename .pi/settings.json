@@ -30,6 +30,7 @@
 		"npm:@ramarivera/pi-skill-selector@0.1.16",
 		"npm:pi-fallback-provider@0.0.1",
 		"npm:pi-oracle@0.7.5",
+		"npm:@curl.md/pi@0.1.2",
 		"npm:agent-eval@0.0.1",
 		"npm:@howaboua/pi-auto-reasoning-tool@0.1.6",
 		"npm:@howaboua/pi-codex-conversion@1.5.19",

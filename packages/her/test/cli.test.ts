@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -112,6 +112,41 @@ async function withLocalSource<T>(
 		);
 	}
 }
+
+async function withCurlMdShim<T>(markdown: string, fn: (env: Record<string, string>) => Promise<T>): Promise<T> {
+	const bin = await mkdtemp(join(tmpdir(), "her-curl-md-bin-"));
+	const shim = join(bin, "curl-md-shim.mjs");
+	await writeFile(shim, `console.log(${JSON.stringify(markdown)});\n`, "utf8");
+	const shellShim = join(bin, "curl.md");
+	await writeFile(shellShim, `#!/usr/bin/env sh\n"${process.execPath}" "${shim}" "$@"\n`, "utf8");
+	await chmod(shellShim, 0o755);
+	const cmdShim = join(bin, "curl.md.cmd");
+	await writeFile(cmdShim, `@echo off\r\n"${process.execPath}" "${shim}" %*\r\n`, "utf8");
+	const pathValue = `${bin}${delimiter}${process.env.PATH ?? process.env.Path ?? ""}`;
+	return fn({
+		HER_CURL_MD_BIN: process.platform === "win32" ? cmdShim : shellShim,
+		Path: pathValue,
+		PATH: pathValue,
+	});
+}
+
+test("CLI intake-url prefers curl.md optimized markdown for public pages", async () => {
+	const { store } = await gitBackedStore();
+
+	await withCurlMdShim("# Curl MD Fixture\n\nOptimized markdown from curl.md enters Her memory.", async (env) => {
+		const result = await runCli(["intake-url", "--url", "https://example.com/curl-md-fixture", "--json"], store, env);
+		const payload = JSON.parse(result.stdout);
+
+		assert.equal(payload.result.sourceType, "article");
+		assert.equal(payload.result.memoryStatus, "active");
+		assert.equal(payload.result.truncated, false);
+		assert.ok(payload.result.bytesRead > 0);
+
+		const world = await readFile(join(store, "world", "curl-md-fixture.md"), "utf8");
+		assert.match(world, /Optimized markdown from curl\.md enters Her memory/);
+		assert.match(world, /Read curl\.md optimized markdown/);
+	});
+});
 
 async function withLocalEmbeddings<T>(fn: (env: Record<string, string>, inputs: string[][]) => Promise<T>): Promise<T> {
 	const inputs: string[][] = [];

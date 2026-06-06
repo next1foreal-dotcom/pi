@@ -7,6 +7,9 @@ export type {
 	PathIntakeResult,
 	UrlIntakeOptions,
 	UrlIntakeResult,
+	UrlMarkdownReader,
+	UrlMarkdownReadOptions,
+	UrlMarkdownReadResult,
 } from "./intake.ts";
 export { collectPathIntakeFiles, readPathForWorldNote, readUrlForWorldNote } from "./intake.ts";
 export type {
