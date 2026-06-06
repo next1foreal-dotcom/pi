@@ -189,6 +189,25 @@ test("recall searches markdown corpus", async () => {
 	assert.equal(state.access?.["semantic/own-memory"]?.count, 1);
 });
 
+test("agent-eval: memory changes the next action decision", async () => {
+	const store = await tempStore();
+	const decide = async (memory: Memory, task: string): Promise<string> => {
+		const hits = await memory.recall(task, { k: 3 });
+		return hits.some((hit) => /verify before reporting|machine truth/i.test(hit.text))
+			? "run-verification-first"
+			: "answer-from-current-context";
+	};
+
+	assert.equal(await decide(new Memory(store), "finish and report status"), "answer-from-current-context");
+
+	await writeText(
+		join(store, "semantic", "reporting-rule.md"),
+		"# Reporting Rule\n\nFei expects Samantha to verify before reporting done and cite machine truth.\n",
+	);
+
+	assert.equal(await decide(new Memory(store), "finish and report status verify"), "run-verification-first");
+});
+
 test("recall fuses lexical and injected semantic rankings with RRF", async () => {
 	const store = await tempStore();
 	await writeText(join(store, "semantic", "literal.md"), "# Literal\n\nA literal-anchor memory for exact search.\n");

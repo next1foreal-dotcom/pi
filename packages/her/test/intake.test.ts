@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import type { lookup as dnsLookup } from "node:dns/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
-import { readUrlForWorldNote } from "../src/her-core/index.ts";
+import { readPathForWorldNote, readUrlForWorldNote } from "../src/her-core/index.ts";
 
 function responseJson(data: unknown): Response {
 	return new Response(JSON.stringify(data), { headers: { "content-type": "application/json" } });
@@ -20,6 +23,27 @@ function inputUrl(input: Parameters<typeof fetch>[0]): string {
 	if (input instanceof URL) return input.href;
 	return String(input);
 }
+
+test("path intake reads a full local markdown source with honest coverage", async () => {
+	const root = await mkdtemp(join(tmpdir(), "her-path-intake-"));
+	const source = join(root, "reference-note.md");
+	await writeFile(
+		source,
+		"# Local Reference\n\nFeeding local sources should create world notes with coverage.\n",
+		"utf8",
+	);
+
+	const result = await readPathForWorldNote(source, { rootDir: root });
+
+	assert.equal(result.data.title, "Local Reference");
+	assert.equal(result.data.sourceType, "local-markdown");
+	assert.equal(result.data.memoryStatus, "active");
+	assert.match(result.data.sourceUrl, /^file:\/\//);
+	assert.match(result.data.coverage, /Read full local local-markdown file reference-note\.md/);
+	assert.match(result.data.extracted, /Feeding local sources/);
+	assert.equal(result.truncated, false);
+	assert.ok(result.bytesRead > 0);
+});
 
 test("URL intake deep reads selected GitHub repository files", async () => {
 	const fetcher: typeof fetch = async (input) => {

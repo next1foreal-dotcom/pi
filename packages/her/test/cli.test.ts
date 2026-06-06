@@ -360,6 +360,48 @@ test("CLI intake-source can update related topics and ideas immediately", async 
 	);
 });
 
+test("CLI intakes a local path as a world note", async () => {
+	const { store } = await gitBackedStore();
+	const sourceRoot = await mkdtemp(join(tmpdir(), "her-cli-source-"));
+	const source = join(sourceRoot, "local-reference.md");
+	await writeFile(source, "# Local Reference\n\nPath feeding makes local docs durable and recallable.\n", "utf8");
+
+	const result = await runCli(["intake-path", "--path", source, "--json"], store);
+	const payload = JSON.parse(result.stdout);
+
+	assert.match(payload.result.noteId, /^[0-9a-f]{8}$/);
+	assert.equal(payload.result.sourceType, "local-markdown");
+	assert.equal(payload.result.memoryStatus, "active");
+	assert.equal(payload.result.truncated, false);
+	assert.ok(payload.result.recall.some((note: { id: string }) => note.id === "world/local-reference"));
+	const world = await readFile(join(store, "world", "local-reference.md"), "utf8");
+	assert.match(world, /Path feeding makes local docs durable/);
+	assert.match(world, /Read full local local-markdown file/);
+});
+
+test("CLI bootstrap-feed recursively feeds local text sources", async () => {
+	const { store } = await gitBackedStore();
+	const sourceRoot = await mkdtemp(join(tmpdir(), "her-cli-feed-"));
+	await writeFile(join(sourceRoot, "first.md"), "# First Feed\n\nThe first local feed source.\n", "utf8");
+	await writeFile(join(sourceRoot, "second.txt"), "# Second Feed\n\nThe second local feed source.\n", "utf8");
+	await writeFile(join(sourceRoot, "skip.jpg"), "not text", "utf8");
+
+	const result = await runCli(["bootstrap-feed", "--path", sourceRoot, "--json"], store);
+	const payload = JSON.parse(result.stdout);
+
+	assert.equal(payload.result.files.length, 2);
+	assert.deepEqual(payload.result.files.map((file: { title: string }) => file.title).sort(), [
+		"First Feed",
+		"Second Feed",
+	]);
+	assert.match(await readFile(join(store, "world", "first-feed.md"), "utf8"), /first local feed source/);
+	assert.match(await readFile(join(store, "world", "second-feed.md"), "utf8"), /second local feed source/);
+	assert.equal(
+		(await readdir(join(store, "world"))).some((file) => file.includes("skip")),
+		false,
+	);
+});
+
 test("CLI intakes an ordinary URL as a world note", async () => {
 	const { store } = await gitBackedStore();
 

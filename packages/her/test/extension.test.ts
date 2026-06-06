@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readdir } from "node:fs/promises";
+import { mkdtemp, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -667,6 +667,8 @@ test("extension memory tools write, recall, judge, and update status", async () 
 		const recall = fake.tools.get("her_recall");
 		const worldNote = fake.tools.get("her_world_note");
 		const intakeSource = fake.tools.get("her_intake_source");
+		const intakePath = fake.tools.get("her_intake_path");
+		const bootstrapFeed = fake.tools.get("her_bootstrap_feed");
 		const idea = fake.tools.get("her_idea");
 		const zoneNote = fake.tools.get("her_zone_note");
 		const judgment = fake.tools.get("her_judgment");
@@ -675,6 +677,8 @@ test("extension memory tools write, recall, judge, and update status", async () 
 		assert.ok(recall);
 		assert.ok(worldNote);
 		assert.ok(intakeSource);
+		assert.ok(intakePath);
+		assert.ok(bootstrapFeed);
 		assert.ok(idea);
 		assert.ok(zoneNote);
 		assert.ok(judgment);
@@ -793,6 +797,32 @@ test("extension memory tools write, recall, judge, and update status", async () 
 		const intakeWorld = (await readText(join(store, "world", "agent-intake-patterns.md"))) ?? "";
 		assert.match(intakeWorld, /recall verification/);
 		assert.match(intakeWorld, /claim: Trusted writer computes hashes/);
+
+		const sourceRoot = await mkdtemp(join(tmpdir(), "her-extension-source-"));
+		const localPath = join(sourceRoot, "local-proof.md");
+		await writeFile(localPath, "# Local Proof\n\nPath intake lets Samantha eat local references.\n", "utf8");
+		const pathResult = await executeTool(intakePath, { path: localPath }, ctx);
+		const pathDetails = pathResult.details as { noteId?: string; recall?: Array<{ id: string }> };
+		assert.match(firstText(pathResult), /Local path intake saved/);
+		assert.ok(pathDetails.noteId);
+		assert.ok((pathDetails.recall ?? []).some((note) => note.id === "world/local-proof"));
+		assert.match((await readText(join(store, "world", "local-proof.md"))) ?? "", /Path intake lets Samantha/);
+
+		const feedRoot = await mkdtemp(join(tmpdir(), "her-extension-feed-"));
+		await writeFile(join(feedRoot, "first.md"), "# Extension First\n\nThe first bootstrap-feed reference.\n", "utf8");
+		await writeFile(
+			join(feedRoot, "second.txt"),
+			"# Extension Second\n\nThe second bootstrap-feed reference.\n",
+			"utf8",
+		);
+		await writeFile(join(feedRoot, "skip.png"), "binary-ish", "utf8");
+		const feedResult = await executeTool(bootstrapFeed, { paths: [feedRoot] }, ctx);
+		const feedDetails = feedResult.details as { count?: number; surfaces?: { status?: string } };
+		assert.match(firstText(feedResult), /Her bootstrap feed saved 2 local file/);
+		assert.equal(feedDetails.count, 2);
+		assert.equal(feedDetails.surfaces?.status, "skipped");
+		assert.match((await readText(join(store, "world", "extension-first.md"))) ?? "", /first bootstrap-feed/);
+		assert.match((await readText(join(store, "world", "extension-second.md"))) ?? "", /second bootstrap-feed/);
 	});
 });
 

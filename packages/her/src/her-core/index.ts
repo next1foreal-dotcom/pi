@@ -1,8 +1,14 @@
 export type { HerConfig } from "./config.ts";
 export { DEFAULT_CONFIG, loadConfig, renderConfig } from "./config.ts";
 export { createEmbeddingSearch } from "./embedding-search.ts";
-export type { UrlIntakeOptions, UrlIntakeResult } from "./intake.ts";
-export { readUrlForWorldNote } from "./intake.ts";
+export type {
+	PathIntakeCollectOptions,
+	PathIntakeOptions,
+	PathIntakeResult,
+	UrlIntakeOptions,
+	UrlIntakeResult,
+} from "./intake.ts";
+export { collectPathIntakeFiles, readPathForWorldNote, readUrlForWorldNote } from "./intake.ts";
 export type {
 	LongTaskCheckpointOptions,
 	LongTaskClaimOptions,

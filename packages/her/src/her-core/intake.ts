@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 import { lookup as dnsLookup } from "node:dns/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { isIP } from "node:net";
+import { basename, extname, relative, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import type { WorldNoteData } from "./memory.ts";
 
 export interface UrlIntakeOptions {
@@ -18,9 +21,38 @@ export interface UrlIntakeResult {
 	truncated: boolean;
 }
 
+export interface PathIntakeOptions {
+	maxBytes?: number;
+	rootDir?: string;
+	sourceType?: string;
+}
+
+export interface PathIntakeResult {
+	data: WorldNoteData;
+	bytesRead: number;
+	path: string;
+	truncated: boolean;
+}
+
+export interface PathIntakeCollectOptions {
+	extensions?: readonly string[];
+	skipDirectories?: readonly string[];
+}
+
 const DEFAULT_MAX_BYTES = 250_000;
 const DEFAULT_MAX_REPO_FILES = 4;
 const DEFAULT_REPO_FILE_BYTES = 40_000;
+const DEFAULT_PATH_INTAKE_EXTENSIONS = [".md", ".txt", ".json", ".jsonl"] as const;
+const DEFAULT_PATH_INTAKE_SKIP_DIRECTORIES = [
+	".git",
+	".her",
+	".venv",
+	"coverage",
+	"dist",
+	"node_modules",
+	"tmp",
+	"__pycache__",
+] as const;
 const MAX_REDIRECTS = 3;
 
 interface GitHubRepoTarget {
@@ -45,6 +77,73 @@ interface GitHubTreeEntry {
 	path?: string;
 	size?: number;
 	type?: string;
+}
+
+export async function readPathForWorldNote(filePath: string, opts: PathIntakeOptions = {}): Promise<PathIntakeResult> {
+	const maxBytes = opts.maxBytes ?? DEFAULT_MAX_BYTES;
+	const absolutePath = resolve(filePath);
+	const info = await stat(absolutePath);
+	if (!info.isFile()) throw new Error(`intake-path requires a file: ${filePath}`);
+	const bytes = await readFile(absolutePath);
+	const truncated = bytes.byteLength > maxBytes;
+	const readBytes = truncated ? bytes.subarray(0, maxBytes) : bytes;
+	const text = readBytes.toString("utf8");
+	const extracted = normalizeExtractedText(text) || "(no readable text extracted)";
+	const sourceType = opts.sourceType ?? detectPathSourceType(absolutePath);
+	const displayPath = opts.rootDir ? relative(resolve(opts.rootDir), absolutePath).replace(/\\/g, "/") : absolutePath;
+	const sourceUrl = pathToFileURL(absolutePath).href;
+	const title = extractTitle(text) ?? titleFromPath(absolutePath);
+	const memoryStatus = truncated || extracted === "(no readable text extracted)" ? "needs_deep_read" : "active";
+	const memoryStatusReason = truncated
+		? `Local file exceeded ${maxBytes} bytes; saved only the first chunk for orientation.`
+		: extracted === "(no readable text extracted)"
+			? "Local file did not yield readable UTF-8 text in intake-path."
+			: undefined;
+	const coverage = truncated
+		? `Orientation only: read first ${readBytes.byteLength} bytes from local ${sourceType} file ${displayPath}; source needs deep read.`
+		: `Read full local ${sourceType} file ${displayPath}; ${readBytes.byteLength} bytes read.`;
+	return {
+		data: {
+			title,
+			sourceUrl,
+			sourceType,
+			contentHash: intakeContentHash(sourceUrl, extracted || coverage),
+			memoryStatus,
+			...(memoryStatusReason ? { memoryStatusReason } : {}),
+			extracted,
+			coverage,
+			read:
+				memoryStatus === "active"
+					? "Samantha read the full local text file through intake-path and preserved it as evidence for later synthesis."
+					: "Samantha only has an orientation stub for this local file.",
+			steal: [],
+			connections: [],
+			take:
+				memoryStatus === "active"
+					? "This local source is now recallable and can feed topic maps, ideas, and later narrative synthesis."
+					: "Keep this local source stub and route it to a deeper reader before relying on strong claims.",
+			possibleMoves:
+				memoryStatus === "active"
+					? ["Refresh topic maps and ideas after local source feeding."]
+					: ["Run a deeper local reader or split the file into chunks for full coverage."],
+		},
+		bytesRead: readBytes.byteLength,
+		path: absolutePath,
+		truncated,
+	};
+}
+
+export async function collectPathIntakeFiles(
+	paths: readonly string[],
+	opts: PathIntakeCollectOptions = {},
+): Promise<string[]> {
+	const extensions = new Set((opts.extensions ?? DEFAULT_PATH_INTAKE_EXTENSIONS).map((item) => item.toLowerCase()));
+	const skipDirectories = new Set(opts.skipDirectories ?? DEFAULT_PATH_INTAKE_SKIP_DIRECTORIES);
+	const out: string[] = [];
+	for (const path of paths) {
+		await collectOnePathIntakeTarget(resolve(path), out, extensions, skipDirectories);
+	}
+	return [...new Set(out)].sort((a, b) => a.localeCompare(b));
 }
 
 export async function readUrlForWorldNote(sourceUrl: string, opts: UrlIntakeOptions = {}): Promise<UrlIntakeResult> {
@@ -490,6 +589,33 @@ function detectSourceType(url: string, contentType: string): string {
 	return "article";
 }
 
+async function collectOnePathIntakeTarget(
+	path: string,
+	out: string[],
+	extensions: ReadonlySet<string>,
+	skipDirectories: ReadonlySet<string>,
+): Promise<void> {
+	const info = await stat(path);
+	if (info.isFile()) {
+		if (extensions.has(extname(path).toLowerCase())) out.push(path);
+		return;
+	}
+	if (!info.isDirectory()) return;
+	const entries = await readdir(path, { withFileTypes: true });
+	for (const entry of entries) {
+		if (entry.isDirectory() && skipDirectories.has(entry.name)) continue;
+		await collectOnePathIntakeTarget(resolve(path, entry.name), out, extensions, skipDirectories);
+	}
+}
+
+function detectPathSourceType(filePath: string): string {
+	const ext = extname(filePath).toLowerCase();
+	if (ext === ".md" || ext === ".mdx") return "local-markdown";
+	if (ext === ".txt") return "local-text";
+	if (ext === ".json" || ext === ".jsonl") return "local-json";
+	return "local-file";
+}
+
 function stripHtml(html: string): string {
 	const title = extractTitle(html);
 	const body = html
@@ -538,6 +664,10 @@ function titleFromUrl(url: string): string {
 	const parsed = new URL(url);
 	const stem = parsed.pathname.split("/").filter(Boolean).at(-1) ?? parsed.hostname;
 	return stem.replace(/\.[A-Za-z0-9]+$/, "").replace(/[-_]+/g, " ") || parsed.hostname;
+}
+
+function titleFromPath(filePath: string): string {
+	return basename(filePath, extname(filePath)).replace(/[-_]+/g, " ") || basename(filePath);
 }
 
 function intakeContentHash(sourceUrl: string, extracted: string): string {

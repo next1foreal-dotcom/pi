@@ -9,6 +9,7 @@ import { Type } from "typebox";
 import {
 	checkpointLongTask,
 	claimNextLongTask,
+	collectPathIntakeFiles,
 	completeLongTask,
 	createEmbeddingSearch,
 	type IdeaData,
@@ -19,6 +20,7 @@ import {
 	Memory,
 	type MemorySyncResult,
 	type MemorySyncStatus,
+	readPathForWorldNote,
 	type SamanthaZoneCategory,
 	startLongTask,
 	type WorldNoteData,
@@ -206,6 +208,36 @@ function requireNonBlank(value: string, field: string): string {
 	const trimmed = value.trim();
 	if (!trimmed) throw new Error(`her_intake_source requires non-empty ${field}`);
 	return trimmed;
+}
+
+function optionalPositiveInteger(value: number | undefined, field: string): number | undefined {
+	if (value === undefined) return undefined;
+	if (!Number.isFinite(value) || value <= 0) throw new Error(`${field} must be a positive number`);
+	return Math.floor(value);
+}
+
+async function updateSurfaces(memory: Memory, enabled: boolean | undefined) {
+	if (!enabled) {
+		return {
+			status: "skipped" as const,
+			topicMaps: [] as string[],
+			ideas: [] as Array<{ id: string; title: string; kind: string }>,
+			reason: "pass updateSurfaces to refresh related topics and ideas after intake",
+		};
+	}
+	const topicMaps: string[] = [];
+	try {
+		topicMaps.push(...(await memory.buildTopicMaps()));
+		const ideas = await memory.generateIdeas();
+		return { status: "updated" as const, topicMaps, ideas };
+	} catch (error) {
+		return {
+			status: "failed" as const,
+			topicMaps,
+			ideas: [] as Array<{ id: string; title: string; kind: string }>,
+			error: errorMessage(error),
+		};
+	}
 }
 
 function renderContextReview(updates: Awaited<ReturnType<Memory["reviewContextUpdates"]>>): string {
@@ -801,6 +833,81 @@ export default function her(pi: ExtensionAPI): void {
 				noteId,
 				contentHash: data.contentHash,
 				recall: recall.map((note) => ({ id: note.id, kind: note.kind, path: note.path })),
+				memoryDir,
+			});
+		},
+	});
+
+	pi.registerTool({
+		name: "her_intake_path",
+		label: "Her Intake Path",
+		description: "Read a local text file path into a Her world note and verify it is recallable.",
+		parameters: Type.Object({
+			path: Type.String(),
+			sourceType: Type.Optional(Type.String()),
+			maxBytes: Type.Optional(Type.Number()),
+		}),
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			const intake = await readPathForWorldNote(resolve(ctx.cwd, params.path), {
+				maxBytes: optionalPositiveInteger(params.maxBytes, "maxBytes"),
+				rootDir: ctx.cwd,
+				...(params.sourceType ? { sourceType: params.sourceType } : {}),
+			});
+			const noteId = await mem.writeWorldNote(intake.data);
+			const recall = await mem.recall(`${intake.data.title} ${intake.data.sourceUrl} ${intake.data.take}`, { k: 3 });
+			return textResult(`Local path intake saved in Her memory: ${noteId}`, {
+				phase: "3",
+				noteId,
+				path: intake.path,
+				bytesRead: intake.bytesRead,
+				contentHash: intake.data.contentHash,
+				memoryStatus: intake.data.memoryStatus,
+				sourceType: intake.data.sourceType,
+				truncated: intake.truncated,
+				recall: recall.map((note) => ({ id: note.id, kind: note.kind, path: note.path })),
+				memoryDir,
+			});
+		},
+	});
+
+	pi.registerTool({
+		name: "her_bootstrap_feed",
+		label: "Her Bootstrap Feed",
+		description: "Recursively read local markdown/text/json files into Her world notes for bootstrap feeding.",
+		parameters: Type.Object({
+			paths: Type.Array(Type.String()),
+			maxBytes: Type.Optional(Type.Number()),
+			updateSurfaces: Type.Optional(Type.Boolean()),
+		}),
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			const maxBytes = optionalPositiveInteger(params.maxBytes, "maxBytes");
+			const files = await collectPathIntakeFiles(params.paths.map((path) => resolve(ctx.cwd, path)));
+			const results: Array<{
+				bytesRead: number;
+				memoryStatus: WorldNoteData["memoryStatus"];
+				noteId: string;
+				path: string;
+				title: string;
+				truncated: boolean;
+			}> = [];
+			for (const file of files) {
+				const intake = await readPathForWorldNote(file, { maxBytes, rootDir: ctx.cwd });
+				const noteId = await mem.writeWorldNote(intake.data);
+				results.push({
+					bytesRead: intake.bytesRead,
+					memoryStatus: intake.data.memoryStatus,
+					noteId,
+					path: intake.path,
+					title: intake.data.title,
+					truncated: intake.truncated,
+				});
+			}
+			const surfaces = await updateSurfaces(mem, params.updateSurfaces);
+			return textResult(`Her bootstrap feed saved ${results.length} local file(s).`, {
+				phase: "3",
+				count: results.length,
+				files: results,
+				surfaces,
 				memoryDir,
 			});
 		},

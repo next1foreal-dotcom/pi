@@ -7,6 +7,7 @@ import {
 	type ConsolidateResult,
 	checkpointLongTask,
 	claimNextLongTask,
+	collectPathIntakeFiles,
 	completeLongTask,
 	createEmbeddingSearch,
 	type DecaySweepResult,
@@ -19,6 +20,7 @@ import {
 	Memory,
 	type MemorySyncStatus,
 	OpenAICompatibleModel,
+	readPathForWorldNote,
 	readUrlForWorldNote,
 	type SelfNarrativeUpdateResult,
 	startLongTask,
@@ -28,6 +30,7 @@ import { createSummaryModel } from "./summary-model.ts";
 
 type CliCommand =
 	| { kind: "approve"; json: boolean; proposalId: string }
+	| { kind: "bootstrap-feed"; json: boolean; maxBytes?: number; paths: string[]; updateSurfaces: boolean }
 	| { kind: "capture"; json: boolean; text: string; project?: string; sessionId?: string; timestamp?: string }
 	| { kind: "choice-model"; json: boolean }
 	| { kind: "consolidate"; json: boolean; limit?: number }
@@ -55,6 +58,14 @@ type CliCommand =
 	| { kind: "help" }
 	| { kind: "ideas"; json: boolean }
 	| { kind: "intake-source"; data: WorldNoteData; json: boolean; updateSurfaces: boolean }
+	| {
+			kind: "intake-path";
+			json: boolean;
+			maxBytes?: number;
+			path: string;
+			sourceType?: string;
+			updateSurfaces: boolean;
+	  }
 	| { kind: "intake-url"; json: boolean; maxBytes?: number; updateSurfaces: boolean; url: string }
 	| { kind: "judgment"; fields: JudgmentFields; json: boolean; noteId: string }
 	| { kind: "memory-status"; json: boolean; noteId: string; reason: string; status: WorldNoteData["memoryStatus"] }
@@ -146,6 +157,36 @@ interface CliIntakeUrlPayload extends CliStatusPayload {
 	};
 }
 
+interface CliIntakePathPayload extends CliStatusPayload {
+	result: {
+		bytesRead: number;
+		contentHash: string;
+		memoryStatus: WorldNoteData["memoryStatus"];
+		noteId: string;
+		path: string;
+		recall: Array<{ id: string; kind: string; path: string }>;
+		sourceType: string;
+		sourceUrl: string;
+		title: string;
+		truncated: boolean;
+		surfaces: CliSurfaceUpdateResult;
+	};
+}
+
+interface CliBootstrapFeedPayload extends CliStatusPayload {
+	result: {
+		files: Array<{
+			bytesRead: number;
+			memoryStatus: WorldNoteData["memoryStatus"];
+			noteId: string;
+			path: string;
+			title: string;
+			truncated: boolean;
+		}>;
+		surfaces: CliSurfaceUpdateResult;
+	};
+}
+
 interface CliSurfaceUpdateResult {
 	status: "skipped" | "updated" | "failed";
 	topicMaps: string[];
@@ -202,6 +243,7 @@ export function parseArgs(argv: string[]): CliCommand {
 	const [command, ...rest] = argv;
 	if (!command || command === "help" || command === "--help" || command === "-h") return { kind: "help" };
 	if (command === "approve") return parseApprove(rest);
+	if (command === "bootstrap-feed") return parseBootstrapFeed(rest);
 	if (command === "capture") return parseCapture(rest);
 	if (command === "choice-model") return parseJsonOnly("choice-model", rest);
 	if (command === "consolidate") return parseConsolidate(rest);
@@ -212,6 +254,7 @@ export function parseArgs(argv: string[]): CliCommand {
 	if (command === "goal-next") return parseGoalNext(rest);
 	if (command === "goal-start") return parseGoalStart(rest);
 	if (command === "ideas") return parseJsonOnly("ideas", rest);
+	if (command === "intake-path") return parseIntakePath(rest);
 	if (command === "intake-source") return parseIntakeSource(rest);
 	if (command === "intake-url") return parseIntakeUrl(rest);
 	if (command === "judgment") return parseJudgment(rest);
@@ -372,6 +415,58 @@ export async function runHerCli(
 		const result = await memory.generateIdeas();
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderIdeas);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "intake-path") {
+		const intake = await readPathForWorldNote(resolve(cwd, command.path), {
+			maxBytes: command.maxBytes,
+			rootDir: cwd,
+			sourceType: command.sourceType,
+		});
+		const noteId = await memory.writeWorldNote(intake.data);
+		const recall = await memory.recall(`${intake.data.title} ${intake.data.sourceUrl} ${intake.data.take}`, {
+			k: 3,
+		});
+		const surfaces = await updateSurfaces(memory, command.updateSurfaces);
+		const payload = {
+			...(await buildStatusPayload(memoryDir, memory)),
+			result: {
+				bytesRead: intake.bytesRead,
+				contentHash: intake.data.contentHash,
+				memoryStatus: intake.data.memoryStatus,
+				noteId,
+				path: intake.path,
+				recall: recall.map((note) => ({ id: note.id, kind: note.kind, path: note.path })),
+				sourceType: intake.data.sourceType,
+				sourceUrl: intake.data.sourceUrl,
+				title: intake.data.title,
+				truncated: intake.truncated,
+				surfaces,
+			},
+		};
+		writePayload(io.stdout, payload, command.json, renderIntakePath);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "bootstrap-feed") {
+		const files = await collectPathIntakeFiles(command.paths.map((path) => resolve(cwd, path)));
+		const results: CliBootstrapFeedPayload["result"]["files"] = [];
+		for (const file of files) {
+			const intake = await readPathForWorldNote(file, { maxBytes: command.maxBytes, rootDir: cwd });
+			const noteId = await memory.writeWorldNote(intake.data);
+			results.push({
+				bytesRead: intake.bytesRead,
+				memoryStatus: intake.data.memoryStatus,
+				noteId,
+				path: intake.path,
+				title: intake.data.title,
+				truncated: intake.truncated,
+			});
+		}
+		const surfaces = await updateSurfaces(memory, command.updateSurfaces);
+		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result: { files: results, surfaces } };
+		writePayload(io.stdout, payload, command.json, renderBootstrapFeed);
 		return payload.status.status === "unknown" ? 1 : 0;
 	}
 
@@ -990,6 +1085,79 @@ function parseIntakeSource(argv: string[]): CliCommand {
 	};
 }
 
+function parseIntakePath(argv: string[]): CliCommand {
+	let json = false;
+	let maxBytes: number | undefined;
+	let path: string | undefined;
+	let sourceType: string | undefined;
+	let updateSurfaces = false;
+
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--update-surfaces") {
+			updateSurfaces = true;
+			continue;
+		}
+		if (arg === "--path") {
+			path = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--source-type") {
+			sourceType = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--max-bytes") {
+			maxBytes = parsePositiveNumber(requireOptionValue(argv[++i], arg), arg);
+			continue;
+		}
+		throw new UsageError(`unknown intake-path option: ${arg}`);
+	}
+
+	return {
+		kind: "intake-path",
+		json,
+		path: requireNonBlank(path, "--path"),
+		updateSurfaces,
+		...(maxBytes ? { maxBytes } : {}),
+		...(sourceType ? { sourceType } : {}),
+	};
+}
+
+function parseBootstrapFeed(argv: string[]): CliCommand {
+	let json = false;
+	let maxBytes: number | undefined;
+	const paths: string[] = [];
+	let updateSurfaces = false;
+
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--update-surfaces") {
+			updateSurfaces = true;
+			continue;
+		}
+		if (arg === "--path") {
+			paths.push(requireOptionValue(argv[++i], arg));
+			continue;
+		}
+		if (arg === "--max-bytes") {
+			maxBytes = parsePositiveNumber(requireOptionValue(argv[++i], arg), arg);
+			continue;
+		}
+		throw new UsageError(`unknown bootstrap-feed option: ${arg}`);
+	}
+
+	if (paths.length === 0) throw new UsageError("bootstrap-feed requires at least one --path <file-or-dir>");
+	return { kind: "bootstrap-feed", json, paths, updateSurfaces, ...(maxBytes ? { maxBytes } : {}) };
+}
+
 function parseIntakeUrl(argv: string[]): CliCommand {
 	let json = false;
 	let maxBytes: number | undefined;
@@ -1318,6 +1486,40 @@ function renderIntakeUrl(payload: CliIntakeUrlPayload): string {
 	].join("\n");
 }
 
+function renderIntakePath(payload: CliIntakePathPayload): string {
+	return [
+		`Her intake path saved: ${payload.result.noteId}`,
+		`title: ${payload.result.title}`,
+		`path: ${payload.result.path}`,
+		`memory status: ${payload.result.memoryStatus}`,
+		`bytes read: ${payload.result.bytesRead}${payload.result.truncated ? " (truncated)" : ""}`,
+		`content hash: ${payload.result.contentHash}`,
+		`recall hits: ${payload.result.recall.map((note) => note.id).join(", ") || "(none)"}`,
+		renderSurfaceUpdate(payload.result.surfaces),
+		"",
+		renderStatus(payload),
+	].join("\n");
+}
+
+function renderBootstrapFeed(payload: CliBootstrapFeedPayload): string {
+	const files =
+		payload.result.files.length > 0
+			? payload.result.files
+					.map(
+						(file, index) =>
+							`${index + 1}. ${file.noteId} - ${file.title} (${file.bytesRead} bytes${file.truncated ? ", truncated" : ""})`,
+					)
+					.join("\n")
+			: "(none)";
+	return [
+		`Her bootstrap feed saved ${payload.result.files.length} file(s):`,
+		files,
+		renderSurfaceUpdate(payload.result.surfaces),
+		"",
+		renderStatus(payload),
+	].join("\n");
+}
+
 function renderSurfaceUpdate(result: CliSurfaceUpdateResult): string {
 	const topics = result.topicMaps.length > 0 ? result.topicMaps.join(", ") : "(none)";
 	const ideas = result.ideas.length > 0 ? result.ideas.map((idea) => idea.title).join(", ") : "(none)";
@@ -1349,6 +1551,7 @@ function writeLine(stream: NodeJS.WritableStream, text: string): void {
 function usage(): string {
 	return `Usage:
   her approve --proposal <id> [--json]
+  her bootstrap-feed --path <file-or-dir> [--path <file-or-dir>] [--max-bytes <n>] [--update-surfaces] [--json]
   her capture --text <text> [--project <name>] [--session <id>] [--timestamp <ISO>] [--json]
   her choice-model [--json]
   her consolidate [--limit <n>] [--json]
@@ -1360,6 +1563,7 @@ function usage(): string {
   her goal-next [--runner <id>] [--lease-minutes <n>] [--now <ISO>] [--json]
   her ideas [--json]
   her intake-source --title <title> --source-url <url> --source-type <kind> --extracted <text> --coverage <text> --read <text> --take <text> [--memory-status active|archive_only|needs_deep_read] [--memory-status-reason <text>] [--claim-json <json>] [--steal <text>] [--connection <id>] [--possible-move <text>] [--update-surfaces] [--json]
+  her intake-path --path <file> [--source-type <kind>] [--max-bytes <n>] [--update-surfaces] [--json]
   her intake-url --url <url> [--max-bytes <n>] [--update-surfaces] [--json]
   her judgment --note <id> [--choice <text>] [--correction <text>] [--reason <text>] [--attraction <text>] [--inferred-intent <text>] [--rejection <text>] [--hesitation <text>] [--outcome <text>] [--json]
   her memory-status --note <id> --status active|archive_only|needs_deep_read --reason <text> [--json]
