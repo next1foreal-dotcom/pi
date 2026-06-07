@@ -130,6 +130,24 @@ async function withCurlMdShim<T>(markdown: string, fn: (env: Record<string, stri
 	});
 }
 
+async function withDefuddleShim<T>(markdown: string, fn: (env: Record<string, string>) => Promise<T>): Promise<T> {
+	const bin = await mkdtemp(join(tmpdir(), "her-defuddle-bin-"));
+	const shim = join(bin, "defuddle-shim.mjs");
+	await writeFile(shim, `console.log(${JSON.stringify(markdown)});\n`, "utf8");
+	const shellShim = join(bin, "defuddle");
+	await writeFile(shellShim, `#!/usr/bin/env sh\n"${process.execPath}" "${shim}" "$@"\n`, "utf8");
+	await chmod(shellShim, 0o755);
+	const cmdShim = join(bin, "defuddle.cmd");
+	await writeFile(cmdShim, `@echo off\r\n"${process.execPath}" "${shim}" %*\r\n`, "utf8");
+	const pathValue = `${bin}${delimiter}${process.env.PATH ?? process.env.Path ?? ""}`;
+	return fn({
+		HER_CURL_MD_ENABLED: "0",
+		HER_DEFUDDLE_BIN: process.platform === "win32" ? cmdShim : shellShim,
+		Path: pathValue,
+		PATH: pathValue,
+	});
+}
+
 test("CLI intake-url prefers curl.md optimized markdown for public pages", async () => {
 	const { store } = await gitBackedStore();
 
@@ -145,6 +163,28 @@ test("CLI intake-url prefers curl.md optimized markdown for public pages", async
 		const world = await readFile(join(store, "world", "curl-md-fixture.md"), "utf8");
 		assert.match(world, /Optimized markdown from curl\.md enters Her memory/);
 		assert.match(world, /Read curl\.md optimized markdown/);
+	});
+});
+
+test("CLI intake-url can read X URLs through defuddle when curl.md is disabled", async () => {
+	const { store } = await gitBackedStore();
+
+	await withDefuddleShim("# X Thread Fixture\n\nPublic X content extracted through Defuddle.", async (env) => {
+		const result = await runCli(
+			["intake-url", "--url", "https://x.com/example/status/1234567890", "--json"],
+			store,
+			env,
+		);
+		const payload = JSON.parse(result.stdout);
+
+		assert.equal(payload.result.sourceType, "x-thread");
+		assert.equal(payload.result.memoryStatus, "active");
+		assert.equal(payload.result.truncated, false);
+		assert.ok(payload.result.bytesRead > 0);
+
+		const world = await readFile(join(store, "world", "x-thread-fixture.md"), "utf8");
+		assert.match(world, /Public X content extracted through Defuddle/);
+		assert.match(world, /defuddle optimized markdown/);
 	});
 });
 

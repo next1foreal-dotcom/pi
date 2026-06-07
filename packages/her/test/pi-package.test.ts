@@ -182,6 +182,13 @@ test("Pi project includes curl.md for public URL to markdown intake", async () =
 	assert.ok(settings.packages?.includes("npm:@curl.md/pi@0.1.2"), "curl.md Pi extension must stay pinned");
 });
 
+test("Pi project pins defuddle for local article and X URL intake", async () => {
+	const manifest = JSON.parse(await readFile(join(process.cwd(), "package.json"), "utf8")) as {
+		dependencies?: Record<string, string>;
+	};
+	assert.equal(manifest.dependencies?.defuddle, "0.18.1");
+});
+
 test("Her subagents are project-discoverable and inherit memory context", async () => {
 	const packageAgentsRoot = join(herRoot, "pi-package", "agents");
 	const packageAgents = (await readdir(packageAgentsRoot)).filter((file) => file.endsWith(".md")).sort();

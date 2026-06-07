@@ -121,6 +121,29 @@ test("URL intake can read ordinary public pages from curl.md optimized markdown"
 	assert.ok(result.bytesRead > 0);
 });
 
+test("URL intake can read X threads through an explicit social markdown reader", async () => {
+	const fetcher: typeof fetch = async () => {
+		throw new Error("X reader should avoid fetching unauthenticated login-wall HTML");
+	};
+	const lookup = (async () => [{ address: "104.244.42.1", family: 4 }]) as unknown as typeof dnsLookup;
+	const xMarkdownReader = async (url: URL) => ({
+		markdown: "# X Thread Fixture\n\nA public X thread extracted through Defuddle.",
+		finalUrl: url.href,
+		source: "defuddle",
+	});
+
+	const result = await readUrlForWorldNote("https://x.com/example/status/1234567890", {
+		fetcher,
+		lookup,
+		xMarkdownReader,
+	});
+
+	assert.equal(result.data.sourceType, "x-thread");
+	assert.equal(result.data.memoryStatus, "active");
+	assert.match(result.data.extracted, /public X thread extracted through Defuddle/);
+	assert.match(result.data.coverage, /defuddle optimized markdown/);
+});
+
 test("URL intake keeps allow-local URLs on the local fetch path instead of curl.md", async () => {
 	const fetcher: typeof fetch = async () => responseText("# Local Debug Page\n\nLocal-only content stays local.");
 	const markdownReader = async () => ({

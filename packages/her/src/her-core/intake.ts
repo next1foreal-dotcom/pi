@@ -13,6 +13,7 @@ export interface UrlIntakeOptions {
 	markdownReader?: UrlMarkdownReader;
 	maxBytes?: number;
 	maxRepoFiles?: number;
+	xMarkdownReader?: UrlMarkdownReader;
 }
 
 export interface UrlMarkdownReadOptions {
@@ -168,6 +169,13 @@ export async function readUrlForWorldNote(sourceUrl: string, opts: UrlIntakeOpti
 	const startUrl = normalizeSourceUrl(sourceUrl);
 	await assertSafeHttpUrl(startUrl, { allowLocal: opts.allowLocal, lookup });
 	if (isXThreadUrl(startUrl)) {
+		if (!opts.allowLocal) {
+			const markdownRead = await readUrlMarkdown(startUrl, opts.xMarkdownReader, {
+				maxBytes,
+				sourceType: "x-thread",
+			});
+			if (markdownRead) return markdownUrlIntake(startUrl.href, markdownRead, maxBytes, "x-thread");
+		}
 		return blockedUrlIntake(
 			startUrl.href,
 			startUrl.href,
@@ -205,7 +213,7 @@ export async function readUrlForWorldNote(sourceUrl: string, opts: UrlIntakeOpti
 	}
 	if (!opts.allowLocal) {
 		const markdownRead = await readUrlMarkdown(startUrl, opts.markdownReader, { maxBytes, sourceType: "article" });
-		if (markdownRead) return markdownUrlIntake(startUrl.href, markdownRead, maxBytes);
+		if (markdownRead) return markdownUrlIntake(startUrl.href, markdownRead, maxBytes, "article");
 	}
 
 	const response = await fetchWithSafeRedirects(startUrl, { allowLocal: opts.allowLocal, fetcher, lookup });
@@ -282,7 +290,12 @@ async function readUrlMarkdown(
 	}
 }
 
-function markdownUrlIntake(requestedUrl: string, result: UrlMarkdownReadResult, maxBytes: number): UrlIntakeResult {
+function markdownUrlIntake(
+	requestedUrl: string,
+	result: UrlMarkdownReadResult,
+	maxBytes: number,
+	sourceType: string,
+): UrlIntakeResult {
 	const finalUrl = result.finalUrl || requestedUrl;
 	const normalized = normalizeExtractedText(result.markdown);
 	const bytes = Buffer.from(normalized, "utf8");
@@ -299,11 +312,11 @@ function markdownUrlIntake(requestedUrl: string, result: UrlMarkdownReadResult, 
 			: undefined;
 	const coverage = truncated
 		? `Orientation only: read first ${readBytes.byteLength} bytes from ${finalUrl} through ${readerName} optimized markdown; source needs deep read.`
-		: `Read curl.md optimized markdown from ${finalUrl}; ${readBytes.byteLength} bytes read.`;
+		: `Read ${readerName} optimized markdown from ${finalUrl}; ${readBytes.byteLength} bytes read.`;
 	const data: WorldNoteData = {
 		title,
 		sourceUrl: finalUrl,
-		sourceType: "article",
+		sourceType,
 		contentHash: intakeContentHash(finalUrl, extracted || coverage),
 		memoryStatus,
 		...(memoryStatusReason ? { memoryStatusReason } : {}),

@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
@@ -497,8 +498,9 @@ export async function runHerCli(
 	if (command.kind === "intake-url") {
 		const intake = await readUrlForWorldNote(command.url, {
 			allowLocal: env.HER_ALLOW_LOCAL_URLS === "1" || env.HER_ALLOW_LOCAL_INTAKE === "1",
-			markdownReader: createCurlMdMarkdownReader(env),
+			markdownReader: createArticleMarkdownReader(env, cwd),
 			maxBytes: command.maxBytes,
+			xMarkdownReader: createDefuddleMarkdownReader(env, cwd),
 		});
 		const noteId = await memory.writeWorldNote(intake.data);
 		const recall = await memory.recall(`${intake.data.title} ${intake.data.sourceUrl} ${intake.data.take}`, {
@@ -579,6 +581,22 @@ function createCliMemory(memoryDir: string, env: NodeJS.ProcessEnv): Memory {
 	return new Memory(memoryDir, { model, semanticSearch: createEmbeddingSearch(env) });
 }
 
+function createArticleMarkdownReader(env: NodeJS.ProcessEnv, cwd: string): UrlMarkdownReader | undefined {
+	return composeMarkdownReaders(createCurlMdMarkdownReader(env), createDefuddleMarkdownReader(env, cwd));
+}
+
+function composeMarkdownReaders(...readers: Array<UrlMarkdownReader | undefined>): UrlMarkdownReader | undefined {
+	const activeReaders = readers.filter((reader): reader is UrlMarkdownReader => Boolean(reader));
+	if (activeReaders.length === 0) return undefined;
+	return async (url, opts) => {
+		for (const reader of activeReaders) {
+			const result = await reader(url, opts);
+			if (result?.markdown?.trim()) return result;
+		}
+		return undefined;
+	};
+}
+
 function createCurlMdMarkdownReader(env: NodeJS.ProcessEnv): UrlMarkdownReader | undefined {
 	if (env.HER_CURL_MD_ENABLED === "0") return undefined;
 	const explicitCommand = env.HER_CURL_MD_BIN?.trim();
@@ -600,6 +618,36 @@ function createCurlMdMarkdownReader(env: NodeJS.ProcessEnv): UrlMarkdownReader |
 		}
 		return undefined;
 	};
+}
+
+function createDefuddleMarkdownReader(env: NodeJS.ProcessEnv, cwd: string): UrlMarkdownReader | undefined {
+	if (env.HER_DEFUDDLE_ENABLED === "0") return undefined;
+	const commands = commandCandidates(env.HER_DEFUDDLE_BIN, "defuddle", cwd);
+	return async (url, opts) => {
+		for (const command of commands) {
+			try {
+				const { stdout } = await execFileAsync(command, ["parse", url.href, "--markdown"], {
+					env,
+					maxBuffer: Math.max(opts.maxBytes * 2, 512_000),
+					shell: process.platform === "win32",
+					timeout: 60_000,
+				});
+				const markdown = stdout.trim();
+				if (markdown) return { finalUrl: url.href, markdown, source: "defuddle" };
+			} catch {
+				// Defuddle is an optional public-URL distiller; failures fall through to the next reader.
+			}
+		}
+		return undefined;
+	};
+}
+
+function commandCandidates(explicitCommand: string | undefined, commandName: string, cwd: string): string[] {
+	if (explicitCommand?.trim()) return [explicitCommand.trim()];
+	const suffix = process.platform === "win32" ? ".cmd" : "";
+	const localCommand = resolve(cwd, "node_modules", ".bin", `${commandName}${suffix}`);
+	const commands = existsSync(localCommand) ? [localCommand, commandName] : [commandName];
+	return [...new Set(commands)];
 }
 
 function parseJsonOnly(
