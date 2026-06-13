@@ -59,6 +59,7 @@
 		}
 	},
 	"dependencies": {
+		"@cedar-policy/cedar-wasm": "4.11.1",
 		"defuddle": "0.18.1"
 	}
 }

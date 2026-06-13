@@ -548,6 +548,57 @@ test("extension returns a full compaction that preserves Her pinned context with
 	});
 });
 
+test("extension gates governed tool calls with Cedar and writes audit JSONL", async () => {
+	const store = await tempStore();
+	const ctx = createContext(store);
+
+	await withMemoryDir(store, async () => {
+		const fake = createFakePi();
+		her(fake.pi);
+
+		const toolCall = fake.handlers.get("tool_call")?.[0];
+		assert.ok(toolCall);
+
+		const allow = await toolCall(
+			{ type: "tool_call", toolCallId: "call-1", toolName: "her_recall", input: { query: "Fei" } },
+			ctx,
+		);
+		assert.equal(allow, undefined);
+
+		const deny = (await toolCall(
+			{ type: "tool_call", toolCallId: "call-2", toolName: "bash", input: { command: "rm -rf ." } },
+			ctx,
+		)) as { block?: boolean; reason?: string };
+		assert.equal(deny.block, true);
+		assert.match(deny.reason ?? "", /forbid_destructive_tool/);
+
+		const unknown = await toolCall(
+			{ type: "tool_call", toolCallId: "call-3", toolName: "unregistered_tool", input: {} },
+			ctx,
+		);
+		assert.equal(unknown, undefined);
+
+		const auditFiles = await readdir(join(store, "audit"));
+		assert.equal(auditFiles.length, 1);
+		const entries = (
+			await Promise.all(
+				auditFiles.sort().map(async (file) => ((await readText(join(store, "audit", file))) ?? "").trim()),
+			)
+		)
+			.join("\n")
+			.split("\n")
+			.filter(Boolean)
+			.map((line) => JSON.parse(line) as { tool: string; verdict: string; rule: string | null; reason?: string });
+		assert.deepEqual(
+			entries.map((entry) => [entry.tool, entry.verdict, entry.rule]),
+			[
+				["her_recall", "ALLOW", "allow_memory_tools"],
+				["bash", "DENY", "forbid_destructive_tool"],
+			],
+		);
+	});
+});
+
 test("extension passes configured summary model to Memory capture", async () => {
 	const store = await tempStore();
 	const ctx = createContext(store);

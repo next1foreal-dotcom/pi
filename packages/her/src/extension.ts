@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { AuthorizationCall } from "@cedar-policy/cedar-wasm/nodejs";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { anthropicOAuthProvider, openaiCodexOAuthProvider } from "@earendil-works/pi-ai/oauth";
 import type { ExtensionAPI, ExtensionContext, ProviderConfig } from "@earendil-works/pi-coding-agent";
@@ -25,6 +26,8 @@ import {
 	startLongTask,
 	type WorldNoteData,
 } from "./her-core/index.ts";
+import { appendAuditLog } from "./lib/audit.ts";
+import { evaluate, policyEnvelope } from "./lib/cedar.ts";
 import { createSummaryModel } from "./summary-model.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -39,6 +42,37 @@ const checkpointStatusValues = ["active", "blocked"] as const;
 const samanthaZoneCategoryValues = ["journal", "collection", "projects", "tools", "dreams"] as const;
 const claimVerdictValues = ["supported", "contradicted", "insufficient_evidence"] as const;
 const sourceQualityValues = ["primary", "secondary", "weak", "unavailable", "blocked"] as const;
+const governedTools: Record<string, { destructive: boolean }> = {
+	bash: { destructive: true },
+	edit: { destructive: true },
+	write: { destructive: true },
+	read: { destructive: false },
+	grep: { destructive: false },
+	find: { destructive: false },
+	ls: { destructive: false },
+	her_status: { destructive: false },
+	her_recall: { destructive: false },
+	her_sync: { destructive: false },
+	her_goal_start: { destructive: false },
+	her_goal_next: { destructive: false },
+	her_goal_checkpoint: { destructive: false },
+	her_goal_complete: { destructive: false },
+	her_goal_list: { destructive: false },
+	her_synthesize_choice_model: { destructive: false },
+	her_synthesize_self_narrative: { destructive: false },
+	her_review_context: { destructive: false },
+	her_keep: { destructive: false },
+	her_revert: { destructive: false },
+	her_remember: { destructive: false },
+	her_world_note: { destructive: false },
+	her_intake_source: { destructive: false },
+	her_intake_path: { destructive: false },
+	her_bootstrap_feed: { destructive: false },
+	her_zone_note: { destructive: false },
+	her_idea: { destructive: false },
+	her_judgment: { destructive: false },
+	her_memory_status: { destructive: false },
+};
 const claimLedgerSchema = Type.Array(
 	Type.Object({
 		claim: Type.String(),
@@ -421,6 +455,20 @@ function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
+function toolAuthorizationCall(toolName: string, destructive: boolean): AuthorizationCall {
+	return {
+		principal: { type: "Agent", id: "samantha" },
+		action: { type: "Action", id: "CallTool" },
+		resource: { type: "Tool", id: toolName },
+		context: {},
+		entities: [
+			{ uid: { type: "Agent", id: "samantha" }, attrs: {}, parents: [] },
+			{ uid: { type: "Tool", id: toolName }, attrs: { name: toolName, destructive }, parents: [] },
+		],
+		...policyEnvelope(),
+	};
+}
+
 export default function her(pi: ExtensionAPI): void {
 	const memoryDir = getMemoryDir();
 	const summaryModel = createSummaryModel();
@@ -652,6 +700,42 @@ export default function her(pi: ExtensionAPI): void {
 				},
 			},
 		};
+	});
+
+	pi.on("tool_call", (event) => {
+		const tool = governedTools[event.toolName];
+		if (!tool) return undefined;
+
+		const ts = new Date().toISOString();
+		try {
+			const verdict = evaluate(toolAuthorizationCall(event.toolName, tool.destructive));
+			const rule = verdict.matched.join(",") || null;
+			appendAuditLog({
+				ts,
+				tool: event.toolName,
+				toolCallId: event.toolCallId,
+				verdict: verdict.decision === "allow" ? "ALLOW" : "DENY",
+				rule,
+				context: { destructive: tool.destructive },
+			});
+			if (verdict.decision === "deny") {
+				const reason = rule ? `cedar: deny (matched ${rule})` : "cedar: deny (no permit matched)";
+				return { block: true, reason };
+			}
+			return undefined;
+		} catch (error) {
+			const reason = `cedar: evaluation failed (${errorMessage(error)})`;
+			appendAuditLog({
+				ts,
+				tool: event.toolName,
+				toolCallId: event.toolCallId,
+				verdict: "DENY",
+				rule: "cedar_error",
+				reason,
+				context: { destructive: tool.destructive },
+			});
+			return { block: true, reason };
+		}
 	});
 
 	pi.registerTool({

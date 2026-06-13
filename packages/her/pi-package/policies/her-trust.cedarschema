@@ -1,0 +1,12 @@
+entity Agent;
+
+entity Tool = {
+  name: String,
+  destructive: Bool,
+};
+
+action "CallTool" appliesTo {
+  principal: Agent,
+  resource: Tool,
+  context: {},
+};
