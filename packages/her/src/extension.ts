@@ -16,11 +16,15 @@ import {
 	createEmbeddingSearch,
 	createHerTask,
 	type GateDecision,
+	type HerProposalRecord,
 	type HerTaskRecord,
+	herProposalFeedbackVerdicts,
+	herProposalStatuses,
 	herTaskStatuses,
 	type IdeaData,
 	type JudgmentFields,
 	type LongTaskRecord,
+	listHerProposals,
 	listHerTasks,
 	listLongTasks,
 	longTaskStatuses,
@@ -28,8 +32,11 @@ import {
 	type MemorySyncResult,
 	type MemorySyncStatus,
 	readPathForWorldNote,
+	recordHerProposal,
+	recordHerProposalFeedback,
 	type SamanthaZoneCategory,
 	startLongTask,
+	summarizeHerProposalStats,
 	updateHerTask,
 	type WorldNoteData,
 } from "./her-core/index.ts";
@@ -75,6 +82,10 @@ const governedTools: Record<string, { destructive: boolean }> = {
 	her_task_create: { destructive: false },
 	her_task_update: { destructive: false },
 	her_task_list: { destructive: false },
+	her_proposal_record: { destructive: false },
+	her_proposal_feedback: { destructive: false },
+	her_proposal_stats: { destructive: false },
+	her_proposal_list: { destructive: false },
 	her_goal_start: { destructive: false },
 	her_goal_next: { destructive: false },
 	her_goal_checkpoint: { destructive: false },
@@ -253,6 +264,13 @@ function renderLongTasks(tasks: Awaited<ReturnType<typeof listLongTasks>>): stri
 function renderHerTasks(tasks: HerTaskRecord[]): string {
 	if (tasks.length === 0) return "No Her tasks found.";
 	return tasks.map((task) => `${task.status}\t${task.id}\t${task.objective}`).join("\n");
+}
+
+function renderHerProposals(proposals: HerProposalRecord[]): string {
+	if (proposals.length === 0) return "No Her scan proposals found.";
+	return proposals
+		.map((proposal) => `${proposal.status}\t${proposal.id}\t${proposal.title}\n${proposal.observation}`)
+		.join("\n\n");
 }
 
 function renderSyncFooterStatus(status: MemorySyncStatus): string {
@@ -939,6 +957,87 @@ export default function her(pi: ExtensionAPI): void {
 		async execute(_toolCallId, params) {
 			const tasks = await listHerTasks(memoryDir, params.status);
 			return textResult(renderHerTasks(tasks), { phase: "C", count: tasks.length, tasks, memoryDir });
+		},
+	});
+
+	pi.registerTool({
+		name: "her_proposal_record",
+		label: "Her Proposal Record",
+		description: "Persist a proactive her-scan proposal so Fei can later accept, defer, or reject it.",
+		parameters: Type.Object({
+			id: Type.Optional(Type.String()),
+			title: Type.String(),
+			observation: Type.String(),
+			suggestion: Type.String(),
+			evidence: Type.Array(Type.String()),
+			source: Type.Optional(Type.String()),
+		}),
+		async execute(_toolCallId, params) {
+			const proposal = await recordHerProposal(memoryDir, {
+				...(params.id ? { id: params.id } : {}),
+				title: params.title,
+				observation: params.observation,
+				suggestion: params.suggestion,
+				evidence: params.evidence,
+				...(params.source ? { source: params.source } : {}),
+			});
+			return textResult(`Her proposal recorded: ${proposal.id}`, { phase: "D", proposal, memoryDir });
+		},
+	});
+
+	pi.registerTool({
+		name: "her_proposal_feedback",
+		label: "Her Proposal Feedback",
+		description: "Record Fei's do/later/wrong feedback for a proactive proposal.",
+		parameters: Type.Object({
+			id: Type.String(),
+			verdict: StringEnum(herProposalFeedbackVerdicts),
+			note: Type.Optional(Type.String()),
+		}),
+		async execute(_toolCallId, params) {
+			const proposal = await recordHerProposalFeedback(memoryDir, params.id, {
+				verdict: params.verdict,
+				...(params.note ? { note: params.note } : {}),
+			});
+			const stats = await summarizeHerProposalStats(memoryDir);
+			return textResult(`Her proposal feedback recorded: ${proposal.id} -> ${proposal.status}`, {
+				phase: "D",
+				proposal,
+				stats,
+				memoryDir,
+			});
+		},
+	});
+
+	pi.registerTool({
+		name: "her_proposal_stats",
+		label: "Her Proposal Stats",
+		description: "Report proactive proposal adoption rate and whether her-scan should become more conservative.",
+		parameters: Type.Object({}),
+		async execute() {
+			const stats = await summarizeHerProposalStats(memoryDir);
+			return textResult(
+				`Her proposal stats: ${stats.accepted}/${stats.total} accepted, adoption ${(stats.adoptionRate * 100).toFixed(1)}%, mode ${stats.suggestedMode}.`,
+				{ phase: "D", stats, memoryDir },
+			);
+		},
+	});
+
+	pi.registerTool({
+		name: "her_proposal_list",
+		label: "Her Proposal List",
+		description: "List proactive her-scan proposals by status.",
+		parameters: Type.Object({
+			status: Type.Optional(StringEnum(herProposalStatuses)),
+		}),
+		async execute(_toolCallId, params) {
+			const proposals = await listHerProposals(memoryDir, params.status);
+			return textResult(renderHerProposals(proposals), {
+				phase: "D",
+				count: proposals.length,
+				proposals,
+				memoryDir,
+			});
 		},
 	});
 

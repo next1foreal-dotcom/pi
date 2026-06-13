@@ -1333,6 +1333,7 @@ export async function initStore(root: string): Promise<StorePaths> {
 		paths.narrative,
 		paths.recognitions,
 		paths.proposals,
+		paths.scanProposals,
 		paths.world,
 		paths.topics,
 		paths.ideas,

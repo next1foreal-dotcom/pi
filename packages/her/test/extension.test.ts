@@ -768,6 +768,57 @@ test("extension task tools verify step gates and audit decisions", async () => {
 	});
 });
 
+test("extension proposal tools record feedback and report adoption stats", async () => {
+	const store = await tempStore();
+	const ctx = createContext(store);
+
+	await withMemoryDir(store, async () => {
+		const fake = createFakePi();
+		her(fake.pi);
+
+		const record = fake.tools.get("her_proposal_record");
+		const feedback = fake.tools.get("her_proposal_feedback");
+		const stats = fake.tools.get("her_proposal_stats");
+		const list = fake.tools.get("her_proposal_list");
+		assert.ok(record);
+		assert.ok(feedback);
+		assert.ok(stats);
+		assert.ok(list);
+
+		await executeTool(
+			record,
+			{
+				id: "proposal-extension",
+				title: "Active task is blocked",
+				observation: "A task has been blocked for more than one checkpoint.",
+				suggestion: "Ask Fei whether to unblock or archive it.",
+				evidence: ["tasks/active contains a blocked task"],
+				source: "her-scan",
+			},
+			ctx,
+		);
+
+		const accepted = await executeTool(
+			feedback,
+			{
+				id: "proposal-extension",
+				verdict: "do",
+				note: "Yes, ask me before it goes stale.",
+			},
+			ctx,
+		);
+		assert.match(firstText(accepted), /accepted/);
+		assert.equal((accepted.details as { stats?: { adoptionRate?: number } }).stats?.adoptionRate, 1);
+
+		const reported = await executeTool(stats, {}, ctx);
+		assert.match(firstText(reported), /100\.0%/);
+
+		const listed = await executeTool(list, { status: "accepted" }, ctx);
+		assert.match(firstText(listed), /proposal-extension/);
+		assert.match((await readText(join(store, "proposals", "scan", "proposal-extension.md"))) ?? "", /Yes, ask me/);
+	});
+});
+
 test("extension passes configured summary model to Memory capture", async () => {
 	const store = await tempStore();
 	const ctx = createContext(store);

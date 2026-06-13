@@ -69,6 +69,24 @@ export {
 	synthesizePrompt,
 	topicMapPrompt,
 } from "./prompts.ts";
+export type {
+	HerProposalFeedback,
+	HerProposalFeedbackVerdict,
+	HerProposalMode,
+	HerProposalRecord,
+	HerProposalStats,
+	HerProposalStatus,
+	RecordHerProposalFeedbackOptions,
+	RecordHerProposalOptions,
+} from "./proposal.ts";
+export {
+	herProposalFeedbackVerdicts,
+	herProposalStatuses,
+	listHerProposals,
+	recordHerProposal,
+	recordHerProposalFeedback,
+	summarizeHerProposalStats,
+} from "./proposal.ts";
 export type { SearchBackend } from "./retrieval.ts";
 export { frontmatter, parseFrontmatter, readJson, readText, writeJson, writeText } from "./store.ts";
 export type {

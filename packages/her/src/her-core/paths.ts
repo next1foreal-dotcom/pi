@@ -67,6 +67,10 @@ export class StorePaths {
 		return join(this.root, "proposals");
 	}
 
+	get scanProposals(): string {
+		return join(this.proposals, "scan");
+	}
+
 	get world(): string {
 		return join(this.root, "world");
 	}
