@@ -71,3 +71,19 @@ export {
 } from "./prompts.ts";
 export type { SearchBackend } from "./retrieval.ts";
 export { frontmatter, parseFrontmatter, readJson, readText, writeJson, writeText } from "./store.ts";
+export type {
+	CreateHerTaskOptions,
+	ExitCriterionResult,
+	GateDecision,
+	GateName,
+	GateVerdict,
+	HerTaskRecord,
+	HerTaskStatus,
+	HerTaskStep,
+	HerTaskStepInput,
+	HerTaskStepStatus,
+	UpdateHerTaskOptions,
+	UpdateHerTaskResult,
+	VerifyStepInput,
+} from "./task.ts";
+export { createHerTask, herTaskStatuses, listHerTasks, updateHerTask, verifyStep } from "./task.ts";

@@ -14,9 +14,14 @@ import {
 	collectPathIntakeFiles,
 	completeLongTask,
 	createEmbeddingSearch,
+	createHerTask,
+	type GateDecision,
+	type HerTaskRecord,
+	herTaskStatuses,
 	type IdeaData,
 	type JudgmentFields,
 	type LongTaskRecord,
+	listHerTasks,
 	listLongTasks,
 	longTaskStatuses,
 	Memory,
@@ -25,6 +30,7 @@ import {
 	readPathForWorldNote,
 	type SamanthaZoneCategory,
 	startLongTask,
+	updateHerTask,
 	type WorldNoteData,
 } from "./her-core/index.ts";
 import { appendAuditLog } from "./lib/audit.ts";
@@ -44,6 +50,16 @@ const samanthaZoneCategoryValues = ["journal", "collection", "projects", "tools"
 const choiceModelDomainValues = ["code-style", "writing-style", "design-taste", "communication-tone"] as const;
 const claimVerdictValues = ["supported", "contradicted", "insufficient_evidence"] as const;
 const sourceQualityValues = ["primary", "secondary", "weak", "unavailable", "blocked"] as const;
+const exitCriterionResultSchema = Type.Object({
+	criterion: Type.String(),
+	passed: Type.Boolean(),
+	evidence: Type.Optional(Type.String()),
+});
+const herTaskStepSchema = Type.Object({
+	id: Type.Optional(Type.String()),
+	title: Type.String(),
+	exitCriteria: Type.Array(Type.String()),
+});
 const governedTools: Record<string, { destructive: boolean }> = {
 	bash: { destructive: true },
 	edit: { destructive: true },
@@ -56,6 +72,9 @@ const governedTools: Record<string, { destructive: boolean }> = {
 	her_recall: { destructive: false },
 	her_feedback: { destructive: false },
 	her_sync: { destructive: false },
+	her_task_create: { destructive: false },
+	her_task_update: { destructive: false },
+	her_task_list: { destructive: false },
 	her_goal_start: { destructive: false },
 	her_goal_next: { destructive: false },
 	her_goal_checkpoint: { destructive: false },
@@ -228,6 +247,11 @@ function renderSync(result: MemorySyncResult): string {
 
 function renderLongTasks(tasks: Awaited<ReturnType<typeof listLongTasks>>): string {
 	if (tasks.length === 0) return "No Her long tasks found.";
+	return tasks.map((task) => `${task.status}\t${task.id}\t${task.objective}`).join("\n");
+}
+
+function renderHerTasks(tasks: HerTaskRecord[]): string {
+	if (tasks.length === 0) return "No Her tasks found.";
 	return tasks.map((task) => `${task.status}\t${task.id}\t${task.objective}`).join("\n");
 }
 
@@ -470,6 +494,32 @@ function toolAuthorizationCall(toolName: string, destructive: boolean): Authoriz
 		],
 		...policyEnvelope(),
 	};
+}
+
+function authorizationGateForUsedTools(toolNames: string[] | undefined): GateDecision | undefined {
+	for (const toolName of toolNames ?? []) {
+		const tool = governedTools[toolName];
+		if (!tool) continue;
+		try {
+			const verdict = evaluate(toolAuthorizationCall(toolName, tool.destructive));
+			if (verdict.decision !== "deny") continue;
+			const rule = verdict.matched.join(",") || "cedar-deny";
+			return {
+				verdict: "DENY",
+				gate: "authorize",
+				rule,
+				reason: `tool ${toolName} denied by Cedar (${rule})`,
+			};
+		} catch (error) {
+			return {
+				verdict: "DENY",
+				gate: "authorize",
+				rule: "cedar_error",
+				reason: `tool ${toolName} Cedar evaluation failed (${errorMessage(error)})`,
+			};
+		}
+	}
+	return undefined;
 }
 
 export default function her(pi: ExtensionAPI): void {
@@ -807,6 +857,88 @@ export default function her(pi: ExtensionAPI): void {
 			const result = await runSync("manual", ctx);
 			if (!result) return textResult("Her memory sync failed.", { phase: "2", status: "failed", memoryDir });
 			return textResult(renderSync(result), { phase: "2", ...result, memoryDir });
+		},
+	});
+
+	pi.registerTool({
+		name: "her_task_create",
+		label: "Her Task Create",
+		description: "Create a verified multi-step Her work task with explicit exit criteria per step.",
+		parameters: Type.Object({
+			id: Type.Optional(Type.String()),
+			objective: Type.String(),
+			steps: Type.Array(herTaskStepSchema),
+		}),
+		async execute(_toolCallId, params) {
+			const task = await createHerTask(memoryDir, {
+				...(params.id ? { id: params.id } : {}),
+				objective: params.objective,
+				steps: params.steps,
+			});
+			return textResult(`Her task created: ${task.id}`, { phase: "C", task, memoryDir });
+		},
+	});
+
+	pi.registerTool({
+		name: "her_task_update",
+		label: "Her Task Update",
+		description: "Verify and advance one Her task step through authorize, budget, retry, and content gates.",
+		parameters: Type.Object({
+			id: Type.String(),
+			stepId: Type.String(),
+			selfReview: Type.Optional(Type.String()),
+			exitCriteriaResults: Type.Optional(Type.Array(exitCriterionResultSchema)),
+			checkpoint: Type.Optional(Type.String()),
+			usedTools: Type.Optional(Type.Array(Type.String())),
+			remainingTokens: Type.Optional(Type.Number()),
+			minimumTokens: Type.Optional(Type.Number()),
+			retryCount: Type.Optional(Type.Number()),
+		}),
+		async execute(toolCallId, params) {
+			const authorization = authorizationGateForUsedTools(params.usedTools);
+			const result = await updateHerTask(memoryDir, params.id, {
+				stepId: params.stepId,
+				authorization,
+				...(params.selfReview ? { selfReview: params.selfReview } : {}),
+				...(params.exitCriteriaResults ? { exitCriteriaResults: params.exitCriteriaResults } : {}),
+				...(params.checkpoint ? { checkpoint: params.checkpoint } : {}),
+				...(params.remainingTokens !== undefined ? { remainingTokens: params.remainingTokens } : {}),
+				...(params.minimumTokens !== undefined ? { minimumTokens: params.minimumTokens } : {}),
+				...(params.retryCount !== undefined ? { retryCount: params.retryCount } : {}),
+			});
+			appendAuditLog({
+				ts: new Date().toISOString(),
+				tool: "her_task_update",
+				toolCallId,
+				verdict: result.decision.verdict,
+				rule: result.decision.rule,
+				reason: result.decision.reason,
+				context: {
+					taskId: result.task.id,
+					stepId: params.stepId,
+					gate: result.decision.gate,
+					status: result.task.status,
+				},
+			});
+			const prefix = result.decision.verdict === "ALLOW" ? "Her task step advanced" : "Her task step blocked";
+			return textResult(`${prefix}: ${result.task.id}/${params.stepId} (${result.decision.rule})`, {
+				phase: "C",
+				...result,
+				memoryDir,
+			});
+		},
+	});
+
+	pi.registerTool({
+		name: "her_task_list",
+		label: "Her Task List",
+		description: "List verified Her work tasks by status.",
+		parameters: Type.Object({
+			status: Type.Optional(StringEnum(herTaskStatuses)),
+		}),
+		async execute(_toolCallId, params) {
+			const tasks = await listHerTasks(memoryDir, params.status);
+			return textResult(renderHerTasks(tasks), { phase: "C", count: tasks.length, tasks, memoryDir });
 		},
 	});
 

@@ -629,6 +629,145 @@ test("extension her_feedback records weighted choice-model rules", async () => {
 	});
 });
 
+test("extension task tools verify step gates and audit decisions", async () => {
+	const store = await tempStore();
+	const ctx = createContext(store);
+
+	await withMemoryDir(store, async () => {
+		const fake = createFakePi();
+		her(fake.pi);
+
+		const create = fake.tools.get("her_task_create");
+		const update = fake.tools.get("her_task_update");
+		const list = fake.tools.get("her_task_list");
+		assert.ok(create);
+		assert.ok(update);
+		assert.ok(list);
+
+		const created = await executeTool(
+			create,
+			{
+				id: "task-extension",
+				objective: "Ship a verified Her task",
+				steps: [
+					{ id: "draft", title: "Draft implementation", exitCriteria: ["task exists"] },
+					{ id: "verify", title: "Verify behavior", exitCriteria: ["tests pass"] },
+				],
+			},
+			ctx,
+		);
+		assert.match(firstText(created), /task-extension/);
+
+		const first = await executeTool(
+			update,
+			{
+				id: "task-extension",
+				stepId: "draft",
+				selfReview: "The task file exists and has explicit steps.",
+				exitCriteriaResults: [{ criterion: "task exists", passed: true, evidence: "created details returned" }],
+				checkpoint: "Draft step created.",
+			},
+			ctx,
+		);
+		assert.match(firstText(first), /advanced/);
+		assert.equal((first.details as { decision?: { rule?: string } }).decision?.rule, "allow");
+
+		const failed = await executeTool(
+			update,
+			{
+				id: "task-extension",
+				stepId: "verify",
+				selfReview: "The verification is not complete yet.",
+				exitCriteriaResults: [{ criterion: "tests pass", passed: false, evidence: "test not run" }],
+			},
+			ctx,
+		);
+		assert.match(firstText(failed), /blocked/);
+		assert.equal((failed.details as { decision?: { rule?: string } }).decision?.rule, "exit-criterion-failed");
+
+		const recovered = await executeTool(
+			update,
+			{
+				id: "task-extension",
+				stepId: "verify",
+				selfReview: "The relevant test passed after the fix.",
+				exitCriteriaResults: [{ criterion: "tests pass", passed: true, evidence: "node --test task.test.ts" }],
+				checkpoint: "Verified step passed.",
+			},
+			ctx,
+		);
+		assert.match(firstText(recovered), /advanced/);
+		assert.equal((recovered.details as { task?: { status?: string } }).task?.status, "done");
+
+		const deniedTask = await executeTool(
+			create,
+			{
+				id: "task-denied-tool",
+				objective: "Reject destructive tools",
+				steps: [{ id: "gate", title: "Gate tool use", exitCriteria: ["safe tools only"] }],
+			},
+			ctx,
+		);
+		assert.match(firstText(deniedTask), /task-denied-tool/);
+		const denied = await executeTool(
+			update,
+			{
+				id: "task-denied-tool",
+				stepId: "gate",
+				usedTools: ["bash"],
+				selfReview: "This attempted to use bash.",
+				exitCriteriaResults: [{ criterion: "safe tools only", passed: true }],
+			},
+			ctx,
+		);
+		assert.match(firstText(denied), /blocked/);
+		assert.equal((denied.details as { decision?: { rule?: string } }).decision?.rule, "forbid_destructive_tool");
+
+		const budgetTask = await executeTool(
+			create,
+			{
+				id: "task-budget",
+				objective: "Stop when context budget is too low",
+				steps: [{ id: "budget", title: "Check budget", exitCriteria: ["enough context remains"] }],
+			},
+			ctx,
+		);
+		assert.match(firstText(budgetTask), /task-budget/);
+		const budget = await executeTool(
+			update,
+			{
+				id: "task-budget",
+				stepId: "budget",
+				remainingTokens: 10,
+				minimumTokens: 100,
+				selfReview: "There is not enough room to continue safely.",
+				exitCriteriaResults: [{ criterion: "enough context remains", passed: true }],
+			},
+			ctx,
+		);
+		assert.equal((budget.details as { decision?: { rule?: string } }).decision?.rule, "budget-exceeded");
+
+		const done = await executeTool(list, { status: "done" }, ctx);
+		assert.match(firstText(done), /task-extension/);
+		const doneFile = (await readText(join(store, "tasks", "done", "task-extension.md"))) ?? "";
+		assert.match(doneFile, /Verified step passed/);
+
+		const auditFiles = await readdir(join(store, "audit"));
+		const rules = (
+			await Promise.all(auditFiles.map(async (file) => ((await readText(join(store, "audit", file))) ?? "").trim()))
+		)
+			.join("\n")
+			.split("\n")
+			.filter(Boolean)
+			.map((line) => JSON.parse(line) as { rule: string | null })
+			.map((entry) => entry.rule);
+		assert.ok(rules.includes("allow"));
+		assert.ok(rules.includes("exit-criterion-failed"));
+		assert.ok(rules.includes("forbid_destructive_tool"));
+		assert.ok(rules.includes("budget-exceeded"));
+	});
+});
+
 test("extension passes configured summary model to Memory capture", async () => {
 	const store = await tempStore();
 	const ctx = createContext(store);

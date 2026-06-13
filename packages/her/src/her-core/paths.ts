@@ -83,6 +83,18 @@ export class StorePaths {
 		return join(this.root, "goals");
 	}
 
+	get tasks(): string {
+		return join(this.root, "tasks");
+	}
+
+	get activeTasks(): string {
+		return join(this.tasks, "active");
+	}
+
+	get doneTasks(): string {
+		return join(this.tasks, "done");
+	}
+
 	get samantha(): string {
 		return join(this.root, "samantha");
 	}
