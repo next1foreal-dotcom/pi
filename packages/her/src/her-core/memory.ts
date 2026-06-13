@@ -32,6 +32,9 @@ const execFileAsync = promisify(execFile);
 const UNIT_TYPES = new Set(["question", "concept", "opinion", "case", "solution"]);
 const RELATION_TYPES = new Set(["responds", "explains", "proves", "conflicts", "relates"]);
 const ACTIVE_MEMORY_TIERS = new Set(["exact", "summarizable", "rule", "decay"]);
+const CHOICE_MODEL_DOMAINS = new Set(["code-style", "writing-style", "design-taste", "communication-tone"]);
+const CHOICE_RULES_MARKER = "her-choice-rules";
+const CHOICE_RULE_STALE_AFTER_DAYS = 30;
 
 export const SEED_CONTEXT =
 	"# CONTEXT - Living Narrative / alive narrative\n\n*(empty - Samantha has not yet formed an understanding of Fei.)*\n";
@@ -152,6 +155,40 @@ export interface JudgmentFields {
 	reason?: string;
 	outcome?: string;
 	correction?: string;
+}
+
+export type ChoiceModelDomain = "code-style" | "writing-style" | "design-taste" | "communication-tone";
+
+export interface FeedbackFields {
+	domain: ChoiceModelDomain;
+	task: string;
+	diffSummary: string;
+	rule: string;
+	at?: string;
+}
+
+export interface FeedbackResult {
+	domain: ChoiceModelDomain;
+	path: string;
+	rule: string;
+	weight: number;
+	status: "active" | "stale";
+}
+
+interface ChoiceRuleEvidence {
+	at: string;
+	task: string;
+	diff_summary: string;
+}
+
+interface ChoiceRuleRecord {
+	id: string;
+	rule: string;
+	weight: number;
+	first_recorded: string;
+	last_triggered: string;
+	status: "active" | "stale";
+	evidence: ChoiceRuleEvidence[];
 }
 
 export interface MemorySyncResult {
@@ -314,12 +351,57 @@ export class Memory {
 		return { context: `${await this.staleBanner()}${context}`, facts, soul, self, choiceModel };
 	}
 
+	async recordFeedback(fields: FeedbackFields): Promise<FeedbackResult> {
+		const domain = validateChoiceModelDomain(fields.domain);
+		const rule = fields.rule.trim();
+		const task = fields.task.trim();
+		const diffSummary = fields.diffSummary.trim();
+		if (!rule) throw new Error("feedback rule is required");
+		if (!task) throw new Error("feedback task is required");
+		if (!diffSummary) throw new Error("feedback diffSummary is required");
+
+		const at = fields.at ?? new Date().toISOString();
+		await mkdir(this.paths.choiceModelDir, { recursive: true });
+		const path = join(this.paths.choiceModelDir, `${domain}.md`);
+		const existing = parseChoiceRuleRecords((await readText(path)) ?? "");
+		const key = normalizeChoiceRule(rule);
+		const found = existing.find((item) => normalizeChoiceRule(item.rule) === key);
+		const evidence = { at, task, diff_summary: diffSummary };
+		let record: ChoiceRuleRecord;
+		if (found) {
+			found.rule = rule;
+			found.weight += 1;
+			found.last_triggered = at;
+			found.status = "active";
+			found.evidence = [...found.evidence, evidence];
+			record = found;
+		} else {
+			record = {
+				id: genId(domain, rule),
+				rule,
+				weight: 1,
+				first_recorded: at,
+				last_triggered: at,
+				status: "active",
+				evidence: [evidence],
+			};
+			existing.push(record);
+		}
+		const renderedRules = sortChoiceRules(existing, at).map((item) => ({
+			...item,
+			status: choiceRuleRuntimeStatus(item, at),
+		}));
+		await writeText(path, renderChoiceRuleFile(domain, renderedRules));
+		return { domain, path, rule: record.rule, weight: record.weight, status: choiceRuleRuntimeStatus(record, at) };
+	}
+
 	private async readChoiceModelContext(): Promise<string> {
 		const base = ((await readText(this.paths.choiceModelFile)) ?? SEED_CHOICE_MODEL).trim();
 		const ruleFiles = await readChoiceModelRuleFiles(this.paths.choiceModelDir);
 		if (ruleFiles.length === 0) return `${base}\n`;
+		const tasteRules = renderTasteRuleSummary(ruleFiles);
 		const rules = ruleFiles.map(({ name, text }) => `## choice-model/${name}\n\n${text.trim()}`).join("\n\n");
-		return `${base}\n\n# CHOICE-MODEL Directory Rules\n\n${rules}\n`;
+		return `${base}${tasteRules ? `\n\n${tasteRules}` : ""}\n\n# CHOICE-MODEL Directory Rules\n\n${rules}\n`;
 	}
 
 	async recall(query: string, opts: { k?: number } = {}): Promise<Note[]> {
@@ -1283,7 +1365,9 @@ export async function initStore(root: string): Promise<StorePaths> {
 	return paths;
 }
 
-async function readChoiceModelRuleFiles(dir: string): Promise<Array<{ name: string; text: string }>> {
+async function readChoiceModelRuleFiles(
+	dir: string,
+): Promise<Array<{ name: string; text: string; rules: ChoiceRuleRecord[] }>> {
 	let names: string[];
 	try {
 		names = await readdir(dir);
@@ -1292,12 +1376,144 @@ async function readChoiceModelRuleFiles(dir: string): Promise<Array<{ name: stri
 		throw error;
 	}
 	const markdown = names.filter((name) => name.endsWith(".md")).sort((a, b) => a.localeCompare(b));
-	const files: Array<{ name: string; text: string }> = [];
+	const files: Array<{ name: string; text: string; rules: ChoiceRuleRecord[] }> = [];
 	for (const name of markdown) {
 		const text = await readText(join(dir, name));
-		if (text?.trim()) files.push({ name, text });
+		if (text?.trim()) files.push({ name, text, rules: parseChoiceRuleRecords(text) });
 	}
 	return files;
+}
+
+function validateChoiceModelDomain(domain: string): ChoiceModelDomain {
+	if (CHOICE_MODEL_DOMAINS.has(domain)) return domain as ChoiceModelDomain;
+	throw new Error(`unknown choice-model domain: ${domain}`);
+}
+
+function parseChoiceRuleRecords(text: string): ChoiceRuleRecord[] {
+	const pattern = new RegExp(`<!-- ${CHOICE_RULES_MARKER}\\n([\\s\\S]*?)\\n-->`, "m");
+	const match = pattern.exec(text);
+	if (!match) return [];
+	try {
+		const parsed = JSON.parse(match[1] ?? "[]");
+		if (!Array.isArray(parsed)) return [];
+		return parsed.flatMap((item) => normalizeChoiceRuleRecord(item));
+	} catch {
+		return [];
+	}
+}
+
+function normalizeChoiceRuleRecord(value: unknown): ChoiceRuleRecord[] {
+	if (!value || typeof value !== "object") return [];
+	const record = value as Partial<ChoiceRuleRecord>;
+	if (typeof record.id !== "string" || typeof record.rule !== "string") return [];
+	const evidence = Array.isArray(record.evidence)
+		? record.evidence.flatMap((item) => {
+				if (!item || typeof item !== "object") return [];
+				const maybe = item as Partial<ChoiceRuleEvidence>;
+				if (
+					typeof maybe.at !== "string" ||
+					typeof maybe.task !== "string" ||
+					typeof maybe.diff_summary !== "string"
+				) {
+					return [];
+				}
+				return [{ at: maybe.at, task: maybe.task, diff_summary: maybe.diff_summary }];
+			})
+		: [];
+	return [
+		{
+			id: record.id,
+			rule: record.rule,
+			weight: typeof record.weight === "number" && Number.isFinite(record.weight) ? record.weight : 1,
+			first_recorded: typeof record.first_recorded === "string" ? record.first_recorded : today(),
+			last_triggered: typeof record.last_triggered === "string" ? record.last_triggered : today(),
+			status: record.status === "stale" ? "stale" : "active",
+			evidence,
+		},
+	];
+}
+
+function renderChoiceRuleFile(domain: ChoiceModelDomain, rules: ChoiceRuleRecord[]): string {
+	const active = rules.filter((rule) => rule.status === "active");
+	const stale = rules.filter((rule) => rule.status === "stale");
+	const sections = [
+		`# ${choiceModelDomainTitle(domain)}`,
+		"",
+		renderChoiceRuleSection("Active Rules", active),
+		renderChoiceRuleSection("Stale Rules", stale),
+		`<!-- ${CHOICE_RULES_MARKER}`,
+		JSON.stringify(rules, null, 2),
+		"-->",
+		"",
+	];
+	return sections.filter((section) => section !== "").join("\n");
+}
+
+function renderChoiceRuleSection(title: string, rules: ChoiceRuleRecord[]): string {
+	if (rules.length === 0) return `## ${title}\n\n(none)\n`;
+	return [
+		`## ${title}`,
+		"",
+		...rules.map((rule) => {
+			const label = rule.status === "stale" ? `stale weight ${rule.weight}` : `weight ${rule.weight}`;
+			const latest = rule.evidence.at(-1);
+			const detail = latest ? `\n  - last: ${rule.last_triggered.slice(0, 10)} · ${latest.task}` : "";
+			return `- [${label}] ${rule.rule}${detail}`;
+		}),
+		"",
+	].join("\n");
+}
+
+function renderTasteRuleSummary(files: Array<{ name: string; rules: ChoiceRuleRecord[] }>): string {
+	const now = new Date().toISOString();
+	const sections: string[] = [];
+	for (const file of files) {
+		const domain = file.name.replace(/\.md$/, "");
+		if (!CHOICE_MODEL_DOMAINS.has(domain) || file.rules.length === 0) continue;
+		const rules = sortChoiceRules(file.rules, now).map((rule) => ({
+			...rule,
+			status: choiceRuleRuntimeStatus(rule, now),
+		}));
+		sections.push(`## Your Taste Rules (${domain})`);
+		for (const rule of rules) {
+			const label = rule.status === "stale" ? `stale weight ${rule.weight}` : `weight ${rule.weight}`;
+			sections.push(`- [${label}] ${rule.rule}`);
+		}
+		sections.push("");
+	}
+	return sections.length > 0 ? `# Your Taste Rules\n\n${sections.join("\n").trim()}` : "";
+}
+
+function sortChoiceRules(rules: ChoiceRuleRecord[], now: string): ChoiceRuleRecord[] {
+	return [...rules].sort((a, b) => {
+		const aStale = choiceRuleRuntimeStatus(a, now) === "stale";
+		const bStale = choiceRuleRuntimeStatus(b, now) === "stale";
+		if (aStale !== bStale) return aStale ? 1 : -1;
+		if (a.weight !== b.weight) return b.weight - a.weight;
+		return b.last_triggered.localeCompare(a.last_triggered);
+	});
+}
+
+function choiceRuleRuntimeStatus(rule: ChoiceRuleRecord, now: string): "active" | "stale" {
+	return daysBetween(rule.last_triggered, now) > CHOICE_RULE_STALE_AFTER_DAYS ? "stale" : "active";
+}
+
+function daysBetween(from: string, to: string): number {
+	const start = Date.parse(from);
+	const end = Date.parse(to);
+	if (!Number.isFinite(start) || !Number.isFinite(end)) return 0;
+	return Math.floor((end - start) / 86_400_000);
+}
+
+function normalizeChoiceRule(rule: string): string {
+	return rule.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function choiceModelDomainTitle(domain: ChoiceModelDomain): string {
+	if (domain === "code-style") return "Code Style Rules";
+	if (domain === "writing-style") return "Writing Style Rules";
+	if (domain === "design-taste") return "Design Taste Rules";
+	return "Communication Tone Rules";
 }
 
 function episodeSection(

@@ -8,6 +8,7 @@ import { anthropicOAuthProvider, openaiCodexOAuthProvider } from "@earendil-work
 import type { ExtensionAPI, ExtensionContext, ProviderConfig } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import {
+	type ChoiceModelDomain,
 	checkpointLongTask,
 	claimNextLongTask,
 	collectPathIntakeFiles,
@@ -40,6 +41,7 @@ const zeroCost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 const memoryStatusValues = ["active", "archive_only", "needs_deep_read"] as const;
 const checkpointStatusValues = ["active", "blocked"] as const;
 const samanthaZoneCategoryValues = ["journal", "collection", "projects", "tools", "dreams"] as const;
+const choiceModelDomainValues = ["code-style", "writing-style", "design-taste", "communication-tone"] as const;
 const claimVerdictValues = ["supported", "contradicted", "insufficient_evidence"] as const;
 const sourceQualityValues = ["primary", "secondary", "weak", "unavailable", "blocked"] as const;
 const governedTools: Record<string, { destructive: boolean }> = {
@@ -52,6 +54,7 @@ const governedTools: Record<string, { destructive: boolean }> = {
 	ls: { destructive: false },
 	her_status: { destructive: false },
 	her_recall: { destructive: false },
+	her_feedback: { destructive: false },
 	her_sync: { destructive: false },
 	her_goal_start: { destructive: false },
 	her_goal_next: { destructive: false },
@@ -766,6 +769,31 @@ export default function her(pi: ExtensionAPI): void {
 				query: params.query,
 				count: notes.length,
 				notes: notes.map((note) => ({ id: note.id, kind: note.kind, path: note.path })),
+			});
+		},
+	});
+
+	pi.registerTool({
+		name: "her_feedback",
+		label: "Her Feedback",
+		description: "Record Fei's correction as a weighted CHOICE-MODEL taste rule.",
+		parameters: Type.Object({
+			task: Type.String({ description: "Task or artifact Fei corrected" }),
+			domain: StringEnum(choiceModelDomainValues),
+			diff_summary: Type.String({ description: "What Fei changed and why" }),
+			rule: Type.String({ description: "Durable rule Samantha should apply next time" }),
+		}),
+		async execute(_toolCallId, params) {
+			const result = await mem.recordFeedback({
+				task: params.task,
+				domain: params.domain as ChoiceModelDomain,
+				diffSummary: params.diff_summary,
+				rule: params.rule,
+			});
+			return textResult(`Feedback recorded in Her CHOICE-MODEL (${result.domain}, weight ${result.weight}).`, {
+				phase: "B",
+				...result,
+				memoryDir,
 			});
 		},
 	});

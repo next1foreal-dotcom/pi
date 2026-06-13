@@ -187,6 +187,46 @@ test("initStore and getContext expose context, facts, soul, self narrative, and 
 	assert.match(updated.choiceModel, /Lead with machine truth/);
 });
 
+test("recordFeedback writes weighted choice rules and getContext sorts stale rules below active rules", async () => {
+	const store = await tempStore();
+	const memory = new Memory(store);
+
+	await memory.recordFeedback({
+		domain: "writing-style",
+		task: "old docs",
+		diffSummary: "Cut the preamble.",
+		rule: "Lead with the conclusion.",
+		at: "2000-01-01T00:00:00.000Z",
+	});
+	await memory.recordFeedback({
+		domain: "writing-style",
+		task: "old docs again",
+		diffSummary: "Same correction.",
+		rule: "Lead with the conclusion.",
+		at: "2000-01-02T00:00:00.000Z",
+	});
+	await memory.recordFeedback({
+		domain: "writing-style",
+		task: "fresh docs",
+		diffSummary: "Use second person.",
+		rule: "Address Fei as you.",
+		at: "2999-01-01T00:00:00.000Z",
+	});
+
+	const file = (await readText(join(store, "choice-model", "writing-style.md"))) ?? "";
+	assert.match(file, /Lead with the conclusion/);
+	assert.match(file, /"weight": 2/);
+	assert.match(file, /Address Fei as you/);
+
+	const context = (await memory.getContext()).choiceModel;
+	assert.match(context, /## Your Taste Rules \(writing-style\)/);
+	const activeIndex = context.indexOf("[weight 1] Address Fei as you.");
+	const staleIndex = context.indexOf("[stale weight 2] Lead with the conclusion.");
+	assert.ok(activeIndex >= 0);
+	assert.ok(staleIndex >= 0);
+	assert.ok(activeIndex < staleIndex);
+});
+
 test("readJson tolerates UTF-8 BOM in existing memory files", async () => {
 	const store = await tempStore();
 	await writeText(join(store, ".her", "seen.json"), '\uFEFF{"hash":"note"}\n');

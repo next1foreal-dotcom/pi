@@ -30,11 +30,14 @@ export {
 } from "./long-task.ts";
 export type {
 	CaptureMeta,
+	ChoiceModelDomain,
 	ChoiceModelUpdateResult,
 	ClaimLedgerEntry,
 	ConsolidateResult,
 	DecaySweepOptions,
 	DecaySweepResult,
+	FeedbackFields,
+	FeedbackResult,
 	IdeaData,
 	JudgmentFields,
 	MemoryOptions,

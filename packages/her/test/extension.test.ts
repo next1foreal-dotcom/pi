@@ -599,6 +599,36 @@ test("extension gates governed tool calls with Cedar and writes audit JSONL", as
 	});
 });
 
+test("extension her_feedback records weighted choice-model rules", async () => {
+	const store = await tempStore();
+	const ctx = createContext(store);
+
+	await withMemoryDir(store, async () => {
+		const fake = createFakePi();
+		her(fake.pi);
+
+		const feedback = fake.tools.get("her_feedback");
+		assert.ok(feedback);
+		const result = await executeTool(
+			feedback,
+			{
+				task: "Write README",
+				domain: "writing-style",
+				diff_summary: "Use second person and lead with the conclusion.",
+				rule: "Use second person and put the conclusion first.",
+			},
+			ctx,
+		);
+
+		assert.match(firstText(result), /Feedback recorded/);
+		assert.equal((result.details as { weight?: number }).weight, 1);
+		assert.match(
+			(await readText(join(store, "choice-model", "writing-style.md"))) ?? "",
+			/Use second person and put the conclusion first/,
+		);
+	});
+});
+
 test("extension passes configured summary model to Memory capture", async () => {
 	const store = await tempStore();
 	const ctx = createContext(store);
