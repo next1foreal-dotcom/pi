@@ -22,6 +22,19 @@ function Invoke-HerCli {
     }
 }
 
+function Invoke-HerTelegramBridge {
+    param([string]$RunFile)
+    if (-not $env:HER_TELEGRAM_BOT_TOKEN -or -not $env:HER_TELEGRAM_CHAT_ID) {
+        Add-Content -LiteralPath $RunFile -Encoding UTF8 -Value "`nTelegram bridge skipped: HER_TELEGRAM_BOT_TOKEN or HER_TELEGRAM_CHAT_ID is not set."
+        return
+    }
+    Add-Content -LiteralPath $RunFile -Encoding UTF8 -Value "`n## Telegram Bridge`n"
+    Invoke-HerCli -Args @("telegram-push-outbox", "--limit", "1", "--json") |
+        Add-Content -LiteralPath $RunFile -Encoding UTF8
+    Invoke-HerCli -Args @("telegram-poll", "--timeout", "0", "--limit", "20", "--json") |
+        Add-Content -LiteralPath $RunFile -Encoding UTF8
+}
+
 function Invoke-HeartbeatCommand {
     param([string]$Command, [int]$Timeout)
     $job = Start-Job -ScriptBlock {
@@ -204,6 +217,8 @@ if ($dryRun) {
     Write-Output "Her heartbeat dry run complete: $runFile"
     exit 0
 }
+
+Invoke-HerTelegramBridge -RunFile $runFile
 
 Invoke-HerCli -Args @("sync", "--message", "memory(sync): heartbeat $stamp", "--json") |
     Add-Content -LiteralPath $runFile -Encoding UTF8

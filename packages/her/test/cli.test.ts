@@ -113,6 +113,60 @@ async function withLocalSource<T>(
 	}
 }
 
+async function withLocalTelegramApi<T>(
+	fn: (env: Record<string, string>, requests: Array<{ body: Record<string, unknown>; url: string }>) => Promise<T>,
+): Promise<T> {
+	const requests: Array<{ body: Record<string, unknown>; url: string }> = [];
+	const server = createServer((req, res) => {
+		let body = "";
+		req.setEncoding("utf8");
+		req.on("data", (chunk) => {
+			body += chunk;
+		});
+		req.on("end", () => {
+			const parsed = body ? (JSON.parse(body) as Record<string, unknown>) : {};
+			const url = req.url ?? "";
+			requests.push({ body: parsed, url });
+			res.writeHead(200, { "content-type": "application/json" });
+			if (url.endsWith("/getUpdates")) {
+				res.end(
+					JSON.stringify({
+						ok: true,
+						result: [
+							{
+								update_id: 7001,
+								message: { message_id: 1, chat: { id: 42 }, text: "Her 状态", from: { id: 42 } },
+							},
+						],
+					}),
+				);
+				return;
+			}
+			if (url.endsWith("/sendMessage")) {
+				res.end(JSON.stringify({ ok: true, result: { message_id: 7002, chat: { id: 42 }, text: parsed.text } }));
+				return;
+			}
+			res.end(JSON.stringify({ ok: false, description: `unexpected path ${url}` }));
+		});
+	});
+	await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+	const { port } = server.address() as AddressInfo;
+	try {
+		return await fn(
+			{
+				HER_TELEGRAM_BASE_URL: `http://127.0.0.1:${port}`,
+				HER_TELEGRAM_BOT_TOKEN: "test-token",
+				HER_TELEGRAM_CHAT_ID: "42",
+			},
+			requests,
+		);
+	} finally {
+		await new Promise<void>((resolveClose, reject) =>
+			server.close((error) => (error ? reject(error) : resolveClose())),
+		);
+	}
+}
+
 async function withCurlMdShim<T>(markdown: string, fn: (env: Record<string, string>) => Promise<T>): Promise<T> {
 	const bin = await mkdtemp(join(tmpdir(), "her-curl-md-bin-"));
 	const shim = join(bin, "curl-md-shim.mjs");
@@ -185,6 +239,34 @@ test("CLI intake-url can read X URLs through defuddle when curl.md is disabled",
 		const world = await readFile(join(store, "world", "x-thread-fixture.md"), "utf8");
 		assert.match(world, /Public X content extracted through Defuddle/);
 		assert.match(world, /defuddle optimized markdown/);
+	});
+});
+
+test("CLI Telegram poll and outbox commands use env credentials against the Bot API", async () => {
+	const { store } = await gitBackedStore();
+	await writeFile(join(store, "outbox", "2026-06-13-heartbeat.md"), "# Heartbeat\n\nHer is awake.", "utf8");
+
+	await withLocalTelegramApi(async (env, requests) => {
+		let result = await runCli(["telegram-poll", "--timeout", "0", "--limit", "10", "--json"], store, env);
+		let payload = JSON.parse(result.stdout);
+		assert.equal(payload.result.received, 1);
+		assert.equal(payload.result.queued.length, 1);
+		assert.equal(payload.result.nextOffset, 7002);
+		assert.match(
+			await readFile(join(store, "tasks", "inbox", payload.result.queued[0].path.split("/").pop()), "utf8"),
+			/Her 状态/,
+		);
+
+		result = await runCli(["telegram-push-outbox", "--limit", "1", "--json"], store, env);
+		payload = JSON.parse(result.stdout);
+		assert.equal(payload.result.sent.length, 1);
+		assert.equal(payload.result.sent[0].messageId, 7002);
+
+		assert.equal(requests[0].url, "/bottest-token/getUpdates");
+		assert.deepEqual(requests[0].body.allowed_updates, ["message"]);
+		assert.equal(requests[1].url, "/bottest-token/sendMessage");
+		assert.equal(requests[1].body.chat_id, "42");
+		assert.match(String(requests[1].body.text), /# Heartbeat/);
 	});
 });
 

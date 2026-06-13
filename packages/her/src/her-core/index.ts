@@ -144,11 +144,26 @@ export type {
 	AttentionDigest,
 	AttentionDigestOptions,
 	AttentionItem,
+	PollTelegramInboxOptions,
+	PushTelegramOutboxOptions,
 	QueueTelegramInboundOptions,
 	ScoredAttentionItem,
+	SendTelegramMessageOptions,
+	TelegramApiOptions,
 	TelegramMessage,
+	TelegramOutboxDelivery,
+	TelegramOutboxResult,
+	TelegramPollResult,
 	TelegramQueueResult,
 	TelegramUpdate,
 	TelegramUser,
 } from "./telegram.ts";
-export { queueTelegramInbound, scoreAttentionItem, selectAttentionDigest } from "./telegram.ts";
+export {
+	callTelegramMethod,
+	pollTelegramInbox,
+	pushTelegramOutbox,
+	queueTelegramInbound,
+	scoreAttentionItem,
+	selectAttentionDigest,
+	sendTelegramMessage,
+} from "./telegram.ts";

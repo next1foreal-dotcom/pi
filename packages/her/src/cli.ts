@@ -27,10 +27,14 @@ import {
 	type MemoryExportCheckResult,
 	type MemorySyncStatus,
 	OpenAICompatibleModel,
+	pollTelegramInbox,
+	pushTelegramOutbox,
 	readPathForWorldNote,
 	readUrlForWorldNote,
 	type SelfNarrativeUpdateResult,
 	startLongTask,
+	type TelegramOutboxResult,
+	type TelegramPollResult,
 	type UrlMarkdownReader,
 	type WorldNoteData,
 } from "./her-core/index.ts";
@@ -88,6 +92,8 @@ type CliCommand =
 	| { kind: "synthesize-due"; json: boolean }
 	| { kind: "status"; json: boolean }
 	| { kind: "sync"; json: boolean; message?: string }
+	| { kind: "telegram-poll"; json: boolean; limit?: number; offset?: number; timeoutSeconds?: number }
+	| { kind: "telegram-push-outbox"; dryRun: boolean; json: boolean; limit?: number }
 	| { kind: "topic-maps"; json: boolean };
 
 interface CliStatusPayload {
@@ -252,6 +258,14 @@ interface CliRecallPayload extends CliStatusPayload {
 	result: Awaited<ReturnType<Memory["recall"]>>;
 }
 
+interface CliTelegramPollPayload extends CliStatusPayload {
+	result: TelegramPollResult;
+}
+
+interface CliTelegramOutboxPayload extends CliStatusPayload {
+	result: TelegramOutboxResult;
+}
+
 interface CliIo {
 	stdout: NodeJS.WritableStream;
 	stderr: NodeJS.WritableStream;
@@ -288,6 +302,8 @@ export function parseArgs(argv: string[]): CliCommand {
 	if (command === "synthesize-due") return parseJsonOnly("synthesize-due", rest);
 	if (command === "status") return parseStatus(rest);
 	if (command === "sync") return parseSync(rest);
+	if (command === "telegram-poll") return parseTelegramPoll(rest);
+	if (command === "telegram-push-outbox") return parseTelegramPushOutbox(rest);
 	if (command === "topic-maps") return parseJsonOnly("topic-maps", rest);
 	throw new UsageError(`unknown Her command: ${command}`);
 }
@@ -378,6 +394,33 @@ export async function runHerCli(
 		const result = (await claimNextLongTask(memoryDir, command)) ?? null;
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderGoalNext);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "telegram-poll") {
+		const result = await pollTelegramInbox(memoryDir, {
+			allowedChatId: requireEnv(env, "HER_TELEGRAM_CHAT_ID"),
+			baseUrl: env.HER_TELEGRAM_BASE_URL,
+			limit: command.limit,
+			offset: command.offset,
+			timeoutSeconds: command.timeoutSeconds,
+			token: requireEnv(env, "HER_TELEGRAM_BOT_TOKEN"),
+		});
+		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
+		writePayload(io.stdout, payload, command.json, renderTelegramPoll);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "telegram-push-outbox") {
+		const result = await pushTelegramOutbox(memoryDir, {
+			baseUrl: env.HER_TELEGRAM_BASE_URL,
+			chatId: requireEnv(env, "HER_TELEGRAM_CHAT_ID"),
+			dryRun: command.dryRun,
+			limit: command.limit,
+			token: requireEnv(env, "HER_TELEGRAM_BOT_TOKEN"),
+		});
+		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
+		writePayload(io.stdout, payload, command.json, renderTelegramOutbox);
 		return payload.status.status === "unknown" ? 1 : 0;
 	}
 
@@ -830,6 +873,57 @@ function parseSync(argv: string[]): CliCommand {
 		throw new UsageError(`unknown sync option: ${arg}`);
 	}
 	return status ? { kind: "status", json } : { kind: "sync", json, message };
+}
+
+function parseTelegramPoll(argv: string[]): CliCommand {
+	let json = false;
+	let limit: number | undefined;
+	let offset: number | undefined;
+	let timeoutSeconds: number | undefined;
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--limit") {
+			limit = parsePositiveNumber(requireOptionValue(argv[++i], arg), arg);
+			continue;
+		}
+		if (arg === "--offset") {
+			offset = parseNonNegativeNumber(requireOptionValue(argv[++i], arg), arg);
+			continue;
+		}
+		if (arg === "--timeout") {
+			timeoutSeconds = parseNonNegativeNumber(requireOptionValue(argv[++i], arg), arg);
+			continue;
+		}
+		throw new UsageError(`unknown telegram-poll option: ${arg}`);
+	}
+	return { kind: "telegram-poll", json, limit, offset, timeoutSeconds };
+}
+
+function parseTelegramPushOutbox(argv: string[]): CliCommand {
+	let dryRun = false;
+	let json = false;
+	let limit: number | undefined;
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		if (arg === "--dry-run") {
+			dryRun = true;
+			continue;
+		}
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--limit") {
+			limit = parsePositiveNumber(requireOptionValue(argv[++i], arg), arg);
+			continue;
+		}
+		throw new UsageError(`unknown telegram-push-outbox option: ${arg}`);
+	}
+	return { kind: "telegram-push-outbox", dryRun, json, limit };
 }
 
 function parseDecay(argv: string[]): CliCommand {
@@ -1528,6 +1622,33 @@ function renderGoalNext(payload: CliGoalNextPayload): string {
 	].join("\n");
 }
 
+function renderTelegramPoll(payload: CliTelegramPollPayload): string {
+	return [
+		`Her Telegram poll received: ${payload.result.received}`,
+		`queued: ${payload.result.queued.length}`,
+		`ignored: ${payload.result.ignored.length}`,
+		`rejected: ${payload.result.rejected.length}`,
+		`next offset: ${payload.result.nextOffset ?? "(unchanged)"}`,
+		"",
+		renderStatus(payload),
+	].join("\n");
+}
+
+function renderTelegramOutbox(payload: CliTelegramOutboxPayload): string {
+	const sent = payload.result.sent.length > 0 ? payload.result.sent.map((item) => item.path).join(", ") : "(none)";
+	const skipped =
+		payload.result.skipped.length > 0
+			? payload.result.skipped.map((item) => `${item.path} (${item.reason})`).join(", ")
+			: "(none)";
+	return [
+		`Her Telegram outbox sent: ${payload.result.sent.length}`,
+		`sent paths: ${sent}`,
+		`skipped: ${skipped}`,
+		"",
+		renderStatus(payload),
+	].join("\n");
+}
+
 function renderApprove(payload: CliApprovePayload): string {
 	return [`Her proposal approved: ${payload.result.proposalId}`, "", renderStatus(payload)].join("\n");
 }
@@ -1721,10 +1842,15 @@ function usage(): string {
   her sync --status [--json]
   her sync [--message <message>] [--json]
   her status [--json]
+  her telegram-poll [--timeout <seconds>] [--limit <n>] [--offset <n>] [--json]
+  her telegram-push-outbox [--limit <n>] [--dry-run] [--json]
   her topic-maps [--json]
 
 Memory root:
-  HER_MEMORY_DIR, defaulting to ../her-memory from the current working directory.`;
+  HER_MEMORY_DIR, defaulting to ../her-memory from the current working directory.
+
+Telegram:
+  HER_TELEGRAM_BOT_TOKEN, HER_TELEGRAM_CHAT_ID, optional HER_TELEGRAM_BASE_URL for local tests.`;
 }
 
 function errorMessage(error: unknown): string {
@@ -1737,6 +1863,12 @@ function parsePositiveNumber(value: string, option: string): number {
 	return parsed;
 }
 
+function parseNonNegativeNumber(value: string, option: string): number {
+	const parsed = Number(value);
+	if (!Number.isFinite(parsed) || parsed < 0) throw new UsageError(`${option} must be a non-negative number`);
+	return parsed;
+}
+
 function requireOptionValue(value: string | undefined, option: string): string {
 	if (!value) throw new UsageError(`${option} requires a value`);
 	return value;
@@ -1746,6 +1878,10 @@ function requireNonBlank(value: string | undefined, option: string): string {
 	const trimmed = value?.trim();
 	if (!trimmed) throw new UsageError(`${option} cannot be blank`);
 	return trimmed;
+}
+
+function requireEnv(env: NodeJS.ProcessEnv, name: string): string {
+	return requireNonBlank(env[name], name);
 }
 
 function parseMemoryStatus(value: string): WorldNoteData["memoryStatus"] {

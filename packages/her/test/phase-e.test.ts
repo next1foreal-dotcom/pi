@@ -8,9 +8,12 @@ import {
 	frontmatter,
 	initStore,
 	planMemoryRetraction,
+	pollTelegramInbox,
+	pushTelegramOutbox,
 	queueTelegramInbound,
 	readText,
 	selectAttentionDigest,
+	sendTelegramMessage,
 	summarizeAuditCosts,
 	writeCostReport,
 	writeText,
@@ -21,6 +24,13 @@ async function tempStore(): Promise<string> {
 	const root = await mkdtemp(join(tmpdir(), "her-phase-e-"));
 	await initStore(root);
 	return root;
+}
+
+function jsonResponse(value: unknown): Response {
+	return new Response(JSON.stringify(value), {
+		headers: { "content-type": "application/json" },
+		status: 200,
+	});
 }
 
 test("memory retraction plans derived references and never edits append-only raw episodes", async () => {
@@ -167,6 +177,110 @@ test("telegram inbound queues Fei messages without executing them and attention 
 		digest.daily.map((item) => item.id),
 		["c", "a"],
 	);
+});
+
+test("telegram bot api sends messages without embedding secrets in code paths", async () => {
+	const calls: Array<{ body: Record<string, unknown>; url: string }> = [];
+	const fakeFetch: typeof fetch = async (input, init) => {
+		calls.push({ url: String(input), body: JSON.parse(String(init?.body)) as Record<string, unknown> });
+		return jsonResponse({ ok: true, result: { message_id: 77, chat: { id: 42 }, text: "Her heartbeat." } });
+	};
+
+	const result = await sendTelegramMessage({
+		token: "test-token",
+		chatId: "42",
+		text: "Her heartbeat.",
+		baseUrl: "https://telegram.test",
+		fetch: fakeFetch,
+	});
+
+	assert.equal(result.message_id, 77);
+	assert.equal(calls[0].url, "https://telegram.test/bottest-token/sendMessage");
+	assert.deepEqual(calls[0].body, { chat_id: "42", text: "Her heartbeat." });
+});
+
+test("telegram poll queues allowlisted inbound updates and persists the next offset", async () => {
+	const store = await tempStore();
+	const calls: Array<Record<string, unknown>> = [];
+	const fakeFetch: typeof fetch = async (_input, init) => {
+		calls.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+		return jsonResponse({
+			ok: true,
+			result: [
+				{
+					update_id: 1001,
+					message: { message_id: 11, chat: { id: 42 }, text: "给我 Her 状态", from: { id: 42, username: "fei" } },
+				},
+				{
+					update_id: 1002,
+					message: { message_id: 12, chat: { id: 9 }, text: "not allowed" },
+				},
+			],
+		});
+	};
+
+	const result = await pollTelegramInbox(store, {
+		token: "test-token",
+		allowedChatId: "42",
+		baseUrl: "https://telegram.test",
+		fetch: fakeFetch,
+		now: "2026-06-13T08:00:00.000Z",
+		timeoutSeconds: 0,
+	});
+
+	assert.equal(result.nextOffset, 1003);
+	assert.equal(result.queued.length, 1);
+	assert.equal(result.rejected.length, 1);
+	assert.equal(calls[0].offset, undefined);
+	assert.match(
+		(await readText(join(store, "tasks", "inbox", "2026-06-13T08-00-00-000Z-telegram-1001.md"))) ?? "",
+		/给我 Her 状态/,
+	);
+	assert.equal(
+		JSON.parse((await readText(join(store, ".her", "telegram-state.json"))) ?? "{}").nextUpdateOffset,
+		1003,
+	);
+});
+
+test("telegram outbox pushes unsent markdown once and records delivery state", async () => {
+	const store = await tempStore();
+	await writeText(join(store, "outbox", "2026-06-13-heartbeat.md"), "# Heartbeat\n\nHer is awake.");
+
+	const calls: Array<Record<string, unknown>> = [];
+	const fakeFetch: typeof fetch = async (_input, init) => {
+		calls.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+		return jsonResponse({ ok: true, result: { message_id: 88, chat: { id: 42 }, text: "sent" } });
+	};
+
+	const sent = await pushTelegramOutbox(store, {
+		token: "test-token",
+		chatId: "42",
+		baseUrl: "https://telegram.test",
+		fetch: fakeFetch,
+		now: "2026-06-13T08:30:00.000Z",
+	});
+
+	assert.equal(sent.sent.length, 1);
+	assert.equal(sent.skipped.length, 0);
+	assert.equal(calls.length, 1);
+	assert.equal(calls[0].chat_id, "42");
+	assert.match(String(calls[0].text), /# Heartbeat/);
+	assert.equal(
+		JSON.parse((await readText(join(store, ".her", "telegram-state.json"))) ?? "{}").sentOutbox[
+			"outbox/2026-06-13-heartbeat.md"
+		].messageId,
+		88,
+	);
+
+	const second = await pushTelegramOutbox(store, {
+		token: "test-token",
+		chatId: "42",
+		baseUrl: "https://telegram.test",
+		fetch: fakeFetch,
+	});
+	assert.equal(second.sent.length, 0);
+	assert.equal(second.skipped.length, 1);
+	assert.equal(calls.length, 1);
 });
 
 test("heartbeat Cedar profile loads independently and denies destructive tools", () => {
