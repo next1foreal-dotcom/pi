@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
@@ -32,6 +33,7 @@ import {
 	readPathForWorldNote,
 	readUrlForWorldNote,
 	type SelfNarrativeUpdateResult,
+	sendTelegramMessage,
 	startLongTask,
 	type TelegramOutboxResult,
 	type TelegramPollResult,
@@ -92,6 +94,15 @@ type CliCommand =
 	| { kind: "synthesize-due"; json: boolean }
 	| { kind: "status"; json: boolean }
 	| { kind: "sync"; json: boolean; message?: string }
+	| {
+			ackText?: string;
+			intervalSeconds: number;
+			json: boolean;
+			kind: "telegram-bridge";
+			limit?: number;
+			once: boolean;
+			timeoutSeconds?: number;
+	  }
 	| { kind: "telegram-poll"; json: boolean; limit?: number; offset?: number; timeoutSeconds?: number }
 	| { kind: "telegram-push-outbox"; dryRun: boolean; json: boolean; limit?: number }
 	| { kind: "topic-maps"; json: boolean };
@@ -266,6 +277,23 @@ interface CliTelegramOutboxPayload extends CliStatusPayload {
 	result: TelegramOutboxResult;
 }
 
+interface TelegramBridgeAcknowledgement {
+	messageId?: number;
+	path: string;
+	sentAt: string;
+	updateId?: number;
+}
+
+interface TelegramBridgeCycleResult {
+	acknowledgements: TelegramBridgeAcknowledgement[];
+	outbox: TelegramOutboxResult;
+	poll: TelegramPollResult;
+}
+
+interface CliTelegramBridgePayload extends CliStatusPayload {
+	result: TelegramBridgeCycleResult;
+}
+
 interface CliIo {
 	stdout: NodeJS.WritableStream;
 	stderr: NodeJS.WritableStream;
@@ -302,6 +330,7 @@ export function parseArgs(argv: string[]): CliCommand {
 	if (command === "synthesize-due") return parseJsonOnly("synthesize-due", rest);
 	if (command === "status") return parseStatus(rest);
 	if (command === "sync") return parseSync(rest);
+	if (command === "telegram-bridge") return parseTelegramBridge(rest);
 	if (command === "telegram-poll") return parseTelegramPoll(rest);
 	if (command === "telegram-push-outbox") return parseTelegramPushOutbox(rest);
 	if (command === "topic-maps") return parseJsonOnly("topic-maps", rest);
@@ -409,6 +438,26 @@ export async function runHerCli(
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderTelegramPoll);
 		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "telegram-bridge") {
+		const options = {
+			ackText: command.ackText,
+			allowedChatId: requireEnv(env, "HER_TELEGRAM_CHAT_ID"),
+			baseUrl: env.HER_TELEGRAM_BASE_URL,
+			chatId: requireEnv(env, "HER_TELEGRAM_CHAT_ID"),
+			limit: command.limit,
+			timeoutSeconds: command.timeoutSeconds,
+			token: requireEnv(env, "HER_TELEGRAM_BOT_TOKEN"),
+		};
+
+		for (;;) {
+			const result = await runTelegramBridgeCycle(memoryDir, options);
+			const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
+			writePayload(io.stdout, payload, command.json, renderTelegramBridge);
+			if (command.once) return payload.status.status === "unknown" ? 1 : 0;
+			await sleep(command.intervalSeconds * 1000);
+		}
 	}
 
 	if (command.kind === "telegram-push-outbox") {
@@ -873,6 +922,44 @@ function parseSync(argv: string[]): CliCommand {
 		throw new UsageError(`unknown sync option: ${arg}`);
 	}
 	return status ? { kind: "status", json } : { kind: "sync", json, message };
+}
+
+function parseTelegramBridge(argv: string[]): CliCommand {
+	let ackText: string | undefined;
+	let intervalSeconds = 1;
+	let json = false;
+	let limit: number | undefined;
+	let once = false;
+	let timeoutSeconds: number | undefined = 20;
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		if (arg === "--ack-text") {
+			ackText = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--interval") {
+			intervalSeconds = parseNonNegativeNumber(requireOptionValue(argv[++i], arg), arg);
+			continue;
+		}
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--limit") {
+			limit = parsePositiveNumber(requireOptionValue(argv[++i], arg), arg);
+			continue;
+		}
+		if (arg === "--once") {
+			once = true;
+			continue;
+		}
+		if (arg === "--timeout") {
+			timeoutSeconds = parseNonNegativeNumber(requireOptionValue(argv[++i], arg), arg);
+			continue;
+		}
+		throw new UsageError(`unknown telegram-bridge option: ${arg}`);
+	}
+	return { ackText, intervalSeconds, json, kind: "telegram-bridge", limit, once, timeoutSeconds };
 }
 
 function parseTelegramPoll(argv: string[]): CliCommand {
@@ -1528,6 +1615,59 @@ async function updateSurfaces(memory: Memory, enabled: boolean): Promise<CliSurf
 	}
 }
 
+async function runTelegramBridgeCycle(
+	memoryDir: string,
+	opts: {
+		ackText?: string;
+		allowedChatId: string;
+		baseUrl?: string;
+		chatId: string;
+		limit?: number;
+		timeoutSeconds?: number;
+		token: string;
+	},
+): Promise<TelegramBridgeCycleResult> {
+	const poll = await pollTelegramInbox(memoryDir, {
+		allowedChatId: opts.allowedChatId,
+		baseUrl: opts.baseUrl,
+		limit: opts.limit,
+		timeoutSeconds: opts.timeoutSeconds,
+		token: opts.token,
+	});
+	const acknowledgements: TelegramBridgeAcknowledgement[] = [];
+	for (const queued of poll.queued) {
+		const sentAt = new Date().toISOString();
+		const text =
+			opts.ackText ??
+			[
+				"收到，已进入 Her inbox。",
+				queued.path ? `path: ${queued.path}` : undefined,
+				"安全规则：Telegram 消息只入队，不会被自动执行。",
+			]
+				.filter(Boolean)
+				.join("\n");
+		const message = await sendTelegramMessage({
+			baseUrl: opts.baseUrl,
+			chatId: opts.chatId,
+			text,
+			token: opts.token,
+		});
+		acknowledgements.push({
+			messageId: message.message_id,
+			path: queued.path ?? "",
+			sentAt,
+			updateId: queued.updateId,
+		});
+	}
+	const outbox = await pushTelegramOutbox(memoryDir, {
+		baseUrl: opts.baseUrl,
+		chatId: opts.chatId,
+		limit: opts.limit,
+		token: opts.token,
+	});
+	return { acknowledgements, outbox, poll };
+}
+
 function renderStatus(payload: CliStatusPayload): string {
 	return [
 		`Her memory sync: ${payload.status.status}`,
@@ -1644,6 +1784,19 @@ function renderTelegramOutbox(payload: CliTelegramOutboxPayload): string {
 		`Her Telegram outbox sent: ${payload.result.sent.length}`,
 		`sent paths: ${sent}`,
 		`skipped: ${skipped}`,
+		"",
+		renderStatus(payload),
+	].join("\n");
+}
+
+function renderTelegramBridge(payload: CliTelegramBridgePayload): string {
+	return [
+		`Her Telegram bridge poll received: ${payload.result.poll.received}`,
+		`queued: ${payload.result.poll.queued.length}`,
+		`acknowledged: ${payload.result.acknowledgements.length}`,
+		`outbox sent: ${payload.result.outbox.sent.length}`,
+		`rejected: ${payload.result.poll.rejected.length}`,
+		`next offset: ${payload.result.poll.nextOffset ?? "(unchanged)"}`,
 		"",
 		renderStatus(payload),
 	].join("\n");
@@ -1842,6 +1995,7 @@ function usage(): string {
   her sync --status [--json]
   her sync [--message <message>] [--json]
   her status [--json]
+  her telegram-bridge [--timeout <seconds>] [--interval <seconds>] [--limit <n>] [--ack-text <text>] [--once] [--json]
   her telegram-poll [--timeout <seconds>] [--limit <n>] [--offset <n>] [--json]
   her telegram-push-outbox [--limit <n>] [--dry-run] [--json]
   her topic-maps [--json]

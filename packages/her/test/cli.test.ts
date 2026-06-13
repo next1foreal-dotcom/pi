@@ -270,6 +270,29 @@ test("CLI Telegram poll and outbox commands use env credentials against the Bot 
 	});
 });
 
+test("CLI Telegram bridge polls inbound messages and acknowledges queued items", async () => {
+	const { store } = await gitBackedStore();
+
+	await withLocalTelegramApi(async (env, requests) => {
+		const result = await runCli(
+			["telegram-bridge", "--once", "--timeout", "0", "--limit", "10", "--json"],
+			store,
+			env,
+		);
+		const payload = JSON.parse(result.stdout);
+		assert.equal(payload.result.poll.received, 1);
+		assert.equal(payload.result.poll.queued.length, 1);
+		assert.equal(payload.result.acknowledgements.length, 1);
+		assert.equal(payload.result.outbox.sent.length, 0);
+
+		assert.equal(requests[0].url, "/bottest-token/getUpdates");
+		assert.equal(requests[1].url, "/bottest-token/sendMessage");
+		assert.equal(requests[1].body.chat_id, "42");
+		assert.match(String(requests[1].body.text), /已进入 Her inbox/);
+		assert.match(String(requests[1].body.text), /不会被自动执行/);
+	});
+});
+
 async function withLocalEmbeddings<T>(fn: (env: Record<string, string>, inputs: string[][]) => Promise<T>): Promise<T> {
 	const inputs: string[][] = [];
 	const server = createServer((req, res) => {
