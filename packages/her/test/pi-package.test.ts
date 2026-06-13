@@ -59,8 +59,7 @@ test("Samantha prompt advertises durable memory tools", async () => {
 
 test("/her-intake prompt encodes the minimal source-to-memory chain", async () => {
 	const packagePrompt = await readFile(join(herRoot, "pi-package", "prompts", "her-intake.md"), "utf8");
-	const projectPrompt = await readFile(join(projectPromptsRoot, "her-intake.md"), "utf8");
-	assert.equal(projectPrompt, packagePrompt);
+	await assert.rejects(readFile(join(projectPromptsRoot, "her-intake.md"), "utf8"), /ENOENT/);
 
 	const { frontmatter, body } = parseSimpleFrontmatter(packagePrompt);
 	assert.match(frontmatter.description, /Her memory/);
