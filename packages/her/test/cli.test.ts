@@ -174,6 +174,8 @@ async function withLocalPiResponderShim<T>(reply: string, fn: (env: Record<strin
 		shim,
 		[
 			`const prompt = process.argv.at(-1) ?? "";`,
+			`if (!process.argv.includes("openai-codex")) throw new Error("missing default OAuth provider");`,
+			`if (!process.argv.includes("gpt-5.5")) throw new Error("missing default Telegram model");`,
 			`if (!prompt.includes("Her 状态")) throw new Error("missing Telegram prompt text");`,
 			`if (!prompt.includes("只允许使用这些 Her tools")) throw new Error("missing safety boundary");`,
 			`console.log(${JSON.stringify(reply)});`,
