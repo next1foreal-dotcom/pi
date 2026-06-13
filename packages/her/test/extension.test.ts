@@ -819,6 +819,30 @@ test("extension proposal tools record feedback and report adoption stats", async
 	});
 });
 
+test("extension privacy tools classify memory and block unsafe exports", async () => {
+	const store = await tempStore();
+	const ctx = createContext(store);
+	await writeText(join(store, "episodic", "raw", "legacy.md"), "# Legacy\n\n朋友说这件事不要外传。\n");
+
+	await withMemoryDir(store, async () => {
+		const fake = createFakePi();
+		her(fake.pi);
+
+		const audit = fake.tools.get("her_privacy_audit");
+		const check = fake.tools.get("her_privacy_check");
+		assert.ok(audit);
+		assert.ok(check);
+
+		const audited = await executeTool(audit, {}, ctx);
+		assert.match(firstText(audited), /classification updated/);
+		assert.match((await readText(join(store, "privacy", "classification.md"))) ?? "", /episodic\/raw\/legacy\.md/);
+
+		const blocked = await executeTool(check, { refs: ["episodic/raw/legacy.md"] }, ctx);
+		assert.match(firstText(blocked), /blocked/);
+		assert.equal((blocked.details as { result?: { allowed?: boolean } }).result?.allowed, false);
+	});
+});
+
 test("extension passes configured summary model to Memory capture", async () => {
 	const store = await tempStore();
 	const ctx = createContext(store);

@@ -7,6 +7,13 @@ import { type HerConfig, loadConfig, renderConfig } from "./config.ts";
 import type { ModelLike } from "./model.ts";
 import { StorePaths } from "./paths.ts";
 import {
+	classifyCapturePrivacy,
+	defaultWorldPrivacy,
+	type MemoryPrivacy,
+	type MemoryProvenance,
+	validateMemoryProvenance,
+} from "./privacy.ts";
+import {
 	choiceModelPrompt,
 	consolidatePrompt,
 	ideaEnginePrompt,
@@ -92,6 +99,8 @@ export interface CaptureMeta {
 	project?: string;
 	type?: string;
 	ref?: string;
+	privacy?: MemoryPrivacy;
+	provenance?: MemoryProvenance;
 }
 
 export interface WorldNoteData {
@@ -109,6 +118,8 @@ export interface WorldNoteData {
 	connections: string[];
 	take: string;
 	possibleMoves: string[];
+	privacy?: MemoryPrivacy;
+	provenance?: MemoryProvenance;
 }
 
 export interface ClaimLedgerEntry {
@@ -307,8 +318,15 @@ export class Memory {
 		const date = safeStem(ts.slice(0, 10));
 		const project = meta.project ?? "unknown";
 		const rawBaseStem = `${safeStem(ts)}--${safeStem(sid)}`;
-		const rawFm = { id: sid, timestamp: ts, project, session_id: sid };
 		const safeRaw = redactSecrets(raw);
+		const rawFm = {
+			id: sid,
+			timestamp: ts,
+			project,
+			session_id: sid,
+			privacy: classifyCapturePrivacy(safeRaw, meta.privacy),
+			provenance: meta.provenance ? validateMemoryProvenance(meta.provenance) : "her-observed",
+		};
 		const rawStem = await this.writeRawEpisode(rawBaseStem, `${frontmatter(rawFm)}\n${safeRaw}`);
 
 		let pending = false;
@@ -938,6 +956,8 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 			status: "captured",
 			memory_status: data.memoryStatus,
 			memory_status_reason: memoryStatusReason,
+			privacy: defaultWorldPrivacy(data.sourceUrl, data.privacy),
+			provenance: data.provenance ? validateMemoryProvenance(data.provenance) : "world-ingested",
 			claim_count: data.claims?.length ?? 0,
 			supported_claims: data.claims?.filter((claim) => claim.verdict === "supported").length ?? 0,
 			insufficient_claims: data.claims?.filter((claim) => claim.verdict === "insufficient_evidence").length ?? 0,
@@ -1341,6 +1361,7 @@ export async function initStore(root: string): Promise<StorePaths> {
 		paths.tasks,
 		paths.activeTasks,
 		paths.doneTasks,
+		paths.privacy,
 		paths.choiceModelDir,
 		paths.samantha,
 		paths.samanthaJournal,

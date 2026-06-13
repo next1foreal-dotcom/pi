@@ -54,6 +54,8 @@ test("capture writes raw and daily summary", async () => {
 	const raw = await readText(join(store, "episodic", "raw", "2026-06-02T2330--sess01.md"));
 	const parsed = parseFrontmatter(raw);
 	assert.equal(parsed.data.id, "sess01");
+	assert.equal(parsed.data.privacy, "private");
+	assert.equal(parsed.data.provenance, "her-observed");
 	assert.match(parsed.body, /memory layer/);
 
 	const daily = await readText(join(store, "episodic", "2026-06-02.md"));
@@ -61,6 +63,31 @@ test("capture writes raw and daily summary", async () => {
 	assert.match(daily ?? "", /project: her/);
 	assert.match(daily ?? "", /prefers Z/);
 	assert.match(daily ?? "", /summary_pending: false/);
+});
+
+test("capture marks third-party memory as intimate and supports explicit source metadata", async () => {
+	const store = await tempStore();
+	const memory = new Memory(store, fakeModel);
+	await memory.capture("朋友说她最近遇到一件私事。", {
+		timestamp: "2026-06-02T2331",
+		sessionId: "sess02",
+		project: "her",
+	});
+	await memory.capture("Fei directly approved this shared project fact.", {
+		timestamp: "2026-06-02T2332",
+		sessionId: "sess03",
+		project: "her",
+		privacy: "shared",
+		provenance: "fei-direct",
+	});
+
+	const intimate = parseFrontmatter(await readText(join(store, "episodic", "raw", "2026-06-02T2331--sess02.md")));
+	assert.equal(intimate.data.privacy, "intimate");
+	assert.equal(intimate.data.provenance, "her-observed");
+
+	const shared = parseFrontmatter(await readText(join(store, "episodic", "raw", "2026-06-02T2332--sess03.md")));
+	assert.equal(shared.data.privacy, "shared");
+	assert.equal(shared.data.provenance, "fei-direct");
 });
 
 test("capture preserves raw when summary fails", async () => {
@@ -990,6 +1017,8 @@ test("writeWorldNote writes contract sections and dedupes by content hash", asyn
 	const parsed = parseFrontmatter(text);
 	assert.equal(parsed.data.claim_count, 1);
 	assert.equal(parsed.data.supported_claims, 1);
+	assert.equal(parsed.data.privacy, "public");
+	assert.equal(parsed.data.provenance, "world-ingested");
 	assert.match(text, /## Claim Ledger/);
 	assert.match(text, /claim: Agents call tools often/);
 	assert.match(text, /verdict: supported/);

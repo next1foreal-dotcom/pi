@@ -8,8 +8,10 @@ import {
 	type ChoiceModelUpdateResult,
 	type ClaimLedgerEntry,
 	type ConsolidateResult,
+	checkMemoryExport,
 	checkpointLongTask,
 	claimNextLongTask,
+	classifyMemoryCorpus,
 	collectPathIntakeFiles,
 	completeLongTask,
 	createEmbeddingSearch,
@@ -21,6 +23,8 @@ import {
 	loadConfig,
 	longTaskStatuses,
 	Memory,
+	type MemoryClassificationResult,
+	type MemoryExportCheckResult,
 	type MemorySyncStatus,
 	OpenAICompatibleModel,
 	readPathForWorldNote,
@@ -75,6 +79,8 @@ type CliCommand =
 	| { kind: "intake-url"; json: boolean; maxBytes?: number; updateSurfaces: boolean; url: string }
 	| { kind: "judgment"; fields: JudgmentFields; json: boolean; noteId: string }
 	| { kind: "memory-status"; json: boolean; noteId: string; reason: string; status: WorldNoteData["memoryStatus"] }
+	| { kind: "privacy-audit"; json: boolean }
+	| { kind: "privacy-check"; json: boolean; refs: string[] }
 	| { kind: "recall"; archive: boolean; json: boolean; k?: number; query: string }
 	| { kind: "restore"; json: boolean; semanticKey: string; now?: string }
 	| { kind: "self-narrative"; json: boolean }
@@ -215,6 +221,14 @@ interface CliMemoryStatusPayload extends CliStatusPayload {
 	};
 }
 
+interface CliPrivacyAuditPayload extends CliStatusPayload {
+	result: MemoryClassificationResult;
+}
+
+interface CliPrivacyCheckPayload extends CliStatusPayload {
+	result: MemoryExportCheckResult;
+}
+
 interface CliGoalPayload extends CliStatusPayload {
 	result: LongTaskRecord;
 }
@@ -265,6 +279,8 @@ export function parseArgs(argv: string[]): CliCommand {
 	if (command === "intake-url") return parseIntakeUrl(rest);
 	if (command === "judgment") return parseJudgment(rest);
 	if (command === "memory-status") return parseMemoryStatusCommand(rest);
+	if (command === "privacy-audit") return parseJsonOnly("privacy-audit", rest);
+	if (command === "privacy-check") return parsePrivacyCheck(rest);
 	if (command === "recall") return parseRecall(rest);
 	if (command === "restore") return parseRestore(rest);
 	if (command === "self-narrative") return parseJsonOnly("self-narrative", rest);
@@ -546,6 +562,20 @@ export async function runHerCli(
 		return payload.status.status === "unknown" ? 1 : 0;
 	}
 
+	if (command.kind === "privacy-audit") {
+		const result = await classifyMemoryCorpus(memoryDir);
+		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
+		writePayload(io.stdout, payload, command.json, renderPrivacyAudit);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "privacy-check") {
+		const result = await checkMemoryExport(memoryDir, command.refs);
+		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
+		writePayload(io.stdout, payload, command.json, renderPrivacyCheck);
+		return result.allowed && payload.status.status !== "unknown" ? 0 : 1;
+	}
+
 	if (command.kind === "choice-model") {
 		const result = await memory.synthesizeChoiceModel();
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
@@ -651,7 +681,7 @@ function commandCandidates(explicitCommand: string | undefined, commandName: str
 }
 
 function parseJsonOnly(
-	kind: "choice-model" | "ideas" | "self-narrative" | "synthesize-due" | "topic-maps",
+	kind: "choice-model" | "ideas" | "privacy-audit" | "self-narrative" | "synthesize-due" | "topic-maps",
 	argv: string[],
 ): CliCommand {
 	let json = false;
@@ -1356,6 +1386,25 @@ function parseMemoryStatusCommand(argv: string[]): CliCommand {
 	};
 }
 
+function parsePrivacyCheck(argv: string[]): CliCommand {
+	let json = false;
+	const refs: string[] = [];
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--ref") {
+			refs.push(requireOptionValue(argv[++i], arg));
+			continue;
+		}
+		throw new UsageError(`unknown privacy-check option: ${arg}`);
+	}
+	if (refs.length === 0) throw new UsageError("privacy-check requires at least one --ref <memory-path>");
+	return { kind: "privacy-check", json, refs };
+}
+
 async function buildStatusPayload(memoryDir: string, memory: Memory): Promise<CliStatusPayload> {
 	const status = await memory.syncStatus();
 	return {
@@ -1497,6 +1546,24 @@ function renderMemoryStatus(payload: CliMemoryStatusPayload): string {
 		"",
 		renderStatus(payload),
 	].join("\n");
+}
+
+function renderPrivacyAudit(payload: CliPrivacyAuditPayload): string {
+	return [
+		`Her privacy classification updated: ${payload.result.total} file(s).`,
+		`frontmatter: ${payload.result.frontmatter}`,
+		`sidecar inferred: ${payload.result.inferred}`,
+		`ledger: ${payload.result.file}`,
+		"",
+		renderStatus(payload),
+	].join("\n");
+}
+
+function renderPrivacyCheck(payload: CliPrivacyCheckPayload): string {
+	const result = payload.result.allowed
+		? `Her privacy check passed: ${payload.result.checked.length} ref(s).`
+		: `Her privacy check blocked ${payload.result.blocked.length} private/intimate and ${payload.result.unknown.length} unknown ref(s).`;
+	return [result, "", renderStatus(payload)].join("\n");
 }
 
 function renderRecall(payload: CliRecallPayload): string {
@@ -1644,6 +1711,8 @@ function usage(): string {
   her intake-url --url <url> [--max-bytes <n>] [--update-surfaces] [--json]
   her judgment --note <id> [--choice <text>] [--correction <text>] [--reason <text>] [--attraction <text>] [--inferred-intent <text>] [--rejection <text>] [--hesitation <text>] [--outcome <text>] [--json]
   her memory-status --note <id> --status active|archive_only|needs_deep_read --reason <text> [--json]
+  her privacy-audit [--json]
+  her privacy-check --ref <memory-path> [--ref <memory-path>] [--json]
   her recall --query <text> [--k <n>] [--archive] [--json]
   her restore --semantic <key> [--now <YYYY-MM-DD>] [--json]
   her self-narrative [--json]

@@ -302,6 +302,43 @@ test("CLI captures a UI message through TS her-core as JSON", async () => {
 	);
 });
 
+test("CLI audits privacy classification and blocks unsafe export refs", async () => {
+	const { store } = await gitBackedStore();
+	await writeFile(join(store, "episodic", "raw", "legacy.md"), "# Legacy\n\n朋友说这件事不要外传。\n", "utf8");
+	await writeFile(
+		join(store, "world", "public-source.md"),
+		[
+			"---",
+			"id: world-public",
+			"source_url: https://example.com/source",
+			"privacy: public",
+			"provenance: world-ingested",
+			"---",
+			"# Public Source",
+		].join("\n"),
+		"utf8",
+	);
+
+	let result = await runCli(["privacy-audit", "--json"], store);
+	const auditPayload = JSON.parse(result.stdout) as { result: { inferred: number; records: Array<{ path: string }> } };
+	assert.ok(auditPayload.result.inferred > 0);
+	assert.ok(auditPayload.result.records.some((record) => record.path === "episodic/raw/legacy.md"));
+
+	result = await runCli(["privacy-check", "--ref", "world/public-source.md", "--json"], store);
+	const checkPayload = JSON.parse(result.stdout) as { result: { allowed: boolean } };
+	assert.equal(checkPayload.result.allowed, true);
+
+	try {
+		await runCli(["privacy-check", "--ref", "episodic/raw/legacy.md", "--json"], store);
+		assert.fail("privacy-check should exit non-zero for private or intimate refs");
+	} catch (error) {
+		const failure = error as { stdout?: string };
+		const blocked = JSON.parse(failure.stdout ?? "{}") as { result?: { allowed?: boolean; blocked?: unknown[] } };
+		assert.equal(blocked.result?.allowed, false);
+		assert.equal(blocked.result?.blocked?.length, 1);
+	}
+});
+
 test("CLI persists an intake source with recall verification as JSON", async () => {
 	const { store } = await gitBackedStore();
 

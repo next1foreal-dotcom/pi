@@ -9,8 +9,10 @@ import type { ExtensionAPI, ExtensionContext, ProviderConfig } from "@earendil-w
 import { Type } from "typebox";
 import {
 	type ChoiceModelDomain,
+	checkMemoryExport,
 	checkpointLongTask,
 	claimNextLongTask,
+	classifyMemoryCorpus,
 	collectPathIntakeFiles,
 	completeLongTask,
 	createEmbeddingSearch,
@@ -82,6 +84,8 @@ const governedTools: Record<string, { destructive: boolean }> = {
 	her_task_create: { destructive: false },
 	her_task_update: { destructive: false },
 	her_task_list: { destructive: false },
+	her_privacy_audit: { destructive: false },
+	her_privacy_check: { destructive: false },
 	her_proposal_record: { destructive: false },
 	her_proposal_feedback: { destructive: false },
 	her_proposal_stats: { destructive: false },
@@ -957,6 +961,36 @@ export default function her(pi: ExtensionAPI): void {
 		async execute(_toolCallId, params) {
 			const tasks = await listHerTasks(memoryDir, params.status);
 			return textResult(renderHerTasks(tasks), { phase: "C", count: tasks.length, tasks, memoryDir });
+		},
+	});
+
+	pi.registerTool({
+		name: "her_privacy_audit",
+		label: "Her Privacy Audit",
+		description: "Classify memory privacy/provenance into a sidecar ledger without editing append-only raw episodes.",
+		parameters: Type.Object({}),
+		async execute() {
+			const result = await classifyMemoryCorpus(memoryDir);
+			return textResult(
+				`Her privacy classification updated: ${result.total} files (${result.inferred} inferred in sidecar).`,
+				{ phase: "E0", result, memoryDir },
+			);
+		},
+	});
+
+	pi.registerTool({
+		name: "her_privacy_check",
+		label: "Her Privacy Check",
+		description: "Check whether memory refs may be used in an external/shared output.",
+		parameters: Type.Object({
+			refs: Type.Array(Type.String()),
+		}),
+		async execute(_toolCallId, params) {
+			const result = await checkMemoryExport(memoryDir, params.refs);
+			const text = result.allowed
+				? `Her privacy check passed for ${result.checked.length} refs.`
+				: `Her privacy check blocked ${result.blocked.length} private/intimate and ${result.unknown.length} unknown refs.`;
+			return textResult(text, { phase: "E0", result, memoryDir });
 		},
 	});
 

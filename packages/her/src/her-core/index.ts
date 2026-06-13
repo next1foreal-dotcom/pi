@@ -58,6 +58,23 @@ export { initStore, Memory, SEED_CHOICE_MODEL, SEED_CONTEXT, SEED_SELF_NARRATIVE
 export type { ModelLike } from "./model.ts";
 export { FakeModel, OpenAICompatibleModel } from "./model.ts";
 export { StorePaths } from "./paths.ts";
+export type {
+	MemoryClassificationRecord,
+	MemoryClassificationResult,
+	MemoryExportCheckResult,
+	MemoryPrivacy,
+	MemoryProvenance,
+} from "./privacy.ts";
+export {
+	checkMemoryExport,
+	classifyCapturePrivacy,
+	classifyMemoryCorpus,
+	defaultWorldPrivacy,
+	memoryPrivacyLevels,
+	memoryProvenanceValues,
+	validateMemoryPrivacy,
+	validateMemoryProvenance,
+} from "./privacy.ts";
 export {
 	choiceModelPrompt,
 	consolidatePrompt,

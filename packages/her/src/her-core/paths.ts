@@ -99,6 +99,14 @@ export class StorePaths {
 		return join(this.tasks, "done");
 	}
 
+	get privacy(): string {
+		return join(this.root, "privacy");
+	}
+
+	get privacyClassificationFile(): string {
+		return join(this.privacy, "classification.md");
+	}
+
 	get samantha(): string {
 		return join(this.root, "samantha");
 	}
