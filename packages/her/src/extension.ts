@@ -854,6 +854,9 @@ export default function her(pi: ExtensionAPI): void {
 			domain: StringEnum(choiceModelDomainValues),
 			diff_summary: Type.String({ description: "What Fei changed and why" }),
 			rule: Type.String({ description: "Durable rule Samantha should apply next time" }),
+			weight: Type.Optional(
+				Type.Number({ description: "Positive integer weight delta for this feedback; default 1." }),
+			),
 		}),
 		async execute(_toolCallId, params) {
 			const result = await mem.recordFeedback({
@@ -861,6 +864,7 @@ export default function her(pi: ExtensionAPI): void {
 				domain: params.domain as ChoiceModelDomain,
 				diffSummary: params.diff_summary,
 				rule: params.rule,
+				weight: params.weight,
 			});
 			return textResult(`Feedback recorded in Her CHOICE-MODEL (${result.domain}, weight ${result.weight}).`, {
 				phase: "B",

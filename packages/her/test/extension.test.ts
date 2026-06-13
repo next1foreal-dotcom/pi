@@ -616,16 +616,16 @@ test("extension her_feedback records weighted choice-model rules", async () => {
 				domain: "writing-style",
 				diff_summary: "Use second person and lead with the conclusion.",
 				rule: "Use second person and put the conclusion first.",
+				weight: 3,
 			},
 			ctx,
 		);
 
 		assert.match(firstText(result), /Feedback recorded/);
-		assert.equal((result.details as { weight?: number }).weight, 1);
-		assert.match(
-			(await readText(join(store, "choice-model", "writing-style.md"))) ?? "",
-			/Use second person and put the conclusion first/,
-		);
+		assert.equal((result.details as { weight?: number }).weight, 3);
+		const file = (await readText(join(store, "choice-model", "writing-style.md"))) ?? "";
+		assert.match(file, /Use second person and put the conclusion first/);
+		assert.match(file, /"weight": 3/);
 	});
 });
 

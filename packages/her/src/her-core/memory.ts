@@ -175,6 +175,7 @@ export interface FeedbackFields {
 	task: string;
 	diffSummary: string;
 	rule: string;
+	weight?: number;
 	at?: string;
 }
 
@@ -374,6 +375,7 @@ export class Memory {
 		const rule = fields.rule.trim();
 		const task = fields.task.trim();
 		const diffSummary = fields.diffSummary.trim();
+		const weight = validateFeedbackWeight(fields.weight);
 		if (!rule) throw new Error("feedback rule is required");
 		if (!task) throw new Error("feedback task is required");
 		if (!diffSummary) throw new Error("feedback diffSummary is required");
@@ -388,7 +390,7 @@ export class Memory {
 		let record: ChoiceRuleRecord;
 		if (found) {
 			found.rule = rule;
-			found.weight += 1;
+			found.weight += weight;
 			found.last_triggered = at;
 			found.status = "active";
 			found.evidence = [...found.evidence, evidence];
@@ -397,7 +399,7 @@ export class Memory {
 			record = {
 				id: genId(domain, rule),
 				rule,
-				weight: 1,
+				weight,
 				first_recorded: at,
 				last_triggered: at,
 				status: "active",
@@ -1412,6 +1414,14 @@ async function readChoiceModelRuleFiles(
 function validateChoiceModelDomain(domain: string): ChoiceModelDomain {
 	if (CHOICE_MODEL_DOMAINS.has(domain)) return domain as ChoiceModelDomain;
 	throw new Error(`unknown choice-model domain: ${domain}`);
+}
+
+function validateFeedbackWeight(weight: number | undefined): number {
+	if (weight === undefined) return 1;
+	if (!Number.isFinite(weight)) throw new Error("feedback weight must be finite");
+	const normalized = Math.floor(weight);
+	if (normalized < 1) throw new Error("feedback weight must be at least 1");
+	return normalized;
 }
 
 function parseChoiceRuleRecords(text: string): ChoiceRuleRecord[] {

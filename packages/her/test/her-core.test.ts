@@ -254,6 +254,35 @@ test("recordFeedback writes weighted choice rules and getContext sorts stale rul
 	assert.ok(activeIndex < staleIndex);
 });
 
+test("recordFeedback honors explicit feedback weight deltas", async () => {
+	const store = await tempStore();
+	const memory = new Memory(store);
+
+	await memory.recordFeedback({
+		domain: "communication-tone",
+		task: "status summary",
+		diffSummary: "Make the first sentence sound like a direct verdict.",
+		rule: "Lead with the verdict before the background.",
+		weight: 3,
+		at: "2999-01-01T00:00:00.000Z",
+	});
+	await memory.recordFeedback({
+		domain: "communication-tone",
+		task: "status summary retry",
+		diffSummary: "Same preference reinforced.",
+		rule: "Lead with the verdict before the background.",
+		weight: 2,
+		at: "2999-01-02T00:00:00.000Z",
+	});
+
+	const file = (await readText(join(store, "choice-model", "communication-tone.md"))) ?? "";
+	assert.match(file, /\[weight 5\] Lead with the verdict before the background\./);
+	assert.match(file, /"weight": 5/);
+
+	const context = (await memory.getContext()).choiceModel;
+	assert.match(context, /\[weight 5\] Lead with the verdict before the background\./);
+});
+
 test("readJson tolerates UTF-8 BOM in existing memory files", async () => {
 	const store = await tempStore();
 	await writeText(join(store, ".her", "seen.json"), '\uFEFF{"hash":"note"}\n');
