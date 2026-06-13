@@ -43,6 +43,7 @@ import {
 import { createSummaryModel } from "./summary-model.ts";
 
 const execFileAsync = promisify(execFile);
+type TelegramReplyMode = "ack" | "pi";
 
 type CliCommand =
 	| { kind: "approve"; json: boolean; proposalId: string }
@@ -101,6 +102,7 @@ type CliCommand =
 			kind: "telegram-bridge";
 			limit?: number;
 			once: boolean;
+			replyMode: TelegramReplyMode;
 			timeoutSeconds?: number;
 	  }
 	| { kind: "telegram-poll"; json: boolean; limit?: number; offset?: number; timeoutSeconds?: number }
@@ -284,10 +286,19 @@ interface TelegramBridgeAcknowledgement {
 	updateId?: number;
 }
 
+interface TelegramBridgeReply {
+	messageId?: number;
+	path: string;
+	responder: "pi";
+	sentAt: string;
+	updateId?: number;
+}
+
 interface TelegramBridgeCycleResult {
 	acknowledgements: TelegramBridgeAcknowledgement[];
 	outbox: TelegramOutboxResult;
 	poll: TelegramPollResult;
+	replies: TelegramBridgeReply[];
 }
 
 interface CliTelegramBridgePayload extends CliStatusPayload {
@@ -446,7 +457,11 @@ export async function runHerCli(
 			allowedChatId: requireEnv(env, "HER_TELEGRAM_CHAT_ID"),
 			baseUrl: env.HER_TELEGRAM_BASE_URL,
 			chatId: requireEnv(env, "HER_TELEGRAM_CHAT_ID"),
+			cwd,
+			env,
 			limit: command.limit,
+			memoryDir,
+			replyMode: command.replyMode,
 			timeoutSeconds: command.timeoutSeconds,
 			token: requireEnv(env, "HER_TELEGRAM_BOT_TOKEN"),
 		};
@@ -930,6 +945,7 @@ function parseTelegramBridge(argv: string[]): CliCommand {
 	let json = false;
 	let limit: number | undefined;
 	let once = false;
+	let replyMode: TelegramReplyMode = "ack";
 	let timeoutSeconds: number | undefined = 20;
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i];
@@ -953,13 +969,26 @@ function parseTelegramBridge(argv: string[]): CliCommand {
 			once = true;
 			continue;
 		}
+		if (arg === "--reply") {
+			replyMode = "pi";
+			continue;
+		}
+		if (arg === "--reply-mode") {
+			replyMode = parseTelegramReplyMode(requireOptionValue(argv[++i], arg), arg);
+			continue;
+		}
 		if (arg === "--timeout") {
 			timeoutSeconds = parseNonNegativeNumber(requireOptionValue(argv[++i], arg), arg);
 			continue;
 		}
 		throw new UsageError(`unknown telegram-bridge option: ${arg}`);
 	}
-	return { ackText, intervalSeconds, json, kind: "telegram-bridge", limit, once, timeoutSeconds };
+	return { ackText, intervalSeconds, json, kind: "telegram-bridge", limit, once, replyMode, timeoutSeconds };
+}
+
+function parseTelegramReplyMode(value: string, option: string): TelegramReplyMode {
+	if (value === "ack" || value === "pi") return value;
+	throw new UsageError(`${option} must be one of: ack, pi`);
 }
 
 function parseTelegramPoll(argv: string[]): CliCommand {
@@ -1622,7 +1651,10 @@ async function runTelegramBridgeCycle(
 		allowedChatId: string;
 		baseUrl?: string;
 		chatId: string;
+		cwd: string;
+		env: NodeJS.ProcessEnv;
 		limit?: number;
+		replyMode: TelegramReplyMode;
 		timeoutSeconds?: number;
 		token: string;
 	},
@@ -1635,8 +1667,32 @@ async function runTelegramBridgeCycle(
 		token: opts.token,
 	});
 	const acknowledgements: TelegramBridgeAcknowledgement[] = [];
+	const replies: TelegramBridgeReply[] = [];
 	for (const queued of poll.queued) {
 		const sentAt = new Date().toISOString();
+		if (opts.replyMode === "pi") {
+			const text = await generatePiTelegramReply({
+				cwd: opts.cwd,
+				env: opts.env,
+				memoryDir,
+				messageText: queued.text ?? "",
+				queuedPath: queued.path ?? "",
+			});
+			const message = await sendTelegramMessage({
+				baseUrl: opts.baseUrl,
+				chatId: opts.chatId,
+				text: trimTelegramBridgeText(text),
+				token: opts.token,
+			});
+			replies.push({
+				messageId: message.message_id,
+				path: queued.path ?? "",
+				responder: "pi",
+				sentAt,
+				updateId: queued.updateId,
+			});
+			continue;
+		}
 		const text =
 			opts.ackText ??
 			[
@@ -1665,7 +1721,75 @@ async function runTelegramBridgeCycle(
 		limit: opts.limit,
 		token: opts.token,
 	});
-	return { acknowledgements, outbox, poll };
+	return { acknowledgements, outbox, poll, replies };
+}
+
+async function generatePiTelegramReply(opts: {
+	cwd: string;
+	env: NodeJS.ProcessEnv;
+	memoryDir: string;
+	messageText: string;
+	queuedPath: string;
+}): Promise<string> {
+	const cli = resolve(opts.cwd, opts.env.HER_TELEGRAM_PI_CLI ?? join("packages", "coding-agent", "dist", "cli.js"));
+	const tools = opts.env.HER_TELEGRAM_PI_TOOLS?.trim() || "her_status,her_recall";
+	const args = [
+		cli,
+		"--approve",
+		"--provider",
+		opts.env.HER_TELEGRAM_PI_PROVIDER?.trim() || "her-codex-oauth",
+		"--model",
+		opts.env.HER_TELEGRAM_PI_MODEL?.trim() || "gpt-5-codex",
+		"--print",
+		"--no-builtin-tools",
+		"--tools",
+		tools,
+		buildTelegramPiPrompt({
+			messageText: opts.messageText,
+			queuedPath: opts.queuedPath,
+			tools,
+		}),
+	];
+	const timeout = parseOptionalPositiveNumber(opts.env.HER_TELEGRAM_PI_TIMEOUT_MS) ?? 180_000;
+	const childEnv: NodeJS.ProcessEnv = { ...process.env, ...opts.env, HER_MEMORY_DIR: opts.memoryDir };
+	const { stdout } = await execFileAsync(process.execPath, args, {
+		cwd: opts.cwd,
+		env: childEnv,
+		timeout,
+	});
+	const reply = stdout.trim();
+	if (!reply) throw new Error("Pi Telegram responder returned an empty reply");
+	return reply;
+}
+
+function buildTelegramPiPrompt(opts: { messageText: string; queuedPath: string; tools: string }): string {
+	return [
+		"你是 Samantha/Her 的 Telegram 正式聊天入口。",
+		"任务：回答 Fei 从 Telegram 发来的消息。",
+		"",
+		"安全边界：",
+		`- 只允许使用这些 Her tools：${opts.tools}`,
+		"- 不要运行 shell、读写任意文件、git、安装依赖、修改代码或操作系统。",
+		"- 如果用户要求远程执行高风险动作，只说明需要回到本地 Codex/Pi 会话确认。",
+		"",
+		"回答风格：",
+		"- 中文。",
+		"- 第一段先给结论。",
+		"- 必要时可以说明你查了哪些记忆。",
+		"- 不要只回复“收到”。",
+		"",
+		`Inbox path: ${opts.queuedPath || "(unknown)"}`,
+		"",
+		"Telegram message:",
+		opts.messageText || "(empty)",
+	].join("\n");
+}
+
+function trimTelegramBridgeText(text: string): string {
+	const limit = 4096;
+	if (text.length <= limit) return text;
+	const suffix = "\n\n[trimmed for Telegram message limit]";
+	return `${text.slice(0, limit - suffix.length)}${suffix}`;
 }
 
 function renderStatus(payload: CliStatusPayload): string {
@@ -1794,6 +1918,7 @@ function renderTelegramBridge(payload: CliTelegramBridgePayload): string {
 		`Her Telegram bridge poll received: ${payload.result.poll.received}`,
 		`queued: ${payload.result.poll.queued.length}`,
 		`acknowledged: ${payload.result.acknowledgements.length}`,
+		`replied: ${payload.result.replies.length}`,
 		`outbox sent: ${payload.result.outbox.sent.length}`,
 		`rejected: ${payload.result.poll.rejected.length}`,
 		`next offset: ${payload.result.poll.nextOffset ?? "(unchanged)"}`,
@@ -1995,7 +2120,7 @@ function usage(): string {
   her sync --status [--json]
   her sync [--message <message>] [--json]
   her status [--json]
-  her telegram-bridge [--timeout <seconds>] [--interval <seconds>] [--limit <n>] [--ack-text <text>] [--once] [--json]
+  her telegram-bridge [--timeout <seconds>] [--interval <seconds>] [--limit <n>] [--reply|--reply-mode ack|pi] [--ack-text <text>] [--once] [--json]
   her telegram-poll [--timeout <seconds>] [--limit <n>] [--offset <n>] [--json]
   her telegram-push-outbox [--limit <n>] [--dry-run] [--json]
   her topic-maps [--json]
@@ -2014,6 +2139,13 @@ function errorMessage(error: unknown): string {
 function parsePositiveNumber(value: string, option: string): number {
 	const parsed = Number(value);
 	if (!Number.isFinite(parsed) || parsed <= 0) throw new UsageError(`${option} must be a positive number`);
+	return parsed;
+}
+
+function parseOptionalPositiveNumber(value: string | undefined): number | undefined {
+	if (value === undefined || value.trim() === "") return undefined;
+	const parsed = Number(value);
+	if (!Number.isFinite(parsed) || parsed <= 0) throw new UsageError("HER_TELEGRAM_PI_TIMEOUT_MS must be positive");
 	return parsed;
 }
 

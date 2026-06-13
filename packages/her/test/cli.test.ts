@@ -167,6 +167,23 @@ async function withLocalTelegramApi<T>(
 	}
 }
 
+async function withLocalPiResponderShim<T>(reply: string, fn: (env: Record<string, string>) => Promise<T>): Promise<T> {
+	const bin = await mkdtemp(join(tmpdir(), "her-pi-reply-bin-"));
+	const shim = join(bin, "pi-reply-shim.mjs");
+	await writeFile(
+		shim,
+		[
+			`const prompt = process.argv.at(-1) ?? "";`,
+			`if (!prompt.includes("Her 状态")) throw new Error("missing Telegram prompt text");`,
+			`if (!prompt.includes("只允许使用这些 Her tools")) throw new Error("missing safety boundary");`,
+			`console.log(${JSON.stringify(reply)});`,
+			"",
+		].join("\n"),
+		"utf8",
+	);
+	return fn({ HER_TELEGRAM_PI_CLI: shim });
+}
+
 async function withCurlMdShim<T>(markdown: string, fn: (env: Record<string, string>) => Promise<T>): Promise<T> {
 	const bin = await mkdtemp(join(tmpdir(), "her-curl-md-bin-"));
 	const shim = join(bin, "curl-md-shim.mjs");
@@ -290,6 +307,31 @@ test("CLI Telegram bridge polls inbound messages and acknowledges queued items",
 		assert.equal(requests[1].body.chat_id, "42");
 		assert.match(String(requests[1].body.text), /已进入 Her inbox/);
 		assert.match(String(requests[1].body.text), /不会被自动执行/);
+	});
+});
+
+test("CLI Telegram bridge can answer inbound messages through the safe Pi responder", async () => {
+	const { store } = await gitBackedStore();
+
+	await withLocalTelegramApi(async (telegramEnv, requests) => {
+		await withLocalPiResponderShim("Her 完整回复：我会先看记忆，再给你结论。", async (piEnv) => {
+			const result = await runCli(
+				["telegram-bridge", "--once", "--timeout", "0", "--limit", "10", "--reply-mode", "pi", "--json"],
+				store,
+				{ ...telegramEnv, ...piEnv },
+			);
+			const payload = JSON.parse(result.stdout);
+			assert.equal(payload.result.poll.received, 1);
+			assert.equal(payload.result.poll.queued.length, 1);
+			assert.equal(payload.result.acknowledgements.length, 0);
+			assert.equal(payload.result.replies.length, 1);
+			assert.equal(payload.result.outbox.sent.length, 0);
+
+			assert.equal(requests[0].url, "/bottest-token/getUpdates");
+			assert.equal(requests[1].url, "/bottest-token/sendMessage");
+			assert.equal(requests[1].body.chat_id, "42");
+			assert.match(String(requests[1].body.text), /Her 完整回复/);
+		});
 	});
 });
 

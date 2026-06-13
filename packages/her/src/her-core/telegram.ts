@@ -77,6 +77,7 @@ export interface TelegramQueueResult {
 	path?: string;
 	reason?: string;
 	status: "queued" | "ignored" | "rejected";
+	text?: string;
 	updateId?: number;
 }
 
@@ -272,7 +273,7 @@ export async function queueTelegramInbound(
 			"",
 		].join("\n"),
 	);
-	return { status: "queued", path, updateId };
+	return { status: "queued", path, text, updateId };
 }
 
 export function selectAttentionDigest(items: AttentionItem[], opts: AttentionDigestOptions = {}): AttentionDigest {
