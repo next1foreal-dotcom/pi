@@ -12,10 +12,11 @@ import {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const policyDir = resolve(here, "..", "..", "pi-package", "policies");
-const policyPath = resolve(policyDir, "her-trust.cedar");
 const schemaPath = resolve(policyDir, "her-trust.cedarschema");
 
-export const POLICY_TEXT = readFileSync(policyPath, "utf8");
+export type CedarProfile = "default" | "heartbeat";
+
+export const POLICY_TEXT = readPolicyText("default");
 export const SCHEMA_TEXT = readFileSync(schemaPath, "utf8");
 
 export interface Verdict {
@@ -51,6 +52,15 @@ function assertSchemaParses(schema: string): void {
 export const NAMED_POLICIES = parseNamedPolicies(POLICY_TEXT);
 assertSchemaParses(SCHEMA_TEXT);
 
+export function readPolicyText(profile: CedarProfile = selectedProfile()): string {
+	const file = profile === "heartbeat" ? "her-trust-heartbeat.cedar" : "her-trust.cedar";
+	return readFileSync(resolve(policyDir, file), "utf8");
+}
+
+export function namedPolicies(profile: CedarProfile = selectedProfile()): Record<string, string> {
+	return profile === "default" ? NAMED_POLICIES : parseNamedPolicies(readPolicyText(profile));
+}
+
 export function evaluate(call: AuthorizationCall): Verdict {
 	const answer: AuthorizationAnswer = isAuthorized(call);
 	if (answer.type !== "success") {
@@ -59,10 +69,16 @@ export function evaluate(call: AuthorizationCall): Verdict {
 	return { decision: answer.response.decision, matched: answer.response.diagnostics.reason };
 }
 
-export function policyEnvelope(): Pick<AuthorizationCall, "schema" | "validateRequest" | "policies"> {
+export function policyEnvelope(
+	profile: CedarProfile = selectedProfile(),
+): Pick<AuthorizationCall, "schema" | "validateRequest" | "policies"> {
 	return {
 		schema: SCHEMA_TEXT,
 		validateRequest: true,
-		policies: { staticPolicies: NAMED_POLICIES },
+		policies: { staticPolicies: namedPolicies(profile) },
 	};
+}
+
+function selectedProfile(): CedarProfile {
+	return process.env.HER_CEDAR_PROFILE === "heartbeat" ? "heartbeat" : "default";
 }

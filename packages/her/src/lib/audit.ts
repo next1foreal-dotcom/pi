@@ -2,6 +2,13 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 
 export interface AuditEntry {
+	cost?: {
+		model?: string;
+		outputTokens?: number;
+		provider?: string;
+		purpose?: string;
+		usd: number;
+	};
 	ts: string;
 	tool: string;
 	toolCallId?: string;

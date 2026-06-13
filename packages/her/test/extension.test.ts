@@ -843,6 +843,73 @@ test("extension privacy tools classify memory and block unsafe exports", async (
 	});
 });
 
+test("extension phase E tools retract memory, report costs, and queue Telegram inbox", async () => {
+	const store = await tempStore();
+	const ctx = createContext(store);
+	await writeText(join(store, "episodic", "raw", "poison.md"), "# Poison\n\nwrong fact\n");
+	await writeText(
+		join(store, "semantic", "derived.md"),
+		"# Derived\n\nThis was derived from episodic/raw/poison.md.\n",
+	);
+	await writeText(
+		join(store, "audit", "2026-06-13.jsonl"),
+		`${JSON.stringify({
+			ts: "2026-06-13T01:00:00.000Z",
+			tool: "her_heartbeat",
+			verdict: "ALLOW",
+			rule: "allow",
+			cost: { usd: 0.25, purpose: "heartbeat" },
+		})}\n`,
+	);
+
+	await withMemoryDir(store, async () => {
+		const fake = createFakePi();
+		her(fake.pi);
+
+		const retract = fake.tools.get("her_memory_retract");
+		const cost = fake.tools.get("her_cost_report");
+		const telegram = fake.tools.get("her_telegram_queue");
+		assert.ok(retract);
+		assert.ok(cost);
+		assert.ok(telegram);
+
+		const planned = await executeTool(
+			retract,
+			{ path: "episodic/raw/poison.md", reason: "wrong fact", confirm: false },
+			ctx,
+		);
+		assert.match(firstText(planned), /planned/);
+
+		const applied = await executeTool(
+			retract,
+			{ path: "episodic/raw/poison.md", reason: "wrong fact", confirm: true },
+			ctx,
+		);
+		assert.match(firstText(applied), /applied/);
+		assert.match((await readText(join(store, "semantic", "derived.md"))) ?? "", /retracted: true/);
+
+		const report = await executeTool(cost, { month: "2026-06" }, ctx);
+		assert.match(firstText(report), /local total \$0\.2500/);
+		assert.match((await readText(join(store, "reports", "cost", "2026-06.md"))) ?? "", /heartbeat/);
+
+		const queued = await executeTool(
+			telegram,
+			{
+				allowedChatId: "42",
+				update: {
+					update_id: 77,
+					message: { message_id: 1, chat: { id: 42 }, text: "状态发我一下" },
+				},
+			},
+			ctx,
+		);
+		assert.match(firstText(queued), /queued/);
+		const inboxFiles = await readdir(join(store, "tasks", "inbox"));
+		assert.equal(inboxFiles.length, 1);
+		assert.match((await readText(join(store, "tasks", "inbox", inboxFiles[0]))) ?? "", /queued, not executed/);
+	});
+});
+
 test("extension passes configured summary model to Memory capture", async () => {
 	const store = await tempStore();
 	const ctx = createContext(store);

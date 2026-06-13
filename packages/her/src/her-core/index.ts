@@ -1,5 +1,15 @@
 export type { HerConfig } from "./config.ts";
 export { DEFAULT_CONFIG, loadConfig, renderConfig } from "./config.ts";
+export type {
+	AuditCost,
+	CostBucket,
+	CostLedgerAuditEntry,
+	CostReport,
+	CostReportOptions,
+	CostSummary,
+	CostSummaryOptions,
+} from "./cost-ledger.ts";
+export { enforceDailyCostCap, summarizeAuditCosts, writeCostReport } from "./cost-ledger.ts";
 export { createEmbeddingSearch } from "./embedding-search.ts";
 export type {
 	PathIntakeCollectOptions,
@@ -104,6 +114,14 @@ export {
 	recordHerProposalFeedback,
 	summarizeHerProposalStats,
 } from "./proposal.ts";
+export type {
+	ApplyMemoryRetractionOptions,
+	MemoryRetractionCandidate,
+	MemoryRetractionPlan,
+	MemoryRetractionResult,
+	PlanMemoryRetractionOptions,
+} from "./retraction.ts";
+export { applyMemoryRetraction, planMemoryRetraction } from "./retraction.ts";
 export type { SearchBackend } from "./retrieval.ts";
 export { frontmatter, parseFrontmatter, readJson, readText, writeJson, writeText } from "./store.ts";
 export type {
@@ -122,3 +140,15 @@ export type {
 	VerifyStepInput,
 } from "./task.ts";
 export { createHerTask, herTaskStatuses, listHerTasks, updateHerTask, verifyStep } from "./task.ts";
+export type {
+	AttentionDigest,
+	AttentionDigestOptions,
+	AttentionItem,
+	QueueTelegramInboundOptions,
+	ScoredAttentionItem,
+	TelegramMessage,
+	TelegramQueueResult,
+	TelegramUpdate,
+	TelegramUser,
+} from "./telegram.ts";
+export { queueTelegramInbound, scoreAttentionItem, selectAttentionDigest } from "./telegram.ts";

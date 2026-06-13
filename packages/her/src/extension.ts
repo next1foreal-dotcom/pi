@@ -8,6 +8,7 @@ import { anthropicOAuthProvider, openaiCodexOAuthProvider } from "@earendil-work
 import type { ExtensionAPI, ExtensionContext, ProviderConfig } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import {
+	applyMemoryRetraction,
 	type ChoiceModelDomain,
 	checkMemoryExport,
 	checkpointLongTask,
@@ -33,6 +34,8 @@ import {
 	Memory,
 	type MemorySyncResult,
 	type MemorySyncStatus,
+	planMemoryRetraction,
+	queueTelegramInbound,
 	readPathForWorldNote,
 	recordHerProposal,
 	recordHerProposalFeedback,
@@ -41,6 +44,7 @@ import {
 	summarizeHerProposalStats,
 	updateHerTask,
 	type WorldNoteData,
+	writeCostReport,
 } from "./her-core/index.ts";
 import { appendAuditLog } from "./lib/audit.ts";
 import { evaluate, policyEnvelope } from "./lib/cedar.ts";
@@ -86,6 +90,9 @@ const governedTools: Record<string, { destructive: boolean }> = {
 	her_task_list: { destructive: false },
 	her_privacy_audit: { destructive: false },
 	her_privacy_check: { destructive: false },
+	her_memory_retract: { destructive: false },
+	her_cost_report: { destructive: false },
+	her_telegram_queue: { destructive: false },
 	her_proposal_record: { destructive: false },
 	her_proposal_feedback: { destructive: false },
 	her_proposal_stats: { destructive: false },
@@ -995,6 +1002,91 @@ export default function her(pi: ExtensionAPI): void {
 				? `Her privacy check passed for ${result.checked.length} refs.`
 				: `Her privacy check blocked ${result.blocked.length} private/intimate and ${result.unknown.length} unknown refs.`;
 			return textResult(text, { phase: "E0", result, memoryDir });
+		},
+	});
+
+	pi.registerTool({
+		name: "her_memory_retract",
+		label: "Her Memory Retract",
+		description: "Plan or confirm a memory retraction without deleting append-only raw episodes.",
+		parameters: Type.Object({
+			path: Type.String({ description: "Memory path to retract, relative to HER_MEMORY_DIR." }),
+			reason: Type.String({ description: "Why this memory is wrong, poisoned, or unsafe." }),
+			confirm: Type.Optional(Type.Boolean({ description: "When true, mark mutable derived files retracted." })),
+		}),
+		async execute(_toolCallId, params) {
+			const input = {
+				path: requireNonBlank(params.path, "path"),
+				reason: requireNonBlank(params.reason, "reason"),
+			};
+			if (params.confirm) {
+				const result = await applyMemoryRetraction(memoryDir, { ...input, confirm: true });
+				const raw = result.rawAppendOnly
+					? " Raw target is append-only and will only be recorded in the retraction ledger."
+					: "";
+				return textResult(
+					`Her memory retraction applied: ${result.updatedFiles.length} updated, ${result.skipped.length} skipped.${raw}`,
+					{ phase: "E0", result, memoryDir },
+				);
+			}
+			const result = await planMemoryRetraction(memoryDir, input);
+			const mutable = result.candidates.filter((candidate) => candidate.mutable).length;
+			const raw = result.rawAppendOnly
+				? " Raw target is append-only and will only be recorded in the retraction ledger."
+				: "";
+			return textResult(
+				`Her memory retraction planned: ${result.candidates.length} candidate(s), ${mutable} mutable.${raw}`,
+				{
+					phase: "E0",
+					result,
+					memoryDir,
+				},
+			);
+		},
+	});
+
+	pi.registerTool({
+		name: "her_cost_report",
+		label: "Her Cost Report",
+		description: "Write a monthly Her audit-cost report from local audit JSONL entries.",
+		parameters: Type.Object({
+			month: Type.Optional(Type.String({ description: "YYYY-MM month; defaults to the current UTC month." })),
+			providerTotalUsd: Type.Optional(
+				Type.Number({ description: "Optional provider dashboard total for partial reconciliation." }),
+			),
+		}),
+		async execute(_toolCallId, params) {
+			const result = await writeCostReport(memoryDir, {
+				...(params.month ? { month: params.month } : {}),
+				...(params.providerTotalUsd !== undefined ? { providerTotalUsd: params.providerTotalUsd } : {}),
+			});
+			return textResult(
+				`Her cost report written: ${result.path}, local total $${result.summary.totalUsd.toFixed(4)}, reconciliation ${result.reconciliation.status}.`,
+				{ phase: "E1", result, memoryDir },
+			);
+		},
+	});
+
+	pi.registerTool({
+		name: "her_telegram_queue",
+		label: "Her Telegram Queue",
+		description: "Queue an allowlisted Telegram update into Her inbox; never executes inbound text directly.",
+		parameters: Type.Object({
+			update: Type.Any({ description: "Raw Telegram getUpdates update object." }),
+			allowedChatId: Type.Optional(Type.String({ description: "Override HER_TELEGRAM_CHAT_ID for tests." })),
+		}),
+		async execute(_toolCallId, params) {
+			const allowedChatId = params.allowedChatId ?? process.env.HER_TELEGRAM_CHAT_ID;
+			if (!allowedChatId) throw new Error("HER_TELEGRAM_CHAT_ID is required to queue Telegram updates");
+			const result = await queueTelegramInbound(memoryDir, {
+				update: params.update,
+				allowedChatId,
+			});
+			return textResult(`Her Telegram update ${result.status}${result.path ? `: ${result.path}` : ""}.`, {
+				phase: "E2",
+				result,
+				memoryDir,
+			});
 		},
 	});
 

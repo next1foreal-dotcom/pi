@@ -91,12 +91,40 @@ export class StorePaths {
 		return join(this.root, "tasks");
 	}
 
+	get inboxTasks(): string {
+		return join(this.tasks, "inbox");
+	}
+
 	get activeTasks(): string {
 		return join(this.tasks, "active");
 	}
 
 	get doneTasks(): string {
 		return join(this.tasks, "done");
+	}
+
+	get outbox(): string {
+		return join(this.root, "outbox");
+	}
+
+	get retractions(): string {
+		return join(this.root, "retractions");
+	}
+
+	get evals(): string {
+		return join(this.root, "evals");
+	}
+
+	get goldenEvals(): string {
+		return join(this.evals, "golden");
+	}
+
+	get reports(): string {
+		return join(this.root, "reports");
+	}
+
+	get costReports(): string {
+		return join(this.reports, "cost");
 	}
 
 	get privacy(): string {
