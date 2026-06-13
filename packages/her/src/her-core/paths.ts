@@ -47,6 +47,10 @@ export class StorePaths {
 		return join(this.narrative, "CHOICE-MODEL.md");
 	}
 
+	get choiceModelDir(): string {
+		return join(this.root, "choice-model");
+	}
+
 	get becoming(): string {
 		return join(this.narrative, "becoming-moments.md");
 	}

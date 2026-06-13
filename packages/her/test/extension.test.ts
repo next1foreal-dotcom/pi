@@ -214,6 +214,10 @@ test("extension injects Her context and captures completed turns", async () => {
 	await writeText(join(store, "narrative", "SOUL.md"), "# SOUL\n\nSamantha sounds grounded, playful, and exact.\n");
 	await writeText(join(store, "narrative", "SAMANTHA.md"), "# SAMANTHA\n\nSamantha is learning to stay grounded.\n");
 	await writeText(join(store, "narrative", "CHOICE-MODEL.md"), "# CHOICE MODEL\n\nPrefer reversible moves.\n");
+	await writeText(
+		join(store, "choice-model", "writing-style.md"),
+		"# Writing Style Rules\n\nLead with verified state.\n",
+	);
 
 	await withMemoryDir(store, async () => {
 		const fake = createFakePi();
@@ -247,6 +251,7 @@ test("extension injects Her context and captures completed turns", async () => {
 		assert.match(injected.systemPrompt ?? "", /grounded, playful, and exact/);
 		assert.match(injected.systemPrompt ?? "", /Samantha is learning to stay grounded/);
 		assert.match(injected.systemPrompt ?? "", /Prefer reversible moves/);
+		assert.match(injected.systemPrompt ?? "", /Lead with verified state/);
 		assert.equal(injected.message?.customType, "her-context");
 		assert.equal(injected.message?.details?.pinned, true);
 
@@ -495,9 +500,12 @@ test("extension context digest does not compete with an active pi-codex-goal fol
 	});
 });
 
-test("extension returns compact guard instructions for Her pinned context", async () => {
+test("extension returns a full compaction that preserves Her pinned context without core patch instructions", async () => {
 	const store = await tempStore();
 	const ctx = createContext(store);
+	await writeText(join(store, "narrative", "FACTS.md"), "Fei is the human owner.\n");
+	await writeText(join(store, "narrative", "SOUL.md"), "# SOUL\n\nSamantha stays warm and exact.\n");
+	await writeText(join(store, "narrative", "CHOICE-MODEL.md"), "# CHOICE MODEL\n\nPrefer reversible moves.\n");
 
 	await withMemoryDir(store, async () => {
 		const fake = createFakePi();
@@ -505,12 +513,34 @@ test("extension returns compact guard instructions for Her pinned context", asyn
 
 		const beforeCompact = fake.handlers.get("session_before_compact")?.[0];
 		assert.ok(beforeCompact);
-		const result = (await beforeCompact({ type: "session_before_compact" }, ctx)) as { customInstructions?: string };
+		const result = (await beforeCompact(
+			{
+				type: "session_before_compact",
+				preparation: {
+					firstKeptEntryId: "keep-1",
+					messagesToSummarize: [{ role: "user", content: [{ type: "text", text: "Remember this Her task." }] }],
+					turnPrefixMessages: [],
+					isSplitTurn: false,
+					tokensBefore: 1234,
+					fileOps: { readFiles: [], modifiedFiles: [] },
+					settings: { enabled: true, reserveTokens: 100, keepRecentTokens: 100 },
+				},
+				branchEntries: [],
+				signal: new AbortController().signal,
+			},
+			ctx,
+		)) as {
+			customInstructions?: string;
+			compaction?: { summary: string; firstKeptEntryId: string; tokensBefore: number };
+		};
 
-		assert.match(result.customInstructions ?? "", /FACTS\.md/);
-		assert.match(result.customInstructions ?? "", /SOUL\.md/);
-		assert.match(result.customInstructions ?? "", /her-\*/);
-		assert.match(result.customInstructions ?? "", /pinned/);
+		assert.equal(result.customInstructions, undefined);
+		assert.equal(result.compaction?.firstKeptEntryId, "keep-1");
+		assert.equal(result.compaction?.tokensBefore, 1234);
+		assert.match(result.compaction?.summary ?? "", /FACTS\.md/);
+		assert.match(result.compaction?.summary ?? "", /Fei is the human owner/);
+		assert.match(result.compaction?.summary ?? "", /SOUL\.md/);
+		assert.match(result.compaction?.summary ?? "", /Prefer reversible moves/);
 		assert.equal(
 			fake.entries.some((entry) => entry.customType === "her-state" && entryStatus(entry) === "compact-guard"),
 			true,

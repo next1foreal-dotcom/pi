@@ -155,10 +155,13 @@ test("initStore and getContext expose context, facts, soul, self narrative, and 
 	assert.equal(context.facts, "");
 	assert.equal(context.soul, SEED_SOUL);
 	assert.equal(context.self, SEED_SELF_NARRATIVE);
-	assert.equal(context.choiceModel, SEED_CHOICE_MODEL);
+	assert.match(context.choiceModel, /CHOICE MODEL - Fei's Selection Priors/);
 	assert.equal(await readText(join(store, "narrative", "SOUL.md")), SEED_SOUL);
 	assert.equal(await readText(join(store, "narrative", "SAMANTHA.md")), SEED_SELF_NARRATIVE);
 	assert.equal(await readText(join(store, "narrative", "CHOICE-MODEL.md")), SEED_CHOICE_MODEL);
+	for (const file of ["README.md", "code-style.md", "writing-style.md", "design-taste.md", "communication-tone.md"]) {
+		assert.match((await readText(join(store, "choice-model", file))) ?? "", /CHOICE-MODEL|Rules|规则/i);
+	}
 	for (const dir of ["journal", "collection", "projects", "tools", "dreams"]) {
 		assert.match((await readText(join(store, "samantha", dir, "README.md"))) ?? "", /#/);
 	}
@@ -167,11 +170,21 @@ test("initStore and getContext expose context, facts, soul, self narrative, and 
 	await writeText(join(store, "narrative", "SOUL.md"), "# SOUL\n\nSamantha sounds grounded and alive.\n");
 	await writeText(join(store, "narrative", "SAMANTHA.md"), "# SAMANTHA\n\nSamantha learned to verify first.\n");
 	await writeText(join(store, "narrative", "CHOICE-MODEL.md"), "# CHOICE MODEL\n\nPrefer verified small steps.\n");
+	await writeText(
+		join(store, "choice-model", "code-style.md"),
+		"# Code Style Rules\n\nPrefer functions over classes.\n",
+	);
+	await writeText(
+		join(store, "choice-model", "communication-tone.md"),
+		"# Communication Tone Rules\n\nLead with machine truth.\n",
+	);
 	const updated = await new Memory(store).getContext();
 	assert.match(updated.facts, /Fei/);
 	assert.match(updated.soul, /grounded and alive/);
 	assert.match(updated.self, /verify first/);
 	assert.match(updated.choiceModel, /verified small steps/);
+	assert.match(updated.choiceModel, /Prefer functions over classes/);
+	assert.match(updated.choiceModel, /Lead with machine truth/);
 });
 
 test("readJson tolerates UTF-8 BOM in existing memory files", async () => {
@@ -666,15 +679,15 @@ test("synthesizeDue waits for the configured count of new semantic notes", async
 		join(store, ".her", "config.yaml"),
 		["llm:", "  base_url: https://api.deepseek.com", "cadence:", "  synthesize_after_new_notes: 2", ""].join("\n"),
 	);
-	await writeText(join(store, ".her", "state.json"), JSON.stringify({ last_synthesize: "2026-06-01" }));
-	await writeText(join(store, "semantic", "one.md"), "---\nupdated: 2026-06-02\n---\n# One\n\nFirst new note.\n");
+	await writeText(join(store, ".her", "state.json"), JSON.stringify({ last_synthesize: "2026-06-12" }));
+	await writeText(join(store, "semantic", "one.md"), "---\nupdated: 2026-06-13\n---\n# One\n\nFirst new note.\n");
 
 	const first = await new Memory(store).synthesizeDue();
 	assert.equal(first.due, false);
 	assert.equal(first.newSemanticNotes, 1);
 	assert.equal(first.threshold, 2);
 
-	await writeText(join(store, "semantic", "two.md"), "---\nupdated: 2026-06-03\n---\n# Two\n\nSecond new note.\n");
+	await writeText(join(store, "semantic", "two.md"), "---\nupdated: 2026-06-13\n---\n# Two\n\nSecond new note.\n");
 	const second = await new Memory(store).synthesizeDue();
 	assert.equal(second.due, true);
 	assert.equal(second.reason, "new_notes");

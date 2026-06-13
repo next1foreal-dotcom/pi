@@ -290,6 +290,72 @@ function renderGoalContinuation(task: LongTaskRecord): string {
 	].join("\n");
 }
 
+function renderCompactionPrompt(input: {
+	context: string;
+	facts: string;
+	soul: string;
+	self: string;
+	choiceModel: string;
+	preparation: { previousSummary?: string; messagesToSummarize?: unknown[]; turnPrefixMessages?: unknown[] };
+}): string {
+	return [
+		"Create a compact continuation summary for Samantha. Preserve machine-truth grounding and do not invent facts.",
+		"",
+		"## Her pinned context to preserve",
+		`### FACTS.md\n${input.facts.trim() || "(empty)"}`,
+		`### SOUL.md\n${input.soul.trim() || "(empty)"}`,
+		`### CONTEXT.md\n${input.context.trim() || "(empty)"}`,
+		`### SAMANTHA.md\n${input.self.trim() || "(empty)"}`,
+		`### CHOICE-MODEL.md\n${input.choiceModel.trim() || "(empty)"}`,
+		"",
+		input.preparation.previousSummary
+			? `## Previous compaction summary\n${input.preparation.previousSummary.trim()}`
+			: "## Previous compaction summary\n(none)",
+		"",
+		"## Messages to summarize",
+		safeJson(input.preparation.messagesToSummarize ?? []),
+		"",
+		"## Turn prefix messages",
+		safeJson(input.preparation.turnPrefixMessages ?? []),
+		"",
+		"Return a concise Markdown summary with: durable facts, current task state, decisions, open questions, and next steps.",
+	].join("\n");
+}
+
+function fallbackCompactionSummary(input: {
+	context: string;
+	facts: string;
+	soul: string;
+	self: string;
+	choiceModel: string;
+	preparation: { previousSummary?: string; messagesToSummarize?: unknown[]; turnPrefixMessages?: unknown[] };
+	error?: string;
+}): string {
+	return [
+		"# Her Compaction Summary",
+		"",
+		"## Preserved Her Grounding",
+		`### FACTS.md\n${input.facts.trim() || "(empty)"}`,
+		`### SOUL.md\n${input.soul.trim() || "(empty)"}`,
+		`### CONTEXT.md\n${input.context.trim().slice(0, 4000) || "(empty)"}`,
+		`### SAMANTHA.md\n${input.self.trim() || "(empty)"}`,
+		`### CHOICE-MODEL.md\n${input.choiceModel.trim() || "(empty)"}`,
+		"",
+		input.preparation.previousSummary
+			? `## Previous Summary\n${input.preparation.previousSummary.trim()}`
+			: "## Previous Summary\n(none)",
+		"",
+		"## Conversation Snapshot",
+		safeJson(input.preparation.messagesToSummarize ?? []).slice(0, 8000),
+		input.preparation.turnPrefixMessages?.length
+			? `\n## Split-Turn Prefix\n${safeJson(input.preparation.turnPrefixMessages).slice(0, 4000)}`
+			: "",
+		input.error ? `\n## Compaction Note\nModel compaction was unavailable: ${input.error}` : "",
+	]
+		.filter(Boolean)
+		.join("\n");
+}
+
 function turnToRaw(event: { turnIndex: number; message: unknown; toolResults: unknown }, session: SessionMeta): string {
 	return `# Pi Turn ${event.turnIndex}
 
@@ -357,7 +423,8 @@ function errorMessage(error: unknown): string {
 
 export default function her(pi: ExtensionAPI): void {
 	const memoryDir = getMemoryDir();
-	const mem = new Memory(memoryDir, { model: createSummaryModel(), semanticSearch: createEmbeddingSearch() });
+	const summaryModel = createSummaryModel();
+	const mem = new Memory(memoryDir, { model: summaryModel, semanticSearch: createEmbeddingSearch() });
 	let syncTimer: ReturnType<typeof setTimeout> | undefined;
 	registerProviderPool(pi);
 
@@ -529,16 +596,61 @@ export default function her(pi: ExtensionAPI): void {
 		}
 	});
 
-	pi.on("session_before_compact", () => {
+	pi.on("session_before_compact", async (event) => {
+		const { context, facts, soul, self, choiceModel } = await mem.getContext();
+		const prompt = renderCompactionPrompt({
+			context,
+			facts,
+			soul,
+			self,
+			choiceModel,
+			preparation: event.preparation,
+		});
+		let summary: string;
+		let fallbackError: string | undefined;
+		if (summaryModel) {
+			try {
+				summary = await summaryModel.complete(prompt);
+			} catch (error) {
+				fallbackError = errorMessage(error);
+				summary = fallbackCompactionSummary({
+					context,
+					facts,
+					soul,
+					self,
+					choiceModel,
+					preparation: event.preparation,
+					error: fallbackError,
+				});
+			}
+		} else {
+			summary = fallbackCompactionSummary({
+				context,
+				facts,
+				soul,
+				self,
+				choiceModel,
+				preparation: event.preparation,
+			});
+		}
 		pi.appendEntry("her-state", {
 			phase: "2",
 			status: "compact-guard",
 			pinned: true,
-			instruction: "Preserve FACTS.md ground truth and her-* pinned entries.",
+			fromExtension: true,
+			...(fallbackError ? { fallbackError } : {}),
 		});
 		return {
-			customInstructions:
-				"Preserve Her memory grounding during compaction: keep narrative/FACTS.md ground truth, keep narrative/SOUL.md voice seed, keep the latest Her CONTEXT.md injection, and retain her-* pinned entries/messages.",
+			compaction: {
+				summary,
+				firstKeptEntryId: event.preparation.firstKeptEntryId,
+				tokensBefore: event.preparation.tokensBefore,
+				details: {
+					source: "her-extension",
+					preserved: ["CONTEXT.md", "FACTS.md", "SOUL.md", "SAMANTHA.md", "CHOICE-MODEL.md"],
+					...(fallbackError ? { fallbackError } : {}),
+				},
+			},
 		};
 	});
 

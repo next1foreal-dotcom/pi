@@ -71,6 +71,17 @@ const SAMANTHA_ZONE_READMES: Array<[SamanthaZonePathKey, string]> = [
 	],
 ];
 
+const CHOICE_MODEL_RULE_FILES: Array<[string, string]> = [
+	[
+		"README.md",
+		"# CHOICE-MODEL Rules\n\nDurable taste rules live here as scoped markdown files. Keep rules small, cite the feedback or judgment trail that created them, and prefer higher-confidence machine truth over vibes.\n",
+	],
+	["code-style.md", "# Code Style Rules\n\n(暂无规则,等 Fei 使用 her_feedback 添加)\n"],
+	["writing-style.md", "# Writing Style Rules\n\n(暂无规则,等 Fei 使用 her_feedback 添加)\n"],
+	["design-taste.md", "# Design Taste Rules\n\n(暂无规则,等 Fei 使用 her_feedback 添加)\n"],
+	["communication-tone.md", "# Communication Tone Rules\n\n(暂无规则,等 Fei 使用 her_feedback 添加)\n"],
+];
+
 export interface CaptureMeta {
 	timestamp?: string;
 	sessionId?: string;
@@ -299,8 +310,16 @@ export class Memory {
 		const facts = (await readText(this.paths.factsFile)) ?? "";
 		const soul = (await readText(this.paths.soulFile)) ?? SEED_SOUL;
 		const self = (await readText(this.paths.selfFile)) ?? SEED_SELF_NARRATIVE;
-		const choiceModel = (await readText(this.paths.choiceModelFile)) ?? SEED_CHOICE_MODEL;
+		const choiceModel = await this.readChoiceModelContext();
 		return { context: `${await this.staleBanner()}${context}`, facts, soul, self, choiceModel };
+	}
+
+	private async readChoiceModelContext(): Promise<string> {
+		const base = ((await readText(this.paths.choiceModelFile)) ?? SEED_CHOICE_MODEL).trim();
+		const ruleFiles = await readChoiceModelRuleFiles(this.paths.choiceModelDir);
+		if (ruleFiles.length === 0) return `${base}\n`;
+		const rules = ruleFiles.map(({ name, text }) => `## choice-model/${name}\n\n${text.trim()}`).join("\n\n");
+		return `${base}\n\n# CHOICE-MODEL Directory Rules\n\n${rules}\n`;
 	}
 
 	async recall(query: string, opts: { k?: number } = {}): Promise<Note[]> {
@@ -1236,6 +1255,7 @@ export async function initStore(root: string): Promise<StorePaths> {
 		paths.topics,
 		paths.ideas,
 		paths.goals,
+		paths.choiceModelDir,
 		paths.samantha,
 		paths.samanthaJournal,
 		paths.samanthaCollection,
@@ -1252,12 +1272,32 @@ export async function initStore(root: string): Promise<StorePaths> {
 	await writeText(paths.soulFile, SEED_SOUL);
 	await writeText(paths.selfFile, SEED_SELF_NARRATIVE);
 	await writeText(paths.choiceModelFile, SEED_CHOICE_MODEL);
+	for (const [file, content] of CHOICE_MODEL_RULE_FILES) {
+		await writeText(join(paths.choiceModelDir, file), content);
+	}
 	for (const [dirKey, content] of SAMANTHA_ZONE_READMES) {
 		await writeText(join(paths[dirKey], "README.md"), content);
 	}
 	await writeText(join(paths.root, ".gitignore"), "# secrets - never commit\n.env\n.her/lock\n");
 	await writeText(join(paths.root, ".env.example"), "HER_LLM_API_KEY=your-key-here\n");
 	return paths;
+}
+
+async function readChoiceModelRuleFiles(dir: string): Promise<Array<{ name: string; text: string }>> {
+	let names: string[];
+	try {
+		names = await readdir(dir);
+	} catch (error) {
+		if (isNotFound(error)) return [];
+		throw error;
+	}
+	const markdown = names.filter((name) => name.endsWith(".md")).sort((a, b) => a.localeCompare(b));
+	const files: Array<{ name: string; text: string }> = [];
+	for (const name of markdown) {
+		const text = await readText(join(dir, name));
+		if (text?.trim()) files.push({ name, text });
+	}
+	return files;
 }
 
 function episodeSection(
@@ -1451,6 +1491,10 @@ function safeStem(text: string): string {
 
 function isFileExists(error: unknown): boolean {
 	return Boolean(error && typeof error === "object" && "code" in error && error.code === "EEXIST");
+}
+
+function isNotFound(error: unknown): boolean {
+	return Boolean(error && typeof error === "object" && "code" in error && error.code === "ENOENT");
 }
 
 function sourceRef(source: string): string {
