@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -369,6 +369,58 @@ export async function runHerCli(
 	}
 
 	const memoryDir = getMemoryDir(env, cwd);
+
+	if (command.kind === "telegram-poll") {
+		const result = await pollTelegramInbox(memoryDir, {
+			allowedChatId: requireEnv(env, "HER_TELEGRAM_CHAT_ID"),
+			baseUrl: env.HER_TELEGRAM_BASE_URL,
+			limit: command.limit,
+			offset: command.offset,
+			timeoutSeconds: command.timeoutSeconds,
+			token: requireEnv(env, "HER_TELEGRAM_BOT_TOKEN"),
+		});
+		const payload = { ...(await buildFreshStatusPayload(memoryDir, env)), result };
+		writePayload(io.stdout, payload, command.json, renderTelegramPoll);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "telegram-bridge") {
+		const options = {
+			ackText: command.ackText,
+			allowedChatId: requireEnv(env, "HER_TELEGRAM_CHAT_ID"),
+			baseUrl: env.HER_TELEGRAM_BASE_URL,
+			chatId: requireEnv(env, "HER_TELEGRAM_CHAT_ID"),
+			cwd,
+			env,
+			limit: command.limit,
+			memoryDir,
+			replyMode: command.replyMode,
+			timeoutSeconds: command.timeoutSeconds,
+			token: requireEnv(env, "HER_TELEGRAM_BOT_TOKEN"),
+		};
+
+		for (;;) {
+			const result = await runTelegramBridgeCycle(memoryDir, options);
+			const payload = { ...(await buildFreshStatusPayload(memoryDir, env)), result };
+			writePayload(io.stdout, payload, command.json, renderTelegramBridge);
+			if (command.once) return payload.status.status === "unknown" ? 1 : 0;
+			await sleep(command.intervalSeconds * 1000);
+		}
+	}
+
+	if (command.kind === "telegram-push-outbox") {
+		const result = await pushTelegramOutbox(memoryDir, {
+			baseUrl: env.HER_TELEGRAM_BASE_URL,
+			chatId: requireEnv(env, "HER_TELEGRAM_CHAT_ID"),
+			dryRun: command.dryRun,
+			limit: command.limit,
+			token: requireEnv(env, "HER_TELEGRAM_BOT_TOKEN"),
+		});
+		const payload = { ...(await buildFreshStatusPayload(memoryDir, env)), result };
+		writePayload(io.stdout, payload, command.json, renderTelegramOutbox);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
 	const memory = createCliMemory(memoryDir, env);
 
 	if (command.kind === "status") {
@@ -434,57 +486,6 @@ export async function runHerCli(
 		const result = (await claimNextLongTask(memoryDir, command)) ?? null;
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderGoalNext);
-		return payload.status.status === "unknown" ? 1 : 0;
-	}
-
-	if (command.kind === "telegram-poll") {
-		const result = await pollTelegramInbox(memoryDir, {
-			allowedChatId: requireEnv(env, "HER_TELEGRAM_CHAT_ID"),
-			baseUrl: env.HER_TELEGRAM_BASE_URL,
-			limit: command.limit,
-			offset: command.offset,
-			timeoutSeconds: command.timeoutSeconds,
-			token: requireEnv(env, "HER_TELEGRAM_BOT_TOKEN"),
-		});
-		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
-		writePayload(io.stdout, payload, command.json, renderTelegramPoll);
-		return payload.status.status === "unknown" ? 1 : 0;
-	}
-
-	if (command.kind === "telegram-bridge") {
-		const options = {
-			ackText: command.ackText,
-			allowedChatId: requireEnv(env, "HER_TELEGRAM_CHAT_ID"),
-			baseUrl: env.HER_TELEGRAM_BASE_URL,
-			chatId: requireEnv(env, "HER_TELEGRAM_CHAT_ID"),
-			cwd,
-			env,
-			limit: command.limit,
-			memoryDir,
-			replyMode: command.replyMode,
-			timeoutSeconds: command.timeoutSeconds,
-			token: requireEnv(env, "HER_TELEGRAM_BOT_TOKEN"),
-		};
-
-		for (;;) {
-			const result = await runTelegramBridgeCycle(memoryDir, options);
-			const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
-			writePayload(io.stdout, payload, command.json, renderTelegramBridge);
-			if (command.once) return payload.status.status === "unknown" ? 1 : 0;
-			await sleep(command.intervalSeconds * 1000);
-		}
-	}
-
-	if (command.kind === "telegram-push-outbox") {
-		const result = await pushTelegramOutbox(memoryDir, {
-			baseUrl: env.HER_TELEGRAM_BASE_URL,
-			chatId: requireEnv(env, "HER_TELEGRAM_CHAT_ID"),
-			dryRun: command.dryRun,
-			limit: command.limit,
-			token: requireEnv(env, "HER_TELEGRAM_BOT_TOKEN"),
-		});
-		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
-		writePayload(io.stdout, payload, command.json, renderTelegramOutbox);
 		return payload.status.status === "unknown" ? 1 : 0;
 	}
 
@@ -1625,6 +1626,10 @@ async function buildStatusPayload(memoryDir: string, memory: Memory): Promise<Cl
 	};
 }
 
+async function buildFreshStatusPayload(memoryDir: string, env: NodeJS.ProcessEnv): Promise<CliStatusPayload> {
+	return buildStatusPayload(memoryDir, createCliMemory(memoryDir, env));
+}
+
 async function updateSurfaces(memory: Memory, enabled: boolean): Promise<CliSurfaceUpdateResult> {
 	if (!enabled) {
 		return {
@@ -1739,7 +1744,7 @@ async function generatePiTelegramReply(opts: {
 		"--provider",
 		opts.env.HER_TELEGRAM_PI_PROVIDER?.trim() || "openai-codex",
 		"--model",
-		opts.env.HER_TELEGRAM_PI_MODEL?.trim() || "gpt-5.5",
+		opts.env.HER_TELEGRAM_PI_MODEL?.trim() || "gpt-5.4-mini:low",
 		"--print",
 		"--no-builtin-tools",
 		"--tools",
@@ -1752,7 +1757,7 @@ async function generatePiTelegramReply(opts: {
 	];
 	const timeout = parseOptionalPositiveNumber(opts.env.HER_TELEGRAM_PI_TIMEOUT_MS) ?? 180_000;
 	const childEnv: NodeJS.ProcessEnv = { ...process.env, ...opts.env, HER_MEMORY_DIR: opts.memoryDir };
-	const { stdout } = await execFileAsync(process.execPath, args, {
+	const stdout = await runPiTelegramProcess(args, {
 		cwd: opts.cwd,
 		env: childEnv,
 		timeout,
@@ -1760,6 +1765,46 @@ async function generatePiTelegramReply(opts: {
 	const reply = stdout.trim();
 	if (!reply) throw new Error("Pi Telegram responder returned an empty reply");
 	return reply;
+}
+
+function runPiTelegramProcess(
+	args: string[],
+	opts: { cwd: string; env: NodeJS.ProcessEnv; timeout: number },
+): Promise<string> {
+	return new Promise((resolvePromise, reject) => {
+		const child = spawn(process.execPath, args, {
+			cwd: opts.cwd,
+			env: opts.env,
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+		let stdout = "";
+		let stderr = "";
+		const timer = setTimeout(() => {
+			child.kill();
+			reject(new Error(`Pi Telegram responder timed out after ${opts.timeout}ms`));
+		}, opts.timeout);
+		child.stdout.setEncoding("utf8");
+		child.stderr.setEncoding("utf8");
+		child.stdout.on("data", (chunk) => {
+			stdout += chunk;
+		});
+		child.stderr.on("data", (chunk) => {
+			stderr += chunk;
+		});
+		child.on("error", (error) => {
+			clearTimeout(timer);
+			reject(error);
+		});
+		child.on("exit", (code, signal) => {
+			clearTimeout(timer);
+			if (code === 0) {
+				resolvePromise(stdout);
+				return;
+			}
+			const detail = stderr.trim() ? `: ${stderr.trim()}` : "";
+			reject(new Error(`Pi Telegram responder exited ${signal ?? code}${detail}`));
+		});
+	});
 }
 
 function buildTelegramPiPrompt(opts: { messageText: string; queuedPath: string; tools: string }): string {
@@ -1775,6 +1820,7 @@ function buildTelegramPiPrompt(opts: { messageText: string; queuedPath: string; 
 		"回答风格：",
 		"- 中文。",
 		"- 第一段先给结论。",
+		"- 默认不超过 120 字。",
 		"- 必要时可以说明你查了哪些记忆。",
 		"- 不要只回复“收到”。",
 		"",
