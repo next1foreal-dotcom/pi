@@ -10,6 +10,22 @@ export type {
 	CostSummaryOptions,
 } from "./cost-ledger.ts";
 export { enforceDailyCostCap, summarizeAuditCosts, writeCostReport } from "./cost-ledger.ts";
+export type {
+	DelegatedOperation,
+	DelegationDecision,
+	DelegationTier,
+	IncidentLevel,
+	TrustEvent,
+	TrustIncidentAction,
+	TrustUpgradeProposal,
+} from "./delegation.ts";
+export {
+	classifyDelegatedOperation,
+	delegationTiers,
+	downgradeAfterIncident,
+	incidentLevels,
+	proposeTrustUpgrade,
+} from "./delegation.ts";
 export { createEmbeddingSearch } from "./embedding-search.ts";
 export type {
 	GoldenEvalAlert,

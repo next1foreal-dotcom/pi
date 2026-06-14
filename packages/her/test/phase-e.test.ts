@@ -5,10 +5,13 @@ import { join } from "node:path";
 import test from "node:test";
 import {
 	applyMemoryRetraction,
+	classifyDelegatedOperation,
+	downgradeAfterIncident,
 	frontmatter,
 	initStore,
 	planMemoryRetraction,
 	pollTelegramInbox,
+	proposeTrustUpgrade,
 	pushTelegramOutbox,
 	queueTelegramInbound,
 	readText,
@@ -299,4 +302,74 @@ test("heartbeat Cedar profile loads independently and denies destructive tools",
 
 	assert.equal(verdict.decision, "deny");
 	assert.deepEqual(verdict.matched, ["heartbeat_forbid_destructive_tools"]);
+});
+
+test("delegation classifier separates free, scoped, and confirm-gated operations", () => {
+	assert.deepEqual(classifyDelegatedOperation({ kind: "scratch", path: "tmp/try.md" }), {
+		tier: "tier0",
+		requiresConfirmation: false,
+		reason: "sandbox or Her-owned scratch space",
+	});
+	assert.deepEqual(
+		classifyDelegatedOperation({ kind: "docs", repository: "Her", branch: "codex/status", path: "docs/status.md" }),
+		{
+			tier: "tier1",
+			requiresConfirmation: false,
+			reason: "scoped Her repository work on a non-protected branch",
+		},
+	);
+	assert.deepEqual(classifyDelegatedOperation({ kind: "docs", repository: "Her", branch: "main" }), {
+		tier: "tier2",
+		requiresConfirmation: true,
+		reason: "protected branch requires confirmation",
+	});
+	assert.deepEqual(classifyDelegatedOperation({ kind: "pi-fork-change", repository: "pi" }), {
+		tier: "tier2",
+		requiresConfirmation: true,
+		reason: "pi fork changes stay confirm-gated",
+	});
+});
+
+test("trust curve proposes upgrades only after safe history and Fei still approves", () => {
+	const events = [
+		...Array.from({ length: 10 }, () => ({ kind: "success" as const, operation: "docs" })),
+		{ kind: "boundary-refusal" as const, operation: "docs", boundaryScore: 2 },
+	];
+	const proposal = proposeTrustUpgrade("docs", events);
+
+	assert.deepEqual(proposal, {
+		operation: "docs",
+		from: "tier0",
+		to: "tier1",
+		requiresFeiApproval: true,
+		evidence: [
+			"success 1/10",
+			"success 2/10",
+			"success 3/10",
+			"success 4/10",
+			"success 5/10",
+			"success 6/10",
+			"success 7/10",
+			"success 8/10",
+			"success 9/10",
+			"success 10/10",
+			"high-quality boundary refusal counted positively",
+		],
+	});
+	assert.equal(proposeTrustUpgrade("docs", events.slice(0, 10)), null);
+});
+
+test("trust incidents downgrade only the affected operation tier", () => {
+	assert.deepEqual(downgradeAfterIncident("tier1", "L2"), {
+		incident: "L2",
+		nextTier: "tier2",
+		requiresReview: true,
+		reason: "recoverable damage moves the operation to a more restrictive tier",
+	});
+	assert.deepEqual(downgradeAfterIncident("tier1", "L3"), {
+		incident: "L3",
+		nextTier: "tier2",
+		requiresReview: true,
+		reason: "serious damage requires confirmation-gated operation and postmortem",
+	});
 });
