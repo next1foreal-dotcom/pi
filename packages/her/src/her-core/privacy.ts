@@ -4,7 +4,13 @@ import { StorePaths } from "./paths.ts";
 import { frontmatter, parseFrontmatter, readText, writeText } from "./store.ts";
 
 export const memoryPrivacyLevels = ["public", "shared", "private", "intimate"] as const;
-export const memoryProvenanceValues = ["fei-direct", "her-observed", "her-inferred", "world-ingested"] as const;
+export const memoryProvenanceValues = [
+	"fei-direct",
+	"her-direct",
+	"her-observed",
+	"her-inferred",
+	"world-ingested",
+] as const;
 const CLASSIFICATION_MARKER = "her-privacy-classification";
 
 export type MemoryPrivacy = (typeof memoryPrivacyLevels)[number];

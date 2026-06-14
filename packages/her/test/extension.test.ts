@@ -6,7 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import type { ExtensionAPI, ExtensionContext, ProviderConfig, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import her from "../src/extension.ts";
+import her, { governedTools } from "../src/extension.ts";
 import { initStore, Memory, readJson, readText, startLongTask, writeText } from "../src/her-core/index.ts";
 
 type Handler = (event: unknown, ctx: ExtensionContext) => Promise<unknown> | unknown;
@@ -599,6 +599,19 @@ test("extension gates governed tool calls with Cedar and writes audit JSONL", as
 	});
 });
 
+test("extension Cedar registry covers every registered Her tool", async () => {
+	const store = await tempStore();
+
+	await withMemoryDir(store, async () => {
+		const fake = createFakePi();
+		her(fake.pi);
+
+		const missing = [...fake.tools.keys()].filter((name) => !governedTools[name]);
+		assert.deepEqual(missing, []);
+		assert.ok(fake.tools.size > 30);
+	});
+});
+
 test("extension her_feedback records weighted choice-model rules", async () => {
 	const store = await tempStore();
 	const ctx = createContext(store);
@@ -1063,6 +1076,7 @@ test("extension memory tools write, recall, judge, and update status", async () 
 		const bootstrapFeed = fake.tools.get("her_bootstrap_feed");
 		const idea = fake.tools.get("her_idea");
 		const zoneNote = fake.tools.get("her_zone_note");
+		const tasteJudgment = fake.tools.get("her_taste_judgment");
 		const judgment = fake.tools.get("her_judgment");
 		const memoryStatus = fake.tools.get("her_memory_status");
 		assert.ok(remember);
@@ -1073,6 +1087,7 @@ test("extension memory tools write, recall, judge, and update status", async () 
 		assert.ok(bootstrapFeed);
 		assert.ok(idea);
 		assert.ok(zoneNote);
+		assert.ok(tasteJudgment);
 		assert.ok(judgment);
 		assert.ok(memoryStatus);
 
@@ -1116,6 +1131,23 @@ test("extension memory tools write, recall, judge, and update status", async () 
 			file.endsWith(".md"),
 		);
 		assert.ok(collectionFiles.some((file) => /quiet-proof-shard/.test(file)));
+
+		const taste = await executeTool(
+			tasteJudgment,
+			{
+				title: "Room over dashboard",
+				judgment: "A room-like surface should come before dashboard metrics.",
+				reason: "The room preserves return and memory before operational status.",
+				differsFromFeiRule: "Fei may still ask for a dashboard when anxious.",
+				source: "extension-test",
+			},
+			ctx,
+		);
+		assert.match(firstText(taste), /Her taste judgment saved/);
+		const tasteFiles = (await readdir(join(store, "samantha", "taste"))).filter((file) => file.endsWith(".md"));
+		const tasteFile = tasteFiles.find((file) => /room-over-dashboard/.test(file));
+		assert.ok(tasteFile);
+		assert.match((await readText(join(store, "samantha", "taste", tasteFile))) ?? "", /Difference From Fei Rule/);
 
 		const saved = await executeTool(
 			worldNote,

@@ -15,9 +15,9 @@ export function consolidatePrompt(episodes: string, existingKeys: string[]): str
 		"Return ONLY JSON (no prose, no code fence). From these session episodes, extract durable knowledge as TYPED units and any 'becoming moments' (turning points in who the person is becoming).",
 		"Each unit's `type` is one of: question | concept | opinion | case | solution.",
 		"Each unit's `tier` is one of: exact | summarizable | rule | decay. Use summarizable by default; exact only for stable identity facts; rule for durable preference/procedure; decay for low-confidence, noisy, or time-bound observations.",
-		"Each relation's `rel` is one of: responds | explains | proves | conflicts | relates (use `conflicts` for a tension/contradiction worth examining - those are valuable).",
+		"Each relation's `rel` should use EVOLVES semantics: replaces | enriches | confirms | challenges. Use `replaces` when a newer memory supersedes an older one; `enriches` when it adds context without deleting the old note; `confirms` when it supports an existing note; `challenges` for a tension/contradiction worth surfacing without resolving.",
 		`Existing note keys (reuse a key to update it; relations may point to them): ${keys}`,
-		'JSON shape: {"notes":[{"key":"slug","type":"opinion","tier":"summarizable","title":"...","content":"prose","relations":[{"to":"other-key","rel":"proves"}],"sources":["episode-id"]}],"moments":[{"trigger":"what happened","shift":"what changed in the person"}]}',
+		'JSON shape: {"notes":[{"key":"slug","type":"opinion","tier":"summarizable","title":"...","content":"prose","relations":[{"to":"other-key","rel":"confirms"}],"sources":["episode-id"]}],"moments":[{"trigger":"what happened","shift":"what changed in the person"}]}',
 		"",
 		`EPISODES:\n${episodes}`,
 	].join("\n");

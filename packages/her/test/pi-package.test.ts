@@ -188,6 +188,40 @@ test("Pi project pins defuddle for local article and X URL intake", async () => 
 	assert.equal(manifest.dependencies?.defuddle, "0.18.1");
 });
 
+test("her-skill-sharpen keeps only challenger skill edits that beat the champion", async () => {
+	const skill = await readFile(join(herRoot, "pi-package", "skills", "her-skill-sharpen", "SKILL.md"), "utf8");
+
+	for (const required of [
+		"Champion",
+		"Challenger",
+		"Source examples",
+		"Rubric",
+		"Verdict",
+		"keep only if the challenger beats the champion",
+		"discard it and say so",
+		"do not edit pi core",
+		"packages/her/pi-package/skills/<skill>/SKILL.md",
+	]) {
+		assert.match(skill, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"));
+	}
+});
+
+test("her-scan skill-mining mode drafts SKILL proposals without installing them", async () => {
+	const skill = await readFile(join(herRoot, "pi-package", "skills", "her-scan", "SKILL.md"), "utf8");
+
+	for (const required of [
+		"mode: skill-mining",
+		"newest `episodic/raw/*.md` entries, up to sixty files",
+		"SKILL.md proposal",
+		"acceptance examples",
+		'source: "her-scan:skill-mining"',
+		"no skill file was created yet",
+		"anything that would require pi core edits",
+	]) {
+		assert.match(skill, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"));
+	}
+});
+
 test("Her subagents are project-discoverable and inherit memory context", async () => {
 	const packageAgentsRoot = join(herRoot, "pi-package", "agents");
 	const packageAgents = (await readdir(packageAgentsRoot)).filter((file) => file.endsWith(".md")).sort();

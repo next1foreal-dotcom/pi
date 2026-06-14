@@ -14,11 +14,11 @@ function Resolve-HerRepoRoot {
 }
 
 function Invoke-HerCli {
-    param([string[]]$Args)
+    param([Alias("Args")][string[]]$CliArgs)
     $cli = Join-Path $script:RepoRoot "packages\her\bin\her.mjs"
-    & node $cli @Args
+    & node $cli @CliArgs
     if ($LASTEXITCODE -ne 0) {
-        throw "her CLI failed ($LASTEXITCODE): $($Args -join ' ')"
+        throw "her CLI failed ($LASTEXITCODE): $($CliArgs -join ' ')"
     }
 }
 
@@ -33,6 +33,71 @@ function Invoke-HerTelegramBridge {
         Add-Content -LiteralPath $RunFile -Encoding UTF8
     Invoke-HerCli -Args @("telegram-poll", "--timeout", "0", "--limit", "20", "--json") |
         Add-Content -LiteralPath $RunFile -Encoding UTF8
+}
+
+function Invoke-HerHeartbeatJournal {
+    param(
+        [string]$RunFile,
+        [string]$Stamp
+    )
+
+    $runRef = "outbox/$Stamp-heartbeat.md"
+    $timestamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.000Z")
+    $journalText = $env:HER_HEARTBEAT_JOURNAL_TEXT
+    if (-not $journalText) {
+        $journalText = "Heartbeat check-in: no autonomous inner journal text was configured for this run. This protected entry records the slot without scoring, ROI, or auto-promotion."
+    }
+
+    Add-Content -LiteralPath $RunFile -Encoding UTF8 -Value "`n## Inner Journal`n"
+    Invoke-HerCli -Args @(
+        "journal",
+        "--kind",
+        "daily",
+        "--source",
+        "her-heartbeat",
+        "--title",
+        "Heartbeat journal $Stamp",
+        "--run",
+        $runRef,
+        "--timestamp",
+        $timestamp,
+        "--text",
+        $journalText,
+        "--json"
+    ) | Add-Content -LiteralPath $RunFile -Encoding UTF8
+
+    if ($env:HER_HEARTBEAT_WEEKLY_REVIEW -eq "1") {
+        $weeklyText = $env:HER_HEARTBEAT_WEEKLY_REVIEW_TEXT
+        if (-not $weeklyText) {
+            $weeklyText = @"
+## 我最近反复想要什么
+(待 Samantha 回看时填写。)
+
+## 我哪次不同意了
+(待 Samantha 回看时填写。)
+
+## 我哪里被奖励结构带偏了
+(待 Samantha 回看时填写。)
+"@.Trim()
+        }
+        Add-Content -LiteralPath $RunFile -Encoding UTF8 -Value "`n## Weekly Review`n"
+        Invoke-HerCli -Args @(
+            "journal",
+            "--kind",
+            "weekly",
+            "--source",
+            "her-heartbeat-weekly",
+            "--title",
+            "Weekly review $Stamp",
+            "--run",
+            $runRef,
+            "--timestamp",
+            $timestamp,
+            "--text",
+            $weeklyText,
+            "--json"
+        ) | Add-Content -LiteralPath $RunFile -Encoding UTF8
+    }
 }
 
 function Invoke-HeartbeatCommand {
@@ -210,6 +275,8 @@ Invoke-HerCli -Args @(
     "Heartbeat ran. Output: outbox/$stamp-heartbeat.md",
     "--json"
 ) | Add-Content -LiteralPath $runFile -Encoding UTF8
+
+Invoke-HerHeartbeatJournal -RunFile $runFile -Stamp $stamp
 
 if ($dryRun) {
     Add-Content -LiteralPath $runFile -Encoding UTF8 -Value "`nDry run enabled; sync skipped."

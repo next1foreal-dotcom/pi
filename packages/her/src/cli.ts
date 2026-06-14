@@ -17,6 +17,7 @@ import {
 	completeLongTask,
 	createEmbeddingSearch,
 	type DecaySweepResult,
+	type GoldenEvalReport,
 	type JudgmentFields,
 	type LongTaskRecord,
 	type LongTaskStatus,
@@ -32,6 +33,8 @@ import {
 	pushTelegramOutbox,
 	readPathForWorldNote,
 	readUrlForWorldNote,
+	runGoldenEvals,
+	type SamanthaJournalKind,
 	type SelfNarrativeUpdateResult,
 	sendTelegramMessage,
 	startLongTask,
@@ -44,6 +47,8 @@ import { createSummaryModel } from "./summary-model.ts";
 
 const execFileAsync = promisify(execFile);
 type TelegramReplyMode = "ack" | "pi";
+const defaultTelegramResponderTools = ["her_status", "her_recall"] as const;
+const telegramResponderReadOnlyTools = new Set<string>(defaultTelegramResponderTools);
 
 type CliCommand =
 	| { kind: "approve"; json: boolean; proposalId: string }
@@ -52,6 +57,7 @@ type CliCommand =
 	| { kind: "choice-model"; json: boolean }
 	| { kind: "consolidate"; json: boolean; limit?: number }
 	| { kind: "decay"; json: boolean; olderThanDays?: number; now?: string }
+	| { kind: "eval-golden"; json: boolean; now?: string; writeBaseline: boolean }
 	| {
 			kind: "goal-checkpoint";
 			evidence: string[];
@@ -85,6 +91,16 @@ type CliCommand =
 	  }
 	| { kind: "intake-url"; json: boolean; maxBytes?: number; updateSurfaces: boolean; url: string }
 	| { kind: "judgment"; fields: JudgmentFields; json: boolean; noteId: string }
+	| {
+			kind: "journal";
+			content: string;
+			journalKind: SamanthaJournalKind;
+			json: boolean;
+			runPath?: string;
+			source?: string;
+			timestamp?: string;
+			title?: string;
+	  }
 	| { kind: "memory-status"; json: boolean; noteId: string; reason: string; status: WorldNoteData["memoryStatus"] }
 	| { kind: "privacy-audit"; json: boolean }
 	| { kind: "privacy-check"; json: boolean; refs: string[] }
@@ -95,6 +111,16 @@ type CliCommand =
 	| { kind: "synthesize-due"; json: boolean }
 	| { kind: "status"; json: boolean }
 	| { kind: "sync"; json: boolean; message?: string }
+	| {
+			kind: "taste";
+			differsFromFeiRule?: string;
+			judgment: string;
+			json: boolean;
+			reason: string;
+			source?: string;
+			timestamp?: string;
+			title: string;
+	  }
 	| {
 			ackText?: string;
 			intervalSeconds: number;
@@ -122,6 +148,10 @@ interface CliSyncPayload extends CliStatusPayload {
 
 interface CliDecayPayload extends CliStatusPayload {
 	result: DecaySweepResult;
+}
+
+interface CliGoldenEvalPayload extends CliStatusPayload {
+	result: GoldenEvalReport;
 }
 
 interface CliConsolidatePayload extends CliStatusPayload {
@@ -233,6 +263,21 @@ interface CliJudgmentPayload extends CliStatusPayload {
 	};
 }
 
+interface CliJournalPayload extends CliStatusPayload {
+	result: {
+		id: string;
+		kind: SamanthaJournalKind;
+		path: string;
+	};
+}
+
+interface CliTastePayload extends CliStatusPayload {
+	result: {
+		id: string;
+		path: string;
+	};
+}
+
 interface CliMemoryStatusPayload extends CliStatusPayload {
 	result: {
 		noteId: string;
@@ -321,6 +366,7 @@ export function parseArgs(argv: string[]): CliCommand {
 	if (command === "choice-model") return parseJsonOnly("choice-model", rest);
 	if (command === "consolidate") return parseConsolidate(rest);
 	if (command === "decay") return parseDecay(rest);
+	if (command === "eval-golden") return parseEvalGolden(rest);
 	if (command === "goal-checkpoint") return parseGoalCheckpoint(rest);
 	if (command === "goal-complete") return parseGoalComplete(rest);
 	if (command === "goal-list") return parseGoalList(rest);
@@ -331,6 +377,7 @@ export function parseArgs(argv: string[]): CliCommand {
 	if (command === "intake-source") return parseIntakeSource(rest);
 	if (command === "intake-url") return parseIntakeUrl(rest);
 	if (command === "judgment") return parseJudgment(rest);
+	if (command === "journal") return parseJournal(rest);
 	if (command === "memory-status") return parseMemoryStatusCommand(rest);
 	if (command === "privacy-audit") return parseJsonOnly("privacy-audit", rest);
 	if (command === "privacy-check") return parsePrivacyCheck(rest);
@@ -341,6 +388,7 @@ export function parseArgs(argv: string[]): CliCommand {
 	if (command === "synthesize-due") return parseJsonOnly("synthesize-due", rest);
 	if (command === "status") return parseStatus(rest);
 	if (command === "sync") return parseSync(rest);
+	if (command === "taste") return parseTaste(rest);
 	if (command === "telegram-bridge") return parseTelegramBridge(rest);
 	if (command === "telegram-poll") return parseTelegramPoll(rest);
 	if (command === "telegram-push-outbox") return parseTelegramPushOutbox(rest);
@@ -441,6 +489,14 @@ export async function runHerCli(
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderDecay);
 		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "eval-golden") {
+		const result = await runGoldenEvals(memoryDir, { now: command.now, writeBaseline: command.writeBaseline });
+		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
+		writePayload(io.stdout, payload, command.json, renderGoldenEval);
+		if (payload.status.status === "unknown") return 1;
+		return result.status === "pass" ? 0 : 1;
 	}
 
 	if (command.kind === "restore") {
@@ -657,6 +713,34 @@ export async function runHerCli(
 			result: { noteId: command.noteId, recorded: true as const },
 		};
 		writePayload(io.stdout, payload, command.json, renderJudgment);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "journal") {
+		const result = await memory.writeSamanthaJournal({
+			kind: command.journalKind,
+			content: command.content,
+			...(command.runPath ? { runPath: command.runPath } : {}),
+			...(command.source ? { source: command.source } : {}),
+			...(command.timestamp ? { timestamp: command.timestamp } : {}),
+			...(command.title ? { title: command.title } : {}),
+		});
+		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
+		writePayload(io.stdout, payload, command.json, renderJournal);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "taste") {
+		const result = await memory.writeSamanthaTasteJudgment({
+			title: command.title,
+			judgment: command.judgment,
+			reason: command.reason,
+			...(command.differsFromFeiRule ? { differsFromFeiRule: command.differsFromFeiRule } : {}),
+			...(command.source ? { source: command.source } : {}),
+			...(command.timestamp ? { timestamp: command.timestamp } : {}),
+		});
+		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
+		writePayload(io.stdout, payload, command.json, renderTaste);
 		return payload.status.status === "unknown" ? 1 : 0;
 	}
 
@@ -1068,6 +1152,29 @@ function parseDecay(argv: string[]): CliCommand {
 		throw new UsageError(`unknown decay option: ${arg}`);
 	}
 	return { kind: "decay", json, olderThanDays, now };
+}
+
+function parseEvalGolden(argv: string[]): CliCommand {
+	let json = false;
+	let now: string | undefined;
+	let writeBaseline = false;
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--write-baseline") {
+			writeBaseline = true;
+			continue;
+		}
+		if (arg === "--now") {
+			now = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		throw new UsageError(`unknown eval-golden option: ${arg}`);
+	}
+	return { kind: "eval-golden", json, now, writeBaseline };
 }
 
 function parseRestore(argv: string[]): CliCommand {
@@ -1561,6 +1668,113 @@ function parseJudgment(argv: string[]): CliCommand {
 	return { kind: "judgment", fields, json, noteId };
 }
 
+function parseJournal(argv: string[]): CliCommand {
+	let json = false;
+	let journalKind: SamanthaJournalKind | undefined;
+	let content: string | undefined;
+	let runPath: string | undefined;
+	let source: string | undefined;
+	let timestamp: string | undefined;
+	let title: string | undefined;
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--kind") {
+			const value = requireOptionValue(argv[++i], arg);
+			if (value !== "daily" && value !== "weekly") throw new UsageError("--kind must be daily or weekly");
+			journalKind = value;
+			continue;
+		}
+		if (arg === "--text") {
+			content = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--run" || arg === "--heartbeat-run") {
+			runPath = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--source") {
+			source = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--timestamp") {
+			timestamp = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--title") {
+			title = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		throw new UsageError(`unknown journal option: ${arg}`);
+	}
+	if (!journalKind) throw new UsageError("journal requires --kind daily|weekly");
+	return {
+		kind: "journal",
+		content: requireNonBlank(content, "--text"),
+		journalKind,
+		json,
+		runPath,
+		source,
+		timestamp,
+		title,
+	};
+}
+
+function parseTaste(argv: string[]): CliCommand {
+	let differsFromFeiRule: string | undefined;
+	let judgment: string | undefined;
+	let json = false;
+	let reason: string | undefined;
+	let source: string | undefined;
+	let timestamp: string | undefined;
+	let title: string | undefined;
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--title") {
+			title = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--judgment") {
+			judgment = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--reason") {
+			reason = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--differs-from-fei-rule") {
+			differsFromFeiRule = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--source") {
+			source = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--timestamp") {
+			timestamp = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		throw new UsageError(`unknown taste option: ${arg}`);
+	}
+	return {
+		kind: "taste",
+		title: requireNonBlank(title, "--title"),
+		judgment: requireNonBlank(judgment, "--judgment"),
+		reason: requireNonBlank(reason, "--reason"),
+		json,
+		...(differsFromFeiRule ? { differsFromFeiRule } : {}),
+		...(source ? { source } : {}),
+		...(timestamp ? { timestamp } : {}),
+	};
+}
+
 function parseMemoryStatusCommand(argv: string[]): CliCommand {
 	let json = false;
 	let noteId: string | undefined;
@@ -1737,7 +1951,7 @@ async function generatePiTelegramReply(opts: {
 	queuedPath: string;
 }): Promise<string> {
 	const cli = resolve(opts.cwd, opts.env.HER_TELEGRAM_PI_CLI ?? join("packages", "coding-agent", "dist", "cli.js"));
-	const tools = opts.env.HER_TELEGRAM_PI_TOOLS?.trim() || "her_status,her_recall";
+	const tools = parseTelegramResponderTools(opts.env.HER_TELEGRAM_PI_TOOLS);
 	const args = [
 		cli,
 		"--approve",
@@ -1838,6 +2052,23 @@ function trimTelegramBridgeText(text: string): string {
 	return `${text.slice(0, limit - suffix.length)}${suffix}`;
 }
 
+function parseTelegramResponderTools(raw: string | undefined): string {
+	const values = (raw?.trim() ? raw : defaultTelegramResponderTools.join(","))
+		.split(",")
+		.map((tool) => tool.trim())
+		.filter(Boolean);
+	if (values.length === 0) {
+		throw new UsageError("HER_TELEGRAM_PI_TOOLS must include at least one read-only Telegram responder tool");
+	}
+	const rejected = values.filter((tool) => !telegramResponderReadOnlyTools.has(tool));
+	if (rejected.length > 0) {
+		throw new UsageError(
+			`HER_TELEGRAM_PI_TOOLS may only include read-only Telegram responder tools: ${defaultTelegramResponderTools.join(", ")}. Rejected: ${rejected.join(", ")}`,
+		);
+	}
+	return [...new Set(values)].join(",");
+}
+
 function renderStatus(payload: CliStatusPayload): string {
 	return [
 		`Her memory sync: ${payload.status.status}`,
@@ -1878,6 +2109,24 @@ function renderDecay(payload: CliDecayPayload): string {
 		`Her memory decay sweep archived ${payload.result.archived} note(s).`,
 		`archived keys: ${archived}`,
 		`kept notes: ${payload.result.kept}`,
+		"",
+		renderStatus(payload),
+	].join("\n");
+}
+
+function renderGoldenEval(payload: CliGoldenEvalPayload): string {
+	const categories = payload.result.categories
+		.map((category) => `- ${category.category}: ${category.score}/${category.maxScore}`)
+		.join("\n");
+	const alerts = payload.result.alerts.length
+		? payload.result.alerts.map((alert) => `- ${alert.kind}: ${alert.message}`).join("\n")
+		: "- none";
+	return [
+		`Her golden evals ${payload.result.status}: ${payload.result.score}/${payload.result.maxScore}`,
+		categories,
+		"",
+		"Alerts:",
+		alerts,
 		"",
 		renderStatus(payload),
 	].join("\n");
@@ -1983,6 +2232,16 @@ function renderCapture(payload: CliCapturePayload): string {
 
 function renderJudgment(payload: CliJudgmentPayload): string {
 	return [`Her judgment recorded for world note: ${payload.result.noteId}`, "", renderStatus(payload)].join("\n");
+}
+
+function renderJournal(payload: CliJournalPayload): string {
+	return [`Her journal saved: ${payload.result.path}`, `kind: ${payload.result.kind}`, "", renderStatus(payload)].join(
+		"\n",
+	);
+}
+
+function renderTaste(payload: CliTastePayload): string {
+	return [`Her taste judgment saved: ${payload.result.path}`, "", renderStatus(payload)].join("\n");
 }
 
 function renderMemoryStatus(payload: CliMemoryStatusPayload): string {
@@ -2145,6 +2404,7 @@ function usage(): string {
   her choice-model [--json]
   her consolidate [--limit <n>] [--json]
   her decay [--older-than-days <days>] [--now <YYYY-MM-DD>] [--json]
+  her eval-golden [--write-baseline] [--now <ISO>] [--json]
   her goal-start --objective <text> [--source <text>] [--owner <text>] [--next <text>] [--json]
   her goal-checkpoint --id <id> --summary <text> [--status active|blocked] [--next <text>] [--evidence <ref>] [--json]
   her goal-complete --id <id> --outcome <text> [--remember <text>] [--json]
@@ -2155,6 +2415,7 @@ function usage(): string {
   her intake-path --path <file> [--source-type <kind>] [--max-bytes <n>] [--update-surfaces] [--json]
   her intake-url --url <url> [--max-bytes <n>] [--update-surfaces] [--json]
   her judgment --note <id> [--choice <text>] [--correction <text>] [--reason <text>] [--attraction <text>] [--inferred-intent <text>] [--rejection <text>] [--hesitation <text>] [--outcome <text>] [--json]
+  her journal --kind daily|weekly --text <text> [--title <text>] [--source <text>] [--timestamp <ISO>] [--run <memory-path>] [--json]
   her memory-status --note <id> --status active|archive_only|needs_deep_read --reason <text> [--json]
   her privacy-audit [--json]
   her privacy-check --ref <memory-path> [--ref <memory-path>] [--json]
@@ -2166,6 +2427,7 @@ function usage(): string {
   her sync --status [--json]
   her sync [--message <message>] [--json]
   her status [--json]
+  her taste --title <title> --judgment <text> --reason <text> [--differs-from-fei-rule <text>] [--source <text>] [--timestamp <ISO>] [--json]
   her telegram-bridge [--timeout <seconds>] [--interval <seconds>] [--limit <n>] [--reply|--reply-mode ack|pi] [--ack-text <text>] [--once] [--json]
   her telegram-poll [--timeout <seconds>] [--limit <n>] [--offset <n>] [--json]
   her telegram-push-outbox [--limit <n>] [--dry-run] [--json]

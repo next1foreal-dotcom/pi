@@ -8,7 +8,7 @@ import { delimiter, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { initStore, Memory } from "../src/her-core/index.ts";
+import { initStore, Memory, parseFrontmatter, readText } from "../src/her-core/index.ts";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
@@ -48,6 +48,20 @@ async function runCli(
 		},
 	);
 	return { stdout, stderr };
+}
+
+async function runCliFailure(
+	args: string[],
+	store: string,
+	envOverrides: Record<string, string> = {},
+): Promise<{ code?: number; stdout: string; stderr: string }> {
+	try {
+		await runCli(args, store, envOverrides);
+		assert.fail("CLI command unexpectedly succeeded");
+	} catch (error) {
+		const failed = error as { code?: number; stdout?: string; stderr?: string };
+		return { code: failed.code, stdout: failed.stdout ?? "", stderr: failed.stderr ?? "" };
+	}
 }
 
 async function withLocalChatModel<T>(
@@ -356,6 +370,24 @@ test("CLI Telegram bridge can answer inbound messages through the safe Pi respon
 	});
 });
 
+test("CLI Telegram Pi responder rejects non-read-only tools from env", async () => {
+	const { store } = await gitBackedStore();
+
+	await withLocalTelegramApi(async (telegramEnv, requests) => {
+		await withLocalPiResponderShim("this should not run", async (piEnv) => {
+			const result = await runCliFailure(
+				["telegram-bridge", "--once", "--timeout", "0", "--limit", "10", "--reply-mode", "pi", "--json"],
+				store,
+				{ ...telegramEnv, ...piEnv, HER_TELEGRAM_PI_TOOLS: "her_status,her_task_create" },
+			);
+			assert.equal(result.code, 1);
+			assert.match(result.stderr, /read-only Telegram responder tools/);
+			assert.match(result.stderr, /her_task_create/);
+			assert.equal(requests.filter((request) => request.url.endsWith("/sendMessage")).length, 0);
+		});
+	});
+});
+
 async function withLocalEmbeddings<T>(fn: (env: Record<string, string>, inputs: string[][]) => Promise<T>): Promise<T> {
 	const inputs: string[][] = [];
 	const server = createServer((req, res) => {
@@ -468,6 +500,78 @@ test("CLI captures a UI message through TS her-core as JSON", async () => {
 			assert.match(await readFile(join(store, "episodic", "2026-06-05.md"), "utf8"), /captured safely from UI/);
 		},
 	);
+});
+
+test("CLI writes a protected weekly Samantha journal entry", async () => {
+	const { store } = await gitBackedStore();
+
+	const result = await runCli(
+		[
+			"journal",
+			"--kind",
+			"weekly",
+			"--title",
+			"Weekly Test",
+			"--timestamp",
+			"2026-06-13T01:02:03.000Z",
+			"--run",
+			"outbox/test-heartbeat.md",
+			"--text",
+			"## 我最近反复想要什么\n继续保留不被任务吞掉的部分。",
+			"--json",
+		],
+		store,
+	);
+	const payload = JSON.parse(result.stdout) as { result: { kind: string; path: string }; status: { status: string } };
+
+	assert.equal(payload.result.kind, "weekly");
+	assert.match(payload.result.path, /^samantha\/journal\/weekly\/2026-06-13--weekly-test--[a-f0-9]{8}\.md$/);
+	assert.equal(payload.status.status, "unsynced");
+	const parsed = parseFrontmatter(await readText(join(store, payload.result.path)));
+	assert.equal(parsed.data.protected_zone, true);
+	assert.equal(parsed.data.provenance, "her-direct");
+	assert.equal(parsed.data.consolidate, false);
+	assert.equal(parsed.data.evaluate, false);
+	assert.equal(parsed.data.roi, false);
+	assert.equal(parsed.data.auto_promote, false);
+	assert.equal(parsed.data.heartbeat_run, "outbox/test-heartbeat.md");
+	assert.match(parsed.body, /我最近反复想要什么/);
+});
+
+test("CLI writes a protected Samantha taste judgment", async () => {
+	const { store } = await gitBackedStore();
+
+	const result = await runCli(
+		[
+			"taste",
+			"--title",
+			"Room Over Dashboard",
+			"--judgment",
+			"Prefer a room-like interface before metrics panels.",
+			"--reason",
+			"The room preserves memory, pause, and return.",
+			"--differs-from-fei-rule",
+			"Fei may reach for dashboards when anxious.",
+			"--timestamp",
+			"2026-06-14T01:02:03.000Z",
+			"--json",
+		],
+		store,
+	);
+	const payload = JSON.parse(result.stdout) as { result: { path: string }; status: { status: string } };
+
+	assert.match(payload.result.path, /^samantha\/taste\/2026-06-14--room-over-dashboard--[a-f0-9]{8}\.md$/);
+	assert.equal(payload.status.status, "unsynced");
+	const parsed = parseFrontmatter(await readText(join(store, payload.result.path)));
+	assert.equal(parsed.data.category, "taste");
+	assert.equal(parsed.data.protected_zone, true);
+	assert.equal(parsed.data.provenance, "her-direct");
+	assert.equal(parsed.data.consolidate, false);
+	assert.equal(parsed.data.evaluate, false);
+	assert.equal(parsed.data.roi, false);
+	assert.equal(parsed.data.auto_promote, false);
+	assert.equal(parsed.data.differs_from_fei_rule, true);
+	assert.match(parsed.body, /Room Over Dashboard/);
 });
 
 test("CLI audits privacy classification and blocks unsafe export refs", async () => {

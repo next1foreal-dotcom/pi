@@ -12,6 +12,17 @@ export type {
 export { enforceDailyCostCap, summarizeAuditCosts, writeCostReport } from "./cost-ledger.ts";
 export { createEmbeddingSearch } from "./embedding-search.ts";
 export type {
+	GoldenEvalAlert,
+	GoldenEvalCategory,
+	GoldenEvalCategorySummary,
+	GoldenEvalFixture,
+	GoldenEvalItemResult,
+	GoldenEvalReport,
+	GoldenEvalScore,
+	RunGoldenEvalOptions,
+} from "./evals.ts";
+export { goldenEvalCategories, runGoldenEvals } from "./evals.ts";
+export type {
 	PathIntakeCollectOptions,
 	PathIntakeOptions,
 	PathIntakeResult,
@@ -55,6 +66,11 @@ export type {
 	MemorySyncStatus,
 	RestoreArchivedSemanticOptions,
 	RestoreArchivedSemanticResult,
+	SamanthaJournalInput,
+	SamanthaJournalKind,
+	SamanthaJournalResult,
+	SamanthaTasteJudgmentInput,
+	SamanthaTasteJudgmentResult,
 	SamanthaZoneCategory,
 	SamanthaZoneNoteInput,
 	SamanthaZoneNoteResult,

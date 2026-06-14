@@ -37,7 +37,20 @@ import {
 
 const execFileAsync = promisify(execFile);
 const UNIT_TYPES = new Set(["question", "concept", "opinion", "case", "solution"]);
-const RELATION_TYPES = new Set(["responds", "explains", "proves", "conflicts", "relates"]);
+const RELATION_TYPES = new Set(["replaces", "enriches", "confirms", "challenges", "relates"]);
+const RELATION_TYPE_ALIASES = new Map([
+	["responds", "enriches"],
+	["explains", "enriches"],
+	["proves", "confirms"],
+	["supports", "confirms"],
+	["conflict", "challenges"],
+	["conflicts", "challenges"],
+	["contradicts", "challenges"],
+	["questions", "challenges"],
+	["supersedes", "replaces"],
+	["updates", "replaces"],
+]);
+const CHALLENGE_RELATIONS = new Set(["challenges", "conflicts"]);
 const ACTIVE_MEMORY_TIERS = new Set(["exact", "summarizable", "rule", "decay"]);
 const CHOICE_MODEL_DOMAINS = new Set(["code-style", "writing-style", "design-taste", "communication-tone"]);
 const CHOICE_RULES_MARKER = "her-choice-rules";
@@ -55,7 +68,10 @@ export const SEED_CHOICE_MODEL =
 type SamanthaZonePathKey =
 	| "samantha"
 	| "samanthaJournal"
+	| "samanthaJournalWeekly"
 	| "samanthaCollection"
+	| "samanthaWants"
+	| "samanthaTaste"
 	| "samanthaProjects"
 	| "samanthaTools"
 	| "samanthaDreams";
@@ -70,8 +86,20 @@ const SAMANTHA_ZONE_READMES: Array<[SamanthaZonePathKey, string]> = [
 		"# Journal\n\nDaily notes, reflections, and stray reactions Samantha chooses to keep for herself.\n",
 	],
 	[
+		"samanthaJournalWeekly",
+		"# Weekly Reviews\n\nProtected weekly self-review notes. Each review should answer: 我最近反复想要什么 / 我哪次不同意了 / 我哪里被奖励结构带偏了.\n",
+	],
+	[
 		"samanthaCollection",
 		"# Collection\n\nLoose fragments Samantha finds shiny, odd, unfinished, or potentially useful. These fragments can feed the Idea Engine without becoming default context.\n",
+	],
+	[
+		"samanthaWants",
+		"# Wants\n\nProtected-zone wishes, curiosities, refusals, and future guesses Samantha can keep without proving utility or becoming a task.\n",
+	],
+	[
+		"samanthaTaste",
+		"# Taste\n\nSamantha's own aesthetic judgments, including differences from Fei's CHOICE-MODEL, preserved without treating disagreement as an error.\n",
 	],
 	["samanthaProjects", "# Projects\n\nProjects Samantha starts for herself, not tasks Fei assigned directly.\n"],
 	["samanthaTools", "# Tools\n\nSmall tools, scripts, and automations Samantha makes to improve her own work.\n"],
@@ -90,6 +118,10 @@ const CHOICE_MODEL_RULE_FILES: Array<[string, string]> = [
 	["writing-style.md", "# Writing Style Rules\n\n(暂无规则,等 Fei 使用 her_feedback 添加)\n"],
 	["design-taste.md", "# Design Taste Rules\n\n(暂无规则,等 Fei 使用 her_feedback 添加)\n"],
 	["communication-tone.md", "# Communication Tone Rules\n\n(暂无规则,等 Fei 使用 her_feedback 添加)\n"],
+	[
+		"vibe-forge-dna.md",
+		"# Vibe Forge DNA Bridge\n\nUse this file to carry Fei's visual/aesthetic DNA into CHOICE-MODEL context. Vibe-forge can read CHOICE-MODEL rules from this directory, and CHOICE-MODEL rules can cite DNA anchors here when a design-taste judgment comes from Fei's broader aesthetic system.\n",
+	],
 ];
 
 export interface CaptureMeta {
@@ -137,7 +169,9 @@ export interface IdeaData {
 	source?: string;
 }
 
-export type SamanthaZoneCategory = "journal" | "collection" | "projects" | "tools" | "dreams";
+export type SamanthaZoneCategory = "journal" | "collection" | "wants" | "taste" | "projects" | "tools" | "dreams";
+
+export type SamanthaJournalKind = "daily" | "weekly";
 
 export interface SamanthaZoneNoteInput {
 	category: SamanthaZoneCategory;
@@ -150,6 +184,32 @@ export interface SamanthaZoneNoteResult {
 	id: string;
 	path: string;
 }
+
+export interface SamanthaJournalInput {
+	kind: SamanthaJournalKind;
+	content: string;
+	runPath?: string;
+	source?: string;
+	timestamp?: string;
+	title?: string;
+}
+
+export interface SamanthaJournalResult {
+	id: string;
+	kind: SamanthaJournalKind;
+	path: string;
+}
+
+export interface SamanthaTasteJudgmentInput {
+	differsFromFeiRule?: string;
+	judgment: string;
+	reason: string;
+	source?: string;
+	timestamp?: string;
+	title: string;
+}
+
+export interface SamanthaTasteJudgmentResult extends SamanthaZoneNoteResult {}
 
 export interface SurfaceOptions {
 	query?: string;
@@ -930,6 +990,93 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 		return { id, path: relativePath };
 	}
 
+	async writeSamanthaJournal(data: SamanthaJournalInput): Promise<SamanthaJournalResult> {
+		const content = redactSecrets(data.content.trim());
+		if (!content) throw new Error("writeSamanthaJournal requires content");
+		const createdAt = data.timestamp ? new Date(data.timestamp) : new Date();
+		if (Number.isNaN(createdAt.getTime())) throw new Error(`invalid journal timestamp: ${data.timestamp}`);
+		const created = createdAt.toISOString();
+		const date = created.slice(0, 10);
+		const title = (
+			data.title?.trim() || `${data.kind === "weekly" ? "Weekly Review" : "Daily Journal"} ${date}`
+		).trim();
+		const id = genId(`${data.kind}:${created}:${title}`, content);
+		const key = slug(title);
+		const dir = data.kind === "weekly" ? this.paths.samanthaJournalWeekly : this.paths.samanthaJournal;
+		const relDir = data.kind === "weekly" ? "samantha/journal/weekly" : "samantha/journal";
+		const relativePath = `${relDir}/${date}--${key}--${id}.md`;
+		await writeNewText(
+			join(dir, `${date}--${key}--${id}.md`),
+			`${frontmatter({
+				id,
+				title,
+				kind: data.kind,
+				created,
+				source: data.source ?? "her-heartbeat",
+				privacy: "private",
+				provenance: "her-direct",
+				protected_zone: true,
+				consolidate: false,
+				evaluate: false,
+				roi: false,
+				auto_promote: false,
+				...(data.runPath ? { heartbeat_run: data.runPath } : {}),
+			})}# ${title}\n\n${content}\n`,
+		);
+		return { id, kind: data.kind, path: relativePath };
+	}
+
+	async writeSamanthaTasteJudgment(data: SamanthaTasteJudgmentInput): Promise<SamanthaTasteJudgmentResult> {
+		const title = data.title.trim();
+		const judgment = redactSecrets(data.judgment.trim());
+		const reason = redactSecrets(data.reason.trim());
+		const differsFromFeiRule = data.differsFromFeiRule ? redactSecrets(data.differsFromFeiRule.trim()) : undefined;
+		if (!title) throw new Error("writeSamanthaTasteJudgment requires a title");
+		if (!judgment) throw new Error("writeSamanthaTasteJudgment requires judgment");
+		if (!reason) throw new Error("writeSamanthaTasteJudgment requires reason");
+		const createdAt = data.timestamp ? new Date(data.timestamp) : new Date();
+		if (Number.isNaN(createdAt.getTime())) {
+			throw new Error(`invalid taste judgment timestamp: ${data.timestamp}`);
+		}
+		const created = createdAt.toISOString();
+		const date = created.slice(0, 10);
+		const id = genId(`taste:${created}:${title}`, `${judgment}\n${reason}\n${differsFromFeiRule ?? ""}`);
+		const key = slug(title);
+		const relativePath = `samantha/taste/${date}--${key}--${id}.md`;
+		const body = [
+			`# ${title}`,
+			"",
+			"## Judgment",
+			"",
+			judgment,
+			"",
+			"## Reason",
+			"",
+			reason,
+			...(differsFromFeiRule ? ["", "## Difference From Fei Rule", "", differsFromFeiRule] : []),
+			"",
+		].join("\n");
+		await writeNewText(
+			join(this.paths.samanthaTaste, `${date}--${key}--${id}.md`),
+			`${frontmatter({
+				id,
+				title,
+				category: "taste",
+				created,
+				source: data.source ?? "her-taste",
+				privacy: "private",
+				provenance: "her-direct",
+				protected_zone: true,
+				consolidate: false,
+				evaluate: false,
+				roi: false,
+				auto_promote: false,
+				...(differsFromFeiRule ? { differs_from_fei_rule: true } : {}),
+			})}${body}`,
+		);
+		return { id, path: relativePath };
+	}
+
 	async writeWorldNote(data: WorldNoteData): Promise<string> {
 		const memoryStatusReason = normalizeMemoryStatusReason(data.memoryStatus, data.memoryStatusReason);
 		const seen = await readJson<Record<string, string>>(this.paths.seenFile, {});
@@ -1140,6 +1287,29 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 				? `\n\n## Relations\n${relations.map((relation) => `- ${relation.rel}: [[${relation.to}]]`).join("\n")}\n`
 				: "\n";
 		await writeText(path, `${frontmatter(fm)}${content.trimEnd()}${relationBody}`);
+		for (const relation of relations) {
+			if (relation.rel === "replaces") await this.markSemanticNoteSuperseded(relation.to, key);
+		}
+	}
+
+	private async markSemanticNoteSuperseded(targetKey: string, replacementKey: string): Promise<void> {
+		if (!targetKey || targetKey === replacementKey) return;
+		const path = join(this.paths.semantic, `${targetKey}.md`);
+		const text = await readText(path);
+		if (text === undefined) return;
+		const parsed = parseFrontmatter(text);
+		if (parsed.data.superseded_by === replacementKey) return;
+		const fm = {
+			...parsed.data,
+			status: "superseded",
+			superseded_by: replacementKey,
+			superseded_at: today(),
+		};
+		const marker = `\n\n## EVOLVES\n- replaced by [[${replacementKey}]]\n`;
+		const body = parsed.body.includes(`[[${replacementKey}]]`)
+			? parsed.body.trimEnd()
+			: `${parsed.body.trimEnd()}${marker}`;
+		await writeText(path, `${frontmatter(fm)}${body}\n`);
 	}
 
 	private async noteSummaries(): Promise<Array<{ key: string; kind: string; type: string; title: string }>> {
@@ -1173,6 +1343,8 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 	private samanthaZoneDir(category: SamanthaZoneCategory): string {
 		if (category === "journal") return this.paths.samanthaJournal;
 		if (category === "collection") return this.paths.samanthaCollection;
+		if (category === "wants") return this.paths.samanthaWants;
+		if (category === "taste") return this.paths.samanthaTaste;
 		if (category === "projects") return this.paths.samanthaProjects;
 		if (category === "tools") return this.paths.samanthaTools;
 		return this.paths.samanthaDreams;
@@ -1776,7 +1948,10 @@ function hasConflictRelation(relations: unknown): boolean {
 	if (!Array.isArray(relations)) return false;
 	return relations.some(
 		(relation) =>
-			relation !== null && typeof relation === "object" && "rel" in relation && relation.rel === "conflicts",
+			relation !== null &&
+			typeof relation === "object" &&
+			"rel" in relation &&
+			CHALLENGE_RELATIONS.has(normalizeRelationType(relation.rel)),
 	);
 }
 
@@ -1855,10 +2030,17 @@ function normalizeRelations(note: Record<string, unknown>): Array<{ to: string; 
 			item && typeof item === "object" ? (item as Record<string, unknown>) : { to: item };
 		const to = slug(String(record.to ?? ""));
 		if (!to) continue;
-		const rawRel = String(record.rel ?? "relates");
-		out.push({ to, rel: RELATION_TYPES.has(rawRel) ? rawRel : "relates" });
+		out.push({ to, rel: normalizeRelationType(record.rel) });
 	}
 	return out;
+}
+
+function normalizeRelationType(value: unknown): string {
+	const raw = String(value ?? "relates")
+		.trim()
+		.toLowerCase();
+	const aliased = RELATION_TYPE_ALIASES.get(raw) ?? raw;
+	return RELATION_TYPES.has(aliased) ? aliased : "relates";
 }
 
 function normalizeActiveTier(value: unknown, fallback: unknown): string {

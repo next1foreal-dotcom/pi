@@ -143,8 +143,20 @@ export class StorePaths {
 		return join(this.samantha, "journal");
 	}
 
+	get samanthaJournalWeekly(): string {
+		return join(this.samanthaJournal, "weekly");
+	}
+
 	get samanthaCollection(): string {
 		return join(this.samantha, "collection");
+	}
+
+	get samanthaWants(): string {
+		return join(this.samantha, "wants");
+	}
+
+	get samanthaTaste(): string {
+		return join(this.samantha, "taste");
 	}
 
 	get samanthaProjects(): string {

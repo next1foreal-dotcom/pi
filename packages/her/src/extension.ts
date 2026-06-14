@@ -59,7 +59,7 @@ const herPromptPath = resolve(promptsDir, "her.md");
 const zeroCost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 const memoryStatusValues = ["active", "archive_only", "needs_deep_read"] as const;
 const checkpointStatusValues = ["active", "blocked"] as const;
-const samanthaZoneCategoryValues = ["journal", "collection", "projects", "tools", "dreams"] as const;
+const samanthaZoneCategoryValues = ["journal", "collection", "wants", "taste", "projects", "tools", "dreams"] as const;
 const choiceModelDomainValues = ["code-style", "writing-style", "design-taste", "communication-tone"] as const;
 const claimVerdictValues = ["supported", "contradicted", "insufficient_evidence"] as const;
 const sourceQualityValues = ["primary", "secondary", "weak", "unavailable", "blocked"] as const;
@@ -73,7 +73,7 @@ const herTaskStepSchema = Type.Object({
 	title: Type.String(),
 	exitCriteria: Type.Array(Type.String()),
 });
-const governedTools: Record<string, { destructive: boolean }> = {
+export const governedTools: Record<string, { destructive: boolean }> = {
 	bash: { destructive: true },
 	edit: { destructive: true },
 	write: { destructive: true },
@@ -113,6 +113,7 @@ const governedTools: Record<string, { destructive: boolean }> = {
 	her_intake_path: { destructive: false },
 	her_bootstrap_feed: { destructive: false },
 	her_zone_note: { destructive: false },
+	her_taste_judgment: { destructive: false },
 	her_idea: { destructive: false },
 	her_judgment: { destructive: false },
 	her_memory_status: { destructive: false },
@@ -1516,6 +1517,30 @@ export default function her(pi: ExtensionAPI): void {
 				...(params.source ? { source: params.source } : {}),
 			});
 			return textResult(`Her Zone note saved: ${result.path}`, { phase: "5", ...result, memoryDir });
+		},
+	});
+
+	pi.registerTool({
+		name: "her_taste_judgment",
+		label: "Her Taste Judgment",
+		description:
+			"Write Samantha's own aesthetic judgment into the protected taste zone, including differences from Fei's rules.",
+		parameters: Type.Object({
+			title: Type.String(),
+			judgment: Type.String(),
+			reason: Type.String(),
+			differsFromFeiRule: Type.Optional(Type.String()),
+			source: Type.Optional(Type.String()),
+		}),
+		async execute(_toolCallId, params) {
+			const result = await mem.writeSamanthaTasteJudgment({
+				title: params.title,
+				judgment: params.judgment,
+				reason: params.reason,
+				...(params.differsFromFeiRule ? { differsFromFeiRule: params.differsFromFeiRule } : {}),
+				...(params.source ? { source: params.source } : {}),
+			});
+			return textResult(`Her taste judgment saved: ${result.path}`, { phase: "F2", ...result, memoryDir });
 		},
 	});
 

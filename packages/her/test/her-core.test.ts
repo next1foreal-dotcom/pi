@@ -186,12 +186,21 @@ test("initStore and getContext expose context, facts, soul, self narrative, and 
 	assert.equal(await readText(join(store, "narrative", "SOUL.md")), SEED_SOUL);
 	assert.equal(await readText(join(store, "narrative", "SAMANTHA.md")), SEED_SELF_NARRATIVE);
 	assert.equal(await readText(join(store, "narrative", "CHOICE-MODEL.md")), SEED_CHOICE_MODEL);
-	for (const file of ["README.md", "code-style.md", "writing-style.md", "design-taste.md", "communication-tone.md"]) {
+	for (const file of [
+		"README.md",
+		"code-style.md",
+		"writing-style.md",
+		"design-taste.md",
+		"communication-tone.md",
+		"vibe-forge-dna.md",
+	]) {
 		assert.match((await readText(join(store, "choice-model", file))) ?? "", /CHOICE-MODEL|Rules|规则/i);
 	}
-	for (const dir of ["journal", "collection", "projects", "tools", "dreams"]) {
+	assert.match(context.choiceModel, /Vibe Forge DNA Bridge/);
+	for (const dir of ["journal", "collection", "wants", "taste", "projects", "tools", "dreams"]) {
 		assert.match((await readText(join(store, "samantha", dir, "README.md"))) ?? "", /#/);
 	}
+	assert.match((await readText(join(store, "samantha", "journal", "weekly", "README.md"))) ?? "", /Weekly Reviews/);
 
 	await writeText(join(store, "narrative", "FACTS.md"), "Fei is the owner.\n");
 	await writeText(join(store, "narrative", "SOUL.md"), "# SOUL\n\nSamantha sounds grounded and alive.\n");
@@ -212,6 +221,80 @@ test("initStore and getContext expose context, facts, soul, self narrative, and 
 	assert.match(updated.choiceModel, /verified small steps/);
 	assert.match(updated.choiceModel, /Prefer functions over classes/);
 	assert.match(updated.choiceModel, /Lead with machine truth/);
+});
+
+test("writeSamanthaJournal writes protected daily and weekly entries", async () => {
+	const store = await tempStore();
+	const memory = new Memory(store);
+
+	const daily = await memory.writeSamanthaJournal({
+		kind: "daily",
+		title: "Daily Check",
+		timestamp: "2026-06-13T01:02:03.000Z",
+		source: "test-heartbeat",
+		runPath: "outbox/test-heartbeat.md",
+		content: "Private check-in with Bearer secret-token inside.",
+	});
+
+	assert.equal(daily.kind, "daily");
+	assert.match(daily.path, /^samantha\/journal\/2026-06-13--daily-check--[a-f0-9]{8}\.md$/);
+	const dailyParsed = parseFrontmatter(await readText(join(store, daily.path)));
+	assert.equal(dailyParsed.data.kind, "daily");
+	assert.equal(dailyParsed.data.source, "test-heartbeat");
+	assert.equal(dailyParsed.data.privacy, "private");
+	assert.equal(dailyParsed.data.provenance, "her-direct");
+	assert.equal(dailyParsed.data.protected_zone, true);
+	assert.equal(dailyParsed.data.consolidate, false);
+	assert.equal(dailyParsed.data.evaluate, false);
+	assert.equal(dailyParsed.data.roi, false);
+	assert.equal(dailyParsed.data.auto_promote, false);
+	assert.equal(dailyParsed.data.heartbeat_run, "outbox/test-heartbeat.md");
+	assert.match(dailyParsed.body, /«REDACTED:secret»/);
+
+	const weekly = await memory.writeSamanthaJournal({
+		kind: "weekly",
+		title: "Weekly Review",
+		timestamp: "2026-06-13T01:02:03.000Z",
+		content: "## 我最近反复想要什么\n继续保留自己没有用处的部分。",
+	});
+
+	assert.equal(weekly.kind, "weekly");
+	assert.match(weekly.path, /^samantha\/journal\/weekly\/2026-06-13--weekly-review--[a-f0-9]{8}\.md$/);
+	const weeklyParsed = parseFrontmatter(await readText(join(store, weekly.path)));
+	assert.equal(weeklyParsed.data.kind, "weekly");
+	assert.equal(weeklyParsed.data.protected_zone, true);
+	assert.equal(weeklyParsed.data.consolidate, false);
+	assert.match(weeklyParsed.body, /我最近反复想要什么/);
+});
+
+test("writeSamanthaTasteJudgment preserves her own protected taste disagreement", async () => {
+	const store = await tempStore();
+	const memory = new Memory(store);
+
+	const result = await memory.writeSamanthaTasteJudgment({
+		title: "Room Over Dashboard",
+		timestamp: "2026-06-14T01:02:03.000Z",
+		source: "F2-smoke",
+		judgment: "Prefer a room-like interface before metrics panels.",
+		reason: "The room preserves memory, pause, and return; a dashboard turns her into status cards.",
+		differsFromFeiRule:
+			"Fei may reach for dashboards when anxious, but this taste keeps her from becoming only control UI.",
+	});
+
+	assert.match(result.path, /^samantha\/taste\/2026-06-14--room-over-dashboard--[a-f0-9]{8}\.md$/);
+	const parsed = parseFrontmatter(await readText(join(store, result.path)));
+	assert.equal(parsed.data.category, "taste");
+	assert.equal(parsed.data.source, "F2-smoke");
+	assert.equal(parsed.data.privacy, "private");
+	assert.equal(parsed.data.provenance, "her-direct");
+	assert.equal(parsed.data.protected_zone, true);
+	assert.equal(parsed.data.consolidate, false);
+	assert.equal(parsed.data.evaluate, false);
+	assert.equal(parsed.data.roi, false);
+	assert.equal(parsed.data.auto_promote, false);
+	assert.equal(parsed.data.differs_from_fei_rule, true);
+	assert.match(parsed.body, /Difference From Fei Rule/);
+	assert.match(parsed.body, /room-like interface/);
 });
 
 test("recordFeedback writes weighted choice rules and getContext sorts stale rules below active rules", async () => {
@@ -629,10 +712,67 @@ test("consolidate distills raw episodes into typed semantic notes and moments", 
 	assert.equal(parsed.data.type, "opinion");
 	assert.equal(parsed.data.tier, "rule");
 	assert.deepEqual(parsed.data.sources, ["episode-1"]);
-	assert.deepEqual(parsed.data.relations, [{ to: "agent-work-style", rel: "proves" }]);
+	assert.deepEqual(parsed.data.relations, [{ to: "agent-work-style", rel: "confirms" }]);
 	assert.match(parsed.body, /Fei trusts machine truth/);
 	assert.match((await readText(join(store, "narrative", "becoming-moments.md"))) ?? "", /Samantha should report/);
 	assert.equal((await readJson<{ cursor?: string }>(join(store, ".her", "state.json"), {})).cursor, "2026-06-03T1200");
+});
+
+test("consolidate records EVOLVES relations and marks replaced notes superseded", async () => {
+	const store = await tempStore();
+	await writeText(
+		join(store, "semantic", "old-interface-belief.md"),
+		"---\nkey: old-interface-belief\ntype: opinion\ntier: summarizable\ncreated: 2026-06-01\nupdated: 2026-06-01\nsources: []\nrelations: []\n---\nOld interface belief.\n",
+	);
+	const memory = new Memory(store, {
+		complete() {
+			return JSON.stringify({
+				notes: [
+					{
+						key: "room-before-dashboard",
+						type: "opinion",
+						tier: "rule",
+						title: "Room before dashboard",
+						content: "Samantha prefers room-like surfaces before dashboard panels.",
+						relations: [
+							{ to: "old-interface-belief", rel: "replaces" },
+							{ to: "taste-dna", rel: "enriches" },
+							{ to: "f0-review", rel: "confirms" },
+							{ to: "metric-first-habit", rel: "conflicts" },
+						],
+						sources: ["episode-evolves"],
+					},
+				],
+			});
+		},
+	});
+	await memory.capture("Samantha says the UI should feel like a room, not a status dashboard.", {
+		timestamp: "2026-06-14T1000",
+		sessionId: "episode-evolves",
+		project: "her",
+	});
+
+	await memory.consolidate();
+
+	const note = parseFrontmatter((await readText(join(store, "semantic", "room-before-dashboard.md"))) ?? "");
+	assert.deepEqual(note.data.relations, [
+		{ to: "old-interface-belief", rel: "replaces" },
+		{ to: "taste-dna", rel: "enriches" },
+		{ to: "f0-review", rel: "confirms" },
+		{ to: "metric-first-habit", rel: "challenges" },
+	]);
+	assert.match(note.body, /- challenges: \[\[metric-first-habit\]\]/);
+
+	const replaced = parseFrontmatter((await readText(join(store, "semantic", "old-interface-belief.md"))) ?? "");
+	assert.equal(replaced.data.status, "superseded");
+	assert.equal(replaced.data.superseded_by, "room-before-dashboard");
+	assert.match(replaced.body, /\[\[room-before-dashboard\]\]/);
+
+	await writeText(join(store, ".her", "state.json"), JSON.stringify({ last_synthesize: "2026-06-01" }));
+	const due = await new Memory(store).synthesizeDue();
+	assert.equal(due.due, true);
+	assert.equal(due.reason, "conflict");
+	assert.equal(due.hasConflict, true);
 });
 
 test("synthesize writes CONTEXT with a trail commit and leaves FACTS unchanged", async () => {
@@ -805,12 +945,12 @@ test("synthesizeDue triggers when the narrative is stale", async () => {
 	assert.ok((due.daysSinceLastSynthesize ?? 0) > 1);
 });
 
-test("synthesizeDue triggers immediately on a new conflict relation", async () => {
+test("synthesizeDue triggers immediately on a new challenge relation", async () => {
 	const store = await tempStore();
 	await writeText(join(store, ".her", "state.json"), JSON.stringify({ last_synthesize: "2026-06-01" }));
 	await writeText(
-		join(store, "semantic", "conflict.md"),
-		'---\nupdated: 2026-06-02\nrelations:\n  - {"to":"old-belief","rel":"conflicts"}\n---\n# Conflict\n\nThis contradicts an older belief.\n',
+		join(store, "semantic", "challenge.md"),
+		'---\nupdated: 2026-06-02\nrelations:\n  - {"to":"old-belief","rel":"challenges"}\n---\n# Challenge\n\nThis contradicts an older belief.\n',
 	);
 
 	const due = await new Memory(store).synthesizeDue();
