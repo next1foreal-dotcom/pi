@@ -222,6 +222,26 @@ test("her-scan skill-mining mode drafts SKILL proposals without installing them"
 	}
 });
 
+test("her-telegram-bridge-smoke verifies real replies without leaking tokens or starting autonomy", async () => {
+	const skill = await readFile(join(herRoot, "pi-package", "skills", "her-telegram-bridge-smoke", "SKILL.md"), "utf8");
+
+	for (const required of [
+		"HER_TELEGRAM_BOT_TOKEN",
+		"Report only present/missing, never values",
+		"ack-only response",
+		"is not a pass",
+		"tasks/inbox/*.md",
+		"queued only and not executed",
+		"her_status",
+		"her_recall",
+		"Any write tool in responder mode is a block",
+		"real user message receives a specific, context-aware reply",
+		"Do not start Task Scheduler or heartbeat autonomy",
+	]) {
+		assert.match(skill, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"));
+	}
+});
+
 test("Her subagents are project-discoverable and inherit memory context", async () => {
 	const packageAgentsRoot = join(herRoot, "pi-package", "agents");
 	const packageAgents = (await readdir(packageAgentsRoot)).filter((file) => file.endsWith(".md")).sort();
