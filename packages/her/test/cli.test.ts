@@ -312,6 +312,25 @@ test("CLI Telegram bridge polls inbound messages and acknowledges queued items",
 	});
 });
 
+test("CLI Telegram bridge ignores duplicate Telegram update ids", async () => {
+	const { store } = await gitBackedStore();
+
+	await withLocalTelegramApi(async (env, requests) => {
+		let result = await runCli(["telegram-bridge", "--once", "--timeout", "0", "--limit", "10", "--json"], store, env);
+		let payload = JSON.parse(result.stdout);
+		assert.equal(payload.result.poll.queued.length, 1);
+		assert.equal(payload.result.acknowledgements.length, 1);
+
+		result = await runCli(["telegram-bridge", "--once", "--timeout", "0", "--limit", "10", "--json"], store, env);
+		payload = JSON.parse(result.stdout);
+		assert.equal(payload.result.poll.queued.length, 0);
+		assert.equal(payload.result.poll.ignored.length, 1);
+		assert.equal(payload.result.poll.ignored[0].reason, "duplicate update");
+		assert.equal(payload.result.acknowledgements.length, 0);
+		assert.equal(requests.filter((request) => request.url.endsWith("/sendMessage")).length, 1);
+	});
+});
+
 test("CLI Telegram bridge can answer inbound messages through the safe Pi responder", async () => {
 	const { store } = await gitBackedStore();
 

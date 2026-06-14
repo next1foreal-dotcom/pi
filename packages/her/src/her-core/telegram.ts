@@ -121,6 +121,7 @@ interface TelegramApiResponse<T> {
 
 interface TelegramState {
 	nextUpdateOffset?: number;
+	processedUpdates: Record<string, { path?: string; seenAt: string; status: TelegramQueueResult["status"] }>;
 	sentOutbox: Record<string, { messageId?: number; sentAt: string }>;
 }
 
@@ -142,20 +143,46 @@ export async function pollTelegramInbox(root: string, opts: PollTelegramInboxOpt
 	const result: TelegramPollResult = { ignored: [], queued: [], received: updates.length, rejected: [] };
 	let nextOffset = offset;
 	for (const update of updates) {
+		const updateKey = typeof update.update_id === "number" ? String(update.update_id) : undefined;
 		if (typeof update.update_id === "number") {
 			nextOffset = Math.max(nextOffset ?? 0, update.update_id + 1);
+		}
+		const duplicatePath = updateKey
+			? (state.processedUpdates[updateKey]?.path ?? (await findQueuedUpdate(root, Number(updateKey))))
+			: undefined;
+		if (updateKey && (state.processedUpdates[updateKey] || duplicatePath)) {
+			state.processedUpdates[updateKey] = {
+				path: duplicatePath,
+				seenAt: opts.now ?? new Date().toISOString(),
+				status: "ignored",
+			};
+			result.ignored.push({
+				path: duplicatePath,
+				reason: "duplicate update",
+				status: "ignored",
+				updateId: update.update_id,
+			});
+			continue;
 		}
 		const queued = await queueTelegramInbound(root, {
 			allowedChatId: opts.allowedChatId,
 			now: opts.now,
 			update,
 		});
+		if (updateKey) {
+			state.processedUpdates[updateKey] = {
+				path: queued.path,
+				seenAt: opts.now ?? new Date().toISOString(),
+				status: queued.status,
+			};
+		}
 		if (queued.status === "queued") result.queued.push(queued);
 		if (queued.status === "ignored") result.ignored.push(queued);
 		if (queued.status === "rejected") result.rejected.push(queued);
 	}
 	if (nextOffset !== undefined) {
 		state.nextUpdateOffset = nextOffset;
+		pruneProcessedUpdates(state.processedUpdates);
 		await writeTelegramState(root, state);
 		result.nextOffset = nextOffset;
 	}
@@ -317,7 +344,7 @@ async function listMarkdownFiles(dir: string): Promise<string[]> {
 
 async function readTelegramState(root: string): Promise<TelegramState> {
 	const state = await readJson<Partial<TelegramState>>(telegramStatePath(root), {});
-	return { ...state, sentOutbox: state.sentOutbox ?? {} };
+	return { ...state, processedUpdates: state.processedUpdates ?? {}, sentOutbox: state.sentOutbox ?? {} };
 }
 
 async function writeTelegramState(root: string, state: TelegramState): Promise<void> {
@@ -326,6 +353,23 @@ async function writeTelegramState(root: string, state: TelegramState): Promise<v
 
 function telegramStatePath(root: string): string {
 	return join(new StorePaths(root).herDir, "telegram-state.json");
+}
+
+async function findQueuedUpdate(root: string, updateId: number): Promise<string | undefined> {
+	const paths = new StorePaths(root);
+	const suffix = `-telegram-${updateId}.md`;
+	const file = (await listMarkdownFiles(paths.inboxTasks)).find((name) => name.endsWith(suffix));
+	return file ? `tasks/inbox/${file}` : undefined;
+}
+
+function pruneProcessedUpdates(processedUpdates: TelegramState["processedUpdates"], keep = 1000): void {
+	const entries = Object.entries(processedUpdates);
+	if (entries.length <= keep) return;
+	const removable = entries
+		.sort(([left], [right]) => Number(left) - Number(right))
+		.slice(0, entries.length - keep)
+		.map(([key]) => key);
+	for (const key of removable) delete processedUpdates[key];
 }
 
 function telegramBaseUrl(value: string | undefined): string {
