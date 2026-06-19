@@ -129,6 +129,12 @@ async function withLocalSource<T>(
 
 async function withLocalTelegramApi<T>(
 	fn: (env: Record<string, string>, requests: Array<{ body: Record<string, unknown>; url: string }>) => Promise<T>,
+	updates: unknown[] = [
+		{
+			update_id: 7001,
+			message: { message_id: 1, chat: { id: 42 }, text: "Her 状态", from: { id: 42 } },
+		},
+	],
 ): Promise<T> {
 	const requests: Array<{ body: Record<string, unknown>; url: string }> = [];
 	const server = createServer((req, res) => {
@@ -146,12 +152,7 @@ async function withLocalTelegramApi<T>(
 				res.end(
 					JSON.stringify({
 						ok: true,
-						result: [
-							{
-								update_id: 7001,
-								message: { message_id: 1, chat: { id: 42 }, text: "Her 状态", from: { id: 42 } },
-							},
-						],
+						result: updates,
 					}),
 				);
 				return;
@@ -386,6 +387,142 @@ test("CLI Telegram Pi responder rejects non-read-only tools from env", async () 
 			assert.equal(requests.filter((request) => request.url.endsWith("/sendMessage")).length, 0);
 		});
 	});
+});
+
+test("CLI Telegram confirmation request queues a phone approval without executing it", async () => {
+	const { store } = await gitBackedStore();
+
+	const result = await runCli(
+		[
+			"telegram-confirm-request",
+			"--action-id",
+			"tier2-test",
+			"--summary",
+			"Run a single Tier 2 smoke action",
+			"--code",
+			"SAFE42",
+			"--expires-at",
+			"2026-06-20T12:15:00.000Z",
+			"--json",
+		],
+		store,
+	);
+	const payload = JSON.parse(result.stdout);
+
+	assert.equal(payload.result.actionId, "tier2-test");
+	assert.equal(payload.result.code, "SAFE42");
+	assert.equal(payload.result.status, "pending");
+
+	const confirmation = await readFile(join(store, payload.result.path), "utf8");
+	assert.match(confirmation, /status: pending/);
+	assert.match(confirmation, /Run a single Tier 2 smoke action/);
+	assert.match(confirmation, /Telegram can approve or reject this request, but it must not execute/);
+
+	const outboxFiles = await readdir(join(store, "outbox"));
+	assert.equal(outboxFiles.length, 1);
+	const outbox = await readFile(join(store, "outbox", outboxFiles[0]), "utf8");
+	assert.match(outbox, /CONFIRM SAFE42/);
+	assert.match(outbox, /Telegram 只记录批准\/拒绝，不会直接执行动作/);
+});
+
+test("CLI Telegram bridge records confirmation replies and does not invoke the Pi responder", async () => {
+	const { store } = await gitBackedStore();
+	await runCli(
+		[
+			"telegram-confirm-request",
+			"--action-id",
+			"tier2-test",
+			"--summary",
+			"Run a single Tier 2 smoke action",
+			"--code",
+			"SAFE42",
+			"--expires-at",
+			"2999-06-20T12:15:00.000Z",
+			"--json",
+		],
+		store,
+	);
+	await withLocalTelegramApi(async (telegramEnv) => {
+		await runCli(["telegram-push-outbox", "--limit", "1", "--json"], store, telegramEnv);
+	}, []);
+
+	await withLocalTelegramApi(
+		async (telegramEnv, requests) => {
+			const result = await runCli(
+				["telegram-bridge", "--once", "--timeout", "0", "--limit", "10", "--reply-mode", "pi", "--json"],
+				store,
+				{ ...telegramEnv, HER_TELEGRAM_PI_CLI: "missing-pi-shim.mjs" },
+			);
+			const payload = JSON.parse(result.stdout);
+			assert.equal(payload.result.confirmations.length, 1);
+			assert.equal(payload.result.confirmations[0].status, "approved");
+			assert.equal(payload.result.replies.length, 0);
+			assert.equal(payload.result.acknowledgements.length, 1);
+
+			const confirmationPath = payload.result.confirmations[0].path;
+			const confirmation = await readFile(join(store, confirmationPath), "utf8");
+			assert.match(confirmation, /status: approved/);
+			assert.match(confirmation, /reply: CONFIRM SAFE42/);
+
+			assert.equal(requests.filter((request) => request.url.endsWith("/sendMessage")).length, 1);
+			assert.match(String(requests[1].body.text), /已记录确认/);
+			assert.match(String(requests[1].body.text), /不会直接执行动作/);
+		},
+		[
+			{
+				update_id: 7001,
+				message: { message_id: 1, chat: { id: 42 }, text: "CONFIRM SAFE42", from: { id: 42 } },
+			},
+		],
+	);
+});
+
+test("CLI Telegram bridge refuses expired confirmation codes", async () => {
+	const { store } = await gitBackedStore();
+	await runCli(
+		[
+			"telegram-confirm-request",
+			"--action-id",
+			"expired-tier2-test",
+			"--summary",
+			"Expired action",
+			"--code",
+			"OLD42",
+			"--expires-at",
+			"2000-01-01T00:00:00.000Z",
+			"--json",
+		],
+		store,
+	);
+	await withLocalTelegramApi(async (telegramEnv) => {
+		await runCli(["telegram-push-outbox", "--limit", "1", "--json"], store, telegramEnv);
+	}, []);
+
+	await withLocalTelegramApi(
+		async (telegramEnv, requests) => {
+			const result = await runCli(
+				["telegram-bridge", "--once", "--timeout", "0", "--limit", "10", "--json"],
+				store,
+				telegramEnv,
+			);
+			const payload = JSON.parse(result.stdout);
+			assert.equal(payload.result.confirmations.length, 1);
+			assert.equal(payload.result.confirmations[0].status, "ignored");
+			assert.match(payload.result.confirmations[0].reason, /expired/);
+
+			const confirmationPath = payload.result.confirmations[0].path;
+			const confirmation = await readFile(join(store, confirmationPath), "utf8");
+			assert.match(confirmation, /status: expired/);
+			assert.equal(requests.filter((request) => request.url.endsWith("/sendMessage")).length, 1);
+			assert.match(String(requests[1].body.text), /确认没有生效/);
+		},
+		[
+			{
+				update_id: 7001,
+				message: { message_id: 1, chat: { id: 42 }, text: "CONFIRM OLD42", from: { id: 42 } },
+			},
+		],
+	);
 });
 
 async function withLocalEmbeddings<T>(fn: (env: Record<string, string>, inputs: string[][]) => Promise<T>): Promise<T> {

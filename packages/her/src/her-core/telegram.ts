@@ -1,7 +1,7 @@
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { StorePaths } from "./paths.ts";
-import { frontmatter, readJson, readText, writeJson, writeText } from "./store.ts";
+import { frontmatter, parseFrontmatter, readJson, readText, writeJson, writeText } from "./store.ts";
 
 export interface TelegramUser {
 	first_name?: string;
@@ -67,6 +67,33 @@ export interface TelegramOutboxResult {
 	skipped: Array<{ path: string; reason: string }>;
 }
 
+export type TelegramConfirmationStatus = "pending" | "approved" | "rejected" | "expired";
+
+export interface CreateTelegramConfirmationOptions {
+	actionId: string;
+	code?: string;
+	expiresAt?: string;
+	now?: string;
+	summary: string;
+	tier?: string;
+}
+
+export interface TelegramConfirmationRequest {
+	actionId: string;
+	code: string;
+	expiresAt: string;
+	path: string;
+	status: TelegramConfirmationStatus;
+}
+
+export interface TelegramConfirmationResult {
+	actionId?: string;
+	code?: string;
+	path?: string;
+	reason?: string;
+	status: "approved" | "rejected" | "ignored";
+}
+
 export interface QueueTelegramInboundOptions {
 	allowedChatId: string;
 	now?: string;
@@ -111,6 +138,7 @@ export interface AttentionDigestOptions {
 const urgentSignals = ["urgent", "blocker", "blocked", "tier2", "guardrail", "circuit"];
 const defaultTelegramBaseUrl = "https://api.telegram.org";
 const telegramMessageLimit = 4096;
+const confirmationCodePattern = /\b(CONFIRM|APPROVE|YES|REJECT|DENY|NO)\s+([A-Z0-9][A-Z0-9-]{2,31})\b/i;
 
 interface TelegramApiResponse<T> {
 	description?: string;
@@ -229,6 +257,90 @@ export async function pushTelegramOutbox(root: string, opts: PushTelegramOutboxO
 	return result;
 }
 
+export async function createTelegramConfirmationRequest(
+	root: string,
+	opts: CreateTelegramConfirmationOptions,
+): Promise<TelegramConfirmationRequest> {
+	const now = opts.now ?? new Date().toISOString();
+	const actionId = requireNonBlank(opts.actionId, "action id");
+	const summary = requireNonBlank(opts.summary, "confirmation summary");
+	const code = normalizeConfirmationCode(opts.code ?? makeConfirmationCode(`${actionId}\n${summary}\n${now}`));
+	const expiresAt = opts.expiresAt ?? new Date(Date.parse(now) + 15 * 60 * 1000).toISOString();
+	if (!Number.isFinite(Date.parse(expiresAt))) throw new Error("confirmation expiresAt must be a valid ISO timestamp");
+	const paths = new StorePaths(root);
+	const fileName = `${safeTimestamp(now)}-${safeSlug(actionId)}-${code}.md`;
+	const path = `tasks/telegram-confirmations/${fileName}`;
+	await writeText(
+		join(paths.telegramConfirmations, fileName),
+		[
+			frontmatter({
+				type: "her_telegram_confirmation",
+				status: "pending",
+				action_id: actionId,
+				code,
+				tier: opts.tier ?? "tier2",
+				created: now,
+				expires_at: expiresAt,
+			}).trimEnd(),
+			"",
+			"# Telegram Confirmation Request",
+			"",
+			"Telegram can approve or reject this request, but it must not execute the action directly.",
+			"",
+			"## Summary",
+			"",
+			summary,
+			"",
+			"## Reply",
+			"",
+			`Approve: CONFIRM ${code}`,
+			`Reject: REJECT ${code}`,
+			"",
+		].join("\n"),
+	);
+	await writeText(
+		join(paths.outbox, `${safeTimestamp(now)}-telegram-confirm-${code}.md`),
+		[
+			`确认请求：${summary}`,
+			"",
+			`批准请回复：CONFIRM ${code}`,
+			`拒绝请回复：REJECT ${code}`,
+			`过期时间：${expiresAt}`,
+			"",
+			"安全边界：Telegram 只记录批准/拒绝，不会直接执行动作。",
+		].join("\n"),
+	);
+	return { actionId, code, expiresAt, path, status: "pending" };
+}
+
+export async function recordTelegramConfirmationFromText(
+	root: string,
+	text: string | undefined,
+	opts: { now?: string } = {},
+): Promise<TelegramConfirmationResult> {
+	const match = confirmationCodePattern.exec(text ?? "");
+	if (!match) return { status: "ignored", reason: "message is not a confirmation reply" };
+	const verb = match[1].toUpperCase();
+	const code = normalizeConfirmationCode(match[2]);
+	const request = await findPendingConfirmation(root, code);
+	if (!request) return { status: "ignored", code, reason: "no pending confirmation for code" };
+	const now = opts.now ?? new Date().toISOString();
+	if (Date.parse(request.expiresAt) <= Date.parse(now)) {
+		await writeConfirmationStatus(root, request, "expired", now, text ?? "");
+		return {
+			actionId: request.actionId,
+			code,
+			path: request.path,
+			status: "ignored",
+			reason: "confirmation expired",
+		};
+	}
+	const approved = ["CONFIRM", "APPROVE", "YES"].includes(verb);
+	const status = approved ? "approved" : "rejected";
+	await writeConfirmationStatus(root, request, status, now, text ?? "");
+	return { actionId: request.actionId, code, path: request.path, status };
+}
+
 export async function callTelegramMethod<T>(
 	opts: TelegramApiOptions,
 	method: string,
@@ -342,6 +454,58 @@ async function listMarkdownFiles(dir: string): Promise<string[]> {
 	}
 }
 
+async function findPendingConfirmation(root: string, code: string): Promise<TelegramConfirmationRequest | null> {
+	const paths = new StorePaths(root);
+	for (const file of await listMarkdownFiles(paths.telegramConfirmations)) {
+		const text = await readText(join(paths.telegramConfirmations, file));
+		const parsed = parseFrontmatter(text);
+		if (String(parsed.data.type ?? "") !== "her_telegram_confirmation") continue;
+		if (String(parsed.data.code ?? "").toUpperCase() !== code) continue;
+		if (String(parsed.data.status ?? "") !== "pending") continue;
+		return {
+			actionId: String(parsed.data.action_id ?? ""),
+			code,
+			expiresAt: String(parsed.data.expires_at ?? ""),
+			path: `tasks/telegram-confirmations/${file}`,
+			status: "pending",
+		};
+	}
+	return null;
+}
+
+async function writeConfirmationStatus(
+	root: string,
+	request: TelegramConfirmationRequest,
+	status: Exclude<TelegramConfirmationStatus, "pending">,
+	now: string,
+	replyText: string,
+): Promise<void> {
+	const paths = new StorePaths(root);
+	const file = request.path.split("/").pop();
+	if (!file) throw new Error(`invalid confirmation path: ${request.path}`);
+	const existing = await readText(join(paths.telegramConfirmations, file));
+	const parsed = parseFrontmatter(existing);
+	await writeText(
+		join(paths.telegramConfirmations, file),
+		[
+			frontmatter({
+				...parsed.data,
+				status,
+				resolved_at: now,
+			}).trimEnd(),
+			"",
+			parsed.body.trimEnd(),
+			"",
+			"## Telegram Resolution",
+			"",
+			`- status: ${status}`,
+			`- resolved_at: ${now}`,
+			`- reply: ${replyText}`,
+			"",
+		].join("\n"),
+	);
+}
+
 async function readTelegramState(root: string): Promise<TelegramState> {
 	const state = await readJson<Partial<TelegramState>>(telegramStatePath(root), {});
 	return { ...state, processedUpdates: state.processedUpdates ?? {}, sentOutbox: state.sentOutbox ?? {} };
@@ -380,6 +544,39 @@ function trimTelegramText(text: string): string {
 	if (text.length <= telegramMessageLimit) return text;
 	const suffix = "\n\n[trimmed for Telegram message limit]";
 	return `${text.slice(0, telegramMessageLimit - suffix.length)}${suffix}`;
+}
+
+function makeConfirmationCode(input: string): string {
+	return createTinyHash(input).slice(0, 6).toUpperCase();
+}
+
+function createTinyHash(input: string): string {
+	let hash = 2166136261;
+	for (let index = 0; index < input.length; index++) {
+		hash ^= input.charCodeAt(index);
+		hash = Math.imul(hash, 16777619);
+	}
+	return (hash >>> 0).toString(36);
+}
+
+function normalizeConfirmationCode(value: string): string {
+	const code = value
+		.trim()
+		.toUpperCase()
+		.replace(/[^A-Z0-9-]/g, "");
+	if (!/^[A-Z0-9][A-Z0-9-]{2,31}$/.test(code))
+		throw new Error("confirmation code must be 3-32 uppercase letters, numbers, or hyphens");
+	return code;
+}
+
+function safeSlug(value: string): string {
+	return (
+		value
+			.toLowerCase()
+			.replace(/[^a-z0-9]+/g, "-")
+			.replace(/^-+|-+$/g, "")
+			.slice(0, 48) || "action"
+	);
 }
 
 function requireNonBlank(value: string | undefined, label: string): string {

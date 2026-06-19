@@ -95,6 +95,10 @@ export class StorePaths {
 		return join(this.tasks, "inbox");
 	}
 
+	get telegramConfirmations(): string {
+		return join(this.tasks, "telegram-confirmations");
+	}
+
 	get activeTasks(): string {
 		return join(this.tasks, "active");
 	}

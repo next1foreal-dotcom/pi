@@ -16,6 +16,7 @@ import {
 	collectPathIntakeFiles,
 	completeLongTask,
 	createEmbeddingSearch,
+	createTelegramConfirmationRequest,
 	type DecaySweepResult,
 	type GoldenEvalReport,
 	type JudgmentFields,
@@ -33,11 +34,14 @@ import {
 	pushTelegramOutbox,
 	readPathForWorldNote,
 	readUrlForWorldNote,
+	recordTelegramConfirmationFromText,
 	runGoldenEvals,
 	type SamanthaJournalKind,
 	type SelfNarrativeUpdateResult,
 	sendTelegramMessage,
 	startLongTask,
+	type TelegramConfirmationRequest,
+	type TelegramConfirmationResult,
 	type TelegramOutboxResult,
 	type TelegramPollResult,
 	type UrlMarkdownReader,
@@ -130,6 +134,15 @@ type CliCommand =
 			once: boolean;
 			replyMode: TelegramReplyMode;
 			timeoutSeconds?: number;
+	  }
+	| {
+			actionId: string;
+			code?: string;
+			expiresAt?: string;
+			json: boolean;
+			kind: "telegram-confirm-request";
+			summary: string;
+			tier?: string;
 	  }
 	| { kind: "telegram-poll"; json: boolean; limit?: number; offset?: number; timeoutSeconds?: number }
 	| { kind: "telegram-push-outbox"; dryRun: boolean; json: boolean; limit?: number }
@@ -341,6 +354,7 @@ interface TelegramBridgeReply {
 
 interface TelegramBridgeCycleResult {
 	acknowledgements: TelegramBridgeAcknowledgement[];
+	confirmations: TelegramConfirmationResult[];
 	outbox: TelegramOutboxResult;
 	poll: TelegramPollResult;
 	replies: TelegramBridgeReply[];
@@ -348,6 +362,10 @@ interface TelegramBridgeCycleResult {
 
 interface CliTelegramBridgePayload extends CliStatusPayload {
 	result: TelegramBridgeCycleResult;
+}
+
+interface CliTelegramConfirmationPayload extends CliStatusPayload {
+	result: TelegramConfirmationRequest;
 }
 
 interface CliIo {
@@ -390,6 +408,7 @@ export function parseArgs(argv: string[]): CliCommand {
 	if (command === "sync") return parseSync(rest);
 	if (command === "taste") return parseTaste(rest);
 	if (command === "telegram-bridge") return parseTelegramBridge(rest);
+	if (command === "telegram-confirm-request") return parseTelegramConfirmRequest(rest);
 	if (command === "telegram-poll") return parseTelegramPoll(rest);
 	if (command === "telegram-push-outbox") return parseTelegramPushOutbox(rest);
 	if (command === "topic-maps") return parseJsonOnly("topic-maps", rest);
@@ -466,6 +485,19 @@ export async function runHerCli(
 		});
 		const payload = { ...(await buildFreshStatusPayload(memoryDir, env)), result };
 		writePayload(io.stdout, payload, command.json, renderTelegramOutbox);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "telegram-confirm-request") {
+		const result = await createTelegramConfirmationRequest(memoryDir, {
+			actionId: command.actionId,
+			code: command.code,
+			expiresAt: command.expiresAt,
+			summary: command.summary,
+			tier: command.tier,
+		});
+		const payload = { ...(await buildFreshStatusPayload(memoryDir, env)), result };
+		writePayload(io.stdout, payload, command.json, renderTelegramConfirmation);
 		return payload.status.status === "unknown" ? 1 : 0;
 	}
 
@@ -1069,6 +1101,46 @@ function parseTelegramBridge(argv: string[]): CliCommand {
 		throw new UsageError(`unknown telegram-bridge option: ${arg}`);
 	}
 	return { ackText, intervalSeconds, json, kind: "telegram-bridge", limit, once, replyMode, timeoutSeconds };
+}
+
+function parseTelegramConfirmRequest(argv: string[]): CliCommand {
+	let actionId: string | undefined;
+	let code: string | undefined;
+	let expiresAt: string | undefined;
+	let json = false;
+	let summary: string | undefined;
+	let tier: string | undefined;
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		if (arg === "--action-id") {
+			actionId = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--code") {
+			code = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--expires-at") {
+			expiresAt = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--summary") {
+			summary = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--tier") {
+			tier = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		throw new UsageError(`unknown telegram-confirm-request option: ${arg}`);
+	}
+	if (!actionId) throw new UsageError("telegram-confirm-request requires --action-id");
+	if (!summary) throw new UsageError("telegram-confirm-request requires --summary");
+	return { actionId, code, expiresAt, json, kind: "telegram-confirm-request", summary, tier };
 }
 
 function parseTelegramReplyMode(value: string, option: string): TelegramReplyMode {
@@ -1886,9 +1958,33 @@ async function runTelegramBridgeCycle(
 		token: opts.token,
 	});
 	const acknowledgements: TelegramBridgeAcknowledgement[] = [];
+	const confirmations: TelegramConfirmationResult[] = [];
 	const replies: TelegramBridgeReply[] = [];
 	for (const queued of poll.queued) {
 		const sentAt = new Date().toISOString();
+		const confirmation = await recordTelegramConfirmationFromText(memoryDir, queued.text, { now: sentAt });
+		if (confirmation.status !== "ignored" || confirmation.code) {
+			confirmations.push(confirmation);
+			const text =
+				confirmation.status === "approved"
+					? `已记录确认：${confirmation.actionId ?? confirmation.code}。\n安全规则：Telegram 只记录批准，不会直接执行动作。`
+					: confirmation.status === "rejected"
+						? `已记录拒绝：${confirmation.actionId ?? confirmation.code}。`
+						: `确认没有生效：${confirmation.reason ?? "无法匹配确认请求"}。`;
+			const message = await sendTelegramMessage({
+				baseUrl: opts.baseUrl,
+				chatId: opts.chatId,
+				text,
+				token: opts.token,
+			});
+			acknowledgements.push({
+				messageId: message.message_id,
+				path: queued.path ?? "",
+				sentAt,
+				updateId: queued.updateId,
+			});
+			continue;
+		}
 		if (opts.replyMode === "pi") {
 			const text = await generatePiTelegramReply({
 				cwd: opts.cwd,
@@ -1940,7 +2036,7 @@ async function runTelegramBridgeCycle(
 		limit: opts.limit,
 		token: opts.token,
 	});
-	return { acknowledgements, outbox, poll, replies };
+	return { acknowledgements, confirmations, outbox, poll, replies };
 }
 
 async function generatePiTelegramReply(opts: {
@@ -2208,11 +2304,25 @@ function renderTelegramOutbox(payload: CliTelegramOutboxPayload): string {
 	].join("\n");
 }
 
+function renderTelegramConfirmation(payload: CliTelegramConfirmationPayload): string {
+	return [
+		`Her Telegram confirmation created: ${payload.result.actionId}`,
+		`code: ${payload.result.code}`,
+		`expires: ${payload.result.expiresAt}`,
+		`path: ${payload.result.path}`,
+		"outbox queued: yes",
+		"execution: not performed by Telegram",
+		"",
+		renderStatus(payload),
+	].join("\n");
+}
+
 function renderTelegramBridge(payload: CliTelegramBridgePayload): string {
 	return [
 		`Her Telegram bridge poll received: ${payload.result.poll.received}`,
 		`queued: ${payload.result.poll.queued.length}`,
 		`acknowledged: ${payload.result.acknowledgements.length}`,
+		`confirmations: ${payload.result.confirmations.length}`,
 		`replied: ${payload.result.replies.length}`,
 		`outbox sent: ${payload.result.outbox.sent.length}`,
 		`rejected: ${payload.result.poll.rejected.length}`,
@@ -2429,6 +2539,7 @@ function usage(): string {
   her status [--json]
   her taste --title <title> --judgment <text> --reason <text> [--differs-from-fei-rule <text>] [--source <text>] [--timestamp <ISO>] [--json]
   her telegram-bridge [--timeout <seconds>] [--interval <seconds>] [--limit <n>] [--reply|--reply-mode ack|pi] [--ack-text <text>] [--once] [--json]
+  her telegram-confirm-request --action-id <id> --summary <text> [--tier <tier>] [--expires-at <ISO>] [--code <code>] [--json]
   her telegram-poll [--timeout <seconds>] [--limit <n>] [--offset <n>] [--json]
   her telegram-push-outbox [--limit <n>] [--dry-run] [--json]
   her topic-maps [--json]
