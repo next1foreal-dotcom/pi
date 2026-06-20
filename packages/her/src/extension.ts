@@ -157,9 +157,7 @@ function registerProviderPool(pi: ExtensionAPI): void {
 				baseUrl: "https://api.anthropic.com",
 				api: "anthropic-messages",
 				oauth: anthropicOAuthProvider,
-				models: [
-					model("claude-sonnet-4-20250514", "Claude Sonnet 4 for Samantha (OAuth)", "anthropic-messages", true),
-				],
+				models: [model("claude-sonnet-4-6", "Claude Sonnet 4.6 for Samantha (OAuth)", "anthropic-messages", true)],
 			},
 		],
 		[
@@ -169,7 +167,7 @@ function registerProviderPool(pi: ExtensionAPI): void {
 				baseUrl: "https://api.anthropic.com",
 				apiKey: "$HER_CLAUDE_API_KEY",
 				api: "anthropic-messages",
-				models: [model("claude-sonnet-4-20250514", "Claude Sonnet 4 for Samantha", "anthropic-messages", true)],
+				models: [model("claude-sonnet-4-6", "Claude Sonnet 4.6 for Samantha", "anthropic-messages", true)],
 			},
 		],
 		[
