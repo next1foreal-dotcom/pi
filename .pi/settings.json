@@ -38,6 +38,9 @@
 		"npm:@howaboua/pi-semantic-grep@0.1.12",
 		"npm:@howaboua/pi-skill-agent-native-hardening@0.0.2",
 		"npm:@howaboua/pi-skill-chrome-cdp@0.0.1",
-		"npm:@howaboua/pi-subagent-review@0.2.2"
+		"npm:@howaboua/pi-subagent-review@0.2.2",
+		"npm:@leblancfg/pi-fusion@0.4.0",
+		"npm:@demigodmode/pi-web-agent@1.5.1",
+		"npm:pi-claude-bridge"
 	]
 }
