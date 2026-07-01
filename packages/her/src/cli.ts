@@ -113,6 +113,7 @@ type CliCommand =
 	| { kind: "self-narrative"; json: boolean }
 	| { kind: "synthesize"; json: boolean; ifDue: boolean }
 	| { kind: "synthesize-due"; json: boolean }
+	| { kind: "surface"; json: boolean }
 	| { kind: "status"; json: boolean }
 	| { kind: "sync"; json: boolean; message?: string }
 	| {
@@ -402,6 +403,7 @@ export function parseArgs(argv: string[]): CliCommand {
 	if (command === "recall") return parseRecall(rest);
 	if (command === "restore") return parseRestore(rest);
 	if (command === "self-narrative") return parseJsonOnly("self-narrative", rest);
+	if (command === "surface") return parseJsonOnly("surface", rest);
 	if (command === "synthesize") return parseSynthesize(rest);
 	if (command === "synthesize-due") return parseJsonOnly("synthesize-due", rest);
 	if (command === "status") return parseStatus(rest);
@@ -611,6 +613,15 @@ export async function runHerCli(
 		const result = await memory.synthesizeDue();
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderSynthesizeDue);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "surface") {
+		// Resurface a relevant note the user hasn't seen this session (retrieval —
+		// no model call). cooldown 0 so a UI can pull one on demand.
+		const note = await memory.surface({ sessionId: "samantha-ui", cooldownMinutes: 0 });
+		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result: { note: note ?? null } };
+		writePayload(io.stdout, payload, command.json, renderSurface);
 		return payload.status.status === "unknown" ? 1 : 0;
 	}
 
@@ -905,7 +916,7 @@ function commandCandidates(explicitCommand: string | undefined, commandName: str
 }
 
 function parseJsonOnly(
-	kind: "choice-model" | "ideas" | "privacy-audit" | "self-narrative" | "synthesize-due" | "topic-maps",
+	kind: "choice-model" | "ideas" | "privacy-audit" | "self-narrative" | "surface" | "synthesize-due" | "topic-maps",
 	argv: string[],
 ): CliCommand {
 	let json = false;
@@ -2404,6 +2415,12 @@ function renderSynthesize(payload: CliSynthesizePayload): string {
 function renderSynthesizeDue(payload: CliSynthesizeDuePayload): string {
 	const reason = payload.result.due ? ` (${payload.result.reason})` : "";
 	return [`Her synthesize due: ${payload.result.due}${reason}`, "", renderStatus(payload)].join("\n");
+}
+
+function renderSurface(payload: { result: { note: { id: string; text: string } | null } } & CliStatusPayload): string {
+	const note = payload.result.note;
+	const head = note ? `Surfaced from memory: ${note.id}` : "Nothing new to surface right now.";
+	return [head, "", renderStatus(payload)].join("\n");
 }
 
 function renderTopicMaps(payload: { result: string[] } & CliStatusPayload): string {
