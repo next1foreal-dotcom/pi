@@ -911,19 +911,23 @@ test("proof-of-life loop accumulates context and Samantha self growth with trace
 
 test("synthesizeDue waits for the configured count of new semantic notes", async () => {
 	const store = await tempStore();
+	// Anchored relative to now (not a hardcoded absolute date) so this stays well under
+	// the default synthesizeStaleAfterDays threshold regardless of when the suite runs.
+	const twoDaysAgo = new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10);
+	const oneDayAgo = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
 	await writeText(
 		join(store, ".her", "config.yaml"),
 		["llm:", "  base_url: https://api.deepseek.com", "cadence:", "  synthesize_after_new_notes: 2", ""].join("\n"),
 	);
-	await writeText(join(store, ".her", "state.json"), JSON.stringify({ last_synthesize: "2026-06-12" }));
-	await writeText(join(store, "semantic", "one.md"), "---\nupdated: 2026-06-13\n---\n# One\n\nFirst new note.\n");
+	await writeText(join(store, ".her", "state.json"), JSON.stringify({ last_synthesize: twoDaysAgo }));
+	await writeText(join(store, "semantic", "one.md"), `---\nupdated: ${oneDayAgo}\n---\n# One\n\nFirst new note.\n`);
 
 	const first = await new Memory(store).synthesizeDue();
 	assert.equal(first.due, false);
 	assert.equal(first.newSemanticNotes, 1);
 	assert.equal(first.threshold, 2);
 
-	await writeText(join(store, "semantic", "two.md"), "---\nupdated: 2026-06-13\n---\n# Two\n\nSecond new note.\n");
+	await writeText(join(store, "semantic", "two.md"), `---\nupdated: ${oneDayAgo}\n---\n# Two\n\nSecond new note.\n`);
 	const second = await new Memory(store).synthesizeDue();
 	assert.equal(second.due, true);
 	assert.equal(second.reason, "new_notes");
