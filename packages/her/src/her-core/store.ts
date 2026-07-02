@@ -1,5 +1,6 @@
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { randomUUID } from "node:crypto";
+import { appendFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 
 const secretPatterns = [
 	/sk-[A-Za-z0-9]{20,}/g,
@@ -30,8 +31,16 @@ export async function readText(path: string): Promise<string | undefined> {
 }
 
 export async function writeText(path: string, text: string): Promise<void> {
-	await mkdir(dirname(path), { recursive: true });
-	await writeFile(path, text, "utf8");
+	const dir = dirname(path);
+	await mkdir(dir, { recursive: true });
+	const temp = join(dir, `.${basename(path)}.${randomUUID()}.tmp`);
+	try {
+		await writeFile(temp, text, "utf8");
+		await rename(temp, path);
+	} catch (error) {
+		await rm(temp, { force: true });
+		throw error;
+	}
 }
 
 export async function writeNewText(path: string, text: string): Promise<void> {
