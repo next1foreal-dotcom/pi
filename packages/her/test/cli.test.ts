@@ -34,6 +34,35 @@ async function gitBackedStore(): Promise<{ store: string; remote: string }> {
 	return { store, remote };
 }
 
+function cliBackfillTimestamp(index: number): string {
+	return `2026-06-21T${String(index).padStart(4, "0")}`;
+}
+
+async function writeCliBackfillRawEpisode(store: string, index: number): Promise<void> {
+	const id = `cli-episode-${String(index).padStart(3, "0")}`;
+	const ts = cliBackfillTimestamp(index);
+	await writeFile(
+		join(store, "episodic", "raw", `${ts}--${id}.md`),
+		["---", `id: ${id}`, `timestamp: ${ts}`, "project: her", "---", "", `CLI backfill raw body ${id}.`, ""].join(
+			"\n",
+		),
+		"utf8",
+	);
+}
+
+function cliBackfillModelReply(prompt: string): string {
+	const ids = [...prompt.matchAll(/\[(cli-episode-\d{3})\]/g)].map((match) => match[1]);
+	return JSON.stringify({
+		notes: ids.map((id) => ({
+			key: `cli-backfill-${id}`,
+			type: "note",
+			tier: "summarizable",
+			content: `# CLI Backfill ${id}\n\nDistilled ${id}.`,
+			sources: [id],
+		})),
+	});
+}
+
 async function runCli(
 	args: string[],
 	store: string,
@@ -1072,6 +1101,69 @@ test("CLI recalls active and archived memory as JSON", async () => {
 	assert.equal(payload.result[0].id, "archive/semantic/old-noise");
 	assert.equal(payload.result[0].kind, "archive/semantic");
 	assert.match(payload.result[0].text, /Recoverable archive memory/);
+});
+
+test("CLI backfill dry-run plans cursor batches without writing memory", async () => {
+	const { store } = await gitBackedStore();
+	for (let index = 1; index <= 3; index++) await writeCliBackfillRawEpisode(store, index);
+	const stateBefore = await readFile(join(store, ".her", "state.json"), "utf8");
+
+	const result = await runCli(["backfill", "--dry-run", "--batch-size", "2", "--max-batches", "1", "--json"], store);
+	const payload = JSON.parse(result.stdout);
+
+	assert.equal(payload.result.dryRun, true);
+	assert.equal(payload.result.plannedEpisodes, 2);
+	assert.equal(payload.result.processedEpisodes, 0);
+	assert.equal(payload.result.stoppedReason, "max_batches");
+	assert.deepEqual(
+		payload.result.batches[0].episodes.map((episode: { id: string }) => episode.id),
+		["cli-episode-001", "cli-episode-002"],
+	);
+	assert.equal(await readFile(join(store, ".her", "state.json"), "utf8"), stateBefore);
+	assert.equal(await readText(join(store, "semantic", "cli-backfill-cli-episode-001.md")), undefined);
+});
+
+test("CLI backfill requires a budget for non-dry runs", async () => {
+	const { store } = await gitBackedStore();
+
+	const result = await runCliFailure(["backfill", "--batch-size", "1"], store);
+
+	assert.equal(result.code, 2);
+	assert.match(result.stderr, /backfill requires --budget-usd unless --dry-run/);
+});
+
+test("CLI backfill processes one budgeted batch with the configured model", async () => {
+	const { store } = await gitBackedStore();
+	await writeCliBackfillRawEpisode(store, 1);
+	await writeCliBackfillRawEpisode(store, 2);
+
+	await withLocalChatModel(
+		(prompt) => {
+			assert.match(prompt, /TYPED units/);
+			return cliBackfillModelReply(prompt);
+		},
+		async (modelEnv) => {
+			const result = await runCli(
+				["backfill", "--batch-size", "2", "--max-batches", "1", "--budget-usd", "1", "--json"],
+				store,
+				modelEnv,
+			);
+			const payload = JSON.parse(result.stdout);
+
+			assert.equal(payload.result.dryRun, false);
+			assert.equal(payload.result.processedEpisodes, 2);
+			assert.equal(payload.result.batches[0].status, "processed");
+			assert.equal(payload.result.cursorAfter, cliBackfillTimestamp(2));
+			assert.match(
+				await readFile(join(store, "semantic", "cli-backfill-cli-episode-001.md"), "utf8"),
+				/Distilled cli-episode-001/,
+			);
+			assert.match(
+				await readFile(join(store, "audit", `${new Date().toISOString().slice(0, 10)}.jsonl`), "utf8"),
+				/her_backfill/,
+			);
+		},
+	);
 });
 
 test("CLI recall can use configured embedding search for semantic hits", async () => {

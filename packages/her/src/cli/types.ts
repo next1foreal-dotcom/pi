@@ -1,4 +1,5 @@
 import type {
+	BackfillRunResult,
 	ChoiceModelUpdateResult,
 	ConsolidateResult,
 	DecaySweepResult,
@@ -25,6 +26,15 @@ export const telegramResponderReadOnlyTools = new Set<string>(defaultTelegramRes
 
 export type CliCommand =
 	| { kind: "approve"; json: boolean; proposalId: string }
+	| {
+			batchSize?: number;
+			budgetUsd?: number;
+			dryRun: boolean;
+			finalize: boolean;
+			json: boolean;
+			kind: "backfill";
+			maxBatches?: number;
+	  }
 	| { kind: "bootstrap-feed"; json: boolean; maxBytes?: number; paths: string[]; updateSurfaces: boolean }
 	| { kind: "capture"; json: boolean; text: string; project?: string; sessionId?: string; timestamp?: string }
 	| { kind: "choice-model"; json: boolean }
@@ -139,6 +149,10 @@ export interface CliGoldenEvalPayload extends CliStatusPayload {
 
 export interface CliConsolidatePayload extends CliStatusPayload {
 	result: ConsolidateResult;
+}
+
+export interface CliBackfillPayload extends CliStatusPayload {
+	result: BackfillRunResult;
 }
 
 export interface CliRestorePayload extends CliStatusPayload {

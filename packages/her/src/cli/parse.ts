@@ -24,6 +24,7 @@ export function parseArgs(argv: string[]): CliCommand {
 	const [command, ...rest] = argv;
 	if (!command || command === "help" || command === "--help" || command === "-h") return { kind: "help" };
 	if (command === "approve") return parseApprove(rest);
+	if (command === "backfill") return parseBackfill(rest);
 	if (command === "bootstrap-feed") return parseBootstrapFeed(rest);
 	if (command === "capture") return parseCapture(rest);
 	if (command === "choice-model") return parseJsonOnly("choice-model", rest);
@@ -95,6 +96,45 @@ function parseApprove(argv: string[]): CliCommand {
 	}
 	if (!proposalId) throw new UsageError("approve requires --proposal <id>");
 	return { kind: "approve", json, proposalId };
+}
+
+function parseBackfill(argv: string[]): CliCommand {
+	let batchSize: number | undefined;
+	let budgetUsd: number | undefined;
+	let dryRun = false;
+	let finalize = false;
+	let json = false;
+	let maxBatches: number | undefined;
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		if (arg === "--batch-size") {
+			batchSize = parsePositiveNumber(requireOptionValue(argv[++i], arg), arg);
+			continue;
+		}
+		if (arg === "--budget-usd") {
+			budgetUsd = parsePositiveNumber(requireOptionValue(argv[++i], arg), arg);
+			continue;
+		}
+		if (arg === "--dry-run") {
+			dryRun = true;
+			continue;
+		}
+		if (arg === "--finalize") {
+			finalize = true;
+			continue;
+		}
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--max-batches") {
+			maxBatches = parsePositiveNumber(requireOptionValue(argv[++i], arg), arg);
+			continue;
+		}
+		throw new UsageError(`unknown backfill option: ${arg}`);
+	}
+	if (!dryRun && budgetUsd === undefined) throw new UsageError("backfill requires --budget-usd unless --dry-run");
+	return { batchSize, budgetUsd, dryRun, finalize, json, kind: "backfill", maxBatches };
 }
 
 function parseCapture(argv: string[]): CliCommand {

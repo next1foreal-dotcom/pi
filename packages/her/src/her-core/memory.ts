@@ -1,6 +1,7 @@
 import { mkdir, readdir } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { type HerConfig, loadConfig } from "./config.ts";
+import { type BackfillOptions, type BackfillRunResult, runBackfill } from "./memory-backfill.ts";
 import { buildArchiveCorpus, buildCorpus, recordAccess, staleBanner } from "./memory-corpus.ts";
 import { decaySweep, restoreArchivedSemantic, syncMemory, syncStatus } from "./memory-maintenance.ts";
 import { writeSamanthaJournal, writeSamanthaTasteJudgment, writeSamanthaZoneNote } from "./memory-samantha.ts";
@@ -98,6 +99,12 @@ import {
 	writeText,
 } from "./store.ts";
 
+export type {
+	BackfillBatchResult,
+	BackfillEpisode,
+	BackfillOptions,
+	BackfillRunResult,
+} from "./memory-backfill.ts";
 export { initStore } from "./memory-init.ts";
 export { SEED_CHOICE_MODEL, SEED_CONTEXT, SEED_SELF_NARRATIVE, SEED_SOUL } from "./memory-seeds.ts";
 export type {
@@ -368,6 +375,10 @@ export class Memory {
 			last_consolidate: newCursor,
 		});
 		return { episodes: episodes.length, notesTouched: notes.length, moments: moments.length };
+	}
+
+	async backfill(opts: BackfillOptions = {}): Promise<BackfillRunResult> {
+		return runBackfill(this, opts);
 	}
 
 	async synthesize(): Promise<string> {
@@ -727,6 +738,7 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 		for (const entry of entries) {
 			const path = join(this.paths.raw, entry);
 			const parsed = parseFrontmatter(await readText(path));
+			if (parsed.data.protected_zone === true || parsed.data.consolidate === false) continue;
 			const ts = String(parsed.data.timestamp ?? entry.split("--")[0]);
 			if (cursor !== null && ts <= cursor) continue;
 			episodes.push({ ts, id: String(parsed.data.id ?? entry.replace(/\.md$/, "")), text: parsed.body.trim() });

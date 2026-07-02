@@ -39,6 +39,44 @@ async function git(cwd: string, ...args: string[]): Promise<{ stdout: string; st
 	return { stdout, stderr };
 }
 
+function backfillTimestamp(index: number): string {
+	return `2026-06-20T${String(index).padStart(4, "0")}`;
+}
+
+async function writeBackfillRawEpisode(store: string, index: number, extraFrontmatter = ""): Promise<void> {
+	const id = `episode-${String(index).padStart(3, "0")}`;
+	const ts = backfillTimestamp(index);
+	await writeText(
+		join(store, "episodic", "raw", `${ts}--${id}.md`),
+		[
+			"---",
+			`id: ${id}`,
+			`timestamp: ${ts}`,
+			"project: her",
+			extraFrontmatter.trim(),
+			"---",
+			"",
+			`Backfill raw body ${id}.`,
+			"",
+		]
+			.filter((line) => line !== "")
+			.join("\n"),
+	);
+}
+
+function backfillModelReply(prompt: string): string {
+	const ids = [...prompt.matchAll(/\[(episode-\d{3})\]/g)].map((match) => match[1]);
+	return JSON.stringify({
+		notes: ids.map((id) => ({
+			key: `backfill-${id}`,
+			type: "note",
+			tier: "summarizable",
+			content: `# Backfill ${id}\n\nDistilled ${id}.`,
+			sources: [id],
+		})),
+	});
+}
+
 const fakeModel = {
 	complete() {
 		return "- what: built X\n- decisions: chose Y\n- signals: prefers Z";
@@ -431,6 +469,107 @@ test("recall uses FTS and entity/path signals before fusing rankings", async () 
 
 	const entityHits = await new Memory(store).recall("Samantha Zone", { k: 3 });
 	assert.equal(entityHits[0]?.id, "world/samantha-zone");
+});
+
+test("backfill advances the cursor by successful batches and resumes after a crash", async () => {
+	const store = await tempStore();
+	for (let index = 1; index <= 6; index++) await writeBackfillRawEpisode(store, index);
+
+	let calls = 0;
+	const failing = new Memory(store, {
+		complete(prompt) {
+			calls++;
+			if (calls === 2) throw new Error("batch crash");
+			return backfillModelReply(prompt);
+		},
+	});
+
+	await assert.rejects(
+		() => failing.backfill({ batchSize: 2, budgetUsd: 1, now: "2026-07-03T00:00:00.000Z" }),
+		/batch crash/,
+	);
+	assert.equal(
+		(await readJson<{ cursor?: string }>(join(store, ".her", "state.json"), {})).cursor,
+		backfillTimestamp(2),
+	);
+	assert.match((await readText(join(store, "semantic", "backfill-episode-001.md"))) ?? "", /Distilled episode-001/);
+	assert.equal(await readText(join(store, "semantic", "backfill-episode-003.md")), undefined);
+
+	const resumed = await new Memory(store, {
+		complete(prompt) {
+			return backfillModelReply(prompt);
+		},
+	}).backfill({ batchSize: 2, budgetUsd: 1, now: "2026-07-03T00:00:00.000Z" });
+
+	assert.equal(resumed.processedEpisodes, 4);
+	assert.deepEqual(
+		resumed.batches.map((batch) => batch.episodes.map((episode) => episode.id)),
+		[
+			["episode-003", "episode-004"],
+			["episode-005", "episode-006"],
+		],
+	);
+	assert.equal(
+		(await readJson<{ cursor?: string }>(join(store, ".her", "state.json"), {})).cursor,
+		backfillTimestamp(6),
+	);
+	const audit = (await readText(join(store, "audit", "2026-07-03.jsonl"))) ?? "";
+	assert.equal(audit.trim().split(/\r?\n/).length, 3);
+});
+
+test("backfill dry-run plans batches without writes and skips protected raw episodes", async () => {
+	const store = await tempStore();
+	await writeBackfillRawEpisode(store, 1);
+	await writeBackfillRawEpisode(store, 2, "protected_zone: true\nconsolidate: false");
+	await writeBackfillRawEpisode(store, 3);
+	await writeText(join(store, "samantha", "journal", "private.md"), "# Private\n\nDo not touch.\n");
+	await writeText(join(store, "samantha", "wants", "private.md"), "# Wants\n\nDo not touch.\n");
+	const stateBefore = await readText(join(store, ".her", "state.json"));
+	const journalBefore = await readText(join(store, "samantha", "journal", "private.md"));
+	const wantsBefore = await readText(join(store, "samantha", "wants", "private.md"));
+
+	const result = await new Memory(store).backfill({ batchSize: 10, dryRun: true });
+
+	assert.equal(result.dryRun, true);
+	assert.equal(result.plannedEpisodes, 2);
+	assert.equal(result.processedEpisodes, 0);
+	assert.deepEqual(
+		result.batches[0].episodes.map((episode) => episode.id),
+		["episode-001", "episode-003"],
+	);
+	assert.equal(await readText(join(store, ".her", "state.json")), stateBefore);
+	assert.equal(await readText(join(store, "semantic", "backfill-episode-001.md")), undefined);
+	assert.equal(await readText(join(store, "audit", "2026-07-03.jsonl")), undefined);
+	assert.equal(await readText(join(store, "samantha", "journal", "private.md")), journalBefore);
+	assert.equal(await readText(join(store, "samantha", "wants", "private.md")), wantsBefore);
+});
+
+test("backfill budget cap stops before model work when the ledger is already spent", async () => {
+	const store = await tempStore();
+	await writeBackfillRawEpisode(store, 1);
+	await writeText(
+		join(store, "audit", "2026-07-03.jsonl"),
+		`${JSON.stringify({
+			ts: "2026-07-03T00:00:00.000Z",
+			tool: "her_backfill",
+			verdict: "ALLOW",
+			rule: null,
+			cost: { usd: 0.25, purpose: "backfill" },
+		})}\n`,
+	);
+	let called = false;
+
+	const result = await new Memory(store, {
+		complete(prompt) {
+			called = true;
+			return backfillModelReply(prompt);
+		},
+	}).backfill({ batchSize: 1, budgetUsd: 0.2, now: "2026-07-03T00:00:00.000Z" });
+
+	assert.equal(called, false);
+	assert.equal(result.stoppedReason, "budget_cap");
+	assert.equal(result.processedEpisodes, 0);
+	assert.equal((await readJson<{ cursor?: string | null }>(join(store, ".her", "state.json"), {})).cursor, null);
 });
 
 test("decaySweep archives only old unaccessed decay-tier semantic notes and keeps them recoverable", async () => {

@@ -1,5 +1,6 @@
 import type {
 	CliApprovePayload,
+	CliBackfillPayload,
 	CliBootstrapFeedPayload,
 	CliCapturePayload,
 	CliChoiceModelPayload,
@@ -65,6 +66,39 @@ export function renderConsolidate(payload: CliConsolidatePayload): string {
 		"",
 		renderStatus(payload),
 	].join("\n");
+}
+
+export function renderBackfill(payload: CliBackfillPayload): string {
+	const mode = payload.result.dryRun ? "planned" : "processed";
+	const batches =
+		payload.result.batches.length > 0
+			? payload.result.batches
+					.map(
+						(batch) =>
+							`batch ${batch.index}: ${batch.status} ${batch.episodes.length} episode(s), cursor ${batch.cursorBefore ?? "(start)"} -> ${batch.cursorAfter}`,
+					)
+					.join("\n")
+			: "(no batches)";
+	const budget =
+		payload.result.budgetUsd === undefined
+			? `spent: $${payload.result.budgetSpentUsd.toFixed(4)}`
+			: `spent: $${payload.result.budgetSpentUsd.toFixed(4)} / $${payload.result.budgetUsd.toFixed(4)}`;
+	const finalized = payload.result.finalize
+		? `finalized: topics ${payload.result.finalize.topicMaps.length}, proposal ${payload.result.finalize.proposalId}`
+		: undefined;
+	return [
+		`Her backfill ${mode}: ${payload.result.dryRun ? payload.result.plannedEpisodes : payload.result.processedEpisodes} episode(s).`,
+		`batches: ${payload.result.batches.length}`,
+		`cursor: ${payload.result.cursorBefore ?? "(start)"} -> ${payload.result.cursorAfter ?? "(unchanged)"}`,
+		budget,
+		`stop: ${payload.result.stoppedReason}`,
+		finalized,
+		batches,
+		"",
+		renderStatus(payload),
+	]
+		.filter(Boolean)
+		.join("\n");
 }
 
 export function renderDecay(payload: CliDecayPayload): string {
@@ -385,6 +419,7 @@ export function writeLine(stream: NodeJS.WritableStream, text: string): void {
 export function usage(): string {
 	return `Usage:
   her approve --proposal <id> [--json]
+  her backfill [--batch-size <n>] [--max-batches <n>] [--budget-usd <usd>] [--dry-run] [--finalize] [--json]
   her bootstrap-feed --path <file-or-dir> [--path <file-or-dir>] [--max-bytes <n>] [--update-surfaces] [--json]
   her capture --text <text> [--project <name>] [--session <id>] [--timestamp <ISO>] [--json]
   her choice-model [--json]

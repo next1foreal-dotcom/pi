@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { parseArgs } from "./cli/parse.ts";
 import {
 	renderApprove,
+	renderBackfill,
 	renderBootstrapFeed,
 	renderCapture,
 	renderChoiceModel,
@@ -180,6 +181,19 @@ export async function runHerCli(
 	if (command.kind === "status") {
 		const payload = await buildStatusPayload(memoryDir, memory);
 		writePayload(io.stdout, payload, command.json, renderStatus);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "backfill") {
+		const result = await memory.backfill({
+			batchSize: command.batchSize,
+			budgetUsd: command.budgetUsd,
+			dryRun: command.dryRun,
+			finalize: command.finalize,
+			maxBatches: command.maxBatches,
+		});
+		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
+		writePayload(io.stdout, payload, command.json, renderBackfill);
 		return payload.status.status === "unknown" ? 1 : 0;
 	}
 
