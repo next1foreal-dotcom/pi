@@ -617,6 +617,36 @@ test("long task claims provide a crash-resumable lease", async () => {
 	assert.match(text, /^claim_expires_at: null$/m);
 });
 
+test("long task claims skip active write locks and recover expired ones", async () => {
+	const store = await tempStore();
+	await startLongTask(store, {
+		id: "goal-locked",
+		objective: "Avoid double dispatch",
+		nextContinuation: "Dispatch once.",
+		now: "2026-06-06T10:00:00.000Z",
+	});
+	const lockPath = join(store, "goals", "goal-locked.claim");
+	await writeText(lockPath, "2026-06-06T10:30:00.000Z\n");
+
+	assert.equal(
+		await claimNextLongTask(store, {
+			runner: "runner-a",
+			now: "2026-06-06T10:05:00.000Z",
+		}),
+		undefined,
+	);
+
+	await writeText(lockPath, "2026-06-06T10:01:00.000Z\n");
+	const claimed = await claimNextLongTask(store, {
+		runner: "runner-b",
+		now: "2026-06-06T10:05:00.000Z",
+	});
+
+	assert.equal(claimed?.id, "goal-locked");
+	assert.equal(claimed?.claimedBy, "runner-b");
+	assert.equal(await readText(lockPath), undefined);
+});
+
 test("sync commits and pushes memory changes", async () => {
 	const store = await tempStore();
 	const remote = await mkdtemp(join(tmpdir(), "her-remote-"));

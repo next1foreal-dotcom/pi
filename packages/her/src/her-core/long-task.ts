@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
-import { mkdir, readdir } from "node:fs/promises";
+import { mkdir, readdir, rm } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { StorePaths } from "./paths.ts";
-import { frontmatter, parseFrontmatter, readText, redactSecrets, writeText } from "./store.ts";
+import { frontmatter, parseFrontmatter, readText, redactSecrets, writeNewText, writeText } from "./store.ts";
 
 export const longTaskStatuses = ["active", "blocked", "completed", "cancelled"] as const;
 export type LongTaskStatus = (typeof longTaskStatuses)[number];
@@ -149,19 +149,28 @@ export async function claimNextLongTask(
 		.sort((a, b) => claimSortKey(a).localeCompare(claimSortKey(b)) || a.id.localeCompare(b.id));
 	for (const candidate of candidates) {
 		const path = longTaskPath(paths, candidate.id);
-		const { record, body } = await readLongTaskFile(path);
-		if (record.status !== "active" || !record.nextContinuation || !claimIsAvailable(record, nowDate)) continue;
 		const claimExpiresAt = new Date(nowDate.getTime() + leaseMinutes * 60 * 1000).toISOString();
-		const updated: LongTaskRecord = {
-			...record,
-			claimedAt: now,
-			claimedBy: runner,
-			claimExpiresAt,
-			lastDispatchedAt: now,
-			updated: now,
-		};
-		await writeText(path, renderLongTask(updated, `${body.trimEnd()}\n\n${claimBody(now, runner, claimExpiresAt)}`));
-		return updated;
+		const lockPath = await acquireClaimWriteLock(paths, candidate.id, nowDate, claimExpiresAt);
+		if (!lockPath) continue;
+		try {
+			const { record, body } = await readLongTaskFile(path);
+			if (record.status !== "active" || !record.nextContinuation || !claimIsAvailable(record, nowDate)) continue;
+			const updated: LongTaskRecord = {
+				...record,
+				claimedAt: now,
+				claimedBy: runner,
+				claimExpiresAt,
+				lastDispatchedAt: now,
+				updated: now,
+			};
+			await writeText(
+				path,
+				renderLongTask(updated, `${body.trimEnd()}\n\n${claimBody(now, runner, claimExpiresAt)}`),
+			);
+			return updated;
+		} finally {
+			await rm(lockPath, { force: true });
+		}
 	}
 	return undefined;
 }
@@ -297,6 +306,35 @@ function parseLeaseMinutes(value: number | undefined): number {
 
 function longTaskPath(paths: StorePaths, id: string): string {
 	return join(paths.goals, `${id}.md`);
+}
+
+function claimWriteLockPath(paths: StorePaths, id: string): string {
+	return join(paths.goals, `${id}.claim`);
+}
+
+async function acquireClaimWriteLock(
+	paths: StorePaths,
+	id: string,
+	now: Date,
+	claimExpiresAt: string,
+): Promise<string | undefined> {
+	const path = claimWriteLockPath(paths, id);
+	if (await tryWriteClaimLock(path, claimExpiresAt)) return path;
+	const existing = await readText(path);
+	const expires = new Date(existing?.trim() ?? "");
+	if (!Number.isNaN(expires.getTime()) && expires.getTime() > now.getTime()) return undefined;
+	await rm(path, { force: true });
+	return (await tryWriteClaimLock(path, claimExpiresAt)) ? path : undefined;
+}
+
+async function tryWriteClaimLock(path: string, claimExpiresAt: string): Promise<boolean> {
+	try {
+		await writeNewText(path, `${claimExpiresAt}\n`);
+		return true;
+	} catch (error) {
+		if (error && typeof error === "object" && "code" in error && error.code === "EEXIST") return false;
+		throw error;
+	}
 }
 
 function relativeGoalPath(id: string): string {
