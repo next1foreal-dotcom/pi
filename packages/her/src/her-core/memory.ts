@@ -449,12 +449,16 @@ export class Memory {
 		const evidence = { at, task, diff_summary: diffSummary };
 		let record: ChoiceRuleRecord;
 		if (found) {
-			found.rule = rule;
-			found.weight += weight;
-			found.last_triggered = at;
-			found.status = "active";
-			found.evidence = [...found.evidence, evidence];
-			record = found;
+			record = {
+				...found,
+				rule,
+				weight: found.weight + weight,
+				last_triggered: at,
+				status: "active",
+				evidence: [...found.evidence, evidence],
+			};
+			const index = existing.indexOf(found);
+			existing[index] = record;
 		} else {
 			record = {
 				id: genId(domain, rule),
