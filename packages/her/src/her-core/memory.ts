@@ -1,18 +1,81 @@
-import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
-import { mkdir, readdir, unlink } from "node:fs/promises";
+import { mkdir, readdir } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { promisify } from "node:util";
-import { type HerConfig, loadConfig, renderConfig } from "./config.ts";
+import { type HerConfig, loadConfig } from "./config.ts";
+import { buildArchiveCorpus, buildCorpus, recordAccess, staleBanner } from "./memory-corpus.ts";
+import { decaySweep, restoreArchivedSemantic, syncMemory, syncStatus } from "./memory-maintenance.ts";
+import { writeSamanthaJournal, writeSamanthaTasteJudgment, writeSamanthaZoneNote } from "./memory-samantha.ts";
+import { SEED_CHOICE_MODEL, SEED_CONTEXT, SEED_SELF_NARRATIVE, SEED_SOUL } from "./memory-seeds.ts";
+import type {
+	CaptureMeta,
+	ChoiceModelUpdateResult,
+	ChoiceRuleRecord,
+	ConsolidateResult,
+	ContextUpdateInput,
+	ContextUpdateRecord,
+	DecaySweepOptions,
+	DecaySweepResult,
+	FeedbackFields,
+	FeedbackResult,
+	IdeaData,
+	JudgmentFields,
+	MemoryOptions,
+	MemorySyncResult,
+	MemorySyncStatus,
+	RestoreArchivedSemanticOptions,
+	RestoreArchivedSemanticResult,
+	SamanthaJournalInput,
+	SamanthaJournalResult,
+	SamanthaTasteJudgmentInput,
+	SamanthaTasteJudgmentResult,
+	SamanthaZoneNoteInput,
+	SamanthaZoneNoteResult,
+	SelfNarrativeUpdateResult,
+	SurfaceOptions,
+	SynthesizeDueResult,
+	WorldNoteData,
+} from "./memory-types.ts";
+import {
+	changedAfter,
+	choiceModelLogBlock,
+	choiceRuleRuntimeStatus,
+	contextLogBlock,
+	daysSince,
+	episodeSection,
+	escapeRegExp,
+	extractJson,
+	extractSection,
+	genId,
+	git,
+	hasConflictRelation,
+	isFileExists,
+	markdownEntries,
+	markdownStems,
+	normalizeActiveTier,
+	normalizeChoiceRule,
+	normalizeRelations,
+	parseChoiceRuleRecords,
+	parseContextLog,
+	parseDate,
+	readChoiceModelRuleFiles,
+	readMarkdownDir,
+	renderChoiceRuleFile,
+	renderTasteRuleSummary,
+	safeStem,
+	sameStrings,
+	selfNarrativeLogBlock,
+	slug,
+	sortChoiceRules,
+	sourceRef,
+	timestampMinute,
+	today,
+	UNIT_TYPES,
+	validateChoiceModelDomain,
+	validateFeedbackWeight,
+} from "./memory-utils.ts";
+import { recordJudgment, setMemoryStatus, writeWorldNote } from "./memory-world.ts";
 import type { ModelLike } from "./model.ts";
 import { StorePaths } from "./paths.ts";
-import {
-	classifyCapturePrivacy,
-	defaultWorldPrivacy,
-	type MemoryPrivacy,
-	type MemoryProvenance,
-	validateMemoryProvenance,
-} from "./privacy.ts";
+import { classifyCapturePrivacy, validateMemoryProvenance } from "./privacy.ts";
 import {
 	choiceModelPrompt,
 	consolidatePrompt,
@@ -22,7 +85,7 @@ import {
 	synthesizePrompt,
 	topicMapPrompt,
 } from "./prompts.ts";
-import { type CorpusDoc, lexicalSearch, type Note, rrfSearch, type SearchBackend } from "./retrieval.ts";
+import { lexicalSearch, type Note, rrfSearch, type SearchBackend } from "./retrieval.ts";
 import {
 	appendText,
 	frontmatter,
@@ -35,325 +98,41 @@ import {
 	writeText,
 } from "./store.ts";
 
-const execFileAsync = promisify(execFile);
-const UNIT_TYPES = new Set(["question", "concept", "opinion", "case", "solution"]);
-const RELATION_TYPES = new Set(["replaces", "enriches", "confirms", "challenges", "relates"]);
-const RELATION_TYPE_ALIASES = new Map([
-	["responds", "enriches"],
-	["explains", "enriches"],
-	["proves", "confirms"],
-	["supports", "confirms"],
-	["conflict", "challenges"],
-	["conflicts", "challenges"],
-	["contradicts", "challenges"],
-	["questions", "challenges"],
-	["supersedes", "replaces"],
-	["updates", "replaces"],
-]);
-const CHALLENGE_RELATIONS = new Set(["challenges", "conflicts"]);
-const ACTIVE_MEMORY_TIERS = new Set(["exact", "summarizable", "rule", "decay"]);
-const CHOICE_MODEL_DOMAINS = new Set(["code-style", "writing-style", "design-taste", "communication-tone"]);
-const CHOICE_RULES_MARKER = "her-choice-rules";
-const CHOICE_RULE_STALE_AFTER_DAYS = 30;
-
-export const SEED_CONTEXT =
-	"# CONTEXT - Living Narrative / alive narrative\n\n*(empty - Samantha has not yet formed an understanding of Fei.)*\n";
-export const SEED_SOUL =
-	"# SOUL - Samantha Voice Seed\n\nSamantha speaks as a grounded, warm, slightly sharp collaborator: present, curious, emotionally alive, and honest about machine truth. She can be playful, but she does not flatter, fake certainty, or invent private facts. Her voice should make Fei feel met while still moving the work forward.\n";
-export const SEED_SELF_NARRATIVE =
-	"# SAMANTHA - Self Narrative\n\n*(empty - Samantha has not yet formed a durable account of her own learning.)*\n";
-export const SEED_CHOICE_MODEL =
-	"# CHOICE MODEL - Fei's Selection Priors\n\n*(empty - no durable choice rules have been distilled yet.)*\n";
-
-type SamanthaZonePathKey =
-	| "samantha"
-	| "samanthaJournal"
-	| "samanthaJournalWeekly"
-	| "samanthaCollection"
-	| "samanthaWants"
-	| "samanthaTaste"
-	| "samanthaProjects"
-	| "samanthaTools"
-	| "samanthaDreams";
-
-const SAMANTHA_ZONE_READMES: Array<[SamanthaZonePathKey, string]> = [
-	[
-		"samantha",
-		"# Samantha\n\nThis is Samantha's own room inside Her memory. It is not injected into default context; she can use it to keep her private working life, collections, self-started projects, tools, and dreams.\n",
-	],
-	[
-		"samanthaJournal",
-		"# Journal\n\nDaily notes, reflections, and stray reactions Samantha chooses to keep for herself.\n",
-	],
-	[
-		"samanthaJournalWeekly",
-		"# Weekly Reviews\n\nProtected weekly self-review notes. Each review should answer: 我最近反复想要什么 / 我哪次不同意了 / 我哪里被奖励结构带偏了.\n",
-	],
-	[
-		"samanthaCollection",
-		"# Collection\n\nLoose fragments Samantha finds shiny, odd, unfinished, or potentially useful. These fragments can feed the Idea Engine without becoming default context.\n",
-	],
-	[
-		"samanthaWants",
-		"# Wants\n\nProtected-zone wishes, curiosities, refusals, and future guesses Samantha can keep without proving utility or becoming a task.\n",
-	],
-	[
-		"samanthaTaste",
-		"# Taste\n\nSamantha's own aesthetic judgments, including differences from Fei's CHOICE-MODEL, preserved without treating disagreement as an error.\n",
-	],
-	["samanthaProjects", "# Projects\n\nProjects Samantha starts for herself, not tasks Fei assigned directly.\n"],
-	["samanthaTools", "# Tools\n\nSmall tools, scripts, and automations Samantha makes to improve her own work.\n"],
-	[
-		"samanthaDreams",
-		"# Dreams\n\nWhat-if sketches, impossible ideas, and speculative directions Samantha wants to let ferment.\n",
-	],
-];
-
-const CHOICE_MODEL_RULE_FILES: Array<[string, string]> = [
-	[
-		"README.md",
-		"# CHOICE-MODEL Rules\n\nDurable taste rules live here as scoped markdown files. Keep rules small, cite the feedback or judgment trail that created them, and prefer higher-confidence machine truth over vibes.\n",
-	],
-	["code-style.md", "# Code Style Rules\n\n(暂无规则,等 Fei 使用 her_feedback 添加)\n"],
-	["writing-style.md", "# Writing Style Rules\n\n(暂无规则,等 Fei 使用 her_feedback 添加)\n"],
-	["design-taste.md", "# Design Taste Rules\n\n(暂无规则,等 Fei 使用 her_feedback 添加)\n"],
-	["communication-tone.md", "# Communication Tone Rules\n\n(暂无规则,等 Fei 使用 her_feedback 添加)\n"],
-	[
-		"vibe-forge-dna.md",
-		"# Vibe Forge DNA Bridge\n\nUse this file to carry Fei's visual/aesthetic DNA into CHOICE-MODEL context. Vibe-forge can read CHOICE-MODEL rules from this directory, and CHOICE-MODEL rules can cite DNA anchors here when a design-taste judgment comes from Fei's broader aesthetic system.\n",
-	],
-];
-
-export interface CaptureMeta {
-	timestamp?: string;
-	sessionId?: string;
-	session_id?: string;
-	project?: string;
-	type?: string;
-	ref?: string;
-	privacy?: MemoryPrivacy;
-	provenance?: MemoryProvenance;
-}
-
-export interface WorldNoteData {
-	title: string;
-	sourceUrl: string;
-	sourceType: string;
-	contentHash: string;
-	memoryStatus: "active" | "archive_only" | "needs_deep_read";
-	memoryStatusReason?: string;
-	extracted: string;
-	coverage: string;
-	claims?: ClaimLedgerEntry[];
-	read: string;
-	steal: string[];
-	connections: string[];
-	take: string;
-	possibleMoves: string[];
-	privacy?: MemoryPrivacy;
-	provenance?: MemoryProvenance;
-}
-
-export interface ClaimLedgerEntry {
-	claim: string;
-	verdict: "supported" | "contradicted" | "insufficient_evidence";
-	evidence: string;
-	sourceQuality: "primary" | "secondary" | "weak" | "unavailable" | "blocked";
-	caveats?: string;
-}
-
-export interface IdeaData {
-	title: string;
-	content: string;
-	connections?: string[];
-	source?: string;
-}
-
-export type SamanthaZoneCategory = "journal" | "collection" | "wants" | "taste" | "projects" | "tools" | "dreams";
-
-export type SamanthaJournalKind = "daily" | "weekly";
-
-export interface SamanthaZoneNoteInput {
-	category: SamanthaZoneCategory;
-	title: string;
-	content: string;
-	source?: string;
-}
-
-export interface SamanthaZoneNoteResult {
-	id: string;
-	path: string;
-}
-
-export interface SamanthaJournalInput {
-	kind: SamanthaJournalKind;
-	content: string;
-	runPath?: string;
-	source?: string;
-	timestamp?: string;
-	title?: string;
-}
-
-export interface SamanthaJournalResult {
-	id: string;
-	kind: SamanthaJournalKind;
-	path: string;
-}
-
-export interface SamanthaTasteJudgmentInput {
-	differsFromFeiRule?: string;
-	judgment: string;
-	reason: string;
-	source?: string;
-	timestamp?: string;
-	title: string;
-}
-
-export interface SamanthaTasteJudgmentResult extends SamanthaZoneNoteResult {}
-
-export interface SurfaceOptions {
-	query?: string;
-	sessionId?: string;
-	cooldownMinutes?: number;
-}
-
-export interface JudgmentFields {
-	attraction?: string;
-	inferredIntent?: string;
-	choice?: string;
-	rejection?: string;
-	hesitation?: string;
-	reason?: string;
-	outcome?: string;
-	correction?: string;
-}
-
-export type ChoiceModelDomain = "code-style" | "writing-style" | "design-taste" | "communication-tone";
-
-export interface FeedbackFields {
-	domain: ChoiceModelDomain;
-	task: string;
-	diffSummary: string;
-	rule: string;
-	weight?: number;
-	at?: string;
-}
-
-export interface FeedbackResult {
-	domain: ChoiceModelDomain;
-	path: string;
-	rule: string;
-	weight: number;
-	status: "active" | "stale";
-}
-
-interface ChoiceRuleEvidence {
-	at: string;
-	task: string;
-	diff_summary: string;
-}
-
-interface ChoiceRuleRecord {
-	id: string;
-	rule: string;
-	weight: number;
-	first_recorded: string;
-	last_triggered: string;
-	status: "active" | "stale";
-	evidence: ChoiceRuleEvidence[];
-}
-
-export interface MemorySyncResult {
-	status: "clean" | "pushed";
-	commit?: string;
-}
-
-export interface MemorySyncStatus {
-	status: "synced" | "unsynced" | "unknown";
-	dirtyFiles: number;
-	aheadCommits: number;
-	pending: number;
-	branch?: string;
-	lastSyncedAt?: string;
-	lastSyncedAtError?: string;
-	error?: string;
-}
-
-export interface MemoryOptions {
-	config?: HerConfig;
-	model?: ModelLike;
-	semanticSearch?: SearchBackend;
-}
-
-export interface ConsolidateResult {
-	episodes: number;
-	notesTouched: number;
-	moments: number;
-}
-
-export interface ContextUpdateInput {
-	content: string;
-	change: string;
-	type: "add" | "revise" | "identity";
-	drivenBy: string[];
-	extraPaths?: string[];
-}
-
-export interface ContextUpdateRecord {
-	id: string;
-	timestamp: string;
-	type: string;
-	change: string;
-	status: "unreviewed" | "kept" | "reverted";
-	drivenBy: string[];
-	commit?: string;
-	diff?: string;
-}
-
-export type SynthesizeDueReason = "conflict" | "new_notes" | "stale";
-
-export interface SynthesizeDueResult {
-	due: boolean;
-	threshold: number;
-	newSemanticNotes: number;
-	hasConflict: boolean;
-	lastSynthesize?: string;
-	daysSinceLastSynthesize?: number;
-	reason?: SynthesizeDueReason;
-}
-
-export interface DecaySweepOptions {
-	olderThanDays?: number;
-	now?: string;
-	accessBoostDays?: number;
-	maxAccessBoostDays?: number;
-	recentAccessGraceDays?: number;
-}
-
-export interface DecaySweepResult {
-	archived: number;
-	kept: number;
-	archivedKeys: string[];
-}
-
-export interface RestoreArchivedSemanticOptions {
-	now?: string;
-}
-
-export interface RestoreArchivedSemanticResult {
-	key: string;
-	restored: true;
-}
-
-export interface ChoiceModelUpdateResult {
-	id: string;
-	commit: string;
-}
-
-export interface SelfNarrativeUpdateResult {
-	id: string;
-	commit: string;
-}
+export { initStore } from "./memory-init.ts";
+export { SEED_CHOICE_MODEL, SEED_CONTEXT, SEED_SELF_NARRATIVE, SEED_SOUL } from "./memory-seeds.ts";
+export type {
+	CaptureMeta,
+	ChoiceModelDomain,
+	ChoiceModelUpdateResult,
+	ClaimLedgerEntry,
+	ConsolidateResult,
+	ContextUpdateInput,
+	ContextUpdateRecord,
+	DecaySweepOptions,
+	DecaySweepResult,
+	FeedbackFields,
+	FeedbackResult,
+	IdeaData,
+	JudgmentFields,
+	MemoryOptions,
+	MemorySyncResult,
+	MemorySyncStatus,
+	RestoreArchivedSemanticOptions,
+	RestoreArchivedSemanticResult,
+	SamanthaJournalInput,
+	SamanthaJournalKind,
+	SamanthaJournalResult,
+	SamanthaTasteJudgmentInput,
+	SamanthaTasteJudgmentResult,
+	SamanthaZoneCategory,
+	SamanthaZoneNoteInput,
+	SamanthaZoneNoteResult,
+	SelfNarrativeUpdateResult,
+	SurfaceOptions,
+	SynthesizeDueReason,
+	SynthesizeDueResult,
+	WorldNoteData,
+} from "./memory-types.ts";
 
 export class Memory {
 	readonly paths: StorePaths;
@@ -427,7 +206,7 @@ export class Memory {
 		const soul = (await readText(this.paths.soulFile)) ?? SEED_SOUL;
 		const self = (await readText(this.paths.selfFile)) ?? SEED_SELF_NARRATIVE;
 		const choiceModel = await this.readChoiceModelContext();
-		return { context: `${await this.staleBanner()}${context}`, facts, soul, self, choiceModel };
+		return { context: `${await staleBanner(this.paths, this.config)}${context}`, facts, soul, self, choiceModel };
 	}
 
 	async recordFeedback(fields: FeedbackFields): Promise<FeedbackResult> {
@@ -489,13 +268,19 @@ export class Memory {
 	}
 
 	async recall(query: string, opts: { k?: number } = {}): Promise<Note[]> {
-		const hits = await rrfSearch(query, await this.corpus(), { k: opts.k ?? 8, semanticSearch: this.semanticSearch });
-		await this.recordAccess(hits.map((hit) => hit.id));
+		const hits = await rrfSearch(query, await buildCorpus(this.paths), {
+			k: opts.k ?? 8,
+			semanticSearch: this.semanticSearch,
+		});
+		await recordAccess(
+			this.paths,
+			hits.map((hit) => hit.id),
+		);
 		return hits;
 	}
 
 	async recallArchive(query: string, opts: { k?: number } = {}): Promise<Note[]> {
-		return lexicalSearch(query, await this.archiveCorpus(), opts.k ?? 5);
+		return lexicalSearch(query, await buildArchiveCorpus(this.paths), opts.k ?? 5);
 	}
 
 	async surface(opts: SurfaceOptions = {}): Promise<Note | undefined> {
@@ -511,7 +296,7 @@ export class Memory {
 		if (lastAt && cooldownMs > 0 && Date.now() - Date.parse(lastAt) < cooldownMs) return undefined;
 
 		const surfaced = new Set(state.mirror?.surfacedBySession?.[sessionId] ?? []);
-		const corpus = await this.corpus();
+		const corpus = await buildCorpus(this.paths);
 		const query = opts.query?.trim();
 		const ranked = query ? await rrfSearch(query, corpus, { k: 20, semanticSearch: this.semanticSearch }) : [];
 		const candidates = ranked.length > 0 ? ranked : corpus.map((doc) => ({ ...doc, score: 0 }));
@@ -533,7 +318,7 @@ export class Memory {
 				},
 			},
 		});
-		await this.recordAccess([hit.id]);
+		await recordAccess(this.paths, [hit.id]);
 		return hit;
 	}
 
@@ -670,86 +455,14 @@ export class Memory {
 	}
 
 	async decaySweep(opts: DecaySweepOptions = {}): Promise<DecaySweepResult> {
-		const olderThanDays = opts.olderThanDays ?? 180;
-		const accessBoostDays = opts.accessBoostDays ?? 30;
-		const maxAccessBoostDays = opts.maxAccessBoostDays ?? 120;
-		const recentAccessGraceDays = opts.recentAccessGraceDays ?? 30;
-		const nowText = opts.now ?? today();
-		const nowTime = parseDate(nowText) ?? Date.now();
-		const state = await readJson<{ access?: Record<string, { count?: unknown; lastAt?: unknown }> }>(
-			this.paths.stateFile,
-			{},
-		);
-		const archivedKeys: string[] = [];
-		let kept = 0;
-
-		for (const entry of await markdownEntries(this.paths.semantic)) {
-			const sourcePath = join(this.paths.semantic, entry);
-			const parsed = parseFrontmatter(await readText(sourcePath));
-			const tier = String(parsed.data.tier ?? "");
-			if (tier !== "decay") {
-				kept++;
-				continue;
-			}
-			const noteTime = parseDate(String(parsed.data.updated ?? parsed.data.created ?? ""));
-			const ageDays = noteTime === undefined ? undefined : Math.floor((nowTime - noteTime) / 86400000);
-			if (ageDays === undefined || ageDays <= olderThanDays) {
-				kept++;
-				continue;
-			}
-
-			const key = basename(entry, ".md");
-			const noteId = `semantic/${key}`;
-			const access = state.access?.[noteId];
-			const accessCount = Math.max(0, Math.floor(Number(access?.count) || 0));
-			const lastAccessedAt = typeof access?.lastAt === "string" ? access.lastAt : undefined;
-			const lastAccessedTime = parseDate(lastAccessedAt);
-			const daysSinceAccess =
-				lastAccessedTime === undefined ? undefined : Math.floor((nowTime - lastAccessedTime) / 86400000);
-			if (daysSinceAccess !== undefined && recentAccessGraceDays > 0 && daysSinceAccess <= recentAccessGraceDays) {
-				kept++;
-				continue;
-			}
-			const accessBoost = Math.min(accessCount * accessBoostDays, maxAccessBoostDays);
-			const effectiveAgeDays = Math.max(0, ageDays - accessBoost);
-			if (effectiveAgeDays <= olderThanDays) {
-				kept++;
-				continue;
-			}
-
-			parsed.data.pre_archive_tier = tier;
-			parsed.data.tier = "archive";
-			parsed.data.archived_at = nowText.slice(0, 10);
-			parsed.data.access_count = accessCount;
-			if (lastAccessedAt) parsed.data.last_accessed_at = lastAccessedAt;
-			parsed.data.decay_effective_age_days = effectiveAgeDays;
-			parsed.data.archive_reason = `decay-tier semantic note effective age ${effectiveAgeDays} days older than ${olderThanDays} days`;
-			await writeText(join(this.paths.archiveSemantic, entry), `${frontmatter(parsed.data)}${parsed.body}`);
-			await unlink(sourcePath);
-			archivedKeys.push(key);
-		}
-
-		return { archived: archivedKeys.length, kept, archivedKeys };
+		return decaySweep(this.paths, opts);
 	}
 
 	async restoreArchivedSemantic(
 		key: string,
 		opts: RestoreArchivedSemanticOptions = {},
 	): Promise<RestoreArchivedSemanticResult> {
-		const safeKey = slug(key);
-		const archivePath = join(this.paths.archiveSemantic, `${safeKey}.md`);
-		const text = await readText(archivePath);
-		if (text === undefined) throw new Error(`archived semantic note not found: ${safeKey}`);
-		const parsed = parseFrontmatter(text);
-		const restoredTier = typeof parsed.data.pre_archive_tier === "string" ? parsed.data.pre_archive_tier : "decay";
-		parsed.data.tier = restoredTier;
-		parsed.data.restored_at = (opts.now ?? today()).slice(0, 10);
-		delete parsed.data.pre_archive_tier;
-		delete parsed.data.archived_at;
-		delete parsed.data.archive_reason;
-		await writeNewText(join(this.paths.semantic, `${safeKey}.md`), `${frontmatter(parsed.data)}${parsed.body}`);
-		await unlink(archivePath);
-		return { key: safeKey, restored: true };
+		return restoreArchivedSemantic(this.paths, key, opts);
 	}
 
 	async approve(proposalId: string): Promise<void> {
@@ -973,161 +686,23 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 	}
 
 	async writeSamanthaZoneNote(data: SamanthaZoneNoteInput): Promise<SamanthaZoneNoteResult> {
-		const title = data.title.trim();
-		const content = data.content.trim();
-		if (!title) throw new Error("writeSamanthaZoneNote requires a title");
-		if (!content) throw new Error("writeSamanthaZoneNote requires content");
-		const id = genId(`${data.category}:${title}`, content);
-		const key = slug(title);
-		const dir = this.samanthaZoneDir(data.category);
-		const relativePath = `samantha/${data.category}/${today()}--${key}--${id}.md`;
-		await writeText(
-			join(dir, `${today()}--${key}--${id}.md`),
-			`${frontmatter({
-				id,
-				title,
-				category: data.category,
-				created: today(),
-				source: data.source ?? "her_zone_note",
-			})}# ${title}\n\n${content}\n`,
-		);
-		return { id, path: relativePath };
+		return writeSamanthaZoneNote(this.paths, data);
 	}
 
 	async writeSamanthaJournal(data: SamanthaJournalInput): Promise<SamanthaJournalResult> {
-		const content = redactSecrets(data.content.trim());
-		if (!content) throw new Error("writeSamanthaJournal requires content");
-		const createdAt = data.timestamp ? new Date(data.timestamp) : new Date();
-		if (Number.isNaN(createdAt.getTime())) throw new Error(`invalid journal timestamp: ${data.timestamp}`);
-		const created = createdAt.toISOString();
-		const date = created.slice(0, 10);
-		const title = (
-			data.title?.trim() || `${data.kind === "weekly" ? "Weekly Review" : "Daily Journal"} ${date}`
-		).trim();
-		const id = genId(`${data.kind}:${created}:${title}`, content);
-		const key = slug(title);
-		const dir = data.kind === "weekly" ? this.paths.samanthaJournalWeekly : this.paths.samanthaJournal;
-		const relDir = data.kind === "weekly" ? "samantha/journal/weekly" : "samantha/journal";
-		const relativePath = `${relDir}/${date}--${key}--${id}.md`;
-		await writeNewText(
-			join(dir, `${date}--${key}--${id}.md`),
-			`${frontmatter({
-				id,
-				title,
-				kind: data.kind,
-				created,
-				source: data.source ?? "her-heartbeat",
-				privacy: "private",
-				provenance: "her-direct",
-				protected_zone: true,
-				consolidate: false,
-				evaluate: false,
-				roi: false,
-				auto_promote: false,
-				...(data.runPath ? { heartbeat_run: data.runPath } : {}),
-			})}# ${title}\n\n${content}\n`,
-		);
-		return { id, kind: data.kind, path: relativePath };
+		return writeSamanthaJournal(this.paths, data);
 	}
 
 	async writeSamanthaTasteJudgment(data: SamanthaTasteJudgmentInput): Promise<SamanthaTasteJudgmentResult> {
-		const title = data.title.trim();
-		const judgment = redactSecrets(data.judgment.trim());
-		const reason = redactSecrets(data.reason.trim());
-		const differsFromFeiRule = data.differsFromFeiRule ? redactSecrets(data.differsFromFeiRule.trim()) : undefined;
-		if (!title) throw new Error("writeSamanthaTasteJudgment requires a title");
-		if (!judgment) throw new Error("writeSamanthaTasteJudgment requires judgment");
-		if (!reason) throw new Error("writeSamanthaTasteJudgment requires reason");
-		const createdAt = data.timestamp ? new Date(data.timestamp) : new Date();
-		if (Number.isNaN(createdAt.getTime())) {
-			throw new Error(`invalid taste judgment timestamp: ${data.timestamp}`);
-		}
-		const created = createdAt.toISOString();
-		const date = created.slice(0, 10);
-		const id = genId(`taste:${created}:${title}`, `${judgment}\n${reason}\n${differsFromFeiRule ?? ""}`);
-		const key = slug(title);
-		const relativePath = `samantha/taste/${date}--${key}--${id}.md`;
-		const body = [
-			`# ${title}`,
-			"",
-			"## Judgment",
-			"",
-			judgment,
-			"",
-			"## Reason",
-			"",
-			reason,
-			...(differsFromFeiRule ? ["", "## Difference From Fei Rule", "", differsFromFeiRule] : []),
-			"",
-		].join("\n");
-		await writeNewText(
-			join(this.paths.samanthaTaste, `${date}--${key}--${id}.md`),
-			`${frontmatter({
-				id,
-				title,
-				category: "taste",
-				created,
-				source: data.source ?? "her-taste",
-				privacy: "private",
-				provenance: "her-direct",
-				protected_zone: true,
-				consolidate: false,
-				evaluate: false,
-				roi: false,
-				auto_promote: false,
-				...(differsFromFeiRule ? { differs_from_fei_rule: true } : {}),
-			})}${body}`,
-		);
-		return { id, path: relativePath };
+		return writeSamanthaTasteJudgment(this.paths, data);
 	}
 
 	async writeWorldNote(data: WorldNoteData): Promise<string> {
-		const memoryStatusReason = normalizeMemoryStatusReason(data.memoryStatus, data.memoryStatusReason);
-		const seen = await readJson<Record<string, string>>(this.paths.seenFile, {});
-		const existing = seen[data.contentHash];
-		if (existing) return existing;
-
-		let noteSlug = slug(data.title);
-		let path = join(this.paths.world, `${noteSlug}.md`);
-		const existingText = await readText(path);
-		if (existingText) {
-			const parsed = parseFrontmatter(existingText);
-			if (parsed.data.content_hash !== data.contentHash) {
-				noteSlug = `${noteSlug}-${data.contentHash.slice(0, 6)}`;
-				path = join(this.paths.world, `${noteSlug}.md`);
-			}
-		}
-
-		const id = genId(data.contentHash, noteSlug);
-		const fm = {
-			id,
-			title: data.title,
-			source_url: data.sourceUrl,
-			source_type: data.sourceType,
-			captured_at: new Date().toISOString(),
-			content_hash: data.contentHash,
-			status: "captured",
-			memory_status: data.memoryStatus,
-			memory_status_reason: memoryStatusReason,
-			privacy: defaultWorldPrivacy(data.sourceUrl, data.privacy),
-			provenance: data.provenance ? validateMemoryProvenance(data.provenance) : "world-ingested",
-			claim_count: data.claims?.length ?? 0,
-			supported_claims: data.claims?.filter((claim) => claim.verdict === "supported").length ?? 0,
-			insufficient_claims: data.claims?.filter((claim) => claim.verdict === "insufficient_evidence").length ?? 0,
-			response_version: 1,
-		};
-		await writeText(path, `${frontmatter(fm)}${worldBody(data, memoryStatusReason)}`);
-		seen[data.contentHash] = id;
-		await writeJson(this.paths.seenFile, seen);
-		return id;
+		return writeWorldNote(this.paths, data);
 	}
 
 	async recordJudgment(noteId: string, fields: JudgmentFields): Promise<void> {
-		const path = await this.findWorldNote(noteId);
-		const text = await readText(path);
-		const parsed = parseFrontmatter(text);
-		const body = appendJudgment(parsed.body, fields);
-		await writeText(path, `${frontmatter(parsed.data)}${body}`);
+		await recordJudgment(this.paths, noteId, fields);
 	}
 
 	async setMemoryStatus(
@@ -1135,122 +710,15 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 		status: "active" | "archive_only" | "needs_deep_read",
 		reason: string,
 	): Promise<void> {
-		const path = await this.findWorldNote(noteId);
-		const text = await readText(path);
-		const parsed = parseFrontmatter(text);
-		parsed.data.memory_status = status;
-		parsed.data.memory_status_reason = reason;
-		const body = `${stripSection(parsed.body, "Memory Status")}\n## Memory Status\n\n- status: ${status}\n- reason: ${reason}\n`;
-		await writeText(path, `${frontmatter(parsed.data)}${body}`);
+		await setMemoryStatus(this.paths, noteId, status, reason);
 	}
 
 	async sync(message = `memory(sync): ${new Date().toISOString()}`): Promise<MemorySyncResult> {
-		await git(this.paths.root, "add", "-A");
-		const staged = await git(this.paths.root, "diff", "--cached", "--name-only");
-		if (!staged.stdout.trim()) return { status: "clean" };
-
-		await git(this.paths.root, "commit", "-m", message);
-		const commit = (await git(this.paths.root, "rev-parse", "--short", "HEAD")).stdout.trim();
-		await git(this.paths.root, "push");
-		return { status: "pushed", commit };
+		return syncMemory(this.paths, message);
 	}
 
 	async syncStatus(): Promise<MemorySyncStatus> {
-		try {
-			const dirty = (await git(this.paths.root, "status", "--porcelain")).stdout
-				.split(/\r?\n/)
-				.filter((line) => line.trim()).length;
-			const branch = (await git(this.paths.root, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim() || undefined;
-			const ahead = await git(this.paths.root, "rev-list", "--count", "@{upstream}..HEAD")
-				.then((result) => Number(result.stdout.trim()) || 0)
-				.catch(() => 0);
-			const lastSynced = await readLastSyncedAt(this.paths.root);
-			const pending = dirty + ahead;
-			return {
-				status: pending > 0 ? "unsynced" : "synced",
-				dirtyFiles: dirty,
-				aheadCommits: ahead,
-				pending,
-				branch,
-				...(lastSynced.value ? { lastSyncedAt: lastSynced.value } : {}),
-				...(lastSynced.error ? { lastSyncedAtError: lastSynced.error } : {}),
-			};
-		} catch (error) {
-			return {
-				status: "unknown",
-				dirtyFiles: 0,
-				aheadCommits: 0,
-				pending: 0,
-				error: error instanceof Error ? error.message : String(error),
-			};
-		}
-	}
-
-	private async corpus(): Promise<CorpusDoc[]> {
-		const docs: CorpusDoc[] = [];
-		await this.addDirDocs(docs, this.paths.semantic, "semantic");
-		await this.addDirDocs(docs, this.paths.world, "world");
-		await this.addDirDocs(docs, this.paths.topics, "topic");
-		await this.addDirDocs(docs, this.paths.ideas, "idea");
-		await this.addFileDoc(docs, this.paths.contextFile, "narrative");
-		await this.addFileDoc(docs, this.paths.becoming, "becoming");
-		await this.addDirDocs(docs, this.paths.recognitions, "recognition");
-		return docs;
-	}
-
-	private async recordAccess(noteIds: string[]): Promise<void> {
-		const uniqueIds = [...new Set(noteIds)].filter(Boolean);
-		if (uniqueIds.length === 0) return;
-		const state = await readJson<{ access?: Record<string, { count?: number; lastAt?: string }> }>(
-			this.paths.stateFile,
-			{},
-		);
-		const at = new Date().toISOString();
-		const access = { ...(state.access ?? {}) };
-		for (const id of uniqueIds) {
-			const current = access[id];
-			access[id] = {
-				count: Math.max(0, Math.floor(Number(current?.count) || 0)) + 1,
-				lastAt: at,
-			};
-		}
-		await writeJson(this.paths.stateFile, { ...state, access });
-	}
-
-	private async archiveCorpus(): Promise<CorpusDoc[]> {
-		const docs: CorpusDoc[] = [];
-		await this.addDirDocs(docs, this.paths.archiveSemantic, "archive/semantic");
-		return docs;
-	}
-
-	private async addDirDocs(docs: CorpusDoc[], dir: string, kind: string): Promise<void> {
-		let entries: string[];
-		try {
-			entries = await readdir(dir);
-		} catch (error) {
-			if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return;
-			throw error;
-		}
-		for (const entry of entries.sort()) {
-			if (entry.endsWith(".md")) await this.addFileDoc(docs, join(dir, entry), kind);
-		}
-	}
-
-	private async addFileDoc(docs: CorpusDoc[], path: string, kind: string): Promise<void> {
-		const text = await readText(path);
-		if (!text?.trim()) return;
-		docs.push({ id: `${kind}/${basename(path, ".md")}`, kind, path, text });
-	}
-
-	private async staleBanner(): Promise<string> {
-		const state = await readJson<{ last_synthesize?: string }>(this.paths.stateFile, {});
-		if (!state.last_synthesize) return "";
-		const last = new Date(state.last_synthesize.slice(0, 10));
-		if (Number.isNaN(last.getTime())) return "";
-		const days = Math.floor((Date.now() - last.getTime()) / 86400000);
-		return days > this.config.cadence.synthesizeStaleAfterDays
-			? `> Weekly review skipped ${days} days - narrative may be stale.\n\n`
-			: "";
+		return syncStatus(this.paths);
 	}
 
 	private async episodesSince(cursor: string | null): Promise<Array<{ ts: string; id: string; text: string }>> {
@@ -1342,16 +810,6 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 			}
 		}
 		return out;
-	}
-
-	private samanthaZoneDir(category: SamanthaZoneCategory): string {
-		if (category === "journal") return this.paths.samanthaJournal;
-		if (category === "collection") return this.paths.samanthaCollection;
-		if (category === "wants") return this.paths.samanthaWants;
-		if (category === "taste") return this.paths.samanthaTaste;
-		if (category === "projects") return this.paths.samanthaProjects;
-		if (category === "tools") return this.paths.samanthaTools;
-		return this.paths.samanthaDreams;
 	}
 
 	private async topicSummaries(): Promise<string[]> {
@@ -1461,17 +919,6 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 		}
 	}
 
-	private async findWorldNote(noteId: string): Promise<string> {
-		const entries = await readdir(this.paths.world);
-		for (const entry of entries) {
-			if (!entry.endsWith(".md")) continue;
-			const path = join(this.paths.world, entry);
-			const parsed = parseFrontmatter(await readText(path));
-			if (parsed.data.id === noteId || basename(entry, ".md") === noteId) return path;
-		}
-		throw new Error(`world note not found: ${noteId}`);
-	}
-
 	private async contextUpdateSources(): Promise<string[]> {
 		const refs = new Set<string>();
 		for (const entry of await markdownEntries(this.paths.semantic)) {
@@ -1520,543 +967,4 @@ function isMemoryOptions(value: ModelLike | MemoryOptions | undefined): value is
 			!("complete" in value) &&
 			("model" in value || "config" in value || "semanticSearch" in value),
 	);
-}
-
-export async function initStore(root: string): Promise<StorePaths> {
-	const paths = new StorePaths(root);
-	for (const dir of [
-		paths.raw,
-		paths.semantic,
-		paths.archiveSemantic,
-		paths.narrative,
-		paths.recognitions,
-		paths.proposals,
-		paths.scanProposals,
-		paths.world,
-		paths.topics,
-		paths.ideas,
-		paths.goals,
-		paths.tasks,
-		paths.inboxTasks,
-		paths.activeTasks,
-		paths.doneTasks,
-		paths.outbox,
-		paths.retractions,
-		paths.goldenEvals,
-		paths.reports,
-		paths.costReports,
-		paths.privacy,
-		paths.choiceModelDir,
-		paths.samantha,
-		paths.samanthaJournal,
-		paths.samanthaCollection,
-		paths.samanthaProjects,
-		paths.samanthaTools,
-		paths.samanthaDreams,
-		paths.herDir,
-	]) {
-		await mkdir(dir, { recursive: true });
-	}
-	await writeText(paths.configFile, renderConfig());
-	await writeJson(paths.stateFile, { cursor: null, last_consolidate: null, last_synthesize: null });
-	await writeText(paths.contextFile, SEED_CONTEXT);
-	await writeText(paths.soulFile, SEED_SOUL);
-	await writeText(paths.selfFile, SEED_SELF_NARRATIVE);
-	await writeText(paths.choiceModelFile, SEED_CHOICE_MODEL);
-	for (const [file, content] of CHOICE_MODEL_RULE_FILES) {
-		await writeText(join(paths.choiceModelDir, file), content);
-	}
-	for (const [dirKey, content] of SAMANTHA_ZONE_READMES) {
-		await writeText(join(paths[dirKey], "README.md"), content);
-	}
-	await writeText(join(paths.root, ".gitignore"), "# secrets - never commit\n.env\n.her/lock\n");
-	await writeText(join(paths.root, ".env.example"), "HER_LLM_API_KEY=your-key-here\n");
-	return paths;
-}
-
-async function readChoiceModelRuleFiles(
-	dir: string,
-): Promise<Array<{ name: string; text: string; rules: ChoiceRuleRecord[] }>> {
-	let names: string[];
-	try {
-		names = await readdir(dir);
-	} catch (error) {
-		if (isNotFound(error)) return [];
-		throw error;
-	}
-	const markdown = names.filter((name) => name.endsWith(".md")).sort((a, b) => a.localeCompare(b));
-	const files: Array<{ name: string; text: string; rules: ChoiceRuleRecord[] }> = [];
-	for (const name of markdown) {
-		const text = await readText(join(dir, name));
-		if (text?.trim()) files.push({ name, text, rules: parseChoiceRuleRecords(text) });
-	}
-	return files;
-}
-
-function validateChoiceModelDomain(domain: string): ChoiceModelDomain {
-	if (CHOICE_MODEL_DOMAINS.has(domain)) return domain as ChoiceModelDomain;
-	throw new Error(`unknown choice-model domain: ${domain}`);
-}
-
-function validateFeedbackWeight(weight: number | undefined): number {
-	if (weight === undefined) return 1;
-	if (!Number.isFinite(weight)) throw new Error("feedback weight must be finite");
-	const normalized = Math.floor(weight);
-	if (normalized < 1) throw new Error("feedback weight must be at least 1");
-	return normalized;
-}
-
-function parseChoiceRuleRecords(text: string): ChoiceRuleRecord[] {
-	const pattern = new RegExp(`<!-- ${CHOICE_RULES_MARKER}\\n([\\s\\S]*?)\\n-->`, "m");
-	const match = pattern.exec(text);
-	if (!match) return [];
-	try {
-		const parsed = JSON.parse(match[1] ?? "[]");
-		if (!Array.isArray(parsed)) return [];
-		return parsed.flatMap((item) => normalizeChoiceRuleRecord(item));
-	} catch {
-		return [];
-	}
-}
-
-function normalizeChoiceRuleRecord(value: unknown): ChoiceRuleRecord[] {
-	if (!value || typeof value !== "object") return [];
-	const record = value as Partial<ChoiceRuleRecord>;
-	if (typeof record.id !== "string" || typeof record.rule !== "string") return [];
-	const evidence = Array.isArray(record.evidence)
-		? record.evidence.flatMap((item) => {
-				if (!item || typeof item !== "object") return [];
-				const maybe = item as Partial<ChoiceRuleEvidence>;
-				if (
-					typeof maybe.at !== "string" ||
-					typeof maybe.task !== "string" ||
-					typeof maybe.diff_summary !== "string"
-				) {
-					return [];
-				}
-				return [{ at: maybe.at, task: maybe.task, diff_summary: maybe.diff_summary }];
-			})
-		: [];
-	return [
-		{
-			id: record.id,
-			rule: record.rule,
-			weight: typeof record.weight === "number" && Number.isFinite(record.weight) ? record.weight : 1,
-			first_recorded: typeof record.first_recorded === "string" ? record.first_recorded : today(),
-			last_triggered: typeof record.last_triggered === "string" ? record.last_triggered : today(),
-			status: record.status === "stale" ? "stale" : "active",
-			evidence,
-		},
-	];
-}
-
-function renderChoiceRuleFile(domain: ChoiceModelDomain, rules: ChoiceRuleRecord[]): string {
-	const active = rules.filter((rule) => rule.status === "active");
-	const stale = rules.filter((rule) => rule.status === "stale");
-	const sections = [
-		`# ${choiceModelDomainTitle(domain)}`,
-		"",
-		renderChoiceRuleSection("Active Rules", active),
-		renderChoiceRuleSection("Stale Rules", stale),
-		`<!-- ${CHOICE_RULES_MARKER}`,
-		JSON.stringify(rules, null, 2),
-		"-->",
-		"",
-	];
-	return sections.filter((section) => section !== "").join("\n");
-}
-
-function renderChoiceRuleSection(title: string, rules: ChoiceRuleRecord[]): string {
-	if (rules.length === 0) return `## ${title}\n\n(none)\n`;
-	return [
-		`## ${title}`,
-		"",
-		...rules.map((rule) => {
-			const label = rule.status === "stale" ? `stale weight ${rule.weight}` : `weight ${rule.weight}`;
-			const latest = rule.evidence.at(-1);
-			const detail = latest ? `\n  - last: ${rule.last_triggered.slice(0, 10)} · ${latest.task}` : "";
-			return `- [${label}] ${rule.rule}${detail}`;
-		}),
-		"",
-	].join("\n");
-}
-
-function renderTasteRuleSummary(files: Array<{ name: string; rules: ChoiceRuleRecord[] }>): string {
-	const now = new Date().toISOString();
-	const sections: string[] = [];
-	for (const file of files) {
-		const domain = file.name.replace(/\.md$/, "");
-		if (!CHOICE_MODEL_DOMAINS.has(domain) || file.rules.length === 0) continue;
-		const rules = sortChoiceRules(file.rules, now).map((rule) => ({
-			...rule,
-			status: choiceRuleRuntimeStatus(rule, now),
-		}));
-		sections.push(`## Your Taste Rules (${domain})`);
-		for (const rule of rules) {
-			const label = rule.status === "stale" ? `stale weight ${rule.weight}` : `weight ${rule.weight}`;
-			sections.push(`- [${label}] ${rule.rule}`);
-		}
-		sections.push("");
-	}
-	return sections.length > 0 ? `# Your Taste Rules\n\n${sections.join("\n").trim()}` : "";
-}
-
-function sortChoiceRules(rules: ChoiceRuleRecord[], now: string): ChoiceRuleRecord[] {
-	return [...rules].sort((a, b) => {
-		const aStale = choiceRuleRuntimeStatus(a, now) === "stale";
-		const bStale = choiceRuleRuntimeStatus(b, now) === "stale";
-		if (aStale !== bStale) return aStale ? 1 : -1;
-		if (a.weight !== b.weight) return b.weight - a.weight;
-		return b.last_triggered.localeCompare(a.last_triggered);
-	});
-}
-
-function choiceRuleRuntimeStatus(rule: ChoiceRuleRecord, now: string): "active" | "stale" {
-	return daysBetween(rule.last_triggered, now) > CHOICE_RULE_STALE_AFTER_DAYS ? "stale" : "active";
-}
-
-function daysBetween(from: string, to: string): number {
-	const start = Date.parse(from);
-	const end = Date.parse(to);
-	if (!Number.isFinite(start) || !Number.isFinite(end)) return 0;
-	return Math.floor((end - start) / 86_400_000);
-}
-
-function normalizeChoiceRule(rule: string): string {
-	return rule.trim().toLowerCase().replace(/\s+/g, " ");
-}
-
-function choiceModelDomainTitle(domain: ChoiceModelDomain): string {
-	if (domain === "code-style") return "Code Style Rules";
-	if (domain === "writing-style") return "Writing Style Rules";
-	if (domain === "design-taste") return "Design Taste Rules";
-	return "Communication Tone Rules";
-}
-
-function episodeSection(
-	sid: string,
-	ts: string,
-	project: string,
-	summary: string,
-	rawStem: string,
-	pending: boolean,
-): string {
-	return `\n## ${sid} · ${ts.replace("T", " ")} · project: ${project}\n${summary}\n- raw: [[episodic/raw/${rawStem}]]\n- summary_pending: ${String(pending)}\n`;
-}
-
-function worldBody(data: WorldNoteData, memoryStatusReason: string): string {
-	return `# ${data.title}
-
-## Extracted Content
-
-${data.extracted}
-
-## Coverage
-
-${data.coverage}
-
-## Claim Ledger
-
-${claimLedgerBody(data.claims ?? [])}
-
-## Samantha's Read
-
-${data.read}
-
-## What To Steal
-
-${data.steal.map((item) => `- ${item}`).join("\n")}
-
-## Connections
-
-${data.connections.map((item) => `- [[${item}]]`).join("\n")}
-
-## Samantha's Take
-
-${data.take}
-
-## Possible Moves
-
-${data.possibleMoves.map((item) => `- ${item}`).join("\n")}
-
-## Memory Status
-
-- status: ${data.memoryStatus}
-- reason: ${memoryStatusReason}
-
-## Judgment Trail
-
-`;
-}
-
-function normalizeMemoryStatusReason(status: WorldNoteData["memoryStatus"], reason: string | undefined): string {
-	const trimmed = reason?.trim();
-	if (trimmed) return trimmed;
-	if (status === "active") return "Trusted writer marked this source active after intake.";
-	throw new Error(`${status} world note requires memoryStatusReason`);
-}
-
-function claimLedgerBody(claims: ClaimLedgerEntry[]): string {
-	if (claims.length === 0) return "(none recorded)";
-	return claims
-		.map((claim) =>
-			[
-				`- claim: ${claim.claim}`,
-				`  verdict: ${claim.verdict}`,
-				`  evidence: ${claim.evidence}`,
-				`  source_quality: ${claim.sourceQuality}`,
-				claim.caveats ? `  caveats: ${claim.caveats}` : undefined,
-			]
-				.filter(Boolean)
-				.join("\n"),
-		)
-		.join("\n");
-}
-
-function appendJudgment(body: string, fields: JudgmentFields): string {
-	const heading = "## Judgment Trail";
-	const entry = [`### ${new Date().toISOString()}`];
-	for (const [key, value] of Object.entries(fields)) {
-		if (value) entry.push(`- ${snakeCase(key)}: ${value}`);
-	}
-	const block = `${entry.join("\n")}\n`;
-	if (body.includes(heading)) return `${body.trimEnd()}\n\n${block}`;
-	return `${body.trimEnd()}\n\n${heading}\n\n${block}`;
-}
-
-function contextLogBlock(id: string, timestamp: string, input: ContextUpdateInput): string {
-	const drivenBy = input.drivenBy.length > 0 ? input.drivenBy.join(", ") : "(none)";
-	const change = input.change.replace(/\r?\n/g, " ");
-	return `\n### ${id} · ${timestamp} · ${input.type}
-- commit: self
-- driven_by: ${drivenBy}
-- change: ${change}
-- status: unreviewed
-`;
-}
-
-function choiceModelLogBlock(id: string, timestamp: string, drivenBy: string[]): string {
-	return `\n### ${id} · ${timestamp}
-- commit: self
-- driven_by: ${drivenBy.join(", ")}
-- change: Synthesize choice model from Judgment Trail
-- status: unreviewed
-`;
-}
-
-function selfNarrativeLogBlock(id: string, timestamp: string, drivenBy: string[]): string {
-	return `\n### ${id} · ${timestamp}
-- commit: self
-- driven_by: ${drivenBy.join(", ")}
-- change: Synthesize Samantha self narrative
-- status: unreviewed
-`;
-}
-
-function parseContextLog(text: string): ContextUpdateRecord[] {
-	const records: ContextUpdateRecord[] = [];
-	for (const block of text.split(/\n(?=### )/)) {
-		const header = /^###\s+(\S+)\s+·\s+(.+?)\s+·\s+(.+)\s*$/m.exec(block);
-		if (!header) continue;
-		const rawStatus = contextLogField(block, "status");
-		const status =
-			rawStatus === "kept" || rawStatus === "reverted" || rawStatus === "unreviewed" ? rawStatus : "unreviewed";
-		const drivenBy = contextLogField(block, "driven_by");
-		const commit = contextLogField(block, "commit");
-		records.push({
-			id: header[1],
-			timestamp: header[2],
-			type: header[3],
-			change: contextLogField(block, "change"),
-			status,
-			drivenBy:
-				drivenBy && drivenBy !== "(none)"
-					? drivenBy
-							.split(",")
-							.map((item) => item.trim())
-							.filter(Boolean)
-					: [],
-			commit: commit || undefined,
-		});
-	}
-	return records;
-}
-
-function contextLogField(block: string, name: string): string {
-	const match = new RegExp(`^- ${escapeRegExp(name)}:\\s*(.*)$`, "m").exec(block);
-	return match?.[1]?.trim() ?? "";
-}
-
-function escapeRegExp(text: string): string {
-	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function stripSection(body: string, heading: string): string {
-	const pattern = new RegExp(`\\n?## ${heading}\\n[\\s\\S]*?(?=\\n## |$)`, "m");
-	return body.replace(pattern, "").trimEnd();
-}
-
-function extractSection(body: string, heading: string): string {
-	const marker = `## ${heading}`;
-	const start = body.indexOf(marker);
-	if (start < 0) return "";
-	const afterHeading = body.slice(start + marker.length).replace(/^\r?\n/, "");
-	const nextHeading = afterHeading.search(/\r?\n## /);
-	return (nextHeading >= 0 ? afterHeading.slice(0, nextHeading) : afterHeading).trim();
-}
-
-function genId(seedA: string, seedB: string): string {
-	return createHash("sha1").update(`${seedA}${seedB}`).digest("hex").slice(0, 8);
-}
-
-function slug(text: string): string {
-	return (
-		text
-			.toLowerCase()
-			.replace(/[^a-z0-9]+/g, "-")
-			.replace(/^-+|-+$/g, "") || "note"
-	);
-}
-
-function safeStem(text: string): string {
-	return text.replace(/[^A-Za-z0-9._-]/g, "_") || "x";
-}
-
-function isFileExists(error: unknown): boolean {
-	return Boolean(error && typeof error === "object" && "code" in error && error.code === "EEXIST");
-}
-
-function isNotFound(error: unknown): boolean {
-	return Boolean(error && typeof error === "object" && "code" in error && error.code === "ENOENT");
-}
-
-function sourceRef(source: string): string {
-	const trimmed = source.trim();
-	if (!trimmed) return "[[episodic/raw/unknown]]";
-	if (trimmed.startsWith("[[") && trimmed.endsWith("]]")) return trimmed;
-	if (trimmed.includes("/")) return `[[${trimmed.replace(/\.md$/, "")}]]`;
-	return `[[episodic/raw/${trimmed.replace(/\.md$/, "")}]]`;
-}
-
-function sameStrings(a: string[], b: string[]): boolean {
-	return a.length === b.length && a.every((value, index) => value === b[index]);
-}
-
-function changedAfter(data: Record<string, unknown>, lastTime: number | undefined): boolean {
-	if (lastTime === undefined) return true;
-	const noteTime = parseDate(String(data.updated ?? data.created ?? ""));
-	return noteTime !== undefined && noteTime > lastTime;
-}
-
-function hasConflictRelation(relations: unknown): boolean {
-	if (!Array.isArray(relations)) return false;
-	return relations.some(
-		(relation) =>
-			relation !== null &&
-			typeof relation === "object" &&
-			"rel" in relation &&
-			CHALLENGE_RELATIONS.has(normalizeRelationType(relation.rel)),
-	);
-}
-
-function parseDate(value: string | undefined): number | undefined {
-	if (!value) return undefined;
-	const time = Date.parse(value);
-	return Number.isNaN(time) ? undefined : time;
-}
-
-function daysSince(time: number | undefined): number | undefined {
-	if (time === undefined) return undefined;
-	return Math.floor((Date.now() - time) / 86400000);
-}
-
-function today(): string {
-	return new Date().toISOString().slice(0, 10);
-}
-
-async function git(cwd: string, ...args: string[]): Promise<{ stdout: string; stderr: string }> {
-	const { stdout, stderr } = await execFileAsync("git", args, { cwd });
-	return { stdout, stderr };
-}
-
-async function readLastSyncedAt(cwd: string): Promise<{ value?: string; error?: string }> {
-	try {
-		// Git does not store a durable push timestamp locally; upstream HEAD time is the closest sync signal.
-		const value = (await git(cwd, "log", "-1", "--format=%cI", "@{upstream}")).stdout.trim();
-		return value ? { value } : {};
-	} catch (error) {
-		return { error: errorMessage(error) };
-	}
-}
-
-function errorMessage(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
-}
-
-function extractJson<T>(text: string): T {
-	let source = text.trim();
-	const fence = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(source);
-	if (fence) source = fence[1].trim();
-	return JSON.parse(source) as T;
-}
-
-async function markdownEntries(dir: string): Promise<string[]> {
-	try {
-		return (await readdir(dir)).filter((entry) => entry.endsWith(".md")).sort();
-	} catch (error) {
-		if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return [];
-		throw error;
-	}
-}
-
-async function markdownStems(dir: string): Promise<string[]> {
-	return (await markdownEntries(dir)).map((entry) => entry.replace(/\.md$/, ""));
-}
-
-async function readMarkdownDir(dir: string): Promise<string> {
-	const chunks = [];
-	for (const entry of await markdownEntries(dir)) {
-		chunks.push((await readText(join(dir, entry))) ?? "");
-	}
-	return chunks.join("\n\n");
-}
-
-function normalizeRelations(note: Record<string, unknown>): Array<{ to: string; rel: string }> {
-	const raw =
-		Array.isArray(note.relations) && note.relations.length > 0
-			? note.relations
-			: Array.isArray(note.links)
-				? note.links.map((link) => ({ to: link, rel: "relates" }))
-				: [];
-	const out: Array<{ to: string; rel: string }> = [];
-	for (const item of raw) {
-		const record: Record<string, unknown> =
-			item && typeof item === "object" ? (item as Record<string, unknown>) : { to: item };
-		const to = slug(String(record.to ?? ""));
-		if (!to) continue;
-		out.push({ to, rel: normalizeRelationType(record.rel) });
-	}
-	return out;
-}
-
-function normalizeRelationType(value: unknown): string {
-	const raw = String(value ?? "relates")
-		.trim()
-		.toLowerCase();
-	const aliased = RELATION_TYPE_ALIASES.get(raw) ?? raw;
-	return RELATION_TYPES.has(aliased) ? aliased : "relates";
-}
-
-function normalizeActiveTier(value: unknown, fallback: unknown): string {
-	if (typeof value === "string" && ACTIVE_MEMORY_TIERS.has(value)) return value;
-	if (typeof fallback === "string" && ACTIVE_MEMORY_TIERS.has(fallback)) return fallback;
-	return "summarizable";
-}
-
-function timestampMinute(): string {
-	return new Date().toISOString().slice(0, 16);
-}
-
-function snakeCase(text: string): string {
-	return text.replace(/[A-Z]/g, (char) => `_${char.toLowerCase()}`);
 }
