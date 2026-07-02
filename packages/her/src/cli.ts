@@ -29,6 +29,7 @@ import {
 	renderPrivacyCheck,
 	renderRecall,
 	renderRestore,
+	renderReviewNarrative,
 	renderSelfNarrative,
 	renderStatus,
 	renderSurface,
@@ -292,6 +293,18 @@ export async function runHerCli(
 			: await memory.recall(command.query, { k: command.k });
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderRecall);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "review-narrative") {
+		if (command.action === "keep" && command.id) await memory.keepContextUpdate(command.id);
+		if (command.action === "revert" && command.id) await memory.revertContextUpdate(command.id);
+		const updates = await memory.reviewContextUpdates();
+		const payload = {
+			...(await buildStatusPayload(memoryDir, memory)),
+			result: { action: command.action, ...(command.id ? { id: command.id } : {}), updates },
+		};
+		writePayload(io.stdout, payload, command.json, renderReviewNarrative);
 		return payload.status.status === "unknown" ? 1 : 0;
 	}
 

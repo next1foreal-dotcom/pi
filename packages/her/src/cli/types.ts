@@ -88,6 +88,7 @@ export type CliCommand =
 	| { kind: "privacy-audit"; json: boolean }
 	| { kind: "privacy-check"; json: boolean; refs: string[] }
 	| { kind: "recall"; archive: boolean; json: boolean; k?: number; query: string }
+	| { action: "list" | "keep" | "revert"; id?: string; json: boolean; kind: "review-narrative" }
 	| { kind: "restore"; json: boolean; semanticKey: string; now?: string }
 	| { kind: "self-narrative"; json: boolean }
 	| { kind: "synthesize"; json: boolean; ifDue: boolean }
@@ -311,6 +312,14 @@ export interface CliGoalNextPayload extends CliStatusPayload {
 
 export interface CliRecallPayload extends CliStatusPayload {
 	result: Awaited<ReturnType<Memory["recall"]>>;
+}
+
+export interface CliReviewNarrativePayload extends CliStatusPayload {
+	result: {
+		action: "list" | "keep" | "revert";
+		id?: string;
+		updates: Awaited<ReturnType<Memory["reviewContextUpdates"]>>;
+	};
 }
 
 export interface CliTelegramPollPayload extends CliStatusPayload {

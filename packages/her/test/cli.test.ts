@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { chmod, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
-import { createServer } from "node:http";
+import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
@@ -12,6 +12,38 @@ import { initStore, Memory, parseFrontmatter, readText } from "../src/her-core/i
 
 const execFileAsync = promisify(execFile);
 const repoRoot = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
+const fetchBlockedPorts = new Set([
+	1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53, 69, 77, 79, 87, 95, 101, 102, 103, 104, 109, 110,
+	111, 113, 115, 117, 119, 123, 135, 137, 139, 143, 161, 179, 389, 427, 465, 512, 513, 514, 515, 526, 530, 531, 532,
+	540, 548, 554, 556, 563, 587, 601, 636, 989, 990, 993, 995, 1719, 1720, 1723, 2049, 3659, 4045, 5060, 5061, 6000,
+	6566, 6665, 6666, 6667, 6668, 6669, 6679, 6697, 10080,
+]);
+
+async function listenOnFetchAllowedPort(server: Server): Promise<number> {
+	for (let attempt = 0; attempt < 20; attempt += 1) {
+		await new Promise<void>((resolveListen, reject) => {
+			const onError = (error: Error) => {
+				server.off("listening", onListening);
+				reject(error);
+			};
+			const onListening = () => {
+				server.off("error", onError);
+				resolveListen();
+			};
+			server.once("error", onError);
+			server.once("listening", onListening);
+			server.listen(0, "127.0.0.1");
+		});
+		const { port } = server.address() as AddressInfo;
+		if (!fetchBlockedPorts.has(port)) {
+			return port;
+		}
+		await new Promise<void>((resolveClose, reject) =>
+			server.close((error) => (error ? reject(error) : resolveClose())),
+		);
+	}
+	throw new Error("Could not allocate a fetch-allowed local port");
+}
 
 async function git(cwd: string, ...args: string[]): Promise<{ stdout: string; stderr: string }> {
 	const { stdout, stderr } = await execFileAsync("git", args, { cwd });
@@ -120,8 +152,7 @@ async function withLocalChatModel<T>(
 			res.end(JSON.stringify({ choices: [{ message: { content } }] }));
 		});
 	});
-	await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
-	const { port } = server.address() as AddressInfo;
+	const port = await listenOnFetchAllowedPort(server);
 	try {
 		return await fn(
 			{
@@ -145,8 +176,7 @@ async function withLocalSource<T>(
 		res.writeHead(200, { "content-type": response.contentType ?? "text/html; charset=utf-8" });
 		res.end(response.body);
 	});
-	await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
-	const { port } = server.address() as AddressInfo;
+	const port = await listenOnFetchAllowedPort(server);
 	try {
 		return await fn(`http://127.0.0.1:${port}${response.path ?? "/source"}`);
 	} finally {
@@ -193,8 +223,7 @@ async function withLocalTelegramApi<T>(
 			res.end(JSON.stringify({ ok: false, description: `unexpected path ${url}` }));
 		});
 	});
-	await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
-	const { port } = server.address() as AddressInfo;
+	const port = await listenOnFetchAllowedPort(server);
 	try {
 		return await fn(
 			{
@@ -573,8 +602,7 @@ async function withLocalEmbeddings<T>(fn: (env: Record<string, string>, inputs: 
 			res.end(JSON.stringify({ data }));
 		});
 	});
-	await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
-	const { port } = server.address() as AddressInfo;
+	const port = await listenOnFetchAllowedPort(server);
 	try {
 		return await fn(
 			{
@@ -1305,6 +1333,42 @@ test("CLI reports synthesize due and approves a proposal as JSON", async () => {
 	assert.deepEqual(payload.result, { proposalId: "manual", approved: true });
 	assert.match(await readFile(join(store, "narrative", "CONTEXT.md"), "utf8"), /Manual proposal from CLI/);
 	assert.match((await git(store, "log", "--oneline", "-1")).stdout, /memory\(context\): Approve proposal manual/);
+});
+
+test("CLI review-narrative lists, keeps, and reverts context updates", async () => {
+	const { store } = await gitBackedStore();
+	const memory = new Memory(store);
+	const first = await memory.writeContextUpdate({
+		content: "# CONTEXT\n\nFirst CLI-reviewed narrative update.\n",
+		change: "First CLI review fixture",
+		type: "revise",
+		drivenBy: ["[[episodic/raw/first]]"],
+	});
+
+	let result = await runCli(["review-narrative", "--json"], store);
+	let payload = JSON.parse(result.stdout);
+	assert.equal(payload.result.action, "list");
+	assert.equal(payload.result.updates.length, 1);
+	assert.equal(payload.result.updates[0].id, first.id);
+	assert.match(payload.result.updates[0].diff, /First CLI-reviewed/);
+
+	result = await runCli(["review-narrative", "--keep", first.id, "--json"], store);
+	payload = JSON.parse(result.stdout);
+	assert.deepEqual(payload.result.updates, []);
+	assert.match(await readFile(join(store, "narrative", "context-log.md"), "utf8"), /status: kept/);
+
+	const second = await memory.writeContextUpdate({
+		content: "# CONTEXT\n\nTemporary CLI-reviewed narrative update.\n",
+		change: "Temporary CLI review fixture",
+		type: "revise",
+		drivenBy: ["[[episodic/raw/second]]"],
+	});
+
+	result = await runCli(["review-narrative", "--revert", second.id, "--json"], store);
+	payload = JSON.parse(result.stdout);
+	assert.deepEqual(payload.result.updates, []);
+	assert.doesNotMatch(await readFile(join(store, "narrative", "CONTEXT.md"), "utf8"), /Temporary CLI-reviewed/);
+	assert.match(await readFile(join(store, "narrative", "context-log.md"), "utf8"), /status: reverted/);
 });
 
 test("CLI runs governed archive sweep as JSON", async () => {

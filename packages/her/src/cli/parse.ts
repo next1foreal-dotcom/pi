@@ -46,6 +46,7 @@ export function parseArgs(argv: string[]): CliCommand {
 	if (command === "privacy-audit") return parseJsonOnly("privacy-audit", rest);
 	if (command === "privacy-check") return parsePrivacyCheck(rest);
 	if (command === "recall") return parseRecall(rest);
+	if (command === "review-narrative") return parseReviewNarrative(rest);
 	if (command === "restore") return parseRestore(rest);
 	if (command === "self-narrative") return parseJsonOnly("self-narrative", rest);
 	if (command === "surface") return parseJsonOnly("surface", rest);
@@ -214,6 +215,27 @@ function parseSynthesize(argv: string[]): CliCommand {
 		throw new UsageError(`unknown synthesize option: ${arg}`);
 	}
 	return { kind: "synthesize", json, ifDue };
+}
+
+function parseReviewNarrative(argv: string[]): CliCommand {
+	let action: "list" | "keep" | "revert" = "list";
+	let id: string | undefined;
+	let json = false;
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--keep" || arg === "--revert") {
+			if (action !== "list") throw new UsageError("review-narrative accepts only one action");
+			action = arg === "--keep" ? "keep" : "revert";
+			id = requireNonBlank(requireOptionValue(argv[++i], arg), arg);
+			continue;
+		}
+		throw new UsageError(`unknown review-narrative option: ${arg}`);
+	}
+	return { action, id, json, kind: "review-narrative" };
 }
 
 function parseStatus(argv: string[]): CliCommand {

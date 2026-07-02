@@ -21,6 +21,7 @@ import type {
 	CliPrivacyCheckPayload,
 	CliRecallPayload,
 	CliRestorePayload,
+	CliReviewNarrativePayload,
 	CliSelfNarrativePayload,
 	CliStatusPayload,
 	CliSurfaceUpdateResult,
@@ -295,6 +296,30 @@ export function renderRecall(payload: CliRecallPayload): string {
 	return [`Her recall hits: ${payload.result.length}`, hits, "", renderStatus(payload)].join("\n");
 }
 
+export function renderReviewNarrative(payload: CliReviewNarrativePayload): string {
+	const action =
+		payload.result.action === "list"
+			? "Narrative updates pending review"
+			: `Narrative update ${payload.result.action === "keep" ? "kept" : "reverted"}: ${payload.result.id}`;
+	const updates = payload.result.updates;
+	const list =
+		updates.length === 0
+			? "No unreviewed narrative updates."
+			: updates
+					.map((update, index) =>
+						[
+							`${index + 1}. ${update.id} · ${update.change} · ${update.timestamp}`,
+							`   type: ${update.type}; status: ${update.status}; commit: ${update.commit ?? "(none)"}`,
+							update.drivenBy.length > 0 ? `   driven by: ${update.drivenBy.join(", ")}` : undefined,
+							update.diff ? `   diff:\n${update.diff}` : undefined,
+						]
+							.filter(Boolean)
+							.join("\n"),
+					)
+					.join("\n\n");
+	return [action, list, "", renderStatus(payload)].join("\n");
+}
+
 export function renderSynthesize(payload: CliSynthesizePayload): string {
 	const result =
 		payload.result.proposalId === null
@@ -441,6 +466,7 @@ export function usage(): string {
   her privacy-audit [--json]
   her privacy-check --ref <memory-path> [--ref <memory-path>] [--json]
   her recall --query <text> [--k <n>] [--archive] [--json]
+  her review-narrative [--keep <id>|--revert <id>] [--json]
   her restore --semantic <key> [--now <YYYY-MM-DD>] [--json]
   her self-narrative [--json]
   her synthesize [--if-due] [--json]

@@ -993,6 +993,12 @@ test("synthesize writes CONTEXT with a trail commit and leaves FACTS unchanged",
 	assert.match(prompts[0].prompt, /Samantha is learning concise execution/);
 	assert.match(prompts[0].prompt, /CHOICE MODEL/);
 	assert.match(prompts[0].prompt, /Fei chooses verified work/);
+
+	await memory.revertContextUpdate(review[0].id);
+	assert.doesNotMatch((await readText(join(store, "narrative", "CONTEXT.md"))) ?? "", /verified execution/);
+	assert.match((await readText(join(store, "narrative", "context-log.md"))) ?? "", /status: reverted/);
+	assert.equal((await memory.reviewContextUpdates()).length, 0);
+	assert.match((await git(store, "log", "--oneline", "-1")).stdout, /memory\(context\): revert/);
 });
 
 test("proof-of-life loop accumulates context and Samantha self growth with traceable review", async () => {
