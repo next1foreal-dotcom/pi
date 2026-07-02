@@ -270,3 +270,21 @@ test("URL intake marks EPUB sources as parser-needed stubs with honest coverage"
 	assert.match(result.data.memoryStatusReason ?? "", /EPUB fetched but not parsed/);
 	assert.equal(result.bytesRead, 0);
 });
+
+test("URL intake blocks bracketed IPv4-mapped and reserved private hosts", async () => {
+	const fetcher: typeof fetch = async () => {
+		throw new Error("private URLs must be blocked before fetch");
+	};
+	const lookup = (async () => {
+		throw new Error("IP literals must be blocked before DNS lookup");
+	}) as unknown as typeof dnsLookup;
+
+	for (const url of [
+		"http://[::ffff:127.0.0.1]/secret",
+		"http://[::ffff:10.0.0.1]/secret",
+		"http://0.0.0.0/secret",
+		"http://100.64.0.1/secret",
+	]) {
+		await assert.rejects(() => readUrlForWorldNote(url, { fetcher, lookup }), /blocked private URL host/);
+	}
+});

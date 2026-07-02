@@ -960,20 +960,23 @@ function isLocalHostname(hostname: string): boolean {
 }
 
 function isPrivateIp(hostname: string): boolean {
-	const version = isIP(hostname);
+	const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+	if (host.startsWith("::ffff:")) return true;
+	const version = isIP(host);
 	if (version === 4) {
-		const parts = hostname.split(".").map((part) => Number(part));
+		const parts = host.split(".").map((part) => Number(part));
 		return (
+			parts[0] === 0 ||
 			parts[0] === 10 ||
 			parts[0] === 127 ||
 			(parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
 			(parts[0] === 192 && parts[1] === 168) ||
+			(parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127) ||
 			(parts[0] === 169 && parts[1] === 254)
 		);
 	}
 	if (version === 6) {
-		const lower = hostname.toLowerCase();
-		return lower === "::1" || lower.startsWith("fc") || lower.startsWith("fd") || lower.startsWith("fe80:");
+		return host === "::1" || host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80:");
 	}
 	return false;
 }
