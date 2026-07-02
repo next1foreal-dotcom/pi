@@ -204,4 +204,5 @@ export {
 	scoreAttentionItem,
 	selectAttentionDigest,
 	sendTelegramMessage,
+	trimTelegramText,
 } from "./telegram.ts";

@@ -540,7 +540,7 @@ function telegramBaseUrl(value: string | undefined): string {
 	return (value ?? defaultTelegramBaseUrl).replace(/\/+$/, "");
 }
 
-function trimTelegramText(text: string): string {
+export function trimTelegramText(text: string): string {
 	if (text.length <= telegramMessageLimit) return text;
 	const suffix = "\n\n[trimmed for Telegram message limit]";
 	return `${text.slice(0, telegramMessageLimit - suffix.length)}${suffix}`;

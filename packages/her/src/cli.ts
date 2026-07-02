@@ -44,6 +44,7 @@ import {
 	type TelegramConfirmationResult,
 	type TelegramOutboxResult,
 	type TelegramPollResult,
+	trimTelegramText,
 	type UrlMarkdownReader,
 	type WorldNoteData,
 } from "./her-core/index.ts";
@@ -2007,7 +2008,7 @@ async function runTelegramBridgeCycle(
 			const message = await sendTelegramMessage({
 				baseUrl: opts.baseUrl,
 				chatId: opts.chatId,
-				text: trimTelegramBridgeText(text),
+				text: trimTelegramText(text),
 				token: opts.token,
 			});
 			replies.push({
@@ -2150,13 +2151,6 @@ function buildTelegramPiPrompt(opts: { messageText: string; queuedPath: string; 
 		"Telegram message:",
 		opts.messageText || "(empty)",
 	].join("\n");
-}
-
-function trimTelegramBridgeText(text: string): string {
-	const limit = 4096;
-	if (text.length <= limit) return text;
-	const suffix = "\n\n[trimmed for Telegram message limit]";
-	return `${text.slice(0, limit - suffix.length)}${suffix}`;
 }
 
 function parseTelegramResponderTools(raw: string | undefined): string {
