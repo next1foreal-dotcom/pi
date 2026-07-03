@@ -1,0 +1,12 @@
+{
+	"name": "@her/pi-her",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"clean": "shx rm -rf dist"
+	},
+	"dependencies": {
+		"undici": "8.5.0"
+	}
+}

@@ -188,6 +188,20 @@ test("Pi project pins defuddle for local article and X URL intake", async () => 
 	assert.equal(manifest.dependencies?.defuddle, "0.18.1");
 });
 
+test("Her package declares its direct undici dependency", async () => {
+	const manifest = JSON.parse(await readFile(join(herRoot, "package.json"), "utf8")) as {
+		dependencies?: Record<string, string>;
+		name?: string;
+		private?: boolean;
+		type?: string;
+	};
+
+	assert.equal(manifest.name, "@her/pi-her");
+	assert.equal(manifest.private, true);
+	assert.equal(manifest.type, "module");
+	assert.equal(manifest.dependencies?.undici, "8.5.0");
+});
+
 test("her-skill-sharpen keeps only challenger skill edits that beat the champion", async () => {
 	const skill = await readFile(join(herRoot, "pi-package", "skills", "her-skill-sharpen", "SKILL.md"), "utf8");
 
