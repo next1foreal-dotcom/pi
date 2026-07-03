@@ -423,6 +423,26 @@ test("recall searches markdown corpus", async () => {
 	assert.equal(state.access?.["semantic/own-memory"]?.count, 1);
 });
 
+test("recall waits for the shared store lock before access accounting", async () => {
+	const store = await tempStore();
+	await writeText(join(store, "semantic", "recall-lock.md"), "# Recall Lock\n\nRecall access accounting must wait.\n");
+	const lock = join(store, ".her", "lock");
+	await writeText(lock, JSON.stringify({ at: Date.now() / 1000, host: "python", owner: "python-owner", pid: 999999 }));
+	let settled = false;
+	const pending = new Memory(store).recall("access accounting", { k: 1 }).finally(() => {
+		settled = true;
+	});
+
+	await sleep(50);
+	assert.equal(settled, false);
+	await rm(lock, { force: true });
+	const hits = await pending;
+
+	assert.equal(hits[0]?.id, "semantic/recall-lock");
+	const state = await readJson<{ access?: Record<string, { count?: number }> }>(join(store, ".her", "state.json"), {});
+	assert.equal(state.access?.["semantic/recall-lock"]?.count, 1);
+});
+
 test("agent-eval: memory changes the next action decision", async () => {
 	const store = await tempStore();
 	const decide = async (memory: Memory, task: string): Promise<string> => {

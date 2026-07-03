@@ -286,9 +286,11 @@ export class Memory {
 			k: opts.k ?? 8,
 			semanticSearch: this.semanticSearch,
 		});
-		await recordAccess(
-			this.paths,
-			hits.map((hit) => hit.id),
+		await this.withStoreLock(() =>
+			recordAccess(
+				this.paths,
+				hits.map((hit) => hit.id),
+			),
 		);
 		return hits;
 	}
