@@ -296,6 +296,8 @@ test("URL intake blocks bracketed IPv4-mapped and reserved private hosts", async
 	}) as unknown as typeof dnsLookup;
 
 	for (const url of [
+		"http://[::]/secret",
+		"http://[::1]/secret",
 		"http://[::ffff:127.0.0.1]/secret",
 		"http://[::ffff:10.0.0.1]/secret",
 		"http://0.0.0.0/secret",
@@ -305,4 +307,20 @@ test("URL intake blocks bracketed IPv4-mapped and reserved private hosts", async
 	]) {
 		await assert.rejects(() => readUrlForWorldNote(url, { fetcher, lookup }), /blocked private URL host/);
 	}
+});
+
+test("URL intake allows public IPv6 literal hosts", async () => {
+	const pinnedAddresses: string[] = [];
+	const fetcher: typeof fetch = async (input, init) => {
+		assert.equal(inputUrl(input), "http://[2606:2800:220:1:248:1893:25c8:1946]/article");
+		pinnedAddresses.push(((init ?? {}) as PinnedFetchInit).dispatcher?.pinnedAddress ?? "");
+		return responseText("# Public IPv6\n\nPublic IPv6 literals are valid remote sources.");
+	};
+	const lookup = (async () => {
+		throw new Error("IP literals should not need DNS lookup");
+	}) as unknown as typeof dnsLookup;
+
+	await readUrlForWorldNote("http://[2606:2800:220:1:248:1893:25c8:1946]/article", { fetcher, lookup });
+
+	assert.deepEqual(pinnedAddresses, ["2606:2800:220:1:248:1893:25c8:1946"]);
 });

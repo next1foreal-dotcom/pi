@@ -1016,6 +1016,7 @@ function isLocalHostname(hostname: string): boolean {
 
 function isPrivateIp(hostname: string): boolean {
 	const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+	if (host === "::") return true;
 	if (host.startsWith("::ffff:")) return true;
 	const version = isIP(host);
 	if (version === 4) return isPrivateIpv4(host);
