@@ -112,7 +112,10 @@ export function estimatePriorTokens(text: string): number {
 }
 
 function isSamanthaTarget(path: string): boolean {
-	const normalized = path.replace(/\\/g, "/").replace(/^\.\/+/, "");
+	const normalized = path
+		.replace(/\\/g, "/")
+		.replace(/^\.\/+/, "")
+		.toLowerCase();
 	return normalized === "samantha" || normalized.startsWith("samantha/") || normalized.includes("/samantha/");
 }
 

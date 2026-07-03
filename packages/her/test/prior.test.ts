@@ -167,6 +167,12 @@ test("prior mode resolution supports env, action, session, and Samantha write gu
 	);
 });
 
+test("prior mode Samantha write guard is case-insensitive (T2 hardcoded)", () => {
+	assert.equal(priorModeForAction(["SAMANTHA/taste/x.md"], { requestedMode: "full" }), "her-only");
+	assert.equal(priorModeForAction(["Samantha\\taste\\x.md"], { requestedMode: "full" }), "her-only");
+	assert.equal(priorModeForAction(["samantha/../narrative/x.md"], { requestedMode: "full" }), "her-only");
+});
+
 test("recordPriorAudit appends prior ledger entries and fails loud", async () => {
 	const store = await tempStore();
 	const prior = await assemblePrior({ mode: "off", storeRoot: store });
