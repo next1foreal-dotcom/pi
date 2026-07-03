@@ -287,6 +287,53 @@ test("URL intake pins fetch to the DNS-validated address", async () => {
 	assert.deepEqual(pinnedAddresses, ["93.184.216.34"]);
 });
 
+test("URL intake re-pins every redirect hop to that hop's DNS result", async () => {
+	const calls: Array<{ pinnedAddress: string; url: string }> = [];
+	const fetcher: typeof fetch = async (input, init) => {
+		const url = inputUrl(input);
+		calls.push({ pinnedAddress: ((init ?? {}) as PinnedFetchInit).dispatcher?.pinnedAddress ?? "", url });
+		if (url === "https://hop-a.test/start") {
+			return new Response(null, { headers: { location: "https://hop-b.test/final" }, status: 302 });
+		}
+		assert.equal(url, "https://hop-b.test/final");
+		return responseText("# Hop B\n\nFetched after a safe redirect.");
+	};
+	const lookup = (async (hostname: string) => {
+		if (hostname === "hop-a.test") return [{ address: "93.184.216.34", family: 4 }];
+		if (hostname === "hop-b.test") return [{ address: "93.184.216.35", family: 4 }];
+		throw new Error(`unexpected lookup: ${hostname}`);
+	}) as unknown as typeof dnsLookup;
+
+	await readUrlForWorldNote("https://hop-a.test/start", { fetcher, lookup });
+
+	assert.deepEqual(calls, [
+		{ pinnedAddress: "93.184.216.34", url: "https://hop-a.test/start" },
+		{ pinnedAddress: "93.184.216.35", url: "https://hop-b.test/final" },
+	]);
+});
+
+test("URL intake blocks redirects to private loopback targets before fetching them", async () => {
+	const fetchedUrls: string[] = [];
+	const fetcher: typeof fetch = async (input) => {
+		const url = inputUrl(input);
+		fetchedUrls.push(url);
+		if (url === "https://safe-redirect.test/start") {
+			return new Response(null, { headers: { location: "http://127.0.0.1/private" }, status: 302 });
+		}
+		throw new Error("private redirect target must be blocked before fetch");
+	};
+	const lookup = (async (hostname: string) => {
+		assert.equal(hostname, "safe-redirect.test");
+		return [{ address: "93.184.216.36", family: 4 }];
+	}) as unknown as typeof dnsLookup;
+
+	await assert.rejects(
+		() => readUrlForWorldNote("https://safe-redirect.test/start", { fetcher, lookup }),
+		/blocked private URL host/,
+	);
+	assert.deepEqual(fetchedUrls, ["https://safe-redirect.test/start"]);
+});
+
 test("URL intake blocks bracketed IPv4-mapped and reserved private hosts", async () => {
 	const fetcher: typeof fetch = async () => {
 		throw new Error("private URLs must be blocked before fetch");
