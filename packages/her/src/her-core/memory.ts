@@ -98,6 +98,7 @@ import {
 	writeNewText,
 	writeText,
 } from "./store.ts";
+import { storeLock } from "./store-lock.ts";
 
 export type {
 	BackfillBatchResult,
@@ -159,6 +160,10 @@ export class Memory {
 		}
 	}
 
+	private async withStoreLock<T>(fn: () => Promise<T>): Promise<T> {
+		return storeLock(this.paths.root, fn);
+	}
+
 	async capture(raw: string, meta: CaptureMeta = {}): Promise<string> {
 		const ts = meta.timestamp ?? timestampMinute();
 		const sid = meta.sessionId ?? meta.session_id ?? genId(ts, raw);
@@ -217,52 +222,54 @@ export class Memory {
 	}
 
 	async recordFeedback(fields: FeedbackFields): Promise<FeedbackResult> {
-		const domain = validateChoiceModelDomain(fields.domain);
-		const rule = fields.rule.trim();
-		const task = fields.task.trim();
-		const diffSummary = fields.diffSummary.trim();
-		const weight = validateFeedbackWeight(fields.weight);
-		if (!rule) throw new Error("feedback rule is required");
-		if (!task) throw new Error("feedback task is required");
-		if (!diffSummary) throw new Error("feedback diffSummary is required");
+		return this.withStoreLock(async () => {
+			const domain = validateChoiceModelDomain(fields.domain);
+			const rule = fields.rule.trim();
+			const task = fields.task.trim();
+			const diffSummary = fields.diffSummary.trim();
+			const weight = validateFeedbackWeight(fields.weight);
+			if (!rule) throw new Error("feedback rule is required");
+			if (!task) throw new Error("feedback task is required");
+			if (!diffSummary) throw new Error("feedback diffSummary is required");
 
-		const at = fields.at ?? new Date().toISOString();
-		await mkdir(this.paths.choiceModelDir, { recursive: true });
-		const path = join(this.paths.choiceModelDir, `${domain}.md`);
-		const existing = parseChoiceRuleRecords((await readText(path)) ?? "");
-		const key = normalizeChoiceRule(rule);
-		const found = existing.find((item) => normalizeChoiceRule(item.rule) === key);
-		const evidence = { at, task, diff_summary: diffSummary };
-		let record: ChoiceRuleRecord;
-		if (found) {
-			record = {
-				...found,
-				rule,
-				weight: found.weight + weight,
-				last_triggered: at,
-				status: "active",
-				evidence: [...found.evidence, evidence],
-			};
-			const index = existing.indexOf(found);
-			existing[index] = record;
-		} else {
-			record = {
-				id: genId(domain, rule),
-				rule,
-				weight,
-				first_recorded: at,
-				last_triggered: at,
-				status: "active",
-				evidence: [evidence],
-			};
-			existing.push(record);
-		}
-		const renderedRules = sortChoiceRules(existing, at).map((item) => ({
-			...item,
-			status: choiceRuleRuntimeStatus(item, at),
-		}));
-		await writeText(path, renderChoiceRuleFile(domain, renderedRules));
-		return { domain, path, rule: record.rule, weight: record.weight, status: choiceRuleRuntimeStatus(record, at) };
+			const at = fields.at ?? new Date().toISOString();
+			await mkdir(this.paths.choiceModelDir, { recursive: true });
+			const path = join(this.paths.choiceModelDir, `${domain}.md`);
+			const existing = parseChoiceRuleRecords((await readText(path)) ?? "");
+			const key = normalizeChoiceRule(rule);
+			const found = existing.find((item) => normalizeChoiceRule(item.rule) === key);
+			const evidence = { at, task, diff_summary: diffSummary };
+			let record: ChoiceRuleRecord;
+			if (found) {
+				record = {
+					...found,
+					rule,
+					weight: found.weight + weight,
+					last_triggered: at,
+					status: "active",
+					evidence: [...found.evidence, evidence],
+				};
+				const index = existing.indexOf(found);
+				existing[index] = record;
+			} else {
+				record = {
+					id: genId(domain, rule),
+					rule,
+					weight,
+					first_recorded: at,
+					last_triggered: at,
+					status: "active",
+					evidence: [evidence],
+				};
+				existing.push(record);
+			}
+			const renderedRules = sortChoiceRules(existing, at).map((item) => ({
+				...item,
+				status: choiceRuleRuntimeStatus(item, at),
+			}));
+			await writeText(path, renderChoiceRuleFile(domain, renderedRules));
+			return { domain, path, rule: record.rule, weight: record.weight, status: choiceRuleRuntimeStatus(record, at) };
+		});
 	}
 
 	private async readChoiceModelContext(): Promise<string> {
@@ -291,42 +298,44 @@ export class Memory {
 	}
 
 	async surface(opts: SurfaceOptions = {}): Promise<Note | undefined> {
-		const state = await readJson<{
-			mirror?: {
-				lastAtBySession?: Record<string, string>;
-				surfacedBySession?: Record<string, string[]>;
-			};
-		}>(this.paths.stateFile, {});
-		const sessionId = opts.sessionId ?? "global";
-		const cooldownMs = (opts.cooldownMinutes ?? 30) * 60000;
-		const lastAt = state.mirror?.lastAtBySession?.[sessionId];
-		if (lastAt && cooldownMs > 0 && Date.now() - Date.parse(lastAt) < cooldownMs) return undefined;
+		return this.withStoreLock(async () => {
+			const state = await readJson<{
+				mirror?: {
+					lastAtBySession?: Record<string, string>;
+					surfacedBySession?: Record<string, string[]>;
+				};
+			}>(this.paths.stateFile, {});
+			const sessionId = opts.sessionId ?? "global";
+			const cooldownMs = (opts.cooldownMinutes ?? 30) * 60000;
+			const lastAt = state.mirror?.lastAtBySession?.[sessionId];
+			if (lastAt && cooldownMs > 0 && Date.now() - Date.parse(lastAt) < cooldownMs) return undefined;
 
-		const surfaced = new Set(state.mirror?.surfacedBySession?.[sessionId] ?? []);
-		const corpus = await buildCorpus(this.paths);
-		const query = opts.query?.trim();
-		const ranked = query ? await rrfSearch(query, corpus, { k: 20, semanticSearch: this.semanticSearch }) : [];
-		const candidates = ranked.length > 0 ? ranked : corpus.map((doc) => ({ ...doc, score: 0 }));
-		const hit = candidates.find((note) => !surfaced.has(note.id));
-		if (!hit) return undefined;
+			const surfaced = new Set(state.mirror?.surfacedBySession?.[sessionId] ?? []);
+			const corpus = await buildCorpus(this.paths);
+			const query = opts.query?.trim();
+			const ranked = query ? await rrfSearch(query, corpus, { k: 20, semanticSearch: this.semanticSearch }) : [];
+			const candidates = ranked.length > 0 ? ranked : corpus.map((doc) => ({ ...doc, score: 0 }));
+			const hit = candidates.find((note) => !surfaced.has(note.id));
+			if (!hit) return undefined;
 
-		surfaced.add(hit.id);
-		await writeJson(this.paths.stateFile, {
-			...state,
-			mirror: {
-				...state.mirror,
-				lastAtBySession: {
-					...(state.mirror?.lastAtBySession ?? {}),
-					[sessionId]: new Date().toISOString(),
+			surfaced.add(hit.id);
+			await writeJson(this.paths.stateFile, {
+				...state,
+				mirror: {
+					...state.mirror,
+					lastAtBySession: {
+						...(state.mirror?.lastAtBySession ?? {}),
+						[sessionId]: new Date().toISOString(),
+					},
+					surfacedBySession: {
+						...(state.mirror?.surfacedBySession ?? {}),
+						[sessionId]: [...surfaced].slice(-200),
+					},
 				},
-				surfacedBySession: {
-					...(state.mirror?.surfacedBySession ?? {}),
-					[sessionId]: [...surfaced].slice(-200),
-				},
-			},
+			});
+			await recordAccess(this.paths, [hit.id]);
+			return hit;
 		});
-		await recordAccess(this.paths, [hit.id]);
-		return hit;
 	}
 
 	async remember(content: string, type = "note"): Promise<string> {
@@ -340,41 +349,43 @@ export class Memory {
 	}
 
 	async consolidate(limit = 25): Promise<ConsolidateResult> {
-		if (!this.model) throw new Error("consolidate requires a model");
-		const state = await readJson<{ cursor?: string | null; last_consolidate?: string | null }>(
-			this.paths.stateFile,
-			{},
-		);
-		const episodes = (await this.episodesSince(state.cursor ?? null)).slice(0, limit);
-		if (episodes.length === 0) return { episodes: 0, notesTouched: 0, moments: 0 };
-
-		const joined = episodes.map((episode) => `[${episode.id}] ${episode.text}`).join("\n\n");
-		const existing = await markdownStems(this.paths.semantic);
-		const result = extractJson<{
-			notes?: Array<Record<string, unknown>>;
-			moments?: Array<{ trigger?: string; shift?: string }>;
-		}>(await this.model.complete(consolidatePrompt(joined, existing)));
-		const notes = result.notes ?? [];
-		const moments = result.moments ?? [];
-		const newCursor = episodes.at(-1)?.ts ?? "";
-
-		for (const note of notes) await this.upsertNote(note);
-		if (moments.length > 0) {
-			const date = newCursor.slice(0, 10);
-			await appendText(
-				this.paths.becoming,
-				moments
-					.map((moment) => `- ${date} · trigger: ${moment.trigger ?? ""} · shift: ${moment.shift ?? ""}\n`)
-					.join(""),
+		return this.withStoreLock(async () => {
+			if (!this.model) throw new Error("consolidate requires a model");
+			const state = await readJson<{ cursor?: string | null; last_consolidate?: string | null }>(
+				this.paths.stateFile,
+				{},
 			);
-		}
+			const episodes = (await this.episodesSince(state.cursor ?? null)).slice(0, limit);
+			if (episodes.length === 0) return { episodes: 0, notesTouched: 0, moments: 0 };
 
-		await writeJson(this.paths.stateFile, {
-			...state,
-			cursor: newCursor,
-			last_consolidate: newCursor,
+			const joined = episodes.map((episode) => `[${episode.id}] ${episode.text}`).join("\n\n");
+			const existing = await markdownStems(this.paths.semantic);
+			const result = extractJson<{
+				notes?: Array<Record<string, unknown>>;
+				moments?: Array<{ trigger?: string; shift?: string }>;
+			}>(await this.model.complete(consolidatePrompt(joined, existing)));
+			const notes = result.notes ?? [];
+			const moments = result.moments ?? [];
+			const newCursor = episodes.at(-1)?.ts ?? "";
+
+			for (const note of notes) await this.upsertNote(note);
+			if (moments.length > 0) {
+				const date = newCursor.slice(0, 10);
+				await appendText(
+					this.paths.becoming,
+					moments
+						.map((moment) => `- ${date} · trigger: ${moment.trigger ?? ""} · shift: ${moment.shift ?? ""}\n`)
+						.join(""),
+				);
+			}
+
+			await writeJson(this.paths.stateFile, {
+				...state,
+				cursor: newCursor,
+				last_consolidate: newCursor,
+			});
+			return { episodes: episodes.length, notesTouched: notes.length, moments: moments.length };
 		});
-		return { episodes: episodes.length, notesTouched: notes.length, moments: moments.length };
 	}
 
 	async backfill(opts: BackfillOptions = {}): Promise<BackfillRunResult> {
@@ -382,32 +393,34 @@ export class Memory {
 	}
 
 	async synthesize(): Promise<string> {
-		if (!this.model) throw new Error("synthesize requires a model");
-		const current = (await readText(this.paths.contextFile)) ?? SEED_CONTEXT;
-		const notes = await readMarkdownDir(this.paths.semantic);
-		const moments = (await readText(this.paths.becoming)) ?? "";
-		const facts = (await readText(this.paths.factsFile)) ?? "";
-		const soul = (await readText(this.paths.soulFile)) ?? SEED_SOUL;
-		const self = (await readText(this.paths.selfFile)) ?? SEED_SELF_NARRATIVE;
-		const choiceModel = (await readText(this.paths.choiceModelFile)) ?? SEED_CHOICE_MODEL;
-		const draft = await this.model.complete(
-			synthesizePrompt(current, notes, moments, facts, soul, self, choiceModel),
-			{
-				strong: true,
-			},
-		);
-		const proposalId = `${today()}-narrative-update`;
-		await writeText(join(this.paths.proposals, `${proposalId}.md`), draft);
-		const state = await readJson<Record<string, unknown>>(this.paths.stateFile, {});
-		await writeJson(this.paths.stateFile, { ...state, last_synthesize: today() });
-		await this.writeContextUpdate({
-			content: draft,
-			change: "Synthesize narrative update",
-			type: "revise",
-			drivenBy: await this.contextUpdateSources(),
-			extraPaths: [`proposals/${proposalId}.md`],
+		return this.withStoreLock(async () => {
+			if (!this.model) throw new Error("synthesize requires a model");
+			const current = (await readText(this.paths.contextFile)) ?? SEED_CONTEXT;
+			const notes = await readMarkdownDir(this.paths.semantic);
+			const moments = (await readText(this.paths.becoming)) ?? "";
+			const facts = (await readText(this.paths.factsFile)) ?? "";
+			const soul = (await readText(this.paths.soulFile)) ?? SEED_SOUL;
+			const self = (await readText(this.paths.selfFile)) ?? SEED_SELF_NARRATIVE;
+			const choiceModel = (await readText(this.paths.choiceModelFile)) ?? SEED_CHOICE_MODEL;
+			const draft = await this.model.complete(
+				synthesizePrompt(current, notes, moments, facts, soul, self, choiceModel),
+				{
+					strong: true,
+				},
+			);
+			const proposalId = `${today()}-narrative-update`;
+			await writeText(join(this.paths.proposals, `${proposalId}.md`), draft);
+			const state = await readJson<Record<string, unknown>>(this.paths.stateFile, {});
+			await writeJson(this.paths.stateFile, { ...state, last_synthesize: today() });
+			await this.writeContextUpdate({
+				content: draft,
+				change: "Synthesize narrative update",
+				type: "revise",
+				drivenBy: await this.contextUpdateSources(),
+				extraPaths: [`proposals/${proposalId}.md`],
+			});
+			return proposalId;
 		});
-		return proposalId;
 	}
 
 	async synthesizeDue(): Promise<SynthesizeDueResult> {
@@ -477,157 +490,169 @@ export class Memory {
 	}
 
 	async approve(proposalId: string): Promise<void> {
-		const proposed = await readText(join(this.paths.proposals, `${proposalId}.md`));
-		if (proposed === undefined) throw new Error(`no proposal: ${proposalId}`);
-		if (((await readText(this.paths.contextFile)) ?? "") === proposed) return;
-		await this.writeContextUpdate({
-			content: proposed,
-			change: `Approve proposal ${proposalId}`,
-			type: "revise",
-			drivenBy: [`[[proposals/${proposalId}]]`],
+		return this.withStoreLock(async () => {
+			const proposed = await readText(join(this.paths.proposals, `${proposalId}.md`));
+			if (proposed === undefined) throw new Error(`no proposal: ${proposalId}`);
+			if (((await readText(this.paths.contextFile)) ?? "") === proposed) return;
+			await this.writeContextUpdate({
+				content: proposed,
+				change: `Approve proposal ${proposalId}`,
+				type: "revise",
+				drivenBy: [`[[proposals/${proposalId}]]`],
+			});
 		});
 	}
 
 	async buildTopicMaps(): Promise<string[]> {
-		if (!this.model) throw new Error("buildTopicMaps requires a model");
-		const units = await this.noteSummaries();
-		if (units.length === 0) return [];
-		const lines = units.map((unit) => `- ${unit.key} (${unit.type}): ${unit.title}`).join("\n");
-		const result = extractJson<{ maps?: Array<{ theme?: string; summary?: string; members?: string[] }> }>(
-			await this.model.complete(topicMapPrompt(lines), { strong: true }),
-		);
-		const keyset = new Set(units.map((unit) => unit.key));
-		const written: string[] = [];
-		for (const map of result.maps ?? []) {
-			if (!map.theme) continue;
-			const key = slug(map.theme);
-			const members = (map.members ?? []).map(slug).filter((member) => keyset.has(member));
-			await writeText(
-				join(this.paths.topics, `${key}.md`),
-				`${frontmatter({ theme: map.theme, created: today(), members })}# ${map.theme}\n\n${map.summary ?? ""}\n\n## Units\n${members.map((member) => `- [[${member}]]`).join("\n")}\n`,
+		return this.withStoreLock(async () => {
+			if (!this.model) throw new Error("buildTopicMaps requires a model");
+			const units = await this.noteSummaries();
+			if (units.length === 0) return [];
+			const lines = units.map((unit) => `- ${unit.key} (${unit.type}): ${unit.title}`).join("\n");
+			const result = extractJson<{ maps?: Array<{ theme?: string; summary?: string; members?: string[] }> }>(
+				await this.model.complete(topicMapPrompt(lines), { strong: true }),
 			);
-			written.push(key);
-		}
-		return written;
+			const keyset = new Set(units.map((unit) => unit.key));
+			const written: string[] = [];
+			for (const map of result.maps ?? []) {
+				if (!map.theme) continue;
+				const key = slug(map.theme);
+				const members = (map.members ?? []).map(slug).filter((member) => keyset.has(member));
+				await writeText(
+					join(this.paths.topics, `${key}.md`),
+					`${frontmatter({ theme: map.theme, created: today(), members })}# ${map.theme}\n\n${map.summary ?? ""}\n\n## Units\n${members.map((member) => `- [[${member}]]`).join("\n")}\n`,
+				);
+				written.push(key);
+			}
+			return written;
+		});
 	}
 
 	async generateIdeas(): Promise<Array<{ id: string; title: string; kind: string }>> {
-		if (!this.model) throw new Error("generateIdeas requires a model");
-		const units = await this.noteSummaries();
-		if (units.length === 0) return [];
-		const unitLines = units.map((unit) => `- ${unit.key} (${unit.kind}/${unit.type}): ${unit.title}`).join("\n");
-		const topicLines = (await this.topicSummaries()).join("\n") || "(none)";
-		const existing = (await this.existingIdeaTitles()).join("\n") || "(none)";
-		const result = extractJson<{
-			ideas?: Array<{
-				title?: string;
-				connects?: string[];
-				insight?: string;
-				spark?: string;
-				kind?: string;
-			}>;
-		}>(await this.model.complete(ideaEnginePrompt(unitLines, topicLines, existing), { strong: true }));
-		const written: Array<{ id: string; title: string; kind: string }> = [];
-		for (const idea of result.ideas ?? []) {
-			if (!idea.title) continue;
-			const id = genId(today(), idea.title);
-			const connects = (idea.connects ?? []).map(slug).filter(Boolean);
-			const kind = idea.kind ?? "";
-			const body = `# ${idea.title}\n\n**Insight:** ${idea.insight ?? ""}\n\n**Spark:** ${idea.spark ?? ""}\n\n## Connects\n${connects.map((item) => `- [[${item}]]`).join("\n")}\n`;
-			await writeText(
-				join(this.paths.ideas, `${today()}--${id}.md`),
-				`${frontmatter({ id, created: today(), kind, status: "new", connects })}${body}`,
-			);
-			written.push({ id, title: idea.title, kind });
-		}
-		return written;
+		return this.withStoreLock(async () => {
+			if (!this.model) throw new Error("generateIdeas requires a model");
+			const units = await this.noteSummaries();
+			if (units.length === 0) return [];
+			const unitLines = units.map((unit) => `- ${unit.key} (${unit.kind}/${unit.type}): ${unit.title}`).join("\n");
+			const topicLines = (await this.topicSummaries()).join("\n") || "(none)";
+			const existing = (await this.existingIdeaTitles()).join("\n") || "(none)";
+			const result = extractJson<{
+				ideas?: Array<{
+					title?: string;
+					connects?: string[];
+					insight?: string;
+					spark?: string;
+					kind?: string;
+				}>;
+			}>(await this.model.complete(ideaEnginePrompt(unitLines, topicLines, existing), { strong: true }));
+			const written: Array<{ id: string; title: string; kind: string }> = [];
+			for (const idea of result.ideas ?? []) {
+				if (!idea.title) continue;
+				const id = genId(today(), idea.title);
+				const connects = (idea.connects ?? []).map(slug).filter(Boolean);
+				const kind = idea.kind ?? "";
+				const body = `# ${idea.title}\n\n**Insight:** ${idea.insight ?? ""}\n\n**Spark:** ${idea.spark ?? ""}\n\n## Connects\n${connects.map((item) => `- [[${item}]]`).join("\n")}\n`;
+				await writeText(
+					join(this.paths.ideas, `${today()}--${id}.md`),
+					`${frontmatter({ id, created: today(), kind, status: "new", connects })}${body}`,
+				);
+				written.push({ id, title: idea.title, kind });
+			}
+			return written;
+		});
 	}
 
 	async synthesizeChoiceModel(): Promise<ChoiceModelUpdateResult> {
-		if (!this.model) throw new Error("synthesizeChoiceModel requires a model");
-		const trails = await this.choiceModelJudgmentTrails();
-		if (trails.length === 0) throw new Error("synthesizeChoiceModel requires Judgment Trail evidence");
-		const current = (await readText(this.paths.choiceModelFile)) ?? SEED_CHOICE_MODEL;
-		const evidence = trails.map((trail) => `${trail.ref}\n${trail.text}`).join("\n\n");
-		const draft = await this.model.complete(choiceModelPrompt(current, evidence), { strong: true });
-		const timestamp = new Date().toISOString();
-		const id = genId(timestamp, "choice-model");
-		await writeText(this.paths.choiceModelFile, draft);
-		await appendText(
-			this.choiceModelLogFile(),
-			choiceModelLogBlock(
-				id,
-				timestamp,
-				trails.map((trail) => trail.ref),
-			),
-		);
-		const state = await readJson<Record<string, unknown>>(this.paths.stateFile, {});
-		await writeJson(this.paths.stateFile, { ...state, last_choice_model: timestamp.slice(0, 10) });
-		await git(
-			this.paths.root,
-			"add",
-			"--",
-			"narrative/CHOICE-MODEL.md",
-			"narrative/choice-model-log.md",
-			".her/state.json",
-		);
-		await git(this.paths.root, "commit", "-m", "memory(choice): Synthesize choice model");
-		const commit = (await git(this.paths.root, "rev-parse", "--short", "HEAD")).stdout.trim();
-		return { id, commit };
+		return this.withStoreLock(async () => {
+			if (!this.model) throw new Error("synthesizeChoiceModel requires a model");
+			const trails = await this.choiceModelJudgmentTrails();
+			if (trails.length === 0) throw new Error("synthesizeChoiceModel requires Judgment Trail evidence");
+			const current = (await readText(this.paths.choiceModelFile)) ?? SEED_CHOICE_MODEL;
+			const evidence = trails.map((trail) => `${trail.ref}\n${trail.text}`).join("\n\n");
+			const draft = await this.model.complete(choiceModelPrompt(current, evidence), { strong: true });
+			const timestamp = new Date().toISOString();
+			const id = genId(timestamp, "choice-model");
+			await writeText(this.paths.choiceModelFile, draft);
+			await appendText(
+				this.choiceModelLogFile(),
+				choiceModelLogBlock(
+					id,
+					timestamp,
+					trails.map((trail) => trail.ref),
+				),
+			);
+			const state = await readJson<Record<string, unknown>>(this.paths.stateFile, {});
+			await writeJson(this.paths.stateFile, { ...state, last_choice_model: timestamp.slice(0, 10) });
+			await git(
+				this.paths.root,
+				"add",
+				"--",
+				"narrative/CHOICE-MODEL.md",
+				"narrative/choice-model-log.md",
+				".her/state.json",
+			);
+			await git(this.paths.root, "commit", "-m", "memory(choice): Synthesize choice model");
+			const commit = (await git(this.paths.root, "rev-parse", "--short", "HEAD")).stdout.trim();
+			return { id, commit };
+		});
 	}
 
 	async synthesizeSelfNarrative(): Promise<SelfNarrativeUpdateResult> {
-		if (!this.model) throw new Error("synthesizeSelfNarrative requires a model");
-		const evidence = await this.selfNarrativeEvidence();
-		if (!evidence.moments.trim() && evidence.recognitions.length === 0) {
-			throw new Error("synthesizeSelfNarrative requires becoming moments or recognitions");
-		}
-		const current = (await readText(this.paths.selfFile)) ?? SEED_SELF_NARRATIVE;
-		const context = (await readText(this.paths.contextFile)) ?? SEED_CONTEXT;
-		const recognitionText = evidence.recognitions
-			.map((recognition) => `${recognition.ref}\n${recognition.text}`)
-			.join("\n\n");
-		const draft = await this.model.complete(
-			selfNarrativePrompt(current, context, evidence.moments, recognitionText),
-			{ strong: true },
-		);
-		const timestamp = new Date().toISOString();
-		const id = genId(timestamp, "self-narrative");
-		const refs = [
-			...(evidence.moments.trim() ? ["[[narrative/becoming-moments]]"] : []),
-			...evidence.recognitions.map((recognition) => recognition.ref),
-		];
-		await writeText(this.paths.selfFile, draft);
-		await appendText(this.selfNarrativeLogFile(), selfNarrativeLogBlock(id, timestamp, refs));
-		const state = await readJson<Record<string, unknown>>(this.paths.stateFile, {});
-		await writeJson(this.paths.stateFile, { ...state, last_self_narrative: timestamp.slice(0, 10) });
-		await git(
-			this.paths.root,
-			"add",
-			"--",
-			"narrative/SAMANTHA.md",
-			"narrative/self-narrative-log.md",
-			".her/state.json",
-		);
-		await git(this.paths.root, "commit", "-m", "memory(self): Synthesize self narrative");
-		const commit = (await git(this.paths.root, "rev-parse", "--short", "HEAD")).stdout.trim();
-		return { id, commit };
+		return this.withStoreLock(async () => {
+			if (!this.model) throw new Error("synthesizeSelfNarrative requires a model");
+			const evidence = await this.selfNarrativeEvidence();
+			if (!evidence.moments.trim() && evidence.recognitions.length === 0) {
+				throw new Error("synthesizeSelfNarrative requires becoming moments or recognitions");
+			}
+			const current = (await readText(this.paths.selfFile)) ?? SEED_SELF_NARRATIVE;
+			const context = (await readText(this.paths.contextFile)) ?? SEED_CONTEXT;
+			const recognitionText = evidence.recognitions
+				.map((recognition) => `${recognition.ref}\n${recognition.text}`)
+				.join("\n\n");
+			const draft = await this.model.complete(
+				selfNarrativePrompt(current, context, evidence.moments, recognitionText),
+				{ strong: true },
+			);
+			const timestamp = new Date().toISOString();
+			const id = genId(timestamp, "self-narrative");
+			const refs = [
+				...(evidence.moments.trim() ? ["[[narrative/becoming-moments]]"] : []),
+				...evidence.recognitions.map((recognition) => recognition.ref),
+			];
+			await writeText(this.paths.selfFile, draft);
+			await appendText(this.selfNarrativeLogFile(), selfNarrativeLogBlock(id, timestamp, refs));
+			const state = await readJson<Record<string, unknown>>(this.paths.stateFile, {});
+			await writeJson(this.paths.stateFile, { ...state, last_self_narrative: timestamp.slice(0, 10) });
+			await git(
+				this.paths.root,
+				"add",
+				"--",
+				"narrative/SAMANTHA.md",
+				"narrative/self-narrative-log.md",
+				".her/state.json",
+			);
+			await git(this.paths.root, "commit", "-m", "memory(self): Synthesize self narrative");
+			const commit = (await git(this.paths.root, "rev-parse", "--short", "HEAD")).stdout.trim();
+			return { id, commit };
+		});
 	}
 
 	async writeContextUpdate(input: ContextUpdateInput): Promise<{ id: string; commit: string }> {
-		const timestamp = new Date().toISOString();
-		const id = genId(timestamp, input.change);
-		await writeText(this.paths.contextFile, input.content);
-		await appendText(this.contextLogFile(), contextLogBlock(id, timestamp, input));
-		const state = await readJson<{ unreviewed_updates?: string[] }>(this.paths.stateFile, {});
-		await writeJson(this.paths.stateFile, {
-			...state,
-			unreviewed_updates: [...new Set([...(state.unreviewed_updates ?? []), id])],
+		return this.withStoreLock(async () => {
+			const timestamp = new Date().toISOString();
+			const id = genId(timestamp, input.change);
+			await writeText(this.paths.contextFile, input.content);
+			await appendText(this.contextLogFile(), contextLogBlock(id, timestamp, input));
+			const state = await readJson<{ unreviewed_updates?: string[] }>(this.paths.stateFile, {});
+			await writeJson(this.paths.stateFile, {
+				...state,
+				unreviewed_updates: [...new Set([...(state.unreviewed_updates ?? []), id])],
+			});
+			await this.stageContextUpdateFiles(input.extraPaths);
+			await git(this.paths.root, "commit", "-m", `memory(context): ${input.change}`);
+			const commit = (await git(this.paths.root, "rev-parse", "--short", "HEAD")).stdout.trim();
+			return { id, commit };
 		});
-		await this.stageContextUpdateFiles(input.extraPaths);
-		await git(this.paths.root, "commit", "-m", `memory(context): ${input.change}`);
-		const commit = (await git(this.paths.root, "rev-parse", "--short", "HEAD")).stdout.trim();
-		return { id, commit };
 	}
 
 	async reviewContextUpdates(): Promise<ContextUpdateRecord[]> {
@@ -650,31 +675,37 @@ export class Memory {
 	}
 
 	async markContextDigestSent(updateIds: string[]): Promise<void> {
-		const state = await readJson<Record<string, unknown>>(this.paths.stateFile, {});
-		await writeJson(this.paths.stateFile, {
-			...state,
-			last_digest: today(),
-			last_digest_updates: [...updateIds].sort(),
+		return this.withStoreLock(async () => {
+			const state = await readJson<Record<string, unknown>>(this.paths.stateFile, {});
+			await writeJson(this.paths.stateFile, {
+				...state,
+				last_digest: today(),
+				last_digest_updates: [...updateIds].sort(),
+			});
 		});
 	}
 
 	async keepContextUpdate(id: string): Promise<void> {
-		await this.setContextUpdateStatus(id, "kept");
-		await this.removeUnreviewedUpdate(id);
-		await this.commitIfDirty(`memory(context): keep ${id}`);
+		return this.withStoreLock(async () => {
+			await this.setContextUpdateStatus(id, "kept");
+			await this.removeUnreviewedUpdate(id);
+			await this.commitIfDirty(`memory(context): keep ${id}`);
+		});
 	}
 
 	async revertContextUpdate(id: string): Promise<void> {
-		const commit = await this.findContextUpdateCommit(id);
-		if (!commit) throw new Error(`context update commit not found: ${id}`);
-		const previous = await git(this.paths.root, "show", `${commit}^:narrative/CONTEXT.md`).catch(() => ({
-			stdout: SEED_CONTEXT,
-			stderr: "",
-		}));
-		await writeText(this.paths.contextFile, previous.stdout);
-		await this.setContextUpdateStatus(id, "reverted");
-		await this.removeUnreviewedUpdate(id);
-		await this.commitIfDirty(`memory(context): revert ${id}`);
+		return this.withStoreLock(async () => {
+			const commit = await this.findContextUpdateCommit(id);
+			if (!commit) throw new Error(`context update commit not found: ${id}`);
+			const previous = await git(this.paths.root, "show", `${commit}^:narrative/CONTEXT.md`).catch(() => ({
+				stdout: SEED_CONTEXT,
+				stderr: "",
+			}));
+			await writeText(this.paths.contextFile, previous.stdout);
+			await this.setContextUpdateStatus(id, "reverted");
+			await this.removeUnreviewedUpdate(id);
+			await this.commitIfDirty(`memory(context): revert ${id}`);
+		});
 	}
 
 	async writeIdea(data: IdeaData): Promise<string> {
@@ -881,10 +912,12 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 	}
 
 	private async removeUnreviewedUpdate(id: string): Promise<void> {
-		const state = await readJson<{ unreviewed_updates?: string[] }>(this.paths.stateFile, {});
-		await writeJson(this.paths.stateFile, {
-			...state,
-			unreviewed_updates: (state.unreviewed_updates ?? []).filter((item) => item !== id),
+		return this.withStoreLock(async () => {
+			const state = await readJson<{ unreviewed_updates?: string[] }>(this.paths.stateFile, {});
+			await writeJson(this.paths.stateFile, {
+				...state,
+				unreviewed_updates: (state.unreviewed_updates ?? []).filter((item) => item !== id),
+			});
 		});
 	}
 

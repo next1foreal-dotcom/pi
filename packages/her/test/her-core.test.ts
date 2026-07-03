@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readdir } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -37,6 +37,10 @@ async function tempStore(): Promise<string> {
 async function git(cwd: string, ...args: string[]): Promise<{ stdout: string; stderr: string }> {
 	const { stdout, stderr } = await execFileAsync("git", args, { cwd });
 	return { stdout, stderr };
+}
+
+function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function backfillTimestamp(index: number): string {
@@ -1295,6 +1299,24 @@ test("writeIdea stores subagent ideas in ideas namespace", async () => {
 	assert.match(parsed.body, /\[\[memory-is-purpose\]\]/);
 });
 
+test("surface waits for the shared store lock before state updates", async () => {
+	const store = await tempStore();
+	await writeText(join(store, "semantic", "mirror.md"), "# Mirror\n\nMirror should wait for purpose.\n");
+	const lock = join(store, ".her", "lock");
+	await writeText(lock, JSON.stringify({ at: Date.now() / 1000, host: "python", owner: "python-owner", pid: 999999 }));
+	const memory = new Memory(store);
+	let settled = false;
+	const pending = memory.surface({ query: "Mirror purpose", sessionId: "locked", cooldownMinutes: 0 }).finally(() => {
+		settled = true;
+	});
+
+	await sleep(50);
+	assert.equal(settled, false);
+	await rm(lock, { force: true });
+	const hit = await pending;
+
+	assert.equal(hit?.id, "semantic/mirror");
+});
 test("surface returns relevant memory with per-session cooldown and dedupe", async () => {
 	const store = await tempStore();
 	await writeText(join(store, "semantic", "mirror.md"), "# Mirror\n\nMirror should wait for purpose.\n");
