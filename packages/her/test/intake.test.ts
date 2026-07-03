@@ -24,6 +24,8 @@ function inputUrl(input: Parameters<typeof fetch>[0]): string {
 	return String(input);
 }
 
+type PinnedFetchInit = Omit<RequestInit, "dispatcher"> & { dispatcher?: { pinnedAddress?: string } };
+
 test("path intake reads a full local markdown source with honest coverage", async () => {
 	const root = await mkdtemp(join(tmpdir(), "her-path-intake-"));
 	const source = join(root, "reference-note.md");
@@ -271,6 +273,20 @@ test("URL intake marks EPUB sources as parser-needed stubs with honest coverage"
 	assert.equal(result.bytesRead, 0);
 });
 
+test("URL intake pins fetch to the DNS-validated address", async () => {
+	const pinnedAddresses: string[] = [];
+	const fetcher: typeof fetch = async (input, init) => {
+		assert.equal(inputUrl(input), "https://rebind.test/article");
+		pinnedAddresses.push(((init ?? {}) as PinnedFetchInit).dispatcher?.pinnedAddress ?? "");
+		return responseText("# Rebind Fixture\n\nFetched through pinned DNS.");
+	};
+	const lookup = (async () => [{ address: "93.184.216.34", family: 4 }]) as unknown as typeof dnsLookup;
+
+	await readUrlForWorldNote("https://rebind.test/article", { fetcher, lookup });
+
+	assert.deepEqual(pinnedAddresses, ["93.184.216.34"]);
+});
+
 test("URL intake blocks bracketed IPv4-mapped and reserved private hosts", async () => {
 	const fetcher: typeof fetch = async () => {
 		throw new Error("private URLs must be blocked before fetch");
@@ -284,6 +300,8 @@ test("URL intake blocks bracketed IPv4-mapped and reserved private hosts", async
 		"http://[::ffff:10.0.0.1]/secret",
 		"http://0.0.0.0/secret",
 		"http://100.64.0.1/secret",
+		"http://[::7f00:1]/secret",
+		"http://[::a00:1]/secret",
 	]) {
 		await assert.rejects(() => readUrlForWorldNote(url, { fetcher, lookup }), /blocked private URL host/);
 	}

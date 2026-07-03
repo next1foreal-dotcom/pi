@@ -4,6 +4,7 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { isIP } from "node:net";
 import { basename, extname, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { Agent } from "undici";
 import type { WorldNoteData } from "./memory.ts";
 
 export interface UrlIntakeOptions {
@@ -70,6 +71,38 @@ const DEFAULT_PATH_INTAKE_SKIP_DIRECTORIES = [
 	"__pycache__",
 ] as const;
 const MAX_REDIRECTS = 3;
+const DEFAULT_FETCH_TIMEOUT_MS = 30_000;
+
+interface SafeLookupAddress {
+	address: string;
+	family: 4 | 6;
+}
+
+interface SafeHttpTarget {
+	address?: SafeLookupAddress;
+	url: URL;
+}
+
+type RequestInitWithDispatcher = Omit<RequestInit, "dispatcher"> & { dispatcher?: unknown };
+
+class PinnedFetchDispatcher extends Agent {
+	readonly pinnedAddress: string;
+
+	constructor(pinned: SafeLookupAddress) {
+		super({
+			connect: {
+				lookup(
+					_hostname: string,
+					_options: unknown,
+					callback: (error: Error | null, address: string, family: number) => void,
+				) {
+					callback(null, pinned.address, pinned.family);
+				},
+			},
+		});
+		this.pinnedAddress = pinned.address;
+	}
+}
 
 interface GitHubRepoTarget {
 	owner: string;
@@ -167,7 +200,7 @@ export async function readUrlForWorldNote(sourceUrl: string, opts: UrlIntakeOpti
 	const fetcher = opts.fetcher ?? fetch;
 	const lookup = opts.lookup ?? dnsLookup;
 	const startUrl = normalizeSourceUrl(sourceUrl);
-	await assertSafeHttpUrl(startUrl, { allowLocal: opts.allowLocal, lookup });
+	const safeStartUrl = await assertSafeHttpUrl(startUrl, { allowLocal: opts.allowLocal, lookup });
 	if (isXThreadUrl(startUrl)) {
 		if (!opts.allowLocal) {
 			const markdownRead = await readUrlMarkdown(startUrl, opts.xMarkdownReader, {
@@ -216,7 +249,7 @@ export async function readUrlForWorldNote(sourceUrl: string, opts: UrlIntakeOpti
 		if (markdownRead) return markdownUrlIntake(startUrl.href, markdownRead, maxBytes, "article");
 	}
 
-	const response = await fetchWithSafeRedirects(startUrl, { allowLocal: opts.allowLocal, fetcher, lookup });
+	const response = await fetchWithSafeRedirects(safeStartUrl, { allowLocal: opts.allowLocal, fetcher, lookup });
 	const contentType = response.headers.get("content-type") ?? "";
 	const finalUrl = response.url || startUrl.href;
 	const sourceType = detectSourceType(finalUrl, contentType);
@@ -410,8 +443,8 @@ async function readArxivPaperForWorldNote(
 	const fetcher = opts.fetcher ?? fetch;
 	const lookup = opts.lookup ?? dnsLookup;
 	const apiUrl = arxivApiUrl(target.id);
-	await assertSafeHttpUrl(apiUrl, { allowLocal: opts.allowLocal, lookup });
-	const response = await fetchWithSafeRedirects(apiUrl, { allowLocal: opts.allowLocal, fetcher, lookup });
+	const safeApiUrl = await assertSafeHttpUrl(apiUrl, { allowLocal: opts.allowLocal, lookup });
+	const response = await fetchWithSafeRedirects(safeApiUrl, { allowLocal: opts.allowLocal, fetcher, lookup });
 	if (!response.ok) {
 		return failedUrlIntake(requestedUrl, target.canonicalUrl, "paper", `arXiv metadata HTTP ${response.status}`);
 	}
@@ -475,8 +508,12 @@ async function readGithubRepoForWorldNote(
 	const maxRepoFiles = opts.maxRepoFiles ?? DEFAULT_MAX_REPO_FILES;
 	const repoUrl = `https://github.com/${target.owner}/${target.repo}`;
 	const apiUrl = new URL(`https://api.github.com/repos/${target.owner}/${target.repo}`);
-	await assertSafeHttpUrl(apiUrl, { allowLocal: opts.allowLocal, lookup });
-	const metadataResponse = await fetchWithSafeRedirects(apiUrl, { allowLocal: opts.allowLocal, fetcher, lookup });
+	const safeMetadataUrl = await assertSafeHttpUrl(apiUrl, { allowLocal: opts.allowLocal, lookup });
+	const metadataResponse = await fetchWithSafeRedirects(safeMetadataUrl, {
+		allowLocal: opts.allowLocal,
+		fetcher,
+		lookup,
+	});
 	if (!metadataResponse.ok) {
 		return failedUrlIntake(requestedUrl, repoUrl, "repo", `GitHub metadata HTTP ${metadataResponse.status}`);
 	}
@@ -487,8 +524,8 @@ async function readGithubRepoForWorldNote(
 		`https://api.github.com/repos/${target.owner}/${target.repo}/git/trees/${encodeURIComponent(defaultBranch)}`,
 	);
 	treeUrl.searchParams.set("recursive", "1");
-	await assertSafeHttpUrl(treeUrl, { allowLocal: opts.allowLocal, lookup });
-	const treeResponse = await fetchWithSafeRedirects(treeUrl, { allowLocal: opts.allowLocal, fetcher, lookup });
+	const safeTreeUrl = await assertSafeHttpUrl(treeUrl, { allowLocal: opts.allowLocal, lookup });
+	const treeResponse = await fetchWithSafeRedirects(safeTreeUrl, { allowLocal: opts.allowLocal, fetcher, lookup });
 	if (!treeResponse.ok) {
 		return failedUrlIntake(requestedUrl, repoUrl, "repo", `GitHub tree HTTP ${treeResponse.status}`);
 	}
@@ -502,8 +539,8 @@ async function readGithubRepoForWorldNote(
 	for (const entry of candidates) {
 		if (!entry.path) continue;
 		const rawUrl = githubRawFileUrl(target, defaultBranch, entry.path);
-		await assertSafeHttpUrl(rawUrl, { allowLocal: opts.allowLocal, lookup });
-		const response = await fetchWithSafeRedirects(rawUrl, { allowLocal: opts.allowLocal, fetcher, lookup });
+		const safeRawUrl = await assertSafeHttpUrl(rawUrl, { allowLocal: opts.allowLocal, lookup });
+		const response = await fetchWithSafeRedirects(safeRawUrl, { allowLocal: opts.allowLocal, fetcher, lookup });
 		if (!response.ok) continue;
 		const read = await readResponseText(
 			response,
@@ -562,28 +599,43 @@ async function readGithubRepoForWorldNote(
 }
 
 async function fetchWithSafeRedirects(
-	url: URL,
+	start: SafeHttpTarget,
 	opts: Required<Pick<UrlIntakeOptions, "fetcher" | "lookup">> & Pick<UrlIntakeOptions, "allowLocal">,
 ): Promise<Response> {
-	let current = url;
+	let current = start;
 	for (let redirect = 0; redirect <= MAX_REDIRECTS; redirect++) {
-		const response = await opts.fetcher(current, { redirect: "manual" });
+		const response = await fetchPinned(current, opts.fetcher);
 		const isRedirect = response.status >= 300 && response.status < 400;
 		const location = response.headers.get("location");
 		if (!isRedirect || !location) return response;
-		current = new URL(location, current);
-		await assertSafeHttpUrl(current, opts);
+		current = await assertSafeHttpUrl(new URL(location, current.url), opts);
 	}
 	throw new Error(`too many redirects after ${MAX_REDIRECTS}`);
 }
 
-async function assertSafeHttpUrl(url: URL, opts: Pick<UrlIntakeOptions, "allowLocal" | "lookup">): Promise<void> {
+async function fetchPinned(target: SafeHttpTarget, fetcher: typeof fetch): Promise<Response> {
+	const init: RequestInitWithDispatcher = {
+		redirect: "manual",
+		signal: AbortSignal.timeout(DEFAULT_FETCH_TIMEOUT_MS),
+	};
+	if (target.address) init.dispatcher = new PinnedFetchDispatcher(target.address);
+	return fetcher(target.url, init as RequestInit);
+}
+
+async function assertSafeHttpUrl(
+	url: URL,
+	opts: Pick<UrlIntakeOptions, "allowLocal" | "lookup">,
+): Promise<SafeHttpTarget> {
 	if (url.protocol !== "http:" && url.protocol !== "https:")
 		throw new Error(`unsupported URL protocol: ${url.protocol}`);
 	if (url.username || url.password) throw new Error("URLs with embedded credentials are not accepted");
-	if (opts.allowLocal) return;
+	if (opts.allowLocal) return { url };
 	if (isLocalHostname(url.hostname)) throw new Error(`blocked local URL host: ${url.hostname}`);
 	if (isPrivateIp(url.hostname)) throw new Error(`blocked private URL host: ${url.hostname}`);
+	const literalFamily = isIP(url.hostname.replace(/^\[|\]$/g, ""));
+	if (literalFamily) {
+		return { address: { address: url.hostname.replace(/^\[|\]$/g, ""), family: literalFamily === 6 ? 6 : 4 }, url };
+	}
 	const addresses = await (opts.lookup ?? dnsLookup)(url.hostname, { all: true }).catch((error) => {
 		throw new Error(
 			`DNS lookup failed for ${url.hostname}: ${error instanceof Error ? error.message : String(error)}`,
@@ -592,6 +644,9 @@ async function assertSafeHttpUrl(url: URL, opts: Pick<UrlIntakeOptions, "allowLo
 	for (const address of addresses) {
 		if (isPrivateIp(address.address)) throw new Error(`blocked private resolved address: ${address.address}`);
 	}
+	const first = addresses[0];
+	if (!first) throw new Error(`DNS lookup returned no addresses for ${url.hostname}`);
+	return { address: { address: first.address, family: first.family === 6 ? 6 : 4 }, url };
 }
 
 async function readResponseText(
@@ -963,20 +1018,36 @@ function isPrivateIp(hostname: string): boolean {
 	const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
 	if (host.startsWith("::ffff:")) return true;
 	const version = isIP(host);
-	if (version === 4) {
-		const parts = host.split(".").map((part) => Number(part));
-		return (
-			parts[0] === 0 ||
-			parts[0] === 10 ||
-			parts[0] === 127 ||
-			(parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
-			(parts[0] === 192 && parts[1] === 168) ||
-			(parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127) ||
-			(parts[0] === 169 && parts[1] === 254)
-		);
-	}
+	if (version === 4) return isPrivateIpv4(host);
 	if (version === 6) {
+		const compatibleIpv4 = ipv4FromCompatibleIpv6(host);
+		if (compatibleIpv4 && isPrivateIpv4(compatibleIpv4)) return true;
 		return host === "::1" || host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80:");
 	}
 	return false;
+}
+
+function isPrivateIpv4(host: string): boolean {
+	const parts = host.split(".").map((part) => Number(part));
+	return (
+		parts[0] === 0 ||
+		parts[0] === 10 ||
+		parts[0] === 127 ||
+		(parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
+		(parts[0] === 192 && parts[1] === 168) ||
+		(parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127) ||
+		(parts[0] === 169 && parts[1] === 254)
+	);
+}
+
+function ipv4FromCompatibleIpv6(host: string): string | undefined {
+	if (!host.startsWith("::") || host.startsWith("::ffff:")) return undefined;
+	const tail = host.slice(2);
+	if (isIP(tail) === 4) return tail;
+	const parts = tail.split(":").filter(Boolean);
+	if (parts.length === 0 || parts.length > 2) return undefined;
+	const high = Number.parseInt(parts.at(-2) ?? "0", 16);
+	const low = Number.parseInt(parts.at(-1) ?? "0", 16);
+	if (![high, low].every((part) => Number.isInteger(part) && part >= 0 && part <= 0xffff)) return undefined;
+	return `${(high >> 8) & 0xff}.${high & 0xff}.${(low >> 8) & 0xff}.${low & 0xff}`;
 }
