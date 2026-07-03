@@ -1,11 +1,18 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import { DISPATCH_GROUND_RULES, type DispatchExecutorResult, runDispatch } from "../src/her-core/dispatch.ts";
+import {
+	DISPATCH_GROUND_RULES,
+	type DispatchExecutorResult,
+	estimateUsdFromNdjson,
+	resolvePiCliPath,
+	runDispatch,
+} from "../src/her-core/dispatch.ts";
 import { initStore, listLongTasks, parseFrontmatter, readText } from "../src/her-core/index.ts";
 
 const execFileAsync = promisify(execFile);
@@ -309,4 +316,38 @@ test("dispatch loudly rejects an unknown executor", async () => {
 			}),
 		/unknown executor/,
 	);
+});
+
+test("resolvePiCliPath resolves the real pi CLI regardless of the executor's --cwd", async () => {
+	// The pi CLI lives in the samantha monorepo, not in whatever repo --cwd points at
+	// (a dispatch target can be any other checkout). Resolution must not depend on cwd.
+	const resolved = resolvePiCliPath({});
+	assert.ok(existsSync(resolved), `expected pi CLI to exist at ${resolved}`);
+	assert.match(resolved.replace(/\\/g, "/"), /packages\/coding-agent\/dist\/cli\.js$/);
+});
+
+test("resolvePiCliPath honors HER_DISPATCH_PI_CLI override relative to the samantha repo root", async () => {
+	const resolved = resolvePiCliPath({ HER_DISPATCH_PI_CLI: "packages/coding-agent/dist/cli.js" });
+	assert.ok(existsSync(resolved));
+});
+
+test("estimateUsdFromNdjson reads the settled message.usage.cost.total pi actually emits", () => {
+	// Shape captured from a real `pi --print --mode json` deepseek run: usage lives under
+	// message.usage, cost is nested at usage.cost.total (not top-level output_tokens/input_tokens).
+	const ndjson = [
+		JSON.stringify({ type: "message_start", message: { role: "assistant", usage: { cost: { total: 0 } } } }),
+		JSON.stringify({
+			type: "message_end",
+			message: {
+				role: "assistant",
+				usage: { input: 16391, output: 13, cost: { input: 0.00713, output: 0.0000113, total: 0.0071414 } },
+			},
+		}),
+	].join("\n");
+	assert.equal(estimateUsdFromNdjson(ndjson), 0.007141);
+});
+
+test("estimateUsdFromNdjson returns undefined for stub output with no usage at all", () => {
+	assert.equal(estimateUsdFromNdjson(""), undefined);
+	assert.equal(estimateUsdFromNdjson("not json\nalso not json"), undefined);
 });

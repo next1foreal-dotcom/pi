@@ -1627,6 +1627,19 @@ test("CLI dispatch loudly rejects an unknown executor with a non-zero exit", asy
 	assert.match(result.stderr, /unknown executor/);
 });
 
+test("CLI dispatch accepts --timeout-min and still reaches executor validation", async () => {
+	const { store } = await gitBackedStore();
+	const dispatchCwd = await tempDispatchGitRepo();
+	const handoffPath = await tempDispatchHandoff();
+
+	const result = await runCliFailure(
+		["dispatch", handoffPath, "--executor", "claude-code", "--cwd", dispatchCwd, "--timeout-min", "5", "--json"],
+		store,
+	);
+	assert.match(result.stderr, /unknown executor/);
+	assert.doesNotMatch(result.stderr, /unknown dispatch option/);
+});
+
 test("CLI dispatch loudly rejects a missing handoff file with a non-zero exit", async () => {
 	const { store } = await gitBackedStore();
 	const dispatchCwd = await tempDispatchGitRepo();

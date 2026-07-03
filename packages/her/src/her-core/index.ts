@@ -36,7 +36,14 @@ export type {
 	ParsedExecutor,
 	SpawnExecutorFn,
 } from "./dispatch.ts";
-export { DISPATCH_GROUND_RULES, normalizeDispatchPath, parseExecutor, runDispatch } from "./dispatch.ts";
+export {
+	DISPATCH_GROUND_RULES,
+	estimateUsdFromNdjson,
+	normalizeDispatchPath,
+	parseExecutor,
+	resolvePiCliPath,
+	runDispatch,
+} from "./dispatch.ts";
 export { createEmbeddingSearch } from "./embedding-search.ts";
 export type {
 	GoldenEvalAlert,

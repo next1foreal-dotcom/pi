@@ -454,6 +454,7 @@ function parseDispatch(argv: string[]): CliCommand {
 	let handoffPath: string | undefined;
 	let json = false;
 	let label: string | undefined;
+	let timeoutMin: number | undefined;
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i];
 		if (arg === "--json") {
@@ -476,6 +477,10 @@ function parseDispatch(argv: string[]): CliCommand {
 			label = requireOptionValue(argv[++i], arg);
 			continue;
 		}
+		if (arg === "--timeout-min") {
+			timeoutMin = parsePositiveNumber(requireOptionValue(argv[++i], arg), arg);
+			continue;
+		}
 		if (arg.startsWith("--")) throw new UsageError(`unknown dispatch option: ${arg}`);
 		if (handoffPath !== undefined) throw new UsageError("dispatch accepts only one handoff path");
 		handoffPath = arg;
@@ -490,6 +495,7 @@ function parseDispatch(argv: string[]): CliCommand {
 		...(budgetUsd !== undefined ? { budgetUsd } : {}),
 		...(cwd ? { cwd } : {}),
 		...(label ? { label } : {}),
+		...(timeoutMin !== undefined ? { timeoutMin } : {}),
 	};
 }
 

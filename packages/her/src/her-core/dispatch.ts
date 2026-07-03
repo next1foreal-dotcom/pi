@@ -1,11 +1,17 @@
 import { spawn } from "node:child_process";
 import { appendFile, mkdir } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { enforceDailyCostCap } from "./cost-ledger.ts";
 import { completeLongTask, startLongTask } from "./long-task.ts";
 import { Memory } from "./memory.ts";
 import { git } from "./memory-utils.ts";
 import { readText } from "./store.ts";
+
+// dispatch.ts lives at packages/her/src/her-core/dispatch.ts; the pi CLI lives at
+// packages/coding-agent/dist/cli.js in the same monorepo checkout. Anchor to this
+// file's own location (not the executor's --cwd, which may be a different repo).
+const SAMANTHA_REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
 
 export type DispatchExecutorKind = "codex" | "pi";
 
@@ -243,6 +249,12 @@ const MODEL_TO_PI: Record<string, { model: string; provider: string }> = {
 	deepseek: { model: "deepseek-v4-pro", provider: "deepseek" },
 };
 
+export function resolvePiCliPath(env: NodeJS.ProcessEnv): string {
+	const override = env.HER_DISPATCH_PI_CLI?.trim();
+	if (override) return resolve(SAMANTHA_REPO_ROOT, override);
+	return join(SAMANTHA_REPO_ROOT, "packages", "coding-agent", "dist", "cli.js");
+}
+
 async function spawnRealExecutor(opts: {
 	cwd: string;
 	env: NodeJS.ProcessEnv;
@@ -254,7 +266,7 @@ async function spawnRealExecutor(opts: {
 	if (opts.executor.kind === "pi") {
 		const mapping = MODEL_TO_PI[opts.executor.model ?? ""];
 		if (!mapping) throw new Error(`her dispatch: unknown executor: pi:${opts.executor.model}`);
-		const cli = resolve(opts.cwd, "packages", "coding-agent", "dist", "cli.js");
+		const cli = resolvePiCliPath(opts.env);
 		return runSpawn(
 			process.execPath,
 			[cli, "--print", "--mode", "json", "--provider", mapping.provider, "--model", mapping.model, opts.prompt],
@@ -347,23 +359,43 @@ function raceAgainstTimeout(
 	});
 }
 
-function estimateUsdFromNdjson(stdout: string): number | undefined {
+interface PiNdjsonUsage {
+	cost?: { total?: number };
+	input?: number;
+	output?: number;
+	output_tokens?: number;
+	input_tokens?: number;
+}
+
+export function estimateUsdFromNdjson(stdout: string): number | undefined {
+	let lastCostTotal: number | undefined;
 	let totalTokens = 0;
-	let found = false;
+	let sawTokensWithoutCost = false;
 	for (const line of stdout.split(/\r?\n/)) {
 		if (!line.trim()) continue;
+		let parsed: { message?: { usage?: PiNdjsonUsage }; usage?: PiNdjsonUsage };
 		try {
-			const parsed = JSON.parse(line) as { usage?: { output_tokens?: number; input_tokens?: number } };
-			if (parsed.usage) {
-				found = true;
-				totalTokens += (parsed.usage.output_tokens ?? 0) + (parsed.usage.input_tokens ?? 0);
-			}
+			parsed = JSON.parse(line);
 		} catch {
 			// non-JSON lines are expected in NDJSON streams (progress text); ignore.
+			continue;
+		}
+		const usage = parsed.message?.usage ?? parsed.usage;
+		if (!usage) continue;
+		if (typeof usage.cost?.total === "number") {
+			// pi reports a running total per event; the last one is the settled turn cost.
+			lastCostTotal = usage.cost.total;
+			continue;
+		}
+		const tokens = (usage.output_tokens ?? usage.output ?? 0) + (usage.input_tokens ?? usage.input ?? 0);
+		if (tokens > 0) {
+			totalTokens = tokens;
+			sawTokensWithoutCost = true;
 		}
 	}
-	if (!found) return undefined;
-	// ponytail: cheap $/token estimate until real per-model pricing is wired; swap when it drifts.
+	if (lastCostTotal !== undefined) return Math.round(lastCostTotal * 1_000_000) / 1_000_000;
+	if (!sawTokensWithoutCost) return undefined;
+	// ponytail: cheap $/token estimate for providers that report tokens but no cost; swap when it drifts.
 	return Math.round(totalTokens * 0.000002 * 1_000_000) / 1_000_000;
 }
 

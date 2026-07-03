@@ -474,7 +474,7 @@ export function usage(): string {
   her choice-model [--json]
   her consolidate [--limit <n>] [--json]
   her decay [--older-than-days <days>] [--now <YYYY-MM-DD>] [--json]
-  her dispatch <handoff.md> --executor pi:<model>|codex [--budget-usd <usd>] [--cwd <dir>] [--label <text>] [--json]
+  her dispatch <handoff.md> --executor pi:<model>|codex [--budget-usd <usd>] [--cwd <dir>] [--label <text>] [--timeout-min <n>] [--json]
   her eval-golden [--write-baseline] [--now <ISO>] [--json]
   her goal-start --objective <text> [--source <text>] [--owner <text>] [--next <text>] [--json]
   her goal-checkpoint --id <id> --summary <text> [--status active|blocked] [--next <text>] [--evidence <ref>] [--json]

@@ -236,6 +236,7 @@ export async function runHerCli(
 			handoffPath: resolve(cwd, command.handoffPath),
 			label: command.label,
 			memoryDir,
+			timeoutMin: command.timeoutMin,
 		});
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderDispatch);

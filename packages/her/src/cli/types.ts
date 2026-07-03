@@ -51,6 +51,7 @@ export type CliCommand =
 			json: boolean;
 			kind: "dispatch";
 			label?: string;
+			timeoutMin?: number;
 	  }
 	| { kind: "eval-golden"; json: boolean; now?: string; writeBaseline: boolean }
 	| {
