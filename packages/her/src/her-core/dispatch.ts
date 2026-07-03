@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { appendFile, mkdir } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { enforceDailyCostCap } from "./cost-ledger.ts";
 import { completeLongTask, startLongTask } from "./long-task.ts";
@@ -81,6 +82,10 @@ export interface DispatchAuditEntry {
 const DEFAULT_BUDGET_USD = 5;
 const DEFAULT_DAILY_CAP_USD = 20;
 const DEFAULT_TIMEOUT_MIN = 60;
+const WINDOWS_CODEX_COMMANDS = ["codex.cmd", "codex.exe", "codex"] as const;
+
+type CodexCommandName = (typeof WINDOWS_CODEX_COMMANDS)[number];
+type CodexCommandProbe = Record<CodexCommandName, boolean>;
 
 const FORBIDDEN_PATH_PREFIXES = ["packages/coding-agent/", "narrative/facts.md"];
 const FORBIDDEN_PATH_SEGMENTS = ["/her-memory/"];
@@ -144,10 +149,40 @@ export async function runDispatch(opts: DispatchOptions): Promise<DispatchResult
 	const timeoutMs = Math.max(1, Math.round(timeoutMin * 60_000));
 	const started = Date.now();
 
-	const execResult = await raceAgainstTimeout(
-		spawnFn({ cwd, env, executor, handoffText, prompt, timeoutMs }),
-		timeoutMs,
-	);
+	let execResult: DispatchExecutorResult;
+	try {
+		execResult = await raceAgainstTimeout(spawnFn({ cwd, env, executor, handoffText, prompt, timeoutMs }), timeoutMs);
+	} catch (error) {
+		const durationMs = Date.now() - started;
+		const failedAt = new Date().toISOString();
+		const reason = error instanceof Error ? error.message : String(error);
+		await completeLongTask(memoryDir, dispatchId, { now: failedAt, outcome: `failed: ${reason}` });
+		await recordDispatchAudit(memoryDir, {
+			dispatchId,
+			executor: opts.executor,
+			handoff: opts.handoffPath,
+			status: "failed",
+			ts: failedAt,
+			...(executor.kind === "codex" ? { cost: { usd: 0, purpose: "codex-untracked" } } : {}),
+		});
+		await captureDispatchEpisode(memoryDir, {
+			dispatchId,
+			executor: opts.executor,
+			handoffPath: opts.handoffPath,
+			status: "failed",
+			summary: `Dispatch failed for ${opts.executor} on ${opts.handoffPath}: ${reason}`,
+		});
+		return {
+			commits: 0,
+			dispatchId,
+			durationMs,
+			executor: opts.executor,
+			filesChanged: 0,
+			handoffPath: opts.handoffPath,
+			status: "failed",
+			violations: [],
+		};
+	}
 	const durationMs = Date.now() - started;
 
 	if (execResult.timedOut) {
@@ -273,7 +308,47 @@ async function spawnRealExecutor(opts: {
 			opts,
 		);
 	}
-	return runSpawn("codex", ["exec", "-s", "workspace-write", "--cd", opts.cwd, "-"], opts, opts.prompt);
+	return runSpawn(
+		resolveCodexCommand(opts.env),
+		["exec", "-s", "workspace-write", "--cd", opts.cwd, "-"],
+		opts,
+		opts.prompt,
+	);
+}
+
+let codexCommandCache:
+	| { command: CodexCommandName; pathValue: string | undefined; platform: NodeJS.Platform }
+	| undefined;
+
+export function selectCodexCommand(platform: NodeJS.Platform, probe: CodexCommandProbe): CodexCommandName {
+	if (platform !== "win32") return "codex";
+	for (const command of WINDOWS_CODEX_COMMANDS) {
+		if (probe[command]) return command;
+	}
+	return "codex.cmd";
+}
+
+function resolveCodexCommand(env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform): CodexCommandName {
+	const pathValue = env.PATH ?? env.Path ?? env.path;
+	if (codexCommandCache && codexCommandCache.platform === platform && codexCommandCache.pathValue === pathValue) {
+		return codexCommandCache.command;
+	}
+	const command = selectCodexCommand(platform, probeCodexCommands(pathValue));
+	codexCommandCache = { command, pathValue, platform };
+	return command;
+}
+
+function probeCodexCommands(pathValue: string | undefined): CodexCommandProbe {
+	const probe: CodexCommandProbe = { "codex.cmd": false, "codex.exe": false, codex: false };
+	if (!pathValue) return probe;
+	for (const rawDir of pathValue.split(delimiter)) {
+		const dir = rawDir.trim().replace(/^"|"$/g, "");
+		if (!dir) continue;
+		for (const command of WINDOWS_CODEX_COMMANDS) {
+			if (!probe[command] && existsSync(join(dir, command))) probe[command] = true;
+		}
+	}
+	return probe;
 }
 
 function runSpawn(

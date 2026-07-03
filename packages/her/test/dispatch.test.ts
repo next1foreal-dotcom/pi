@@ -12,6 +12,7 @@ import {
 	estimateUsdFromNdjson,
 	resolvePiCliPath,
 	runDispatch,
+	selectCodexCommand,
 } from "../src/her-core/dispatch.ts";
 import { initStore, listLongTasks, parseFrontmatter, readText } from "../src/her-core/index.ts";
 
@@ -49,6 +50,55 @@ async function tempHandoff(text = "# Example Handoff\n\nDo the thing.\n"): Promi
 function okStub(): DispatchExecutorResult {
 	return { exitCode: 0, prompt: "", stderr: "", stdout: "", timedOut: false };
 }
+
+test("selectCodexCommand chooses the Windows shim from probe results", () => {
+	assert.equal(selectCodexCommand("win32", { "codex.cmd": true, "codex.exe": true, codex: true }), "codex.cmd");
+	assert.equal(selectCodexCommand("win32", { "codex.cmd": false, "codex.exe": true, codex: true }), "codex.exe");
+	assert.equal(selectCodexCommand("win32", { "codex.cmd": false, "codex.exe": false, codex: true }), "codex");
+	assert.equal(selectCodexCommand("win32", { "codex.cmd": false, "codex.exe": false, codex: false }), "codex.cmd");
+	assert.equal(selectCodexCommand("linux", { "codex.cmd": true, "codex.exe": true, codex: false }), "codex");
+});
+
+test("dispatch records executor spawn failures across ledger audit and capture", async () => {
+	const memoryDir = await tempMemoryStore();
+	const cwd = await tempGitRepo();
+	const handoffPath = await tempHandoff();
+	const spawnError = Object.assign(new Error("spawn missing-executor ENOENT"), { code: "ENOENT" });
+
+	const result = await runDispatch({
+		cwd,
+		executor: "codex",
+		handoffPath,
+		memoryDir,
+		spawnExecutor: async () => {
+			throw spawnError;
+		},
+	});
+
+	assert.equal(result.status, "failed");
+	assert.equal(result.commits, 0);
+	assert.equal(result.filesChanged, 0);
+
+	const tasks = await listLongTasks(memoryDir);
+	assert.equal(tasks.length, 1);
+	assert.notEqual(tasks[0].status, "active");
+	const record = await readText(join(memoryDir, tasks[0].path));
+	assert.match(record ?? "", /failed: spawn missing-executor ENOENT/);
+
+	const auditFiles = await readdir(join(memoryDir, "audit"));
+	const auditRaw = await readText(join(memoryDir, "audit", auditFiles[0]));
+	const auditEntry = JSON.parse((auditRaw ?? "").trim()) as { dispatchId: string; executor: string; status: string };
+	assert.equal(auditEntry.dispatchId, result.dispatchId);
+	assert.equal(auditEntry.executor, "codex");
+	assert.equal(auditEntry.status, "failed");
+
+	const rawFiles = (await readdir(join(memoryDir, "episodic", "raw"))).filter((name) => name.endsWith(".md"));
+	assert.equal(rawFiles.length, 1);
+	const raw = await readText(join(memoryDir, "episodic", "raw", rawFiles[0]));
+	const parsed = parseFrontmatter(raw);
+	assert.equal(parsed.data.dispatch_id, result.dispatchId);
+	assert.equal(parsed.data.executor, "codex");
+});
 
 function committingStub(files: Array<{ path: string; content: string }>) {
 	return async (opts: { cwd: string; prompt: string }): Promise<DispatchExecutorResult> => {
