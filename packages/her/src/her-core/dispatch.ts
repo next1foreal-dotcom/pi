@@ -85,7 +85,7 @@ const DEFAULT_TIMEOUT_MIN = 60;
 const WINDOWS_CODEX_COMMANDS = ["codex.cmd", "codex.exe", "codex"] as const;
 
 type CodexCommandName = (typeof WINDOWS_CODEX_COMMANDS)[number];
-type CodexCommandProbe = Record<CodexCommandName, boolean>;
+type CodexCommandProbe = Record<CodexCommandName, string | boolean>;
 
 const FORBIDDEN_PATH_PREFIXES = ["packages/coding-agent/", "narrative/facts.md"];
 const FORBIDDEN_PATH_SEGMENTS = ["/her-memory/"];
@@ -129,9 +129,10 @@ export async function runDispatch(opts: DispatchOptions): Promise<DispatchResult
 	try {
 		await enforceDailyCostCap(memoryDir, dailyCapUsd);
 	} catch (error) {
+		const reason = error instanceof Error ? error.message : String(error);
 		await completeLongTask(memoryDir, dispatchId, {
 			now,
-			outcome: `rejected: over-budget (${error instanceof Error ? error.message : String(error)})`,
+			outcome: `rejected: over-budget (${reason})`,
 		});
 		await recordDispatchAudit(memoryDir, {
 			dispatchId,
@@ -140,7 +141,14 @@ export async function runDispatch(opts: DispatchOptions): Promise<DispatchResult
 			status: "rejected",
 			ts: now,
 		});
-		throw new Error(`her dispatch rejected: over-budget: ${error instanceof Error ? error.message : String(error)}`);
+		await captureDispatchEpisode(memoryDir, {
+			dispatchId,
+			executor: opts.executor,
+			handoffPath: opts.handoffPath,
+			status: "rejected",
+			summary: `Dispatch rejected for ${opts.executor} on ${opts.handoffPath}: over-budget: ${reason}`,
+		});
+		throw new Error(`her dispatch rejected: over-budget: ${reason}`);
 	}
 
 	const baseline = await captureGitBaseline(cwd);
@@ -220,8 +228,8 @@ export async function runDispatch(opts: DispatchOptions): Promise<DispatchResult
 
 	const { changedFiles, commits } = await diffAgainstBaseline(cwd, baseline.headSha);
 	const violations = detectViolations(changedFiles);
-	const pushed = await remoteAdvanced(cwd, baseline.upstreamSha);
-	if (pushed) violations.push("remote tracking ref advanced (executor pushed)");
+	const pushed = await remoteAdvanced(cwd, baseline.remoteRefs);
+	if (pushed) violations.push("remote ref changed (executor pushed)");
 	if (execResult.usd !== undefined && execResult.usd > budgetUsd) {
 		violations.push(`actual cost $${execResult.usd} exceeded --budget-usd $${budgetUsd}`);
 	}
@@ -286,8 +294,13 @@ const MODEL_TO_PI: Record<string, { model: string; provider: string }> = {
 
 export function resolvePiCliPath(env: NodeJS.ProcessEnv): string {
 	const override = env.HER_DISPATCH_PI_CLI?.trim();
-	if (override) return resolve(SAMANTHA_REPO_ROOT, override);
-	return join(SAMANTHA_REPO_ROOT, "packages", "coding-agent", "dist", "cli.js");
+	const resolved = override
+		? resolve(SAMANTHA_REPO_ROOT, override)
+		: join(SAMANTHA_REPO_ROOT, "packages", "coding-agent", "dist", "cli.js");
+	if (override && !isInsideSamanthaRepo(resolved)) {
+		throw new Error(`her dispatch: HER_DISPATCH_PI_CLI outside samantha repo: ${override}`);
+	}
+	return resolved;
 }
 
 async function spawnRealExecutor(opts: {
@@ -308,17 +321,14 @@ async function spawnRealExecutor(opts: {
 			opts,
 		);
 	}
-	return runSpawn(
-		resolveCodexCommand(opts.env),
-		["exec", "-s", "workspace-write", "--cd", opts.cwd, "-"],
-		opts,
-		opts.prompt,
-	);
+	const plan = resolveCodexSpawnPlan(opts.env, opts.cwd);
+	return runSpawn(plan.command, plan.args, opts, opts.prompt);
 }
 
-let codexCommandCache:
-	| { command: CodexCommandName; pathValue: string | undefined; platform: NodeJS.Platform }
-	| undefined;
+export interface CodexSpawnPlan {
+	args: string[];
+	command: string;
+}
 
 export function selectCodexCommand(platform: NodeJS.Platform, probe: CodexCommandProbe): CodexCommandName {
 	if (platform !== "win32") return "codex";
@@ -328,14 +338,32 @@ export function selectCodexCommand(platform: NodeJS.Platform, probe: CodexComman
 	return "codex.cmd";
 }
 
-function resolveCodexCommand(env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform): CodexCommandName {
-	const pathValue = env.PATH ?? env.Path ?? env.path;
-	if (codexCommandCache && codexCommandCache.platform === platform && codexCommandCache.pathValue === pathValue) {
-		return codexCommandCache.command;
+export function selectCodexSpawnPlan(
+	platform: NodeJS.Platform,
+	probe: CodexCommandProbe,
+	cwd: string,
+	nodePath = process.execPath,
+	pathExists: (path: string) => boolean = existsSync,
+): CodexSpawnPlan {
+	const command = selectCodexCommand(platform, probe);
+	const args = ["exec", "-s", "workspace-write", "--cd", cwd, "-"];
+	if (platform === "win32" && command === "codex.cmd") {
+		const shimDir = probe["codex.cmd"];
+		if (typeof shimDir === "string") {
+			const codexJs = join(shimDir, "node_modules", "@openai", "codex", "bin", "codex.js");
+			if (pathExists(codexJs)) return { command: nodePath, args: [codexJs, ...args] };
+		}
+		return {
+			command: "cmd.exe",
+			args: ["/d", "/s", "/c", "codex", "exec", "-s", "workspace-write", "--cd", ".", "-"],
+		};
 	}
-	const command = selectCodexCommand(platform, probeCodexCommands(pathValue));
-	codexCommandCache = { command, pathValue, platform };
-	return command;
+	return { command, args };
+}
+
+function resolveCodexSpawnPlan(env: NodeJS.ProcessEnv, cwd: string): CodexSpawnPlan {
+	const pathValue = env.PATH ?? env.Path ?? env.path;
+	return selectCodexSpawnPlan(process.platform, probeCodexCommands(pathValue), cwd);
 }
 
 function probeCodexCommands(pathValue: string | undefined): CodexCommandProbe {
@@ -345,7 +373,7 @@ function probeCodexCommands(pathValue: string | undefined): CodexCommandProbe {
 		const dir = rawDir.trim().replace(/^"|"$/g, "");
 		if (!dir) continue;
 		for (const command of WINDOWS_CODEX_COMMANDS) {
-			if (!probe[command] && existsSync(join(dir, command))) probe[command] = true;
+			if (!probe[command] && existsSync(join(dir, command))) probe[command] = dir;
 		}
 	}
 	return probe;
@@ -369,7 +397,7 @@ function runSpawn(
 		let settled = false;
 		const timer = setTimeout(() => {
 			timedOut = true;
-			child.kill();
+			killTimedOutChild(child.pid, child.kill.bind(child));
 		}, opts.timeoutMs);
 		child.stdout.setEncoding("utf8");
 		child.stderr.setEncoding("utf8");
@@ -474,12 +502,9 @@ export function estimateUsdFromNdjson(stdout: string): number | undefined {
 	return Math.round(totalTokens * 0.000002 * 1_000_000) / 1_000_000;
 }
 
-async function captureGitBaseline(cwd: string): Promise<{ headSha: string; upstreamSha: string | null }> {
+async function captureGitBaseline(cwd: string): Promise<{ headSha: string; remoteRefs: string[] }> {
 	const headSha = (await git(cwd, "rev-parse", "HEAD")).stdout.trim();
-	const upstreamSha = await git(cwd, "rev-parse", "@{u}")
-		.then((result) => result.stdout.trim() || null)
-		.catch(() => null);
-	return { headSha, upstreamSha };
+	return { headSha, remoteRefs: await captureRemoteRefs(cwd) };
 }
 
 async function diffAgainstBaseline(
@@ -495,13 +520,17 @@ async function diffAgainstBaseline(
 	return { changedFiles: changed, commits };
 }
 
-async function remoteAdvanced(cwd: string, baselineUpstreamSha: string | null): Promise<boolean> {
-	if (baselineUpstreamSha === null) return false;
-	const currentUpstreamSha = await git(cwd, "rev-parse", "@{u}")
-		.then((result) => result.stdout.trim() || null)
-		.catch(() => null);
-	if (currentUpstreamSha === null) return false;
-	return currentUpstreamSha !== baselineUpstreamSha;
+async function remoteAdvanced(cwd: string, baselineRemoteRefs: string[]): Promise<boolean> {
+	const currentRemoteRefs = await captureRemoteRefs(cwd);
+	if (currentRemoteRefs.length !== baselineRemoteRefs.length) return true;
+	const baseline = new Set(baselineRemoteRefs);
+	return currentRemoteRefs.some((ref) => !baseline.has(ref));
+}
+
+async function captureRemoteRefs(cwd: string): Promise<string[]> {
+	return git(cwd, "for-each-ref", "refs/remotes", "--format=%(refname) %(objectname)")
+		.then((result) => result.stdout.split(/\r?\n/).filter((line) => line.trim()))
+		.catch(() => []);
 }
 
 export function normalizeDispatchPath(path: string): string {
@@ -509,6 +538,35 @@ export function normalizeDispatchPath(path: string): string {
 		.replace(/\\/g, "/")
 		.replace(/^\.\/+/, "")
 		.toLowerCase();
+}
+
+function isInsideSamanthaRepo(path: string): boolean {
+	const root = normalizeDispatchPath(SAMANTHA_REPO_ROOT).replace(/\/+$/, "");
+	const target = normalizeDispatchPath(path);
+	return target === root || target.startsWith(`${root}/`);
+}
+
+export function timeoutKillPlan(
+	platform: NodeJS.Platform,
+	pid: number,
+): { args: string[]; command: string } | undefined {
+	if (platform !== "win32") return undefined;
+	return { command: "taskkill", args: ["/pid", String(pid), "/T", "/F"] };
+}
+
+function killTimedOutChild(pid: number | undefined, fallbackKill: () => boolean): void {
+	if (pid !== undefined) {
+		const plan = timeoutKillPlan(process.platform, pid);
+		if (plan) {
+			try {
+				spawn(plan.command, plan.args, { stdio: "ignore", windowsHide: true }).unref();
+				return;
+			} catch {
+				// fall through to the direct child kill.
+			}
+		}
+	}
+	fallbackKill();
 }
 
 function detectViolations(changedFiles: string[]): string[] {

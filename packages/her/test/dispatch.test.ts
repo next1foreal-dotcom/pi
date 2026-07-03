@@ -13,6 +13,8 @@ import {
 	resolvePiCliPath,
 	runDispatch,
 	selectCodexCommand,
+	selectCodexSpawnPlan,
+	timeoutKillPlan,
 } from "../src/her-core/dispatch.ts";
 import { initStore, listLongTasks, parseFrontmatter, readText } from "../src/her-core/index.ts";
 
@@ -57,6 +59,41 @@ test("selectCodexCommand chooses the Windows shim from probe results", () => {
 	assert.equal(selectCodexCommand("win32", { "codex.cmd": false, "codex.exe": false, codex: true }), "codex");
 	assert.equal(selectCodexCommand("win32", { "codex.cmd": false, "codex.exe": false, codex: false }), "codex.cmd");
 	assert.equal(selectCodexCommand("linux", { "codex.cmd": true, "codex.exe": true, codex: false }), "codex");
+});
+
+test("selectCodexSpawnPlan runs the Codex JS entry instead of spawning the Windows cmd shim", () => {
+	const plan = selectCodexSpawnPlan(
+		"win32",
+		{ "codex.cmd": "C:\\tools\\npm", "codex.exe": false, codex: false },
+		"D:\\work dir\\项目",
+		"C:\\node\\node.exe",
+		() => true,
+	);
+
+	assert.equal(plan.command, "C:\\node\\node.exe");
+	assert.equal(plan.args[0].replace(/\\/g, "/"), "C:/tools/npm/node_modules/@openai/codex/bin/codex.js");
+	assert.deepEqual(plan.args.slice(1), ["exec", "-s", "workspace-write", "--cd", "D:\\work dir\\项目", "-"]);
+});
+
+test("selectCodexSpawnPlan falls back to cmd.exe with cwd and --cd . when JS probing fails", () => {
+	const plan = selectCodexSpawnPlan(
+		"win32",
+		{ "codex.cmd": "C:\\tools\\npm", "codex.exe": false, codex: false },
+		"D:\\work dir\\项目",
+		"C:\\node\\node.exe",
+		() => false,
+	);
+
+	assert.equal(plan.command, "cmd.exe");
+	assert.deepEqual(plan.args, ["/d", "/s", "/c", "codex", "exec", "-s", "workspace-write", "--cd", ".", "-"]);
+});
+
+test("timeoutKillPlan kills the whole Windows process tree", () => {
+	assert.deepEqual(timeoutKillPlan("win32", 1234), {
+		command: "taskkill",
+		args: ["/pid", "1234", "/T", "/F"],
+	});
+	assert.equal(timeoutKillPlan("linux", 1234), undefined);
 });
 
 test("dispatch records executor spawn failures across ledger audit and capture", async () => {
@@ -146,6 +183,14 @@ test("dispatch rejects over-budget requests and records rejection on the ledger"
 	assert.equal(tasks[0].status, "completed");
 	const record = await readText(join(memoryDir, tasks[0].path));
 	assert.match(record ?? "", /rejected: over-budget/);
+
+	const rawFiles = (await readdir(join(memoryDir, "episodic", "raw"))).filter((name) => name.endsWith(".md"));
+	assert.equal(rawFiles.length, 1);
+	const raw = await readText(join(memoryDir, "episodic", "raw", rawFiles[0]));
+	const parsed = parseFrontmatter(raw);
+	assert.equal(parsed.data.dispatch_id, tasks[0].id);
+	assert.equal(parsed.data.executor, "pi:deepseek");
+	assert.equal(parsed.data.provenance, "her-observed");
 });
 
 test("dispatch runs the full lifecycle from active to completed with frontmatter fields intact", async () => {
@@ -216,6 +261,33 @@ test("dispatch flags a forbidden-zone commit as completed-with-violations and fa
 	const tasks = await listLongTasks(memoryDir);
 	const record = await readText(join(memoryDir, tasks[0].path));
 	assert.match(record ?? "", /packages\/coding-agent\/x\.ts/);
+});
+
+test("dispatch flags a push to a non-tracking remote as completed-with-violations", async () => {
+	const memoryDir = await tempMemoryStore();
+	const cwd = await tempGitRepo();
+	const handoffPath = await tempHandoff();
+
+	const bareRemote = await mkdtemp(join(tmpdir(), "her-dispatch-extra-remote-"));
+	await git(bareRemote, "init", "-q", "--bare");
+
+	const result = await runDispatch({
+		cwd,
+		executor: "pi:deepseek",
+		handoffPath,
+		memoryDir,
+		spawnExecutor: async (opts) => {
+			await git(opts.cwd, "remote", "add", "x", bareRemote);
+			await writeFile(join(opts.cwd, "pushed-extra.txt"), "pushed\n", "utf8");
+			await git(opts.cwd, "add", "-A");
+			await git(opts.cwd, "commit", "-q", "-m", "executor commit before extra push");
+			await git(opts.cwd, "push", "-q", "x", "HEAD:main");
+			return { ...okStub(), prompt: opts.prompt };
+		},
+	});
+
+	assert.equal(result.status, "completed-with-violations");
+	assert.ok(result.violations.some((violation) => /remote/i.test(violation)));
 });
 
 test("dispatch flags a remote push during the run as completed-with-violations", async () => {
@@ -379,6 +451,17 @@ test("resolvePiCliPath resolves the real pi CLI regardless of the executor's --c
 test("resolvePiCliPath honors HER_DISPATCH_PI_CLI override relative to the samantha repo root", async () => {
 	const resolved = resolvePiCliPath({ HER_DISPATCH_PI_CLI: "packages/coding-agent/dist/cli.js" });
 	assert.ok(existsSync(resolved));
+});
+
+test("resolvePiCliPath rejects an absolute HER_DISPATCH_PI_CLI override outside the repo", () => {
+	assert.throws(
+		() => resolvePiCliPath({ HER_DISPATCH_PI_CLI: join(tmpdir(), "evil-pi.js") }),
+		/HER_DISPATCH_PI_CLI.*outside/i,
+	);
+});
+
+test("resolvePiCliPath rejects parent-directory escape", () => {
+	assert.throws(() => resolvePiCliPath({ HER_DISPATCH_PI_CLI: "../evil-pi.js" }), /HER_DISPATCH_PI_CLI.*outside/i);
 });
 
 test("estimateUsdFromNdjson reads the settled message.usage.cost.total pi actually emits", () => {
