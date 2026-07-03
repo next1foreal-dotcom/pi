@@ -30,6 +30,7 @@ export function parseArgs(argv: string[]): CliCommand {
 	if (command === "choice-model") return parseJsonOnly("choice-model", rest);
 	if (command === "consolidate") return parseConsolidate(rest);
 	if (command === "decay") return parseDecay(rest);
+	if (command === "dispatch") return parseDispatch(rest);
 	if (command === "eval-golden") return parseEvalGolden(rest);
 	if (command === "goal-checkpoint") return parseGoalCheckpoint(rest);
 	if (command === "goal-complete") return parseGoalComplete(rest);
@@ -444,6 +445,52 @@ function parseDecay(argv: string[]): CliCommand {
 		throw new UsageError(`unknown decay option: ${arg}`);
 	}
 	return { kind: "decay", json, olderThanDays, now };
+}
+
+function parseDispatch(argv: string[]): CliCommand {
+	let budgetUsd: number | undefined;
+	let cwd: string | undefined;
+	let executor: string | undefined;
+	let handoffPath: string | undefined;
+	let json = false;
+	let label: string | undefined;
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--executor") {
+			executor = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--budget-usd") {
+			budgetUsd = parsePositiveNumber(requireOptionValue(argv[++i], arg), arg);
+			continue;
+		}
+		if (arg === "--cwd") {
+			cwd = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--label") {
+			label = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg.startsWith("--")) throw new UsageError(`unknown dispatch option: ${arg}`);
+		if (handoffPath !== undefined) throw new UsageError("dispatch accepts only one handoff path");
+		handoffPath = arg;
+	}
+	if (!handoffPath?.trim()) throw new UsageError("dispatch requires a handoff path, e.g. her dispatch <handoff.md>");
+	if (!executor?.trim()) throw new UsageError("dispatch requires --executor <pi:model|codex>");
+	return {
+		kind: "dispatch",
+		json,
+		handoffPath,
+		executor,
+		...(budgetUsd !== undefined ? { budgetUsd } : {}),
+		...(cwd ? { cwd } : {}),
+		...(label ? { label } : {}),
+	};
 }
 
 function parseEvalGolden(argv: string[]): CliCommand {

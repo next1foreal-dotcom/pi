@@ -6,6 +6,7 @@ import type {
 	CliChoiceModelPayload,
 	CliConsolidatePayload,
 	CliDecayPayload,
+	CliDispatchPayload,
 	CliGoalCompletePayload,
 	CliGoalListPayload,
 	CliGoalNextPayload,
@@ -139,6 +140,23 @@ export function renderGoldenEval(payload: CliGoldenEvalPayload): string {
 
 export function renderRestore(payload: CliRestorePayload): string {
 	return [`Her memory restored archived semantic note: ${payload.result.key}`, "", renderStatus(payload)].join("\n");
+}
+
+export function renderDispatch(payload: CliDispatchPayload): string {
+	return [
+		`Her dispatch ${payload.result.status}: ${payload.result.dispatchId}`,
+		`executor: ${payload.result.executor}`,
+		`handoff: ${payload.result.handoffPath}`,
+		`commits: ${payload.result.commits}`,
+		`files changed: ${payload.result.filesChanged}`,
+		`duration_ms: ${payload.result.durationMs}`,
+		payload.result.usd !== undefined ? `usd: ${payload.result.usd}` : undefined,
+		payload.result.violations.length > 0 ? `violations: ${payload.result.violations.join(", ")}` : undefined,
+		"",
+		renderStatus(payload),
+	]
+		.filter((line) => line !== undefined)
+		.join("\n");
 }
 
 export function renderGoal(payload: CliGoalPayload): string {
@@ -456,6 +474,7 @@ export function usage(): string {
   her choice-model [--json]
   her consolidate [--limit <n>] [--json]
   her decay [--older-than-days <days>] [--now <YYYY-MM-DD>] [--json]
+  her dispatch <handoff.md> --executor pi:<model>|codex [--budget-usd <usd>] [--cwd <dir>] [--label <text>] [--json]
   her eval-golden [--write-baseline] [--now <ISO>] [--json]
   her goal-start --objective <text> [--source <text>] [--owner <text>] [--next <text>] [--json]
   her goal-checkpoint --id <id> --summary <text> [--status active|blocked] [--next <text>] [--evidence <ref>] [--json]

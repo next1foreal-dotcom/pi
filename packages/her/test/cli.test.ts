@@ -1586,3 +1586,59 @@ test("CLI persists Her long task checkpoints and completion writeback", async ()
 	assert.ok(memoryFile);
 	assert.match(await readFile(join(store, "semantic", memoryFile), "utf8"), /Long-task completion/);
 });
+
+async function tempDispatchGitRepo(): Promise<string> {
+	const dispatchCwd = await mkdtemp(join(tmpdir(), "her-cli-dispatch-repo-"));
+	await git(dispatchCwd, "init", "-q");
+	await git(dispatchCwd, "config", "user.email", "cli-dispatch-test@example.com");
+	await git(dispatchCwd, "config", "user.name", "Her CLI Dispatch Test");
+	await writeFile(join(dispatchCwd, "README.md"), "# repo\n", "utf8");
+	await git(dispatchCwd, "add", "-A");
+	await git(dispatchCwd, "commit", "-q", "-m", "initial commit");
+	return dispatchCwd;
+}
+
+async function tempDispatchHandoff(text = "# CLI dispatch handoff\n\nDo the thing.\n"): Promise<string> {
+	const dir = await mkdtemp(join(tmpdir(), "her-cli-dispatch-handoff-"));
+	const path = join(dir, "handoff.md");
+	await writeFile(path, text, "utf8");
+	return path;
+}
+
+test("CLI dispatch requires --executor and a handoff path", async () => {
+	const { store } = await gitBackedStore();
+
+	const missingExecutor = await runCliFailure(["dispatch", await tempDispatchHandoff(), "--json"], store);
+	assert.match(missingExecutor.stderr, /--executor/);
+
+	const missingHandoff = await runCliFailure(["dispatch", "--executor", "pi:deepseek", "--json"], store);
+	assert.match(missingHandoff.stderr, /handoff path/);
+});
+
+test("CLI dispatch loudly rejects an unknown executor with a non-zero exit", async () => {
+	const { store } = await gitBackedStore();
+	const dispatchCwd = await tempDispatchGitRepo();
+	const handoffPath = await tempDispatchHandoff();
+
+	const result = await runCliFailure(
+		["dispatch", handoffPath, "--executor", "claude-code", "--cwd", dispatchCwd, "--json"],
+		store,
+	);
+	assert.match(result.stderr, /unknown executor/);
+});
+
+test("CLI dispatch loudly rejects a missing handoff file with a non-zero exit", async () => {
+	const { store } = await gitBackedStore();
+	const dispatchCwd = await tempDispatchGitRepo();
+
+	const result = await runCliFailure(
+		["dispatch", join(dispatchCwd, "does-not-exist.md"), "--executor", "pi:deepseek", "--cwd", dispatchCwd, "--json"],
+		store,
+	);
+	assert.match(result.stderr, /handoff file not found or empty/);
+});
+
+test("CLI dispatch is never added to the read-only Telegram responder whitelist", async () => {
+	const { telegramResponderReadOnlyTools } = await import("../src/cli/types.ts");
+	assert.equal(telegramResponderReadOnlyTools.has("her_dispatch"), false);
+});

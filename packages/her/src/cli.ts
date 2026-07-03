@@ -13,6 +13,7 @@ import {
 	renderChoiceModel,
 	renderConsolidate,
 	renderDecay,
+	renderDispatch,
 	renderGoal,
 	renderGoalComplete,
 	renderGoalList,
@@ -80,6 +81,7 @@ import {
 	readPathForWorldNote,
 	readUrlForWorldNote,
 	recordTelegramConfirmationFromText,
+	runDispatch,
 	runGoldenEvals,
 	sendTelegramMessage,
 	startLongTask,
@@ -223,6 +225,22 @@ export async function runHerCli(
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderDecay);
 		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "dispatch") {
+		const result = await runDispatch({
+			budgetUsd: command.budgetUsd,
+			cwd: command.cwd ? resolve(cwd, command.cwd) : cwd,
+			env,
+			executor: command.executor,
+			handoffPath: resolve(cwd, command.handoffPath),
+			label: command.label,
+			memoryDir,
+		});
+		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
+		writePayload(io.stdout, payload, command.json, renderDispatch);
+		if (payload.status.status === "unknown") return 1;
+		return result.status === "completed" ? 0 : 1;
 	}
 
 	if (command.kind === "eval-golden") {

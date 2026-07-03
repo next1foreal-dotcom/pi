@@ -3,6 +3,7 @@ import type {
 	ChoiceModelUpdateResult,
 	ConsolidateResult,
 	DecaySweepResult,
+	DispatchResult,
 	GoldenEvalReport,
 	JudgmentFields,
 	LongTaskRecord,
@@ -42,6 +43,15 @@ export type CliCommand =
 	| { kind: "choice-model"; json: boolean }
 	| { kind: "consolidate"; json: boolean; limit?: number }
 	| { kind: "decay"; json: boolean; olderThanDays?: number; now?: string }
+	| {
+			budgetUsd?: number;
+			cwd?: string;
+			executor: string;
+			handoffPath: string;
+			json: boolean;
+			kind: "dispatch";
+			label?: string;
+	  }
 	| { kind: "eval-golden"; json: boolean; now?: string; writeBaseline: boolean }
 	| {
 			kind: "goal-checkpoint";
@@ -316,6 +326,10 @@ export interface CliGoalListPayload extends CliStatusPayload {
 
 export interface CliGoalNextPayload extends CliStatusPayload {
 	result: LongTaskRecord | null;
+}
+
+export interface CliDispatchPayload extends CliStatusPayload {
+	result: DispatchResult;
 }
 
 export interface CliRecallPayload extends CliStatusPayload {
