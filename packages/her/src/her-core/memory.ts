@@ -202,6 +202,9 @@ export class Memory {
 			session_id: sid,
 			privacy: classifyCapturePrivacy(safeRaw, meta.privacy),
 			provenance: meta.provenance ? validateMemoryProvenance(meta.provenance) : "her-observed",
+			...(meta.executor ? { executor: meta.executor } : {}),
+			...(meta.handoff ? { handoff: meta.handoff } : {}),
+			...(meta.dispatchId ? { dispatch_id: meta.dispatchId } : {}),
 		};
 		const rawStem = await this.writeRawEpisode(rawBaseStem, `${frontmatter(rawFm)}\n${safeRaw}`);
 

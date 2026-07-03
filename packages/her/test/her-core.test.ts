@@ -164,6 +164,34 @@ test("capture never overwrites an existing raw episode with the same timestamp a
 	assert.match(daily, /\[\[episodic\/raw\/2026-06-02T2330--sess01--dup-1\]\]/);
 });
 
+test("capture records executor provenance in raw frontmatter when supplied", async () => {
+	const store = await tempStore();
+	const memory = new Memory(store, fakeModel);
+	await memory.capture("dispatched a handoff to pi:deepseek.", {
+		...meta,
+		executor: "pi:deepseek",
+		handoff: "docs/spark/example-handoff.md",
+		dispatchId: "dispatch-2026-07-04-abc123",
+	});
+
+	const raw = await readText(join(store, "episodic", "raw", "2026-06-02T2330--sess01.md"));
+	const parsed = parseFrontmatter(raw);
+	assert.equal(parsed.data.executor, "pi:deepseek");
+	assert.equal(parsed.data.handoff, "docs/spark/example-handoff.md");
+	assert.equal(parsed.data.dispatch_id, "dispatch-2026-07-04-abc123");
+});
+
+test("capture omits executor provenance keys from raw frontmatter when not supplied", async () => {
+	const store = await tempStore();
+	const memory = new Memory(store, fakeModel);
+	await memory.capture("plain capture with no dispatch metadata.", meta);
+
+	const raw = (await readText(join(store, "episodic", "raw", "2026-06-02T2330--sess01.md"))) ?? "";
+	assert.doesNotMatch(raw, /executor:/);
+	assert.doesNotMatch(raw, /handoff:/);
+	assert.doesNotMatch(raw, /dispatch_id:/);
+});
+
 test("capture default timestamp writes the daily episode under an ISO date", async () => {
 	const store = await tempStore();
 	await new Memory(store, fakeModel).capture("Default timestamp should keep ISO date boundaries.");

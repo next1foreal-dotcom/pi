@@ -12,6 +12,12 @@ export interface CaptureMeta {
 	ref?: string;
 	privacy?: MemoryPrivacy;
 	provenance?: MemoryProvenance;
+	/** her dispatch provenance (T5): which executor this capture was observed from. */
+	executor?: string;
+	/** her dispatch provenance (T5): handoff document path that drove the dispatch. */
+	handoff?: string;
+	/** her dispatch provenance (T5): dispatch long-task id, for cross-referencing the ledger. */
+	dispatchId?: string;
 }
 
 export interface WorldNoteData {
