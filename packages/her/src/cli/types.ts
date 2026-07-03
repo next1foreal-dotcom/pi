@@ -11,6 +11,8 @@ import type {
 	MemoryClassificationResult,
 	MemoryExportCheckResult,
 	MemorySyncStatus,
+	PriorMode,
+	PriorResult,
 	SamanthaJournalKind,
 	SelfNarrativeUpdateResult,
 	TelegramConfirmationRequest,
@@ -87,6 +89,7 @@ export type CliCommand =
 	| { kind: "memory-status"; json: boolean; noteId: string; reason: string; status: WorldNoteData["memoryStatus"] }
 	| { kind: "privacy-audit"; json: boolean }
 	| { kind: "privacy-check"; json: boolean; refs: string[] }
+	| { budget?: number; json: boolean; kind: "prior"; mode: PriorMode; task?: string }
 	| { kind: "recall"; archive: boolean; json: boolean; k?: number; query: string }
 	| { action: "list" | "keep" | "revert"; id?: string; json: boolean; kind: "review-narrative" }
 	| { kind: "restore"; json: boolean; semanticKey: string; now?: string }
@@ -289,6 +292,11 @@ export interface CliPrivacyAuditPayload extends CliStatusPayload {
 
 export interface CliPrivacyCheckPayload extends CliStatusPayload {
 	result: MemoryExportCheckResult;
+}
+
+export interface CliPriorPayload {
+	memoryDir: string;
+	result: PriorResult;
 }
 
 export interface CliGoalPayload extends CliStatusPayload {

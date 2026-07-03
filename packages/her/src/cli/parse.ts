@@ -1,4 +1,4 @@
-import type { ClaimLedgerEntry, LongTaskStatus, WorldNoteData } from "../her-core/index.ts";
+import type { ClaimLedgerEntry, LongTaskStatus, PriorMode, WorldNoteData } from "../her-core/index.ts";
 import {
 	parseJournal,
 	parseJudgment,
@@ -45,6 +45,7 @@ export function parseArgs(argv: string[]): CliCommand {
 	if (command === "memory-status") return parseMemoryStatusCommand(rest);
 	if (command === "privacy-audit") return parseJsonOnly("privacy-audit", rest);
 	if (command === "privacy-check") return parsePrivacyCheck(rest);
+	if (command === "prior") return parsePrior(rest);
 	if (command === "recall") return parseRecall(rest);
 	if (command === "review-narrative") return parseReviewNarrative(rest);
 	if (command === "restore") return parseRestore(rest);
@@ -667,6 +668,39 @@ function parseGoalNext(argv: string[]): CliCommand {
 	};
 }
 
+function parsePrior(argv: string[]): CliCommand {
+	let budget: number | undefined;
+	let json = false;
+	let mode: PriorMode = "full";
+	let task: string | undefined;
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--task") {
+			task = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--budget") {
+			budget = parsePositiveNumber(requireOptionValue(argv[++i], arg), arg);
+			continue;
+		}
+		if (arg === "--off") {
+			if (mode !== "full") throw new UsageError("prior accepts only one mode flag");
+			mode = "off";
+			continue;
+		}
+		if (arg === "--her-only") {
+			if (mode !== "full") throw new UsageError("prior accepts only one mode flag");
+			mode = "her-only";
+			continue;
+		}
+		throw new UsageError(`unknown prior option: ${arg}`);
+	}
+	return { budget, json, kind: "prior", mode, task };
+}
 function parseRecall(argv: string[]): CliCommand {
 	let archive = false;
 	let json = false;

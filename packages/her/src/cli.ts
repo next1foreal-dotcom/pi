@@ -25,6 +25,7 @@ import {
 	renderJournal,
 	renderJudgment,
 	renderMemoryStatus,
+	renderPrior,
 	renderPrivacyAudit,
 	renderPrivacyCheck,
 	renderRecall,
@@ -61,6 +62,7 @@ import {
 } from "./cli/types.ts";
 import { errorMessage, parseOptionalPositiveNumber, requireEnv, UsageError } from "./cli/utils.ts";
 import {
+	assemblePrior,
 	checkMemoryExport,
 	checkpointLongTask,
 	claimNextLongTask,
@@ -112,6 +114,17 @@ export async function runHerCli(
 	}
 
 	const memoryDir = getMemoryDir(env, cwd);
+
+	if (command.kind === "prior") {
+		const result = await assemblePrior({
+			budget: command.budget,
+			mode: command.mode,
+			storeRoot: memoryDir,
+			task: command.task,
+		});
+		writePayload(io.stdout, { memoryDir, result }, command.json, renderPrior);
+		return 0;
+	}
 
 	if (command.kind === "telegram-poll") {
 		const result = await pollTelegramInbox(memoryDir, {

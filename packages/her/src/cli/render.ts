@@ -17,6 +17,7 @@ import type {
 	CliJournalPayload,
 	CliJudgmentPayload,
 	CliMemoryStatusPayload,
+	CliPriorPayload,
 	CliPrivacyAuditPayload,
 	CliPrivacyCheckPayload,
 	CliRecallPayload,
@@ -35,6 +36,11 @@ import type {
 	CliTelegramPollPayload,
 } from "./types.ts";
 
+export function renderPrior(payload: CliPriorPayload): string {
+	return [`prior id: ${payload.result.priorId}`, `memory dir: ${payload.memoryDir}`, "", payload.result.text]
+		.filter(Boolean)
+		.join("\n");
+}
 export function renderStatus(payload: CliStatusPayload): string {
 	return [
 		`Her memory sync: ${payload.status.status}`,
@@ -465,6 +471,7 @@ export function usage(): string {
   her memory-status --note <id> --status active|archive_only|needs_deep_read --reason <text> [--json]
   her privacy-audit [--json]
   her privacy-check --ref <memory-path> [--ref <memory-path>] [--json]
+  her prior [--task <text>] [--off|--her-only] [--budget <tokens>] [--json]
   her recall --query <text> [--k <n>] [--archive] [--json]
   her review-narrative [--keep <id>|--revert <id>] [--json]
   her restore --semantic <key> [--now <YYYY-MM-DD>] [--json]

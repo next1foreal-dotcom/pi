@@ -281,17 +281,19 @@ export class Memory {
 		return `${base}${tasteRules ? `\n\n${tasteRules}` : ""}\n\n# CHOICE-MODEL Directory Rules\n\n${rules}\n`;
 	}
 
-	async recall(query: string, opts: { k?: number } = {}): Promise<Note[]> {
+	async recall(query: string, opts: { k?: number; recordAccess?: boolean } = {}): Promise<Note[]> {
 		const hits = await rrfSearch(query, await buildCorpus(this.paths), {
 			k: opts.k ?? 8,
 			semanticSearch: this.semanticSearch,
 		});
-		await this.withStoreLock(() =>
-			recordAccess(
-				this.paths,
-				hits.map((hit) => hit.id),
-			),
-		);
+		if (opts.recordAccess !== false) {
+			await this.withStoreLock(() =>
+				recordAccess(
+					this.paths,
+					hits.map((hit) => hit.id),
+				),
+			);
+		}
 		return hits;
 	}
 

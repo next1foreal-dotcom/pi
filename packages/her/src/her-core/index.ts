@@ -106,6 +106,8 @@ export type {
 export type { ModelLike } from "./model.ts";
 export { FakeModel, OpenAICompatibleModel } from "./model.ts";
 export { StorePaths } from "./paths.ts";
+export type { AssemblePriorOptions, PriorBlock, PriorLayer, PriorMode, PriorResult } from "./prior.ts";
+export { assemblePrior, estimatePriorTokens } from "./prior.ts";
 export type {
 	MemoryClassificationRecord,
 	MemoryClassificationResult,
