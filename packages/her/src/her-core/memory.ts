@@ -76,6 +76,7 @@ import {
 import { recordJudgment, setMemoryStatus, writeWorldNote } from "./memory-world.ts";
 import type { ModelLike } from "./model.ts";
 import { StorePaths } from "./paths.ts";
+import type { PriorMode, PriorResult } from "./prior.ts";
 import { classifyCapturePrivacy, validateMemoryProvenance } from "./privacy.ts";
 import {
 	choiceModelPrompt,
@@ -141,6 +142,29 @@ export type {
 	SynthesizeDueResult,
 	WorldNoteData,
 } from "./memory-types.ts";
+
+export interface GetContextPriorOptions {
+	action?: string;
+	budget?: number;
+	env?: Pick<NodeJS.ProcessEnv, "HER_PRIOR">;
+	mode?: PriorMode;
+	sessionMode?: PriorMode;
+	task?: string;
+	writeTargets?: string[];
+}
+
+export interface GetContextOptions {
+	prior?: GetContextPriorOptions;
+}
+
+export interface MemoryContext {
+	choiceModel: string;
+	context: string;
+	facts: string;
+	prior?: PriorResult;
+	self: string;
+	soul: string;
+}
 
 export class Memory {
 	readonly paths: StorePaths;
@@ -212,13 +236,35 @@ export class Memory {
 		throw new Error(`could not allocate raw episode filename for ${baseStem}`);
 	}
 
-	async getContext(): Promise<{ context: string; facts: string; soul: string; self: string; choiceModel: string }> {
+	async getContext(opts: GetContextOptions = {}): Promise<MemoryContext> {
 		const context = (await readText(this.paths.contextFile)) ?? SEED_CONTEXT;
 		const facts = (await readText(this.paths.factsFile)) ?? "";
 		const soul = (await readText(this.paths.soulFile)) ?? SEED_SOUL;
 		const self = (await readText(this.paths.selfFile)) ?? SEED_SELF_NARRATIVE;
 		const choiceModel = await this.readChoiceModelContext();
-		return { context: `${await staleBanner(this.paths, this.config)}${context}`, facts, soul, self, choiceModel };
+		const base: MemoryContext = {
+			context: `${await staleBanner(this.paths, this.config)}${context}`,
+			facts,
+			soul,
+			self,
+			choiceModel,
+		};
+		if (!opts.prior) return base;
+
+		const { assemblePrior, priorModeForAction, recordPriorAudit } = await import("./prior.ts");
+		const mode = priorModeForAction(opts.prior.writeTargets ?? [], {
+			env: opts.prior.env,
+			requestedMode: opts.prior.mode,
+			sessionMode: opts.prior.sessionMode,
+		});
+		const prior = await assemblePrior({
+			budget: opts.prior.budget,
+			mode,
+			storeRoot: this.paths.root,
+			task: opts.prior.task,
+		});
+		await recordPriorAudit(this.paths.root, { action: opts.prior.action ?? "getContext", mode, prior });
+		return { ...base, prior };
 	}
 
 	async recordFeedback(fields: FeedbackFields): Promise<FeedbackResult> {

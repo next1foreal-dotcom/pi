@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readdir } from "node:fs/promises";
+import { appendFile, mkdir, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { Memory } from "./memory.ts";
 import { StorePaths } from "./paths.ts";
@@ -26,6 +26,61 @@ export interface AssemblePriorOptions {
 	mode: PriorMode;
 	storeRoot: string;
 	task?: string;
+}
+
+export interface ResolvePriorModeOptions {
+	defaultMode?: PriorMode;
+	env?: Pick<NodeJS.ProcessEnv, "HER_PRIOR">;
+	requestedMode?: PriorMode;
+	sessionMode?: PriorMode;
+}
+
+export interface PriorAuditEntry {
+	action: string;
+	blocks: Array<Pick<PriorBlock, "layer" | "source" | "tokens">>;
+	mode: PriorMode;
+	priorId: string;
+	ts: string;
+}
+
+export interface RecordPriorAuditOptions {
+	action: string;
+	mode?: PriorMode;
+	prior: PriorResult;
+	ts?: string;
+}
+
+export function resolvePriorMode(opts: ResolvePriorModeOptions = {}): PriorMode {
+	if (opts.env?.HER_PRIOR?.trim().toLowerCase() === "off") return "off";
+	return opts.requestedMode ?? opts.sessionMode ?? opts.defaultMode ?? "full";
+}
+
+export function priorModeForAction(writeTargets: string[], opts: ResolvePriorModeOptions = {}): PriorMode {
+	const mode = resolvePriorMode(opts);
+	if (mode === "off") return "off";
+	return writeTargets.some(isSamanthaTarget) && mode === "full" ? "her-only" : mode;
+}
+
+export async function recordPriorAudit(storeRoot: string, opts: RecordPriorAuditOptions): Promise<PriorAuditEntry> {
+	const ts = opts.ts ?? new Date().toISOString();
+	const entry: PriorAuditEntry = {
+		action: opts.action,
+		blocks: opts.prior.blocks.map((block) => ({ layer: block.layer, source: block.source, tokens: block.tokens })),
+		mode: opts.mode ?? inferPriorMode(opts.prior),
+		priorId: opts.prior.priorId,
+		ts,
+	};
+	const auditDir = join(storeRoot, "audit");
+	const auditFile = join(auditDir, `${ts.slice(0, 10)}.jsonl`);
+	try {
+		await mkdir(auditDir, { recursive: true });
+		await appendFile(auditFile, `${JSON.stringify(entry)}\n`, "utf8");
+	} catch (error) {
+		throw new Error(
+			`prior audit append failed for ${auditFile}: ${error instanceof Error ? error.message : String(error)}`,
+		);
+	}
+	return entry;
 }
 
 interface SourceBlock {
@@ -56,6 +111,15 @@ export function estimatePriorTokens(text: string): number {
 	return trimmed ? Math.ceil(trimmed.length / 4) : 0;
 }
 
+function isSamanthaTarget(path: string): boolean {
+	const normalized = path.replace(/\\/g, "/").replace(/^\.\/+/, "");
+	return normalized === "samantha" || normalized.startsWith("samantha/") || normalized.includes("/samantha/");
+}
+
+function inferPriorMode(prior: PriorResult): PriorMode {
+	if (prior.priorId === "off") return "off";
+	return prior.blocks.every((block) => block.layer === "S") ? "her-only" : "full";
+}
 async function readFullBlocks(paths: StorePaths, task?: string): Promise<SourceBlock[]> {
 	return [
 		...(await readFileBlock(paths.factsFile, "L1", "narrative/FACTS.md")),

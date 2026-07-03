@@ -1,10 +1,19 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { runHerCli } from "../src/cli.ts";
-import { assemblePrior, initStore, writeText } from "../src/her-core/index.ts";
+import {
+	assemblePrior,
+	initStore,
+	Memory,
+	priorModeForAction,
+	readText,
+	recordPriorAudit,
+	resolvePriorMode,
+	writeText,
+} from "../src/her-core/index.ts";
 
 async function tempStore(): Promise<string> {
 	const root = await mkdtemp(join(tmpdir(), "her-prior-"));
@@ -142,4 +151,64 @@ test("CLI prints prior text and id", async () => {
 	const payload = JSON.parse(stdout) as { result: { priorId: string; text: string } };
 	assert.match(payload.result.priorId, /^[a-f0-9]{12}$/);
 	assert.match(payload.result.text, /<!-- prior:L1 narrative\/FACTS\.md -->/);
+});
+
+test("prior mode resolution supports env, action, session, and Samantha write guards", () => {
+	assert.equal(resolvePriorMode({ env: { HER_PRIOR: "off" }, requestedMode: "full" }), "off");
+	assert.equal(resolvePriorMode({ requestedMode: "her-only", sessionMode: "full" }), "her-only");
+	assert.equal(resolvePriorMode({ sessionMode: "her-only" }), "her-only");
+	assert.equal(resolvePriorMode({}), "full");
+	assert.equal(priorModeForAction(["samantha/taste/private.md"], { requestedMode: "full" }), "her-only");
+	assert.equal(priorModeForAction(["./samantha/journal/day.md"], { requestedMode: "full" }), "her-only");
+	assert.equal(priorModeForAction(["narrative/CONTEXT.md"], { requestedMode: "full" }), "full");
+	assert.equal(
+		priorModeForAction(["samantha/taste/private.md"], { env: { HER_PRIOR: "off" }, requestedMode: "full" }),
+		"off",
+	);
+});
+
+test("recordPriorAudit appends prior ledger entries and fails loud", async () => {
+	const store = await tempStore();
+	const prior = await assemblePrior({ mode: "off", storeRoot: store });
+	await recordPriorAudit(store, { action: "unit-test", prior, ts: "2026-07-03T00:00:00.000Z" });
+
+	const audit = (await readText(join(store, "audit", "2026-07-03.jsonl"))) ?? "";
+	const entry = JSON.parse(audit.trim()) as { action: string; priorId: string; mode: string; blocks: unknown[] };
+	assert.deepEqual(entry, {
+		action: "unit-test",
+		blocks: [],
+		mode: "off",
+		priorId: "off",
+		ts: "2026-07-03T00:00:00.000Z",
+	});
+
+	const blocked = await tempStore();
+	await writeText(join(blocked, "audit"), "not a directory");
+	await assert.rejects(
+		recordPriorAudit(blocked, { action: "unit-test", prior, ts: "2026-07-03T00:00:00.000Z" }),
+		/audit/,
+	);
+});
+
+test("getContext keeps the default shape and adds prior only when requested", async () => {
+	const store = await tempStore();
+	await writePriorFixture(store);
+	const memory = new Memory(store);
+
+	const plain = await memory.getContext();
+	assert.equal("prior" in plain, false);
+
+	const withPrior = await memory.getContext({ prior: { action: "context-test", task: "A6 task" } });
+	assert.equal(withPrior.prior?.priorId.length, 12);
+	assert.match(withPrior.prior?.text ?? "", /A6 task memory should be cited/);
+	const auditFile = (await readdir(join(store, "audit"))).find((name) => name.endsWith(".jsonl"));
+	assert.ok(auditFile);
+	const audit = (await readText(join(store, "audit", auditFile))) ?? "";
+	assert.match(audit, /"action":"context-test"/);
+
+	const herZone = await memory.getContext({
+		prior: { action: "her-zone", mode: "full", writeTargets: ["samantha/wants/x.md"] },
+	});
+	assert.equal(herZone.prior?.blocks.map((block) => block.layer).join(","), "S");
+	assert.doesNotMatch(herZone.prior?.text ?? "", /Fei owns his memory/);
 });

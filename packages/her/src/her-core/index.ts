@@ -75,8 +75,11 @@ export type {
 	DecaySweepResult,
 	FeedbackFields,
 	FeedbackResult,
+	GetContextOptions,
+	GetContextPriorOptions,
 	IdeaData,
 	JudgmentFields,
+	MemoryContext,
 	MemoryOptions,
 	MemorySyncResult,
 	MemorySyncStatus,
@@ -106,8 +109,17 @@ export type {
 export type { ModelLike } from "./model.ts";
 export { FakeModel, OpenAICompatibleModel } from "./model.ts";
 export { StorePaths } from "./paths.ts";
-export type { AssemblePriorOptions, PriorBlock, PriorLayer, PriorMode, PriorResult } from "./prior.ts";
-export { assemblePrior, estimatePriorTokens } from "./prior.ts";
+export type {
+	AssemblePriorOptions,
+	PriorAuditEntry,
+	PriorBlock,
+	PriorLayer,
+	PriorMode,
+	PriorResult,
+	RecordPriorAuditOptions,
+	ResolvePriorModeOptions,
+} from "./prior.ts";
+export { assemblePrior, estimatePriorTokens, priorModeForAction, recordPriorAudit, resolvePriorMode } from "./prior.ts";
 export type {
 	MemoryClassificationRecord,
 	MemoryClassificationResult,
