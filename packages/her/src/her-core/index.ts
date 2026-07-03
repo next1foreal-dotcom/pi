@@ -26,6 +26,17 @@ export {
 	incidentLevels,
 	proposeTrustUpgrade,
 } from "./delegation.ts";
+export type {
+	DispatchAuditEntry,
+	DispatchExecutorKind,
+	DispatchExecutorResult,
+	DispatchOptions,
+	DispatchResult,
+	DispatchStatus,
+	ParsedExecutor,
+	SpawnExecutorFn,
+} from "./dispatch.ts";
+export { DISPATCH_GROUND_RULES, normalizeDispatchPath, parseExecutor, runDispatch } from "./dispatch.ts";
 export { createEmbeddingSearch } from "./embedding-search.ts";
 export type {
 	GoldenEvalAlert,
