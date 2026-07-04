@@ -1,6 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { appendFile, mkdir, readFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
@@ -157,11 +158,38 @@ export async function runHerCli(
 			token: requireEnv(env, "HER_TELEGRAM_BOT_TOKEN"),
 		};
 
+		const retryDelayMs =
+			parseNonNegativeEnvNumber(env.HER_TELEGRAM_RETRY_DELAY_MS) ?? DEFAULT_TELEGRAM_RETRY_DELAY_MS;
+		const maxConsecutiveFailures =
+			parsePositiveEnvInt(env.HER_TELEGRAM_MAX_CONSECUTIVE_FAILURES) ?? DEFAULT_TELEGRAM_MAX_CONSECUTIVE_FAILURES;
+		const maxCycles = parsePositiveEnvInt(env.HER_TELEGRAM_BRIDGE_MAX_CYCLES);
+		let consecutiveFailures = 0;
+		let cycles = 0;
 		for (;;) {
-			const result = await runTelegramBridgeCycle(memoryDir, options);
+			cycles += 1;
+			let result: TelegramBridgeCycleResult;
+			try {
+				result = await runTelegramBridgeCycle(memoryDir, options);
+			} catch (error) {
+				consecutiveFailures += 1;
+				await recordTelegramBridgeCycleFailure(memoryDir, error, io.stderr);
+				if (consecutiveFailures >= maxConsecutiveFailures) {
+					writeLine(
+						io.stderr,
+						`her telegram-bridge: ${consecutiveFailures} consecutive cycle failures (threshold ${maxConsecutiveFailures}); exiting`,
+					);
+					return 1;
+				}
+				if (command.once) return 1;
+				if (maxCycles !== undefined && cycles >= maxCycles) return 1;
+				await sleep(retryDelayMs);
+				continue;
+			}
+			consecutiveFailures = 0;
 			const payload = { ...(await buildFreshStatusPayload(memoryDir, env)), result };
 			writePayload(io.stdout, payload, command.json, renderTelegramBridge);
 			if (command.once) return payload.status.status === "unknown" ? 1 : 0;
+			if (maxCycles !== undefined && cycles >= maxCycles) return payload.status.status === "unknown" ? 1 : 0;
 			await sleep(command.intervalSeconds * 1000);
 		}
 	}
@@ -600,10 +628,10 @@ function createCurlMdMarkdownReader(env: NodeJS.ProcessEnv): UrlMarkdownReader |
 	return async (url, opts) => {
 		for (const command of commands) {
 			try {
-				const { stdout } = await execFileAsync(command, [url.href, "--mode", "smart"], {
+				const plan = await resolveShellSafeSpawnPlan(command, [url.href, "--mode", "smart"]);
+				const { stdout } = await execFileAsync(plan.command, plan.args, {
 					env,
 					maxBuffer: Math.max(opts.maxBytes * 2, 256_000),
-					shell: process.platform === "win32",
 					timeout: 60_000,
 				});
 				const markdown = stdout.trim();
@@ -622,10 +650,10 @@ function createDefuddleMarkdownReader(env: NodeJS.ProcessEnv, cwd: string): UrlM
 	return async (url, opts) => {
 		for (const command of commands) {
 			try {
-				const { stdout } = await execFileAsync(command, ["parse", url.href, "--markdown"], {
+				const plan = await resolveShellSafeSpawnPlan(command, ["parse", url.href, "--markdown"]);
+				const { stdout } = await execFileAsync(plan.command, plan.args, {
 					env,
 					maxBuffer: Math.max(opts.maxBytes * 2, 512_000),
-					shell: process.platform === "win32",
 					timeout: 60_000,
 				});
 				const markdown = stdout.trim();
@@ -636,6 +664,33 @@ function createDefuddleMarkdownReader(env: NodeJS.ProcessEnv, cwd: string): UrlM
 		}
 		return undefined;
 	};
+}
+
+const NPM_CMD_SHIM_TARGET = /"([^"]+)"\s+%\*\s*$/;
+
+/**
+ * Runs `command` with `args` as literal argv elements — never a shell-concatenated string.
+ * cmd.exe's own command-line parser treats &, |, <, >, ^ as syntax even inside quoted segments
+ * (this is why execFile's `shell: true`, and even a manual `cmd.exe /c` wrap, can still let a URL's
+ * metacharacters be reinterpreted). Node also cannot spawn a .cmd/.bat file directly without a
+ * shell, so on Windows this reads the .cmd shim's own source (developer/install-controlled, not
+ * attacker-controlled) and resolves past it to the real script it wraps — the same technique
+ * dispatch.ts's selectCodexSpawnPlan uses for the codex.cmd shim, generalized to any npm
+ * cmd-shim-style .cmd file (curl.md, defuddle). The resolved script is then run via `node`, so
+ * no shell is ever invoked on the attacker-influenced argv.
+ */
+export async function resolveShellSafeSpawnPlan(
+	command: string,
+	args: string[],
+	nodePath = process.execPath,
+): Promise<{ args: string[]; command: string }> {
+	if (process.platform !== "win32" || !command.toLowerCase().endsWith(".cmd")) return { args, command };
+	const shimText = await readFile(command, "utf8").catch(() => undefined);
+	const rawTarget = shimText && NPM_CMD_SHIM_TARGET.exec(shimText)?.[1];
+	if (!rawTarget) throw new Error(`could not resolve the script wrapped by cmd shim: ${command}`);
+	// cmd-shim templates reference the shim's own directory as %dp0%; substitute it before resolving.
+	const target = resolve(rawTarget.replace(/%dp0%/gi, dirname(command)));
+	return { command: nodePath, args: [target, ...args] };
 }
 
 function commandCandidates(explicitCommand: string | undefined, commandName: string, cwd: string): string[] {
@@ -677,6 +732,37 @@ async function updateSurfaces(memory: Memory, enabled: boolean): Promise<CliSurf
 	} catch (error) {
 		return { status: "failed", topicMaps, ideas: [], error: errorMessage(error) };
 	}
+}
+
+const DEFAULT_TELEGRAM_RETRY_DELAY_MS = 5000;
+const DEFAULT_TELEGRAM_MAX_CONSECUTIVE_FAILURES = 10;
+
+async function recordTelegramBridgeCycleFailure(
+	memoryDir: string,
+	error: unknown,
+	stderr: NodeJS.WritableStream,
+): Promise<void> {
+	const ts = new Date().toISOString();
+	const errorClass = error instanceof Error ? error.constructor.name : "UnknownError";
+	const message = errorMessage(error);
+	writeLine(stderr, `her telegram-bridge: cycle failed (${errorClass}): ${message}`);
+	const entry = { tool: "her_telegram_bridge_cycle", ts, status: "failed", errorClass, error: message };
+	const auditDir = join(memoryDir, "audit");
+	const auditFile = join(auditDir, `${ts.slice(0, 10)}.jsonl`);
+	await mkdir(auditDir, { recursive: true });
+	await appendFile(auditFile, `${JSON.stringify(entry)}\n`, "utf8");
+}
+
+function parseNonNegativeEnvNumber(value: string | undefined): number | undefined {
+	if (!value?.trim()) return undefined;
+	const parsed = Number(value);
+	return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function parsePositiveEnvInt(value: string | undefined): number | undefined {
+	if (!value?.trim()) return undefined;
+	const parsed = Number(value);
+	return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 async function runTelegramBridgeCycle(

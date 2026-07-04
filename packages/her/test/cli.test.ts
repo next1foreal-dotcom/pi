@@ -5,9 +5,11 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
+import { PassThrough } from "node:stream";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { runHerCli } from "../src/cli.ts";
 import { initStore, Memory, parseFrontmatter, readText } from "../src/her-core/index.ts";
 
 const execFileAsync = promisify(execFile);
@@ -294,6 +296,104 @@ async function withDefuddleShim<T>(markdown: string, fn: (env: Record<string, st
 	});
 }
 
+async function withCurlMdArgvEchoShim<T>(
+	fn: (env: Record<string, string>, argvFile: string) => Promise<T>,
+): Promise<T> {
+	const bin = await mkdtemp(join(tmpdir(), "her-curl-md-argv-bin-"));
+	const argvFile = join(bin, "received-argv.json");
+	const shim = join(bin, "curl-md-argv-shim.mjs");
+	await writeFile(
+		shim,
+		[
+			"import { writeFileSync } from 'node:fs';",
+			`writeFileSync(${JSON.stringify(argvFile)}, JSON.stringify(process.argv.slice(2)));`,
+			"console.log('# fetched');",
+			"console.log('');",
+			"console.log('fixture body');",
+			"",
+		].join("\n"),
+		"utf8",
+	);
+	const shellShim = join(bin, "curl.md");
+	await writeFile(shellShim, `#!/usr/bin/env sh\n"${process.execPath}" "${shim}" "$@"\n`, "utf8");
+	await chmod(shellShim, 0o755);
+	const cmdShim = join(bin, "curl.md.cmd");
+	await writeFile(cmdShim, `@echo off\r\n"${process.execPath}" "${shim}" %*\r\n`, "utf8");
+	const pathValue = `${bin}${delimiter}${process.env.PATH ?? process.env.Path ?? ""}`;
+	return fn(
+		{
+			HER_CURL_MD_BIN: process.platform === "win32" ? cmdShim : shellShim,
+			Path: pathValue,
+			PATH: pathValue,
+		},
+		argvFile,
+	);
+}
+
+test("CLI intake-url passes a URL with shell metacharacters to curl.md as a single literal argv element", async () => {
+	const { store } = await gitBackedStore();
+
+	await withCurlMdArgvEchoShim(async (env, argvFile) => {
+		// No space in the query string: URL normalization would percent-encode it (a benign,
+		// expected transform), which would make an exact-string assertion ambiguous. & ; $() alone
+		// are enough to prove the shell-injection surface.
+		const dangerousUrl = "https://example.com/?a=1&b=2;touch_pwned;$(whoami)";
+		// The CLI's overall exit code is irrelevant here (a shell that mangles the URL may chain a
+		// bogus second "command" and fail loudly); what matters is what curl.md actually received.
+		await runCli(["intake-url", "--url", dangerousUrl, "--json"], store, env).catch(() => undefined);
+
+		const receivedArgv = JSON.parse(await readFile(argvFile, "utf8")) as string[];
+		assert.equal(receivedArgv[0], dangerousUrl);
+	});
+});
+
+async function withDefuddleArgvEchoShim<T>(
+	fn: (env: Record<string, string>, argvFile: string) => Promise<T>,
+): Promise<T> {
+	const bin = await mkdtemp(join(tmpdir(), "her-defuddle-argv-bin-"));
+	const argvFile = join(bin, "received-argv.json");
+	const shim = join(bin, "defuddle-argv-shim.mjs");
+	await writeFile(
+		shim,
+		[
+			"import { writeFileSync } from 'node:fs';",
+			`writeFileSync(${JSON.stringify(argvFile)}, JSON.stringify(process.argv.slice(2)));`,
+			"console.log('# fetched');",
+			"console.log('');",
+			"console.log('fixture body');",
+			"",
+		].join("\n"),
+		"utf8",
+	);
+	const shellShim = join(bin, "defuddle");
+	await writeFile(shellShim, `#!/usr/bin/env sh\n"${process.execPath}" "${shim}" "$@"\n`, "utf8");
+	await chmod(shellShim, 0o755);
+	const cmdShim = join(bin, "defuddle.cmd");
+	await writeFile(cmdShim, `@echo off\r\n"${process.execPath}" "${shim}" %*\r\n`, "utf8");
+	const pathValue = `${bin}${delimiter}${process.env.PATH ?? process.env.Path ?? ""}`;
+	return fn(
+		{
+			HER_CURL_MD_ENABLED: "0",
+			HER_DEFUDDLE_BIN: process.platform === "win32" ? cmdShim : shellShim,
+			Path: pathValue,
+			PATH: pathValue,
+		},
+		argvFile,
+	);
+}
+
+test("CLI intake-url passes an X URL with shell metacharacters to defuddle as a single literal argv element", async () => {
+	const { store } = await gitBackedStore();
+
+	await withDefuddleArgvEchoShim(async (env, argvFile) => {
+		const dangerousUrl = "https://x.com/example/status/1234567890?a=1&b=2;touch_pwned;$(whoami)";
+		await runCli(["intake-url", "--url", dangerousUrl, "--json"], store, env).catch(() => undefined);
+
+		const receivedArgv = JSON.parse(await readFile(argvFile, "utf8")) as string[];
+		assert.equal(receivedArgv[1], dangerousUrl);
+	});
+});
+
 test("CLI intake-url prefers curl.md optimized markdown for public pages", async () => {
 	const { store } = await gitBackedStore();
 
@@ -383,6 +483,113 @@ test("CLI Telegram bridge polls inbound messages and acknowledges queued items",
 		assert.match(String(requests[1].body.text), /已进入 Her inbox/);
 		assert.match(String(requests[1].body.text), /不会被自动执行/);
 	});
+});
+
+test("CLI Telegram bridge survives a single-cycle exception, backs off, and keeps looping", async () => {
+	const { store } = await gitBackedStore();
+	let getUpdatesCalls = 0;
+
+	const server = createServer((req, res) => {
+		let body = "";
+		req.setEncoding("utf8");
+		req.on("data", (chunk) => {
+			body += chunk;
+		});
+		req.on("end", () => {
+			const url = req.url ?? "";
+			if (url.endsWith("/getUpdates")) {
+				getUpdatesCalls += 1;
+				if (getUpdatesCalls === 1) {
+					res.writeHead(500, { "content-type": "application/json" });
+					res.end(JSON.stringify({ ok: false, description: "simulated 5xx" }));
+					return;
+				}
+				res.writeHead(200, { "content-type": "application/json" });
+				res.end(JSON.stringify({ ok: true, result: [] }));
+				return;
+			}
+			if (url.endsWith("/sendMessage")) {
+				const parsed = JSON.parse(body) as Record<string, unknown>;
+				res.writeHead(200, { "content-type": "application/json" });
+				res.end(JSON.stringify({ ok: true, result: { message_id: 1, chat: { id: 42 }, text: parsed.text } }));
+				return;
+			}
+			res.end(JSON.stringify({ ok: false, description: `unexpected path ${url}` }));
+		});
+	});
+	const port = await listenOnFetchAllowedPort(server);
+	try {
+		const code = await runHerCli(
+			["telegram-bridge", "--interval", "0", "--timeout", "0", "--limit", "10", "--json"],
+			{
+				...process.env,
+				HER_MEMORY_DIR: store,
+				HER_TELEGRAM_BASE_URL: `http://127.0.0.1:${port}`,
+				HER_TELEGRAM_BOT_TOKEN: "test-token",
+				HER_TELEGRAM_CHAT_ID: "42",
+				HER_TELEGRAM_RETRY_DELAY_MS: "1",
+				HER_TELEGRAM_BRIDGE_MAX_CYCLES: "2",
+			},
+			store,
+			{ stdout: new PassThrough(), stderr: new PassThrough() },
+		);
+		assert.equal(code, 0);
+		assert.ok(getUpdatesCalls >= 2, `expected at least 2 getUpdates calls, saw ${getUpdatesCalls}`);
+
+		const auditDir = join(store, "audit");
+		const auditFiles = (await readdir(auditDir)).filter((name) => name.endsWith(".jsonl"));
+		assert.ok(auditFiles.length > 0, "expected an audit file recording the cycle failure");
+		const auditText = await readFile(join(auditDir, auditFiles[0]), "utf8");
+		const auditLines = auditText
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line) as Record<string, unknown>);
+		const failureEntry = auditLines.find(
+			(entry) => entry.tool === "her_telegram_bridge_cycle" && entry.status === "failed",
+		);
+		assert.ok(failureEntry, `expected a failed telegram-bridge-cycle audit entry, saw ${JSON.stringify(auditLines)}`);
+		assert.ok(typeof failureEntry?.errorClass === "string" && (failureEntry.errorClass as string).length > 0);
+		assert.ok(typeof failureEntry?.ts === "string" && (failureEntry.ts as string).length > 0);
+	} finally {
+		await new Promise<void>((resolveClose, reject) =>
+			server.close((error) => (error ? reject(error) : resolveClose())),
+		);
+	}
+});
+
+test("CLI Telegram bridge exits loudly with non-zero code after consecutive-failure threshold", async () => {
+	const { store } = await gitBackedStore();
+
+	const server = createServer((req, res) => {
+		req.on("data", () => {});
+		req.on("end", () => {
+			res.writeHead(500, { "content-type": "application/json" });
+			res.end(JSON.stringify({ ok: false, description: "simulated permanent outage" }));
+		});
+	});
+	const port = await listenOnFetchAllowedPort(server);
+	try {
+		const code = await runHerCli(
+			["telegram-bridge", "--interval", "0", "--timeout", "0", "--limit", "10", "--json"],
+			{
+				...process.env,
+				HER_MEMORY_DIR: store,
+				HER_TELEGRAM_BASE_URL: `http://127.0.0.1:${port}`,
+				HER_TELEGRAM_BOT_TOKEN: "test-token",
+				HER_TELEGRAM_CHAT_ID: "42",
+				HER_TELEGRAM_RETRY_DELAY_MS: "1",
+				HER_TELEGRAM_MAX_CONSECUTIVE_FAILURES: "3",
+				HER_TELEGRAM_BRIDGE_MAX_CYCLES: "10",
+			},
+			store,
+			{ stdout: new PassThrough(), stderr: new PassThrough() },
+		);
+		assert.notEqual(code, 0);
+	} finally {
+		await new Promise<void>((resolveClose, reject) =>
+			server.close((error) => (error ? reject(error) : resolveClose())),
+		);
+	}
 });
 
 test("CLI Telegram bridge ignores duplicate Telegram update ids", async () => {
