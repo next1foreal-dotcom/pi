@@ -3,6 +3,15 @@ import { basename, join } from "node:path";
 import { type HerConfig, loadConfig } from "./config.ts";
 import { type BackfillOptions, type BackfillRunResult, runBackfill } from "./memory-backfill.ts";
 import { buildArchiveCorpus, buildCorpus, recordAccess, staleBanner } from "./memory-corpus.ts";
+import {
+	advanceConsolidateCursor,
+	type ParsedConsolidateCursor,
+	parseConsolidateCursor,
+	rawEpisodeIdFromName,
+	rawEpisodeTimestamp,
+	shouldReadRawEpisodeName,
+	shouldUseRawEpisode,
+} from "./memory-cursor.ts";
 import { decaySweep, restoreArchivedSemantic, syncMemory, syncStatus } from "./memory-maintenance.ts";
 import { writeSamanthaJournal, writeSamanthaTasteJudgment, writeSamanthaZoneNote } from "./memory-samantha.ts";
 import { SEED_CHOICE_MODEL, SEED_CONTEXT, SEED_SELF_NARRATIVE, SEED_SOUL } from "./memory-seeds.ts";
@@ -100,6 +109,42 @@ import {
 	writeText,
 } from "./store.ts";
 import { storeLock } from "./store-lock.ts";
+
+const DEFAULT_CONSOLIDATE_EPISODE_CHARS = 8000;
+const DEFAULT_CONSOLIDATE_BATCH_CHARS = 240000;
+
+function envPositiveInt(name: string, fallback: number): number {
+	const raw = process.env[name];
+	if (raw === undefined || raw === "") return fallback;
+	const value = Number(raw);
+	if (!Number.isFinite(value) || value <= 0) throw new Error(`${name} must be a positive number`);
+	return Math.floor(value);
+}
+
+function truncateEpisodeText(text: string, maxChars: number): string {
+	if (text.length <= maxChars) return text;
+	const marker = `...[truncated, original ${text.length} chars]`;
+	const keep = Math.max(0, maxChars - marker.length);
+	return `${text.slice(0, keep)}${marker}`;
+}
+
+function selectConsolidateBatch<T extends { id: string; text: string }>(
+	episodes: T[],
+	limit: number,
+): Array<{ episode: T; promptText: string }> {
+	const episodeChars = envPositiveInt("HER_CONSOLIDATE_EPISODE_CHARS", DEFAULT_CONSOLIDATE_EPISODE_CHARS);
+	const batchChars = envPositiveInt("HER_CONSOLIDATE_BATCH_CHARS", DEFAULT_CONSOLIDATE_BATCH_CHARS);
+	const batch: Array<{ episode: T; promptText: string }> = [];
+	let chars = 0;
+	for (const episode of episodes) {
+		if (batch.length >= limit) break;
+		const promptText = `[${episode.id}] ${truncateEpisodeText(episode.text, episodeChars)}`;
+		if (batch.length > 0 && chars + promptText.length > batchChars) break;
+		batch.push({ episode, promptText });
+		chars += promptText.length;
+	}
+	return batch;
+}
 
 export type {
 	BackfillBatchResult,
@@ -404,14 +449,13 @@ export class Memory {
 	async consolidate(limit = 25): Promise<ConsolidateResult> {
 		return this.withStoreLock(async () => {
 			if (!this.model) throw new Error("consolidate requires a model");
-			const state = await readJson<{ cursor?: string | null; last_consolidate?: string | null }>(
-				this.paths.stateFile,
-				{},
-			);
-			const episodes = (await this.episodesSince(state.cursor ?? null)).slice(0, limit);
+			const state = await readJson<{ cursor?: unknown; last_consolidate?: string | null }>(this.paths.stateFile, {});
+			const cursor = parseConsolidateCursor(state.cursor ?? null);
+			const batch = selectConsolidateBatch(await this.episodesSince(cursor), limit);
+			const episodes = batch.map(({ episode }) => episode);
 			if (episodes.length === 0) return { episodes: 0, notesTouched: 0, moments: 0 };
 
-			const joined = episodes.map((episode) => `[${episode.id}] ${episode.text}`).join("\n\n");
+			const joined = batch.map(({ promptText }) => promptText).join("\n\n");
 			const existing = await markdownStems(this.paths.semantic);
 			const result = extractJson<{
 				notes?: Array<Record<string, unknown>>;
@@ -419,11 +463,11 @@ export class Memory {
 			}>(await this.model.complete(consolidatePrompt(joined, existing)));
 			const notes = result.notes ?? [];
 			const moments = result.moments ?? [];
-			const newCursor = episodes.at(-1)?.ts ?? "";
+			const newCursor = advanceConsolidateCursor(cursor, episodes);
 
 			for (const note of notes) await this.upsertNote(note);
 			if (moments.length > 0) {
-				const date = newCursor.slice(0, 10);
+				const date = newCursor.ts.slice(0, 10);
 				await appendText(
 					this.paths.becoming,
 					moments
@@ -435,12 +479,11 @@ export class Memory {
 			await writeJson(this.paths.stateFile, {
 				...state,
 				cursor: newCursor,
-				last_consolidate: newCursor,
+				last_consolidate: newCursor.ts,
 			});
 			return { episodes: episodes.length, notesTouched: notes.length, moments: moments.length };
 		});
 	}
-
 	async backfill(opts: BackfillOptions = {}): Promise<BackfillRunResult> {
 		return runBackfill(this, opts);
 	}
@@ -816,20 +859,28 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 		return syncStatus(this.paths);
 	}
 
-	private async episodesSince(cursor: string | null): Promise<Array<{ ts: string; id: string; text: string }>> {
+	private async episodesSince(
+		cursor: ParsedConsolidateCursor | null,
+	): Promise<Array<{ ts: string; id: string; cursorId: string; text: string }>> {
 		const entries = await markdownEntries(this.paths.raw);
-		const episodes: Array<{ ts: string; id: string; text: string }> = [];
+		const episodes: Array<{ ts: string; id: string; cursorId: string; text: string }> = [];
 		for (const entry of entries) {
+			if (!shouldReadRawEpisodeName(entry, cursor)) continue;
 			const path = join(this.paths.raw, entry);
 			const parsed = parseFrontmatter(await readText(path));
 			if (parsed.data.protected_zone === true || parsed.data.consolidate === false) continue;
-			const ts = String(parsed.data.timestamp ?? entry.split("--")[0]);
-			if (cursor !== null && ts <= cursor) continue;
-			episodes.push({ ts, id: String(parsed.data.id ?? entry.replace(/\.md$/, "")), text: parsed.body.trim() });
+			const ts = String(parsed.data.timestamp ?? rawEpisodeTimestamp(entry));
+			const cursorId = rawEpisodeIdFromName(entry);
+			if (!shouldUseRawEpisode(ts, cursorId, cursor)) continue;
+			episodes.push({
+				ts,
+				id: String(parsed.data.id ?? entry.replace(/\.md$/, "")),
+				cursorId,
+				text: parsed.body.trim(),
+			});
 		}
 		return episodes.sort((a, b) => a.ts.localeCompare(b.ts));
 	}
-
 	private async upsertNote(note: Record<string, unknown>): Promise<void> {
 		const key = slug(String(note.key ?? note.title ?? "note"));
 		const path = join(this.paths.semantic, `${key}.md`);

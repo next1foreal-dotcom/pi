@@ -1,6 +1,15 @@
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { summarizeAuditCosts } from "./cost-ledger.ts";
+import {
+	advanceConsolidateCursor,
+	type ParsedConsolidateCursor,
+	parseConsolidateCursor,
+	rawEpisodeIdFromName,
+	rawEpisodeTimestamp,
+	shouldReadRawEpisodeName,
+	shouldUseRawEpisode,
+} from "./memory-cursor.ts";
 import type { ConsolidateResult } from "./memory-types.ts";
 import type { StorePaths } from "./paths.ts";
 import { appendText, parseFrontmatter, readJson, readText } from "./store.ts";
@@ -20,9 +29,13 @@ export interface BackfillEpisode {
 	ts: string;
 }
 
+interface BackfillRawEpisode extends BackfillEpisode {
+	cursorId: string;
+}
+
 export interface BackfillBatchResult {
 	costUsd: number;
-	cursorAfter: string;
+	cursorAfter: string | null;
 	cursorBefore: string | null;
 	episodes: BackfillEpisode[];
 	index: number;
@@ -54,7 +67,7 @@ export interface BackfillMemory {
 }
 
 interface BackfillState {
-	cursor?: string | null;
+	cursor?: unknown;
 }
 
 export async function runBackfill(memory: BackfillMemory, opts: BackfillOptions = {}): Promise<BackfillRunResult> {
@@ -70,13 +83,14 @@ export async function runBackfill(memory: BackfillMemory, opts: BackfillOptions 
 	}
 
 	const initialState = await readJson<BackfillState>(memory.paths.stateFile, {});
-	const cursorBefore = initialState.cursor ?? null;
-	let cursor = cursorBefore;
+	const cursorBefore = parseConsolidateCursor(initialState.cursor ?? null)?.ts ?? null;
+	let cursorValue: unknown = initialState.cursor ?? null;
 	let budgetSpentUsd = await readBackfillCostUsd(memory.paths.root, opts.now);
 	const batches: BackfillBatchResult[] = [];
 	let stoppedReason: BackfillRunResult["stoppedReason"] = "complete";
 
 	for (;;) {
+		const cursor = parseConsolidateCursor(cursorValue);
 		const episodes = (await episodesSince(memory.paths, cursor)).slice(0, batchSize);
 		if (episodes.length === 0) {
 			stoppedReason = "complete";
@@ -91,32 +105,33 @@ export async function runBackfill(memory: BackfillMemory, opts: BackfillOptions 
 			break;
 		}
 
-		const cursorAfter = episodes.at(-1)?.ts ?? cursor ?? "";
+		const plannedCursor = advanceConsolidateCursor(cursor, episodes);
 		const batchBase = {
 			costUsd: 0,
-			cursorAfter,
-			cursorBefore: cursor,
+			cursorAfter: plannedCursor.ts,
+			cursorBefore: cursor?.ts ?? null,
 			episodes: episodes.map(({ id, path, ts }) => ({ id, path, ts })),
 			index: batches.length + 1,
 		};
 		if (dryRun) {
 			batches.push({ ...batchBase, status: "planned" });
-			cursor = cursorAfter;
+			cursorValue = plannedCursor;
 			continue;
 		}
 
 		const result = await memory.consolidate(batchSize);
 		const stateAfter = await readJson<BackfillState>(memory.paths.stateFile, {});
-		const writtenCursor = stateAfter.cursor ?? cursorAfter;
+		const writtenCursor = parseConsolidateCursor(stateAfter.cursor ?? plannedCursor);
 		const batch = {
 			...batchBase,
-			cursorAfter: writtenCursor,
+			cursorAfter: writtenCursor?.ts ?? plannedCursor.ts,
+			episodes: batchBase.episodes.slice(0, result.episodes),
 			result,
 			status: "processed" as const,
 		};
 		await recordBackfillBatch(memory.paths, batch, opts.now);
 		batches.push(batch);
-		cursor = writtenCursor;
+		cursorValue = stateAfter.cursor ?? plannedCursor;
 		budgetSpentUsd = await readBackfillCostUsd(memory.paths.root, opts.now);
 	}
 
@@ -142,19 +157,22 @@ export async function runBackfill(memory: BackfillMemory, opts: BackfillOptions 
 	return result;
 }
 
-async function episodesSince(paths: StorePaths, cursor: string | null): Promise<BackfillEpisode[]> {
+async function episodesSince(paths: StorePaths, cursor: ParsedConsolidateCursor | null): Promise<BackfillRawEpisode[]> {
 	const names = await readdir(paths.raw).catch((error: unknown) => {
 		if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return [];
 		throw error;
 	});
-	const episodes: BackfillEpisode[] = [];
+	const episodes: BackfillRawEpisode[] = [];
 	for (const name of names.filter((entry) => entry.endsWith(".md"))) {
+		if (!shouldReadRawEpisodeName(name, cursor)) continue;
 		const path = join(paths.raw, name);
 		const parsed = parseFrontmatter(await readText(path));
 		if (parsed.data.protected_zone === true || parsed.data.consolidate === false) continue;
-		const ts = String(parsed.data.timestamp ?? name.split("--")[0]);
-		if (cursor !== null && ts <= cursor) continue;
+		const ts = String(parsed.data.timestamp ?? rawEpisodeTimestamp(name));
+		const cursorId = rawEpisodeIdFromName(name);
+		if (!shouldUseRawEpisode(ts, cursorId, cursor)) continue;
 		episodes.push({
+			cursorId,
 			id: String(parsed.data.id ?? name.replace(/\.md$/, "")),
 			path: `episodic/raw/${name}`,
 			ts,
@@ -162,7 +180,6 @@ async function episodesSince(paths: StorePaths, cursor: string | null): Promise<
 	}
 	return episodes.sort((left, right) => left.ts.localeCompare(right.ts) || left.path.localeCompare(right.path));
 }
-
 async function readBackfillCostUsd(root: string, now = new Date().toISOString()): Promise<number> {
 	const summary = await summarizeAuditCosts(root, { month: now.slice(0, 7) });
 	return summary.byPurpose.backfill?.usd ?? 0;

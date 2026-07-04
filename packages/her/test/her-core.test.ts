@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -43,10 +44,32 @@ function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function sha256(text: string): string {
+	return createHash("sha256").update(text).digest("hex");
+}
+
+function restoreEnv(name: string, value: string | undefined): void {
+	if (value === undefined) delete process.env[name];
+	else process.env[name] = value;
+}
 function backfillTimestamp(index: number): string {
 	return `2026-06-20T${String(index).padStart(4, "0")}`;
 }
 
+async function writeRawEpisode(
+	store: string,
+	ts: string,
+	id: string,
+	body: string,
+	extraFrontmatter = "",
+): Promise<void> {
+	await writeText(
+		join(store, "episodic", "raw", `${ts}--${id}.md`),
+		["---", `id: ${id}`, `timestamp: ${ts}`, "project: her", extraFrontmatter.trim(), "---", "", body, ""]
+			.filter((line) => line !== "")
+			.join("\n"),
+	);
+}
 async function writeBackfillRawEpisode(store: string, index: number, extraFrontmatter = ""): Promise<void> {
 	const id = `episode-${String(index).padStart(3, "0")}`;
 	const ts = backfillTimestamp(index);
@@ -541,7 +564,7 @@ test("backfill advances the cursor by successful batches and resumes after a cra
 		/batch crash/,
 	);
 	assert.equal(
-		(await readJson<{ cursor?: string }>(join(store, ".her", "state.json"), {})).cursor,
+		(await readJson<{ cursor?: { ts?: string } }>(join(store, ".her", "state.json"), {})).cursor?.ts,
 		backfillTimestamp(2),
 	);
 	assert.match((await readText(join(store, "semantic", "backfill-episode-001.md"))) ?? "", /Distilled episode-001/);
@@ -562,7 +585,7 @@ test("backfill advances the cursor by successful batches and resumes after a cra
 		],
 	);
 	assert.equal(
-		(await readJson<{ cursor?: string }>(join(store, ".her", "state.json"), {})).cursor,
+		(await readJson<{ cursor?: { ts?: string } }>(join(store, ".her", "state.json"), {})).cursor?.ts,
 		backfillTimestamp(6),
 	);
 	const audit = (await readText(join(store, "audit", "2026-07-03.jsonl"))) ?? "";
@@ -621,7 +644,10 @@ test("backfill budget cap stops before model work when the ledger is already spe
 	assert.equal(called, false);
 	assert.equal(result.stoppedReason, "budget_cap");
 	assert.equal(result.processedEpisodes, 0);
-	assert.equal((await readJson<{ cursor?: string | null }>(join(store, ".her", "state.json"), {})).cursor, null);
+	assert.equal(
+		(await readJson<{ cursor?: { ts?: string } | null }>(join(store, ".her", "state.json"), {})).cursor,
+		null,
+	);
 });
 
 test("decaySweep archives only old unaccessed decay-tier semantic notes and keeps them recoverable", async () => {
@@ -936,9 +962,155 @@ test("consolidate distills raw episodes into typed semantic notes and moments", 
 	assert.deepEqual(parsed.data.relations, [{ to: "agent-work-style", rel: "confirms" }]);
 	assert.match(parsed.body, /Fei trusts machine truth/);
 	assert.match((await readText(join(store, "narrative", "becoming-moments.md"))) ?? "", /Samantha should report/);
-	assert.equal((await readJson<{ cursor?: string }>(join(store, ".her", "state.json"), {})).cursor, "2026-06-03T1200");
+	assert.equal(
+		(await readJson<{ cursor?: { ts?: string } }>(join(store, ".her", "state.json"), {})).cursor?.ts,
+		"2026-06-03T1200",
+	);
 });
 
+test("consolidate truncates long raw episodes in the prompt without changing raw", async () => {
+	const store = await tempStore();
+	const body = "A".repeat(20_000);
+	await writeRawEpisode(store, "2026-06-20T0001", "long-episode", body);
+	const rawPath = join(store, "episodic", "raw", "2026-06-20T0001--long-episode.md");
+	const before = sha256((await readText(rawPath)) ?? "");
+	const previousEpisodeLimit = process.env.HER_CONSOLIDATE_EPISODE_CHARS;
+	const previousBatchLimit = process.env.HER_CONSOLIDATE_BATCH_CHARS;
+	let prompt = "";
+	try {
+		process.env.HER_CONSOLIDATE_EPISODE_CHARS = "1000";
+		process.env.HER_CONSOLIDATE_BATCH_CHARS = "5000";
+		const result = await new Memory(store, {
+			complete(input) {
+				prompt = input;
+				return JSON.stringify({ notes: [], moments: [] });
+			},
+		}).consolidate();
+
+		assert.equal(result.episodes, 1);
+		const promptedBody = prompt.split("[long-episode] ")[1] ?? "";
+		assert.ok(promptedBody.length <= 1000);
+		assert.match(promptedBody, /\[truncated, original 20000 chars\]/);
+		assert.equal(sha256((await readText(rawPath)) ?? ""), before);
+	} finally {
+		restoreEnv("HER_CONSOLIDATE_EPISODE_CHARS", previousEpisodeLimit);
+		restoreEnv("HER_CONSOLIDATE_BATCH_CHARS", previousBatchLimit);
+	}
+});
+
+test("consolidate stops a batch at the prompt character budget and resumes without repeats", async () => {
+	const store = await tempStore();
+	for (let index = 1; index <= 5; index++) {
+		await writeRawEpisode(
+			store,
+			`2026-06-20T000${index}`,
+			`budget-${String(index).padStart(3, "0")}`,
+			"B".repeat(7000),
+		);
+	}
+	const previousEpisodeLimit = process.env.HER_CONSOLIDATE_EPISODE_CHARS;
+	const previousBatchLimit = process.env.HER_CONSOLIDATE_BATCH_CHARS;
+	const seen: string[][] = [];
+	try {
+		process.env.HER_CONSOLIDATE_EPISODE_CHARS = "8000";
+		process.env.HER_CONSOLIDATE_BATCH_CHARS = "15000";
+		const memory = new Memory(store, {
+			complete(prompt) {
+				seen.push([...prompt.matchAll(/\[(budget-\d{3})\]/g)].map((match) => match[1]));
+				return JSON.stringify({ notes: [], moments: [] });
+			},
+		});
+
+		assert.equal((await memory.consolidate(10)).episodes, 2);
+		assert.equal(
+			(await readJson<{ cursor?: { ts?: string } }>(join(store, ".her", "state.json"), {})).cursor?.ts,
+			"2026-06-20T0002",
+		);
+		assert.equal((await memory.consolidate(10)).episodes, 2);
+		assert.equal((await memory.consolidate(10)).episodes, 1);
+		assert.deepEqual(seen.flat(), ["budget-001", "budget-002", "budget-003", "budget-004", "budget-005"]);
+	} finally {
+		restoreEnv("HER_CONSOLIDATE_EPISODE_CHARS", previousEpisodeLimit);
+		restoreEnv("HER_CONSOLIDATE_BATCH_CHARS", previousBatchLimit);
+	}
+});
+
+test("consolidate filters old raw filenames before reading bodies", async () => {
+	const store = await tempStore();
+	await writeJson(join(store, ".her", "state.json"), { cursor: "2026-06-20T0002" });
+	await mkdir(join(store, "episodic", "raw", "2026-06-20T0001--old-body.md"));
+	await writeRawEpisode(store, "2026-06-20T0003", "after-003", "after three");
+	await writeRawEpisode(store, "2026-06-20T0004", "after-004", "after four");
+	let ids: string[] = [];
+
+	const result = await new Memory(store, {
+		complete(prompt) {
+			ids = [...prompt.matchAll(/\[(after-\d{3})\]/g)].map((match) => match[1]);
+			return JSON.stringify({ notes: [], moments: [] });
+		},
+	}).consolidate(10);
+
+	assert.equal(result.episodes, 2);
+	assert.deepEqual(ids, ["after-003", "after-004"]);
+});
+
+test("backfill dry-run filters old raw filenames before reading bodies", async () => {
+	const store = await tempStore();
+	await writeJson(join(store, ".her", "state.json"), { cursor: "2026-06-20T0002" });
+	await mkdir(join(store, "episodic", "raw", "2026-06-20T0001--old-body.md"));
+	await writeBackfillRawEpisode(store, 3);
+	await writeBackfillRawEpisode(store, 4);
+
+	const result = await new Memory(store).backfill({ batchSize: 10, dryRun: true });
+
+	assert.equal(result.plannedEpisodes, 2);
+	assert.deepEqual(
+		result.batches[0]?.episodes.map((episode) => episode.id),
+		["episode-003", "episode-004"],
+	);
+});
+
+test("consolidate resumes same-minute episodes without repeating completed ones", async () => {
+	const store = await tempStore();
+	await writeRawEpisode(store, "2026-06-20T0100", "same-001", "first");
+	await writeRawEpisode(store, "2026-06-20T0100", "same-002", "second");
+	const seen: string[][] = [];
+	const memory = new Memory(store, {
+		complete(prompt) {
+			seen.push([...prompt.matchAll(/\[(same-\d{3})\]/g)].map((match) => match[1]));
+			return JSON.stringify({ notes: [], moments: [] });
+		},
+	});
+
+	assert.equal((await memory.consolidate(10)).episodes, 2);
+	await writeRawEpisode(store, "2026-06-20T0100", "same-003", "third");
+	assert.equal((await memory.consolidate(10)).episodes, 1);
+	assert.equal((await memory.consolidate(10)).episodes, 0);
+	assert.deepEqual(seen, [["same-001", "same-002"], ["same-003"]]);
+});
+
+test("consolidate migrates legacy string cursors after keeping the old boundary behavior", async () => {
+	const store = await tempStore();
+	await writeJson(join(store, ".her", "state.json"), { cursor: "2026-06-20T0200" });
+	await writeRawEpisode(store, "2026-06-20T0200", "legacy-boundary", "old boundary");
+	await writeRawEpisode(store, "2026-06-20T0201", "legacy-after", "new after");
+	let ids: string[] = [];
+	const memory = new Memory(store, {
+		complete(prompt) {
+			ids = [...prompt.matchAll(/\[(legacy-[^\]]+)\]/g)].map((match) => match[1]);
+			return JSON.stringify({ notes: [], moments: [] });
+		},
+	});
+
+	assert.equal((await memory.consolidate(10)).episodes, 1);
+	assert.deepEqual(ids, ["legacy-after"]);
+	const cursor = (
+		await readJson<{ cursor?: { ts?: string; done_ids?: string[] } }>(join(store, ".her", "state.json"), {})
+	).cursor;
+	assert.equal(cursor?.ts, "2026-06-20T0201");
+	assert.deepEqual(cursor?.done_ids, ["legacy-after"]);
+	assert.equal((await memory.consolidate(10)).episodes, 0);
+});
 test("consolidate records EVOLVES relations and marks replaced notes superseded", async () => {
 	const store = await tempStore();
 	await writeText(
