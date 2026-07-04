@@ -25,6 +25,7 @@ import {
 	writeJson,
 	writeText,
 } from "../src/her-core/index.ts";
+import { advanceConsolidateCursor } from "../src/her-core/memory-cursor.ts";
 
 const meta = { timestamp: "2026-06-02T2330", sessionId: "sess01", project: "her" };
 const execFileAsync = promisify(execFile);
@@ -1111,6 +1112,24 @@ test("consolidate migrates legacy string cursors after keeping the old boundary 
 	assert.deepEqual(cursor?.done_ids, ["legacy-after"]);
 	assert.equal((await memory.consolidate(10)).episodes, 0);
 });
+
+test("advanceConsolidateCursor writes done_ids sorted, byte-identical to Python's sorted(done_ids)", () => {
+	// Python's memory_cursor.py writes `sorted(done_ids)`; the TS side must match exactly so
+	// alternating TS/Python writers don't produce git-diff noise on the same state.json.
+	const cursor = { ts: "2026-07-04T0000", doneIds: new Set(["zeta", "alpha", "mike"]), legacy: false };
+	const episodes = [
+		{ ts: "2026-07-04T0000", cursorId: "zeta" },
+		{ ts: "2026-07-04T0000", cursorId: "alpha" },
+		{ ts: "2026-07-04T0000", cursorId: "mike" },
+		{ ts: "2026-07-04T0000", cursorId: "bravo" },
+	];
+
+	const result = advanceConsolidateCursor(cursor, episodes);
+
+	assert.deepEqual(result.done_ids, ["alpha", "bravo", "mike", "zeta"]);
+	assert.equal(JSON.stringify(result.done_ids), JSON.stringify([...result.done_ids].sort()));
+});
+
 test("consolidate records EVOLVES relations and marks replaced notes superseded", async () => {
 	const store = await tempStore();
 	await writeText(

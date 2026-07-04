@@ -61,5 +61,5 @@ export function advanceConsolidateCursor(
 	for (const episode of episodes) {
 		if (episode.ts === last.ts) doneIds.add(episode.cursorId);
 	}
-	return { ts: last.ts, done_ids: [...doneIds] };
+	return { ts: last.ts, done_ids: [...doneIds].sort() };
 }
