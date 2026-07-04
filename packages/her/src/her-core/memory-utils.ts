@@ -455,11 +455,41 @@ export function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
+const JSON_LEGAL_ESCAPES = new Set(['"', "\\", "/", "b", "f", "n", "r", "t", "u"]);
+
+export function repairJsonEscapes(source: string): string {
+	let out = "";
+	for (let i = 0; i < source.length; i++) {
+		const char = source[i];
+		if (char !== "\\") {
+			out += char;
+			continue;
+		}
+		const next = source[i + 1];
+		const isLegal =
+			next !== undefined &&
+			JSON_LEGAL_ESCAPES.has(next) &&
+			(next !== "u" || /^[0-9a-fA-F]{4}/.test(source.slice(i + 2, i + 6)));
+		out += isLegal ? "\\" : "\\\\";
+	}
+	return out;
+}
+
 export function extractJson<T>(text: string): T {
 	let source = text.trim();
 	const fence = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(source);
 	if (fence) source = fence[1].trim();
-	return JSON.parse(source) as T;
+	try {
+		return JSON.parse(source) as T;
+	} catch (originalError) {
+		try {
+			return JSON.parse(repairJsonEscapes(source)) as T;
+		} catch (repairError) {
+			throw new Error(
+				`extractJson failed. original error: ${errorMessage(originalError)}; after repair attempt error: ${errorMessage(repairError)}`,
+			);
+		}
+	}
 }
 
 export async function markdownEntries(dir: string): Promise<string[]> {

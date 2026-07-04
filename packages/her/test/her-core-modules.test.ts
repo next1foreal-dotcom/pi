@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { mock } from "node:test";
 import { loadConfig } from "../src/her-core/config.ts";
 import { createEmbeddingSearch } from "../src/her-core/embedding-search.ts";
+import { extractJson } from "../src/her-core/memory-utils.ts";
 import { FakeModel, OpenAICompatibleModel } from "../src/her-core/model.ts";
 import {
 	choiceModelPrompt,
@@ -47,6 +48,44 @@ test("prompts preserve Python memory operation contracts", () => {
 		/current self/,
 	);
 	assert.match(surfacePrompt("recent", "existing"), /reply with exactly: NONE/);
+});
+
+test("extractJson repairs an illegal \\C escape from a Windows path in a string value", () => {
+	const bad = String.raw`{"path": "C:\WindowsApps\Claude", "ok": true}`;
+	const result = extractJson<{ path: string; ok: boolean }>(bad);
+	assert.equal(result.path, String.raw`C:\WindowsApps\Claude`);
+	assert.equal(result.ok, true);
+});
+
+test("extractJson repairs an illegal \\' escape from a quoted shell arg", () => {
+	const bad = String.raw`{"cmd": "Get-Process \'cowork-svc\'", "ok": true}`;
+	const result = extractJson<{ cmd: string; ok: boolean }>(bad);
+	assert.equal(result.cmd, String.raw`Get-Process \'cowork-svc\'`);
+	assert.equal(result.ok, true);
+});
+
+test("extractJson never invokes the repair path for legal JSON", () => {
+	const parseSpy = mock.method(JSON, "parse");
+	try {
+		const result = extractJson<{ a: number }>('{"a": 1}');
+		assert.equal(result.a, 1);
+		assert.equal(parseSpy.mock.calls.length, 1);
+	} finally {
+		parseSpy.mock.restore();
+	}
+});
+
+test("extractJson fail-loud on truncated JSON reports both original and repair-attempt errors", () => {
+	const truncated = '{"a": 1, "b": [1, 2,';
+	assert.throws(
+		() => extractJson(truncated),
+		(error: unknown) => {
+			assert.ok(error instanceof Error);
+			assert.match(error.message, /original error/i);
+			assert.match(error.message, /after repair/i);
+			return true;
+		},
+	);
 });
 
 test("config loads shallow YAML overrides over defaults", async () => {
