@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { appendFile, mkdir } from "node:fs/promises";
+import { appendFile, mkdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { enforceDailyCostCap } from "./cost-ledger.ts";
@@ -8,6 +9,7 @@ import { completeLongTask, startLongTask } from "./long-task.ts";
 import { Memory } from "./memory.ts";
 import { git } from "./memory-utils.ts";
 import { readText } from "./store.ts";
+import { storeLock } from "./store-lock.ts";
 
 // dispatch.ts lives at packages/her/src/her-core/dispatch.ts; the pi CLI lives at
 // packages/coding-agent/dist/cli.js in the same monorepo checkout. Anchor to this
@@ -30,6 +32,7 @@ export interface DispatchOptions {
 	executor: string;
 	handoffPath: string;
 	label?: string;
+	maxCodexRunsPerDay?: number;
 	memoryDir: string;
 	now?: string;
 	spawnExecutor?: SpawnExecutorFn;
@@ -57,6 +60,7 @@ export type SpawnExecutorFn = (opts: {
 }) => Promise<DispatchExecutorResult>;
 
 export interface DispatchResult {
+	branch?: string;
 	commits: number;
 	dispatchId: string;
 	durationMs: number;
@@ -66,6 +70,7 @@ export interface DispatchResult {
 	status: DispatchStatus;
 	usd?: number;
 	violations: string[];
+	worktreePath?: string;
 }
 
 export interface DispatchAuditEntry {
@@ -82,6 +87,10 @@ export interface DispatchAuditEntry {
 const DEFAULT_BUDGET_USD = 5;
 const DEFAULT_DAILY_CAP_USD = 20;
 const DEFAULT_TIMEOUT_MIN = 60;
+const DEFAULT_CODEX_USD_ESTIMATE = 0.5;
+const DEFAULT_MAX_CODEX_RUNS_PER_DAY = 10;
+const DEFAULT_COMPLETION_LOCK_TIMEOUT_MS = 20_000;
+const DEFAULT_COMPLETION_LOCK_RETRIES = 3;
 const WINDOWS_CODEX_COMMANDS = ["codex.cmd", "codex.exe", "codex"] as const;
 
 type CodexCommandName = (typeof WINDOWS_CODEX_COMMANDS)[number];
@@ -106,6 +115,10 @@ export async function runDispatch(opts: DispatchOptions): Promise<DispatchResult
 	const budgetUsd = opts.budgetUsd ?? DEFAULT_BUDGET_USD;
 	const dailyCapUsd =
 		opts.dailyCapUsd ?? parsePositiveEnvNumber(env.HER_DISPATCH_DAILY_CAP_USD) ?? DEFAULT_DAILY_CAP_USD;
+	const maxCodexRunsPerDay =
+		opts.maxCodexRunsPerDay ??
+		parsePositiveEnvInt(env.HER_DISPATCH_MAX_CODEX_RUNS_PER_DAY) ??
+		DEFAULT_MAX_CODEX_RUNS_PER_DAY;
 	const timeoutMin = opts.timeoutMin ?? DEFAULT_TIMEOUT_MIN;
 	const now = opts.now ?? new Date().toISOString();
 
@@ -128,11 +141,21 @@ export async function runDispatch(opts: DispatchOptions): Promise<DispatchResult
 
 	try {
 		await enforceDailyCostCap(memoryDir, dailyCapUsd);
+		if (executor.kind === "codex") await enforceDailyCodexRunCap(memoryDir, maxCodexRunsPerDay);
 	} catch (error) {
 		const reason = error instanceof Error ? error.message : String(error);
-		await completeLongTask(memoryDir, dispatchId, {
-			now,
-			outcome: `rejected: over-budget (${reason})`,
+		await completeDispatchWithLock(memoryDir, env, async () => {
+			await completeLongTask(memoryDir, dispatchId, {
+				now,
+				outcome: `rejected: over-budget (${reason})`,
+			});
+			await captureDispatchEpisode(memoryDir, {
+				dispatchId,
+				executor: opts.executor,
+				handoffPath: opts.handoffPath,
+				status: "rejected",
+				summary: `Dispatch rejected for ${opts.executor} on ${opts.handoffPath}: over-budget: ${reason}`,
+			});
 		});
 		await recordDispatchAudit(memoryDir, {
 			dispatchId,
@@ -141,44 +164,44 @@ export async function runDispatch(opts: DispatchOptions): Promise<DispatchResult
 			status: "rejected",
 			ts: now,
 		});
-		await captureDispatchEpisode(memoryDir, {
-			dispatchId,
-			executor: opts.executor,
-			handoffPath: opts.handoffPath,
-			status: "rejected",
-			summary: `Dispatch rejected for ${opts.executor} on ${opts.handoffPath}: over-budget: ${reason}`,
-		});
 		throw new Error(`her dispatch rejected: over-budget: ${reason}`);
 	}
 
-	const baseline = await captureGitBaseline(cwd);
 	const prompt = `${DISPATCH_GROUND_RULES}\n\n${handoffText.trim()}\n`;
 	const spawnFn = opts.spawnExecutor ?? spawnRealExecutor;
 	const timeoutMs = Math.max(1, Math.round(timeoutMin * 60_000));
 	const started = Date.now();
 
+	let worktree: DispatchWorktree;
 	let execResult: DispatchExecutorResult;
 	try {
-		execResult = await raceAgainstTimeout(spawnFn({ cwd, env, executor, handoffText, prompt, timeoutMs }), timeoutMs);
+		worktree = await createDispatchWorktree(cwd, env, dispatchId);
+		execResult = await raceAgainstTimeout(
+			spawnFn({ cwd: worktree.worktreePath, env, executor, handoffText, prompt, timeoutMs }),
+			timeoutMs,
+		);
 	} catch (error) {
 		const durationMs = Date.now() - started;
 		const failedAt = new Date().toISOString();
 		const reason = error instanceof Error ? error.message : String(error);
-		await completeLongTask(memoryDir, dispatchId, { now: failedAt, outcome: `failed: ${reason}` });
+		const cost = resolveDispatchCost(executor, undefined, env);
+		await completeDispatchWithLock(memoryDir, env, async () => {
+			await completeLongTask(memoryDir, dispatchId, { now: failedAt, outcome: `failed: ${reason}` });
+			await captureDispatchEpisode(memoryDir, {
+				dispatchId,
+				executor: opts.executor,
+				handoffPath: opts.handoffPath,
+				status: "failed",
+				summary: `Dispatch failed for ${opts.executor} on ${opts.handoffPath}: ${reason}`,
+			});
+		});
 		await recordDispatchAudit(memoryDir, {
 			dispatchId,
 			executor: opts.executor,
 			handoff: opts.handoffPath,
 			status: "failed",
 			ts: failedAt,
-			...(executor.kind === "codex" ? { cost: { usd: 0, purpose: "codex-untracked" } } : {}),
-		});
-		await captureDispatchEpisode(memoryDir, {
-			dispatchId,
-			executor: opts.executor,
-			handoffPath: opts.handoffPath,
-			status: "failed",
-			summary: `Dispatch failed for ${opts.executor} on ${opts.handoffPath}: ${reason}`,
+			...(cost ? { cost } : {}),
 		});
 		return {
 			commits: 0,
@@ -189,14 +212,25 @@ export async function runDispatch(opts: DispatchOptions): Promise<DispatchResult
 			handoffPath: opts.handoffPath,
 			status: "failed",
 			violations: [],
+			...(cost ? { usd: cost.usd } : {}),
 		};
 	}
 	const durationMs = Date.now() - started;
 
 	if (execResult.timedOut) {
-		await completeLongTask(memoryDir, dispatchId, {
-			now: new Date().toISOString(),
-			outcome: `timed-out after ${timeoutMin}min`,
+		const cost = resolveDispatchCost(executor, execResult.usd, env);
+		await completeDispatchWithLock(memoryDir, env, async () => {
+			await completeLongTask(memoryDir, dispatchId, {
+				now: new Date().toISOString(),
+				outcome: `timed-out after ${timeoutMin}min`,
+			});
+			await captureDispatchEpisode(memoryDir, {
+				dispatchId,
+				executor: opts.executor,
+				handoffPath: opts.handoffPath,
+				status: "timed-out",
+				summary: `Dispatch timed out after ${timeoutMin} minutes.`,
+			});
 		});
 		await recordDispatchAudit(memoryDir, {
 			dispatchId,
@@ -204,16 +238,10 @@ export async function runDispatch(opts: DispatchOptions): Promise<DispatchResult
 			handoff: opts.handoffPath,
 			status: "timed-out",
 			ts: new Date().toISOString(),
-			...(execResult.usd !== undefined ? { cost: { usd: execResult.usd } } : {}),
-		});
-		await captureDispatchEpisode(memoryDir, {
-			dispatchId,
-			executor: opts.executor,
-			handoffPath: opts.handoffPath,
-			status: "timed-out",
-			summary: `Dispatch timed out after ${timeoutMin} minutes.`,
+			...(cost ? { cost } : {}),
 		});
 		return {
+			branch: worktree.branch,
 			commits: 0,
 			dispatchId,
 			durationMs,
@@ -222,13 +250,14 @@ export async function runDispatch(opts: DispatchOptions): Promise<DispatchResult
 			handoffPath: opts.handoffPath,
 			status: "timed-out",
 			violations: [],
-			...(execResult.usd !== undefined ? { usd: execResult.usd } : {}),
+			worktreePath: worktree.worktreePath,
+			...(cost ? { usd: cost.usd } : {}),
 		};
 	}
 
-	const { changedFiles, commits } = await diffAgainstBaseline(cwd, baseline.headSha);
+	const { changedFiles, commits } = await diffAgainstBaseline(worktree.worktreePath, worktree.headSha);
 	const violations = detectViolations(changedFiles);
-	const pushed = await remoteAdvanced(cwd, baseline.remoteRefs);
+	const pushed = await remoteAdvanced(worktree.worktreePath, worktree.remoteRefs);
 	if (pushed) violations.push("remote ref changed (executor pushed)");
 	if (execResult.usd !== undefined && execResult.usd > budgetUsd) {
 		violations.push(`actual cost $${execResult.usd} exceeded --budget-usd $${budgetUsd}`);
@@ -242,29 +271,33 @@ export async function runDispatch(opts: DispatchOptions): Promise<DispatchResult
 		usd: execResult.usd,
 		violations,
 	});
+	const cost = resolveDispatchCost(executor, execResult.usd, env);
+	// A true no-op run (nothing committed, nothing to flag) is the only case the dispatch body
+	// cleans up itself; any commit or violation leaves the branch/worktree for the acceptor.
+	const isNoOp = commits === 0 && violations.length === 0;
+	if (isNoOp) await removeDispatchWorktree(cwd, worktree);
 
-	await completeLongTask(memoryDir, dispatchId, { now: new Date().toISOString(), outcome });
+	await completeDispatchWithLock(memoryDir, env, async () => {
+		await completeLongTask(memoryDir, dispatchId, { now: new Date().toISOString(), outcome });
+		await captureDispatchEpisode(memoryDir, {
+			dispatchId,
+			executor: opts.executor,
+			handoffPath: opts.handoffPath,
+			status,
+			summary: `Dispatched ${opts.executor} for ${opts.handoffPath}. Result: ${status}. ${commits} commit(s), ${changedFiles.length} file(s) changed.${violations.length ? ` Violations: ${violations.join("; ")}.` : ""}`,
+		});
+	});
 	await recordDispatchAudit(memoryDir, {
 		dispatchId,
 		executor: opts.executor,
 		handoff: opts.handoffPath,
 		status,
 		ts: new Date().toISOString(),
-		...(execResult.usd !== undefined
-			? { cost: { usd: execResult.usd } }
-			: executor.kind === "codex"
-				? { cost: { usd: 0, purpose: "codex-untracked" } }
-				: {}),
-	});
-	await captureDispatchEpisode(memoryDir, {
-		dispatchId,
-		executor: opts.executor,
-		handoffPath: opts.handoffPath,
-		status,
-		summary: `Dispatched ${opts.executor} for ${opts.handoffPath}. Result: ${status}. ${commits} commit(s), ${changedFiles.length} file(s) changed.${violations.length ? ` Violations: ${violations.join("; ")}.` : ""}`,
+		...(cost ? { cost } : {}),
 	});
 
 	return {
+		...(isNoOp ? {} : { branch: worktree.branch, worktreePath: worktree.worktreePath }),
 		commits,
 		dispatchId,
 		durationMs,
@@ -273,7 +306,7 @@ export async function runDispatch(opts: DispatchOptions): Promise<DispatchResult
 		handoffPath: opts.handoffPath,
 		status,
 		violations,
-		...(execResult.usd !== undefined ? { usd: execResult.usd } : {}),
+		...(cost ? { usd: cost.usd } : {}),
 	};
 }
 
@@ -502,9 +535,46 @@ export function estimateUsdFromNdjson(stdout: string): number | undefined {
 	return Math.round(totalTokens * 0.000002 * 1_000_000) / 1_000_000;
 }
 
-async function captureGitBaseline(cwd: string): Promise<{ headSha: string; remoteRefs: string[] }> {
+interface DispatchWorktree {
+	branch: string;
+	headSha: string;
+	remoteRefs: string[];
+	worktreePath: string;
+}
+
+function dispatchWorktreeRoot(env: NodeJS.ProcessEnv): string {
+	return env.HER_DISPATCH_WORKTREE_ROOT?.trim() || join(tmpdir(), "her-dispatch-worktrees");
+}
+
+/**
+ * Creates an isolated `dispatch/<id>` branch and worktree off the target repo's current HEAD.
+ * Every concurrent dispatch gets its own working tree and branch, so one dispatch's commits can
+ * never leak into another's violation diff (they physically aren't in the same working tree).
+ * The dispatch body never merges this branch back — that is always the acceptor's action.
+ */
+async function createDispatchWorktree(
+	cwd: string,
+	env: NodeJS.ProcessEnv,
+	dispatchId: string,
+): Promise<DispatchWorktree> {
 	const headSha = (await git(cwd, "rev-parse", "HEAD")).stdout.trim();
-	return { headSha, remoteRefs: await captureRemoteRefs(cwd) };
+	const remoteRefs = await captureRemoteRefs(cwd);
+	const worktreePath = resolve(dispatchWorktreeRoot(env), dispatchId);
+	const branch = `dispatch/${dispatchId}`;
+	await mkdir(dirname(worktreePath), { recursive: true });
+	await git(cwd, "worktree", "add", worktreePath, "-b", branch, "HEAD");
+	return { branch, headSha, remoteRefs, worktreePath };
+}
+
+/**
+ * Removes a dispatch worktree and its branch. Only called by the dispatch body itself when the
+ * run produced zero commits and zero violations (a true no-op) — any other outcome leaves the
+ * worktree and branch in place for the acceptor to merge/cherry-pick and clean up.
+ */
+async function removeDispatchWorktree(cwd: string, worktree: DispatchWorktree): Promise<void> {
+	await git(cwd, "worktree", "remove", worktree.worktreePath, "--force").catch(() => undefined);
+	await rm(worktree.worktreePath, { force: true, recursive: true }).catch(() => undefined);
+	await git(cwd, "branch", "-D", worktree.branch).catch(() => undefined);
 }
 
 async function diffAgainstBaseline(
@@ -610,6 +680,31 @@ async function captureDispatchEpisode(
 	});
 }
 
+/**
+ * Runs the goal-file completion + episodic capture as one store-locked unit, retrying on lock
+ * contention instead of dying on the first timeout. Each attempt gets a short lock timeout
+ * (default 20s); up to `retries` attempts are made (default 3) before failing loud.
+ */
+async function completeDispatchWithLock(
+	memoryDir: string,
+	env: NodeJS.ProcessEnv,
+	fn: () => Promise<void>,
+): Promise<void> {
+	const timeoutMs =
+		parsePositiveEnvInt(env.HER_DISPATCH_COMPLETION_LOCK_TIMEOUT_MS) ?? DEFAULT_COMPLETION_LOCK_TIMEOUT_MS;
+	const retries = parsePositiveEnvInt(env.HER_DISPATCH_COMPLETION_LOCK_RETRIES) ?? DEFAULT_COMPLETION_LOCK_RETRIES;
+	let lastError: unknown;
+	for (let attempt = 1; attempt <= retries; attempt++) {
+		try {
+			await storeLock(memoryDir, fn, { timeoutMs });
+			return;
+		} catch (error) {
+			lastError = error;
+		}
+	}
+	throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
 async function recordDispatchAudit(
 	memoryDir: string,
 	opts: {
@@ -649,4 +744,45 @@ function parsePositiveEnvNumber(value: string | undefined): number | undefined {
 	if (!value?.trim()) return undefined;
 	const parsed = Number(value);
 	return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function parsePositiveEnvInt(value: string | undefined): number | undefined {
+	if (!value?.trim()) return undefined;
+	const parsed = Number(value);
+	return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+/**
+ * Every codex terminal state (completed / failed / timed-out) must leave a cost entry so the
+ * daily cost cap can see the main executor. estimateUsdFromNdjson (the real pi accounting path)
+ * is untouched: when it produced a number, that number is trusted as-is. Codex output isn't
+ * NDJSON, so its usd is never parsed here — codex always falls back to the conservative estimate
+ * and is labeled "codex-estimated" so the ledger is honest about what's measured vs. guessed.
+ */
+function resolveDispatchCost(
+	executor: ParsedExecutor,
+	usd: number | undefined,
+	env: NodeJS.ProcessEnv,
+): { purpose?: string; usd: number } | undefined {
+	if (usd !== undefined) return { usd };
+	if (executor.kind !== "codex") return undefined;
+	const estimate = parsePositiveEnvNumber(env.HER_CODEX_USD_ESTIMATE) ?? DEFAULT_CODEX_USD_ESTIMATE;
+	return { purpose: "codex-estimated", usd: estimate };
+}
+
+async function enforceDailyCodexRunCap(memoryDir: string, limit: number, date = today()): Promise<void> {
+	const auditDir = join(memoryDir, "audit");
+	const auditFile = join(auditDir, `${date}.jsonl`);
+	const text = (await readText(auditFile)) ?? "";
+	let runs = 0;
+	for (const line of text.split(/\r?\n/)) {
+		if (!line.trim()) continue;
+		const parsed = JSON.parse(line) as { executor?: string; tool?: string };
+		if (parsed.tool === "her_dispatch" && parsed.executor === "codex") runs += 1;
+	}
+	if (runs >= limit) throw new Error(`daily codex dispatch run cap reached: ${runs} >= ${limit}`);
+}
+
+function today(): string {
+	return new Date().toISOString().slice(0, 10);
 }
