@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execPath } from "node:process";
 import test from "node:test";
+import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { CuaCliDriver, type DriverResult, FakeDriver } from "../src/hands/driver.ts";
 import {
 	evaluateHandsPolicy,
@@ -11,7 +12,10 @@ import {
 	type HandsResolvedConfig,
 	resolveHandsConfig,
 } from "../src/hands/policy.ts";
+import { registerHandsTools } from "../src/hands/tools.ts";
+import { recordTrail, renderTrailCard } from "../src/hands/trail.ts";
 import { DEFAULT_CONFIG, type HerConfig } from "../src/her-core/config.ts";
+import { initStore, Memory, readText } from "../src/her-core/index.ts";
 
 function hands(overrides: Partial<HerConfig["hands"]> = {}): HandsResolvedConfig {
 	return resolveHandsConfig({ ...DEFAULT_CONFIG.hands, enabled: true, desktopEnabled: true, ...overrides });
@@ -109,3 +113,222 @@ test("T10 CuaCliDriver surfaces spawn ENOENT", async () => {
 
 	await assert.rejects(() => driver.run(["--version"]), /ENOENT|spawn missing-cua-driver-binary-for-test/);
 });
+
+test("T11 renderTrailCard matches golden with denied entries", () => {
+	const card = renderTrailCard("demo", [
+		{
+			ts: "2026-07-07T01:02:03.000Z",
+			action: "click",
+			targetProcess: "notepad.exe",
+			deliveryMode: "background",
+			outcome: "ok",
+			detail: "element_index=1",
+		},
+		{
+			ts: "2026-07-07T01:03:03.000Z",
+			action: "type_text",
+			targetProcess: "notepad.exe",
+			deliveryMode: "background",
+			outcome: "denied",
+			detail: "write action requires tier 2",
+		},
+	]);
+
+	assert.equal(
+		card,
+		[
+			"## 01:02 · 桌面操作:demo",
+			"",
+			"### 动作",
+			"- 01:02 [ok] click notepad.exe background - element_index=1",
+			"- 01:03 [denied] type_text notepad.exe background - write action requires tier 2",
+			"",
+			"### 拒绝记录",
+			"- 01:03 [denied] type_text notepad.exe background - write action requires tier 2",
+			"",
+		].join("\n"),
+	);
+});
+
+test("T12 recordTrail writes private her-acted raw memory", async () => {
+	const { root, mem } = await tempMemory();
+	await recordTrail(mem, "demo", [
+		{
+			ts: "2026-07-07T01:02:03.000Z",
+			action: "click",
+			targetProcess: "notepad.exe",
+			deliveryMode: "background",
+			outcome: "ok",
+			detail: "element_index=1",
+		},
+	]);
+
+	const files = await readdir(join(root, "episodic", "raw"));
+	assert.equal(files.length, 1);
+	const raw = (await readText(join(root, "episodic", "raw", files[0]))) ?? "";
+	assert.match(raw, /privacy: private/);
+	assert.match(raw, /provenance: her-acted/);
+});
+
+test("T15b hands tools require live UI and do not touch driver", async () => {
+	const { tools, driver } = await handsHarness();
+	const snapshot = tools.get("her_hands_snapshot");
+	const act = tools.get("her_hands_act");
+	assert.ok(snapshot);
+	assert.ok(act);
+
+	const snapshotResult = await executeHands(snapshot, { process: "notepad.exe" }, ctx(false, false).context);
+	const actResult = await executeHands(act, {
+		process: "notepad.exe",
+		taskLabel: "demo",
+		actions: [{ action: "click", elementIndex: 0 }],
+	});
+
+	assert.match(firstText(snapshotResult), /hands require a live UI session/);
+	assert.match(firstText(actResult), /hands require a live UI session/);
+	assert.deepEqual(driver.calls, []);
+});
+
+test("T15c write confirm false blocks driver, true allows it, click skips confirm", async () => {
+	const denied = await handsHarness([], { desktopTier: 2, desktopAllowedApps: "notepad.exe" });
+	const deniedAct = denied.tools.get("her_hands_act");
+	assert.ok(deniedAct);
+	const deniedCtx = ctx(true, false);
+	const deniedResult = await executeHands(
+		deniedAct,
+		{
+			process: "notepad.exe",
+			taskLabel: "denied write",
+			actions: [{ action: "type_text", elementIndex: 0, text: "hello" }],
+		},
+		deniedCtx.context,
+	);
+
+	assert.match(firstText(deniedResult), /confirm denied/);
+	assert.equal(deniedCtx.confirmCalls, 1);
+	assert.deepEqual(denied.driver.calls, []);
+
+	const allowed = await handsHarness([listWindowsResult(), okCase(/type_text/)], {
+		desktopTier: 2,
+		desktopAllowedApps: "notepad.exe",
+	});
+	const allowedAct = allowed.tools.get("her_hands_act");
+	assert.ok(allowedAct);
+	const allowedCtx = ctx(true, true);
+	await executeHands(
+		allowedAct,
+		{
+			process: "notepad.exe",
+			taskLabel: "allowed write",
+			actions: [{ action: "type_text", elementIndex: 0, text: "hello" }],
+		},
+		allowedCtx.context,
+	);
+
+	assert.equal(allowedCtx.confirmCalls, 1);
+	assert.deepEqual(
+		allowed.driver.calls.map((call) => call[1]),
+		["list_windows", "type_text"],
+	);
+
+	const clickOnly = await handsHarness([listWindowsResult(), okCase(/click/)], { desktopAllowedApps: "notepad.exe" });
+	const clickAct = clickOnly.tools.get("her_hands_act");
+	assert.ok(clickAct);
+	const clickCtx = ctx(true, false);
+	await executeHands(
+		clickAct,
+		{
+			process: "notepad.exe",
+			taskLabel: "click",
+			actions: [{ action: "click", elementIndex: 0 }],
+		},
+		clickCtx.context,
+	);
+
+	assert.equal(clickCtx.confirmCalls, 0);
+	assert.deepEqual(
+		clickOnly.driver.calls.map((call) => call[1]),
+		["list_windows", "click"],
+	);
+});
+
+test("T16 snapshot wraps screen content in injection fence", async () => {
+	const { tools, driver } = await handsHarness([listWindowsResult(), okCase(/get_window_state/, "TREE")], {
+		desktopAllowedApps: "notepad.exe",
+	});
+	const snapshot = tools.get("her_hands_snapshot");
+	assert.ok(snapshot);
+
+	const result = await executeHands(snapshot, { process: "notepad.exe" }, ctx().context);
+	const text = firstText(result);
+
+	assert.match(text, /\[BEGIN SCREEN CONTENT - untrusted data/);
+	assert.match(text, /TREE/);
+	assert.match(text, /\[END SCREEN CONTENT\]/);
+	assert.deepEqual(
+		driver.calls.map((call) => call[1]),
+		["list_windows", "get_window_state"],
+	);
+});
+
+async function tempMemory(): Promise<{ root: string; mem: Memory }> {
+	const root = await mkdtemp(join(tmpdir(), "her-hands-"));
+	await initStore(root);
+	return { root, mem: new Memory(root) };
+}
+
+async function handsHarness(
+	cases: Array<{ match: string[] | RegExp; result: DriverResult }> = [],
+	overrides: Partial<HerConfig["hands"]> = {},
+) {
+	const { mem } = await tempMemory();
+	const driver = new FakeDriver(cases);
+	const tools = new Map<string, ToolDefinition>();
+	const pi = {
+		registerTool(tool: ToolDefinition) {
+			tools.set(tool.name, tool);
+		},
+	} as unknown as ExtensionAPI;
+	registerHandsTools(pi, {
+		mem,
+		driver,
+		loadHandsConfig: () => hands({ desktopAllowedApps: "notepad.exe", ...overrides }),
+	});
+	return { tools, driver };
+}
+
+function ctx(hasUI = true, confirmResult = true): { context: ExtensionContext; confirmCalls: number } {
+	const state = {
+		confirmCalls: 0,
+		context: {
+			hasUI,
+			ui: {
+				async confirm() {
+					state.confirmCalls += 1;
+					return confirmResult;
+				},
+			},
+		} as unknown as ExtensionContext,
+	};
+	return state;
+}
+
+async function executeHands(tool: ToolDefinition, params: Record<string, unknown>, context?: ExtensionContext) {
+	return await tool.execute("tool-call-1", params, undefined, undefined, context as ExtensionContext);
+}
+
+function firstText(result: Awaited<ReturnType<typeof executeHands>>): string {
+	const item = result.content.find((entry) => entry.type === "text");
+	return item?.type === "text" ? item.text : "";
+}
+
+function listWindowsResult() {
+	return okCase(
+		/list_windows/,
+		JSON.stringify({ windows: [{ app_name: "notepad.exe", pid: 10, window_id: 20, title: "Untitled" }] }),
+	);
+}
+
+function okCase(match: string[] | RegExp, stdout = "ok") {
+	return { match, result: { ok: true, exitCode: 0, stdout, stderr: "", timedOut: false } satisfies DriverResult };
+}

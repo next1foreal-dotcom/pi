@@ -612,6 +612,39 @@ test("extension Cedar registry covers every registered Her tool", async () => {
 	});
 });
 
+test("extension Cedar allows hands tools as governed non-destructive tools", async () => {
+	const store = await tempStore();
+	const ctx = createContext(store);
+
+	await withMemoryDir(store, async () => {
+		const fake = createFakePi();
+		her(fake.pi);
+		const toolCall = fake.handlers.get("tool_call")?.[0];
+		assert.ok(toolCall);
+
+		const snapshot = await toolCall(
+			{
+				type: "tool_call",
+				toolCallId: "call-hands-1",
+				toolName: "her_hands_snapshot",
+				input: { process: "notepad.exe" },
+			},
+			ctx,
+		);
+		const act = await toolCall(
+			{
+				type: "tool_call",
+				toolCallId: "call-hands-2",
+				toolName: "her_hands_act",
+				input: { process: "notepad.exe", taskLabel: "demo", actions: [{ action: "click", elementIndex: 0 }] },
+			},
+			ctx,
+		);
+
+		assert.equal(snapshot, undefined);
+		assert.equal(act, undefined);
+	});
+});
 test("extension her_feedback records weighted choice-model rules", async () => {
 	const store = await tempStore();
 	const ctx = createContext(store);

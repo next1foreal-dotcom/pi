@@ -7,6 +7,9 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { anthropicOAuthProvider, openaiCodexOAuthProvider } from "@earendil-works/pi-ai/oauth";
 import type { ExtensionAPI, ExtensionContext, ProviderConfig } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { CuaCliDriver } from "./hands/driver.ts";
+import { resolveHandsConfig } from "./hands/policy.ts";
+import { registerHandsTools } from "./hands/tools.ts";
 import {
 	applyMemoryRetraction,
 	type ChoiceModelDomain,
@@ -30,6 +33,7 @@ import {
 	listHerProposals,
 	listHerTasks,
 	listLongTasks,
+	loadConfig,
 	longTaskStatuses,
 	Memory,
 	type MemorySyncResult,
@@ -117,6 +121,8 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	her_idea: { destructive: false },
 	her_judgment: { destructive: false },
 	her_memory_status: { destructive: false },
+	her_hands_snapshot: { destructive: false },
+	her_hands_act: { destructive: false },
 };
 const claimLedgerSchema = Type.Array(
 	Type.Object({
@@ -1598,6 +1604,19 @@ export default function her(pi: ExtensionAPI): void {
 				status: params.status,
 				memoryDir,
 			});
+		},
+	});
+	registerHandsTools(pi, {
+		mem,
+		loadHandsConfig: () => resolveHandsConfig(loadConfig(resolve(memoryDir, ".her", "config.yaml")).hands),
+		driver: {
+			run(args, opts) {
+				const config = loadConfig(resolve(memoryDir, ".her", "config.yaml")).hands;
+				return new CuaCliDriver({
+					binary: config.desktopDriverBinary,
+					defaultTimeoutMs: config.desktopActionTimeoutS * 1000,
+				}).run(args, opts);
+			},
 		},
 	});
 }
