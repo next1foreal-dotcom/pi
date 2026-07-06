@@ -17,6 +17,7 @@ import type {
 	CliIntakeUrlPayload,
 	CliJournalPayload,
 	CliJudgmentPayload,
+	CliLintPayload,
 	CliMemoryStatusPayload,
 	CliPriorPayload,
 	CliPrivacyAuditPayload,
@@ -140,6 +141,14 @@ export function renderGoldenEval(payload: CliGoldenEvalPayload): string {
 	].join("\n");
 }
 
+export function renderLint(payload: CliLintPayload): string {
+	return [
+		`Her memory lint ${payload.result.status}: ${payload.result.counts.brokenLinks} broken wikilink(s), ${payload.result.counts.orphans} orphan note(s), ${payload.result.counts.supersessionIssues} supersession issue(s).`,
+		`report: ${payload.result.reportPath}`,
+		"",
+		renderStatus(payload),
+	].join("\n");
+}
 export function renderRestore(payload: CliRestorePayload): string {
 	return [`Her memory restored archived semantic note: ${payload.result.key}`, "", renderStatus(payload)].join("\n");
 }
@@ -509,6 +518,7 @@ export function usage(): string {
   her intake-url --url <url> [--max-bytes <n>] [--update-surfaces] [--json]
   her judgment --note <id> [--choice <text>] [--correction <text>] [--reason <text>] [--attraction <text>] [--inferred-intent <text>] [--rejection <text>] [--hesitation <text>] [--outcome <text>] [--json]
   her journal --kind daily|weekly --text <text> [--title <text>] [--source <text>] [--timestamp <ISO>] [--run <memory-path>] [--json]
+  her lint [--json]
   her memory-status --note <id> --status active|archive_only|needs_deep_read --reason <text> [--json]
   her privacy-audit [--json]
   her privacy-check --ref <memory-path> [--ref <memory-path>] [--json]

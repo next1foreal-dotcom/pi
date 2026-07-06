@@ -43,6 +43,7 @@ export function parseArgs(argv: string[]): CliCommand {
 	if (command === "intake-url") return parseIntakeUrl(rest);
 	if (command === "judgment") return parseJudgment(rest);
 	if (command === "journal") return parseJournal(rest);
+	if (command === "lint") return parseJsonOnly("lint", rest);
 	if (command === "memory-status") return parseMemoryStatusCommand(rest);
 	if (command === "privacy-audit") return parseJsonOnly("privacy-audit", rest);
 	if (command === "privacy-check") return parsePrivacyCheck(rest);
@@ -68,7 +69,15 @@ export function parseArgs(argv: string[]): CliCommand {
 }
 
 function parseJsonOnly(
-	kind: "choice-model" | "ideas" | "privacy-audit" | "self-narrative" | "surface" | "synthesize-due" | "topic-maps",
+	kind:
+		| "choice-model"
+		| "ideas"
+		| "lint"
+		| "privacy-audit"
+		| "self-narrative"
+		| "surface"
+		| "synthesize-due"
+		| "topic-maps",
 	argv: string[],
 ): CliCommand {
 	let json = false;

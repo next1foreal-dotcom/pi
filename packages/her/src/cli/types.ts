@@ -11,6 +11,7 @@ import type {
 	Memory,
 	MemoryClassificationResult,
 	MemoryExportCheckResult,
+	MemoryLintReport,
 	MemorySyncStatus,
 	PriorMode,
 	PriorResult,
@@ -87,6 +88,7 @@ export type CliCommand =
 	  }
 	| { kind: "intake-url"; json: boolean; maxBytes?: number; updateSurfaces: boolean; url: string }
 	| { kind: "judgment"; fields: JudgmentFields; json: boolean; noteId: string }
+	| { kind: "lint"; json: boolean }
 	| {
 			kind: "journal";
 			content: string;
@@ -168,6 +170,10 @@ export interface CliDecayPayload extends CliStatusPayload {
 
 export interface CliGoldenEvalPayload extends CliStatusPayload {
 	result: GoldenEvalReport;
+}
+
+export interface CliLintPayload extends CliStatusPayload {
+	result: MemoryLintReport;
 }
 
 export interface CliConsolidatePayload extends CliStatusPayload {

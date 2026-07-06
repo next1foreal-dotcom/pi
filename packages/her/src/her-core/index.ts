@@ -67,6 +67,8 @@ export type {
 	UrlMarkdownReadResult,
 } from "./intake.ts";
 export { collectPathIntakeFiles, readPathForWorldNote, readUrlForWorldNote } from "./intake.ts";
+export type { MemoryLintBrokenLink, MemoryLintOrphan, MemoryLintReport, MemoryLintSupersessionIssue } from "./lint.ts";
+export { renderMemoryLintReport, runMemoryLint } from "./lint.ts";
 export type {
 	LongTaskCheckpointOptions,
 	LongTaskClaimOptions,

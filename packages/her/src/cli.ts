@@ -27,6 +27,7 @@ import {
 	renderIntakeUrl,
 	renderJournal,
 	renderJudgment,
+	renderLint,
 	renderMemoryStatus,
 	renderPrior,
 	renderPrivacyAudit,
@@ -90,6 +91,7 @@ import {
 	recordTelegramConfirmationFromText,
 	runDispatch,
 	runGoldenEvals,
+	runMemoryLint,
 	StorePaths,
 	sendTelegramMessage,
 	startLongTask,
@@ -301,6 +303,13 @@ export async function runHerCli(
 		writePayload(io.stdout, payload, command.json, renderGoldenEval);
 		if (payload.status.status === "unknown") return 1;
 		return result.status === "pass" ? 0 : 1;
+	}
+
+	if (command.kind === "lint") {
+		const result = await runMemoryLint(memoryDir);
+		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
+		writePayload(io.stdout, payload, command.json, renderLint);
+		return payload.status.status === "unknown" ? 1 : 0;
 	}
 
 	if (command.kind === "restore") {
