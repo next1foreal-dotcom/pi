@@ -62,6 +62,7 @@ export function parseArgs(argv: string[]): CliCommand {
 	if (command === "telegram-poll") return parseTelegramPoll(rest);
 	if (command === "telegram-push-outbox") return parseTelegramPushOutbox(rest);
 	if (command === "topic-maps") return parseJsonOnly("topic-maps", rest);
+	if (command === "voice-task-enqueue") return parseVoiceTaskEnqueue(rest);
 	throw new UsageError(`unknown Her command: ${command}`);
 }
 
@@ -420,6 +421,23 @@ function parseTelegramPushOutbox(argv: string[]): CliCommand {
 	return { kind: "telegram-push-outbox", dryRun, json, limit };
 }
 
+function parseVoiceTaskEnqueue(argv: string[]): CliCommand {
+	let json = false;
+	let objective: string | undefined;
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--objective") {
+			objective = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		throw new UsageError(`unknown voice-task-enqueue option: ${arg}`);
+	}
+	return { kind: "voice-task-enqueue", json, objective: requireNonBlank(objective, "objective") };
+}
 function parseDecay(argv: string[]): CliCommand {
 	let json = false;
 	let olderThanDays: number | undefined;

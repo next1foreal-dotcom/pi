@@ -35,6 +35,7 @@ import type {
 	CliTelegramConfirmationPayload,
 	CliTelegramOutboxPayload,
 	CliTelegramPollPayload,
+	CliVoiceTaskEnqueuePayload,
 } from "./types.ts";
 
 export function renderPrior(payload: CliPriorPayload): string {
@@ -452,6 +453,14 @@ export function renderSelfNarrative(payload: CliSelfNarrativePayload): string {
 	return [`Her self narrative synthesized: ${payload.result.commit}`, "", renderStatus(payload)].join("\n");
 }
 
+export function renderVoiceTaskEnqueue(payload: CliVoiceTaskEnqueuePayload): string {
+	return [
+		`Her voice task queued: ${payload.result.path}`,
+		`objective: ${payload.result.objective}`,
+		"",
+		renderStatus(payload),
+	].join("\n");
+}
 export function writePayload<T>(
 	stream: NodeJS.WritableStream,
 	payload: T,
@@ -506,6 +515,7 @@ export function usage(): string {
   her telegram-poll [--timeout <seconds>] [--limit <n>] [--offset <n>] [--json]
   her telegram-push-outbox [--limit <n>] [--dry-run] [--json]
   her topic-maps [--json]
+  her voice-task-enqueue --objective <text> [--json]
 
 Memory root:
   HER_MEMORY_DIR, defaulting to ../her-memory from the current working directory.

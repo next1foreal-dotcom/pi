@@ -1,4 +1,5 @@
 import { execFile, spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
@@ -45,6 +46,7 @@ import {
 	renderTelegramOutbox,
 	renderTelegramPoll,
 	renderTopicMaps,
+	renderVoiceTaskEnqueue,
 	usage,
 	writeLine,
 	writePayload,
@@ -55,6 +57,7 @@ import {
 	type CliIo,
 	type CliStatusPayload,
 	type CliSurfaceUpdateResult,
+	type CliVoiceTaskEnqueuePayload,
 	defaultTelegramResponderTools,
 	type TelegramBridgeAcknowledgement,
 	type TelegramBridgeCycleResult,
@@ -73,6 +76,7 @@ import {
 	completeLongTask,
 	createEmbeddingSearch,
 	createTelegramConfirmationRequest,
+	frontmatter,
 	listLongTasks,
 	loadConfig,
 	Memory,
@@ -84,12 +88,15 @@ import {
 	recordTelegramConfirmationFromText,
 	runDispatch,
 	runGoldenEvals,
+	StorePaths,
 	sendTelegramMessage,
 	startLongTask,
 	type TelegramConfirmationResult,
 	trimTelegramText,
 	type UrlMarkdownReader,
+	writeText,
 } from "./her-core/index.ts";
+import { redactSecrets } from "./her-core/store.ts";
 import { createSummaryModel } from "./summary-model.ts";
 
 export { parseArgs } from "./cli/parse.ts";
@@ -217,6 +224,13 @@ export async function runHerCli(
 		});
 		const payload = { ...(await buildFreshStatusPayload(memoryDir, env)), result };
 		writePayload(io.stdout, payload, command.json, renderTelegramConfirmation);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "voice-task-enqueue") {
+		const result = await queueVoiceTask(memoryDir, command.objective);
+		const payload: CliVoiceTaskEnqueuePayload = { ...(await buildFreshStatusPayload(memoryDir, env)), result };
+		writePayload(io.stdout, payload, command.json, renderVoiceTaskEnqueue);
 		return payload.status.status === "unknown" ? 1 : 0;
 	}
 
@@ -907,6 +921,41 @@ async function generatePiTelegramReply(opts: {
 	return reply;
 }
 
+async function queueVoiceTask(root: string, rawObjective: string): Promise<CliVoiceTaskEnqueuePayload["result"]> {
+	const now = new Date().toISOString();
+	const objective = redactSecrets(rawObjective).trim();
+	if (!objective) throw new UsageError("voice-task-enqueue requires --objective <text>");
+	const paths = new StorePaths(root);
+	await mkdir(paths.inboxTasks, { recursive: true });
+	const fileName = `${safeVoiceTimestamp(now)}-voice-${randomUUID().slice(0, 8)}.md`;
+	const path = `tasks/inbox/${fileName}`;
+	await writeText(
+		join(paths.inboxTasks, fileName),
+		[
+			frontmatter({
+				type: "her_voice_inbox",
+				source: "voice",
+				status: "queued",
+				created: now,
+				objective,
+			}).trimEnd(),
+			"",
+			"# Voice Inbox Item",
+			"",
+			"Spoken task request queued from the voice interface; it is not active until triaged.",
+			"",
+			"## Objective",
+			"",
+			objective,
+			"",
+		].join("\n"),
+	);
+	return { created: now, objective, path, status: "queued" };
+}
+
+function safeVoiceTimestamp(value: string): string {
+	return value.replace(/[:.]/g, "-").replace(/[^A-Za-z0-9_-]/g, "-");
+}
 function runPiTelegramProcess(
 	args: string[],
 	opts: { cwd: string; env: NodeJS.ProcessEnv; timeout: number },
