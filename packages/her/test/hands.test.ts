@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { execPath } from "node:process";
 import test from "node:test";
+import { CuaCliDriver, type DriverResult, FakeDriver } from "../src/hands/driver.ts";
 import {
 	evaluateHandsPolicy,
 	type HandsActionKind,
@@ -76,4 +81,31 @@ test("T8 snapshot also requires whitelist", () => {
 		allow: false,
 		reason: "not in whitelist: calculatorapp.exe",
 	});
+});
+
+const okResult: DriverResult = { ok: true, exitCode: 0, stdout: "ok", stderr: "", timedOut: false };
+
+test("T9 FakeDriver replays matching results and records calls", async () => {
+	const driver = new FakeDriver([{ match: ["call", "list-tools"], result: okResult }]);
+
+	assert.deepEqual(await driver.run(["call", "list-tools"]), okResult);
+	assert.deepEqual(driver.calls, [["call", "list-tools"]]);
+});
+
+test("T9 CuaCliDriver times out and kills a hanging child", async () => {
+	const root = await mkdtemp(join(tmpdir(), "cua-driver-timeout-"));
+	const script = join(root, "hang.mjs");
+	await writeFile(script, "setTimeout(() => {}, 10000);\n", "utf8");
+	const driver = new CuaCliDriver({ binary: execPath, defaultTimeoutMs: 1000 });
+
+	const result = await driver.run([script], { timeoutMs: 50 });
+
+	assert.equal(result.ok, false);
+	assert.equal(result.timedOut, true);
+});
+
+test("T10 CuaCliDriver surfaces spawn ENOENT", async () => {
+	const driver = new CuaCliDriver({ binary: "missing-cua-driver-binary-for-test", defaultTimeoutMs: 50 });
+
+	await assert.rejects(() => driver.run(["--version"]), /ENOENT|spawn missing-cua-driver-binary-for-test/);
 });
