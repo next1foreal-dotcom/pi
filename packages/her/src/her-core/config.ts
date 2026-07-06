@@ -14,6 +14,16 @@ export interface HerConfig {
 		synthesizeAfterNewNotes: number;
 		digestAfterUnreviewed: number;
 	};
+	hands: {
+		enabled: boolean;
+		desktopEnabled: boolean;
+		desktopAllowedApps: string;
+		desktopDeniedApps: string;
+		desktopTier: number;
+		desktopMaxActionsPerTask: number;
+		desktopActionTimeoutS: number;
+		desktopDriverBinary: string;
+	};
 }
 
 export const DEFAULT_CONFIG: HerConfig = {
@@ -29,6 +39,16 @@ export const DEFAULT_CONFIG: HerConfig = {
 		synthesizeStaleAfterDays: 10,
 		synthesizeAfterNewNotes: 8,
 		digestAfterUnreviewed: 3,
+	},
+	hands: {
+		enabled: false,
+		desktopEnabled: false,
+		desktopAllowedApps: "",
+		desktopDeniedApps: "",
+		desktopTier: 1,
+		desktopMaxActionsPerTask: 30,
+		desktopActionTimeoutS: 30,
+		desktopDriverBinary: "cua-driver",
 	},
 };
 
@@ -58,6 +78,15 @@ export function renderConfig(config: HerConfig = DEFAULT_CONFIG): string {
 		`  synthesize_stale_after_days: ${config.cadence.synthesizeStaleAfterDays}`,
 		`  synthesize_after_new_notes: ${config.cadence.synthesizeAfterNewNotes}`,
 		`  digest_after_unreviewed: ${config.cadence.digestAfterUnreviewed}`,
+		"hands:",
+		`  enabled: ${config.hands.enabled}`,
+		`  desktop_enabled: ${config.hands.desktopEnabled}`,
+		`  desktop_allowed_apps: ${config.hands.desktopAllowedApps}`,
+		`  desktop_denied_apps: ${config.hands.desktopDeniedApps}`,
+		`  desktop_tier: ${config.hands.desktopTier}`,
+		`  desktop_max_actions_per_task: ${config.hands.desktopMaxActionsPerTask}`,
+		`  desktop_action_timeout_s: ${config.hands.desktopActionTimeoutS}`,
+		`  desktop_driver_binary: ${config.hands.desktopDriverBinary}`,
 		"",
 	].join("\n");
 }
@@ -66,6 +95,7 @@ function mergeConfig(base: HerConfig, overrides: Partial<HerConfig>): HerConfig 
 	return {
 		llm: { ...base.llm, ...(overrides.llm ?? {}) },
 		cadence: { ...base.cadence, ...(overrides.cadence ?? {}) },
+		hands: { ...base.hands, ...(overrides.hands ?? {}) },
 	};
 }
 

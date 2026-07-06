@@ -3,10 +3,11 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { mock } from "node:test";
-import { loadConfig } from "../src/her-core/config.ts";
+import { DEFAULT_CONFIG, loadConfig, renderConfig } from "../src/her-core/config.ts";
 import { createEmbeddingSearch } from "../src/her-core/embedding-search.ts";
 import { extractJson } from "../src/her-core/memory-utils.ts";
 import { FakeModel, OpenAICompatibleModel } from "../src/her-core/model.ts";
+import { validateMemoryProvenance } from "../src/her-core/privacy.ts";
 import {
 	choiceModelPrompt,
 	consolidatePrompt,
@@ -101,6 +102,13 @@ test("config loads shallow YAML overrides over defaults", async () => {
 			"  synthesize_stale_after_days: 3",
 			"  synthesize_after_new_notes: 5",
 			"  digest_after_unreviewed: 2",
+			"hands:",
+			"  enabled: true",
+			"  desktop_enabled: true",
+			"  desktop_allowed_apps: notepad.exe, calculatorapp.exe",
+			"  desktop_tier: 2",
+			"  desktop_action_timeout_s: 12",
+			"  desktop_driver_binary: C:/Tools/cua-driver.exe",
 			"",
 		].join("\n"),
 		"utf8",
@@ -115,8 +123,27 @@ test("config loads shallow YAML overrides over defaults", async () => {
 	assert.equal(config.cadence.synthesizeStaleAfterDays, 3);
 	assert.equal(config.cadence.synthesizeAfterNewNotes, 5);
 	assert.equal(config.cadence.digestAfterUnreviewed, 2);
+	assert.equal(config.hands.enabled, true);
+	assert.equal(config.hands.desktopEnabled, true);
+	assert.equal(config.hands.desktopAllowedApps, "notepad.exe, calculatorapp.exe");
+	assert.equal(config.hands.desktopDeniedApps, "");
+	assert.equal(config.hands.desktopTier, 2);
+	assert.equal(config.hands.desktopMaxActionsPerTask, 30);
+	assert.equal(config.hands.desktopActionTimeoutS, 12);
+	assert.equal(config.hands.desktopDriverBinary, "C:/Tools/cua-driver.exe");
 });
 
+test("renderConfig round-trips hands defaults", async () => {
+	const root = await mkdtemp(join(tmpdir(), "her-config-render-"));
+	const configPath = join(root, "config.yaml");
+	await writeFile(configPath, renderConfig(), "utf8");
+
+	assert.deepEqual(loadConfig(configPath), DEFAULT_CONFIG);
+});
+
+test("validateMemoryProvenance accepts her-acted", () => {
+	assert.equal(validateMemoryProvenance("her-acted"), "her-acted");
+});
 test("FakeModel records calls and strong flag", async () => {
 	const model = new FakeModel("ok");
 	assert.equal(await model.complete("hello", { strong: true }), "ok");
@@ -150,6 +177,7 @@ test("OpenAICompatibleModel uses fast or strong configured model", async () => {
 				synthesizeAfterNewNotes: 8,
 				digestAfterUnreviewed: 3,
 			},
+			hands: DEFAULT_CONFIG.hands,
 		},
 		{ HER_TEST_KEY: "secret" },
 		fetcher,

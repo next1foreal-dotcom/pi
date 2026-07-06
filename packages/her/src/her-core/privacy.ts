@@ -10,6 +10,7 @@ export const memoryProvenanceValues = [
 	"her-observed",
 	"her-inferred",
 	"world-ingested",
+	"her-acted",
 ] as const;
 const CLASSIFICATION_MARKER = "her-privacy-classification";
 
