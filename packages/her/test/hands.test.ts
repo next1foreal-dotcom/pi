@@ -6,7 +6,7 @@ import { execPath } from "node:process";
 import test from "node:test";
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { governedTools } from "../src/extension.ts";
-import { CuaCliDriver, type DriverResult, FakeDriver } from "../src/hands/driver.ts";
+import { CUA_DRIVER_M0, CuaCliDriver, type DriverResult, FakeDriver } from "../src/hands/driver.ts";
 import {
 	evaluateHandsPolicy,
 	type HandsActionKind,
@@ -260,6 +260,7 @@ test("T15c write confirm false blocks driver, true allows it, click skips confir
 		clickOnly.driver.calls.map((call) => call[1]),
 		["list_windows", "click"],
 	);
+	assert.equal(JSON.parse(clickOnly.driver.calls[1]?.[2] ?? "{}").session, CUA_DRIVER_M0.session);
 });
 
 test("T16 snapshot wraps screen content in injection fence", async () => {
@@ -279,8 +280,38 @@ test("T16 snapshot wraps screen content in injection fence", async () => {
 		driver.calls.map((call) => call[1]),
 		["list_windows", "get_window_state"],
 	);
+	assert.equal(JSON.parse(driver.calls[1]?.[2] ?? "{}").session, CUA_DRIVER_M0.session);
 });
 
+test("T16d act maps cached click elementIndex to window coordinates", async () => {
+	const snapshotTree = JSON.stringify({
+		elements: [
+			{ element_index: 0, frame: { x: 5, y: 10, w: 100, h: 100 } },
+			{ element_index: 3, frame: { x: 10, y: 20, w: 30, h: 40 } },
+		],
+	});
+	const { tools, driver } = await handsHarness(
+		[listWindowsResult(), okCase(/get_window_state/, snapshotTree), listWindowsResult(), okCase(/click/)],
+		{ desktopAllowedApps: "notepad.exe" },
+	);
+	const snapshot = tools.get("her_hands_snapshot");
+	const act = tools.get("her_hands_act");
+	assert.ok(snapshot);
+	assert.ok(act);
+
+	await executeHands(snapshot, { process: "notepad.exe" }, ctx().context);
+	await executeHands(
+		act,
+		{ process: "notepad.exe", taskLabel: "coords", actions: [{ action: "click", elementIndex: 3 }] },
+		ctx().context,
+	);
+
+	const payload = JSON.parse(driver.calls[3]?.[2] ?? "{}");
+	assert.equal(payload.x, 20);
+	assert.equal(payload.y, 30);
+	assert.equal(payload.element_index, undefined);
+	assert.equal(payload.session, CUA_DRIVER_M0.session);
+});
 test("T17 batch act stops at policy denial after prior actions and records skipped", async () => {
 	const { tools, driver } = await handsHarness([listWindowsResult(), okCase(/click/)], {
 		desktopAllowedApps: "notepad.exe",

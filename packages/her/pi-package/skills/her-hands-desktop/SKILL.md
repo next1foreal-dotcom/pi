@@ -70,6 +70,7 @@ cua-driver describe drag
 - Snapshot tool: `get_window_state`; required args are `pid` and `window_id`.
 - Action tools: `click`, `double_click`, `right_click`, `scroll`, `type_text`, `press_key`, `hotkey`, `drag`.
 - `click`, `double_click`, and `right_click` accept either `element_index + window_id` or `x + y`.
+- Her keeps the latest snapshot frames in memory and may send click-like `elementIndex` actions to cua-driver as window-local `x/y`; this avoids Windows 0.7.0 bare-CLI element cache loss between separate `call` processes.
 - `type_text` on XAML/UWP hosts requires `element_index + window_id` and uses UIA ValuePattern.
 - `press_key` and `scroll` accept `element_index` for parity, but it is no-op on Windows in 0.7.0.
 - `hotkey` may briefly foreground legacy Win32 targets when real modifier state is required; the Her tool must not choose foreground preemptively.

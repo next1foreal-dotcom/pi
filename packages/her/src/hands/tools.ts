@@ -31,6 +31,25 @@ interface WindowRef {
 	window_id: number;
 	title?: string;
 }
+interface UiFrame {
+	x: number;
+	y: number;
+	w: number;
+	h: number;
+}
+
+interface CachedElement {
+	element_index?: number;
+	frame?: UiFrame;
+}
+
+interface CachedSnapshot {
+	pid: number;
+	window_id: number;
+	originX: number;
+	originY: number;
+	elements: CachedElement[];
+}
 
 interface ActionInput {
 	action: (typeof actionKinds)[number];
@@ -43,8 +62,11 @@ interface ActionInput {
 	deliveryMode?: "background" | "foreground";
 }
 
+const coordinateClickActions = new Set<ActionInput["action"]>(["click", "double_click", "right_click"]);
+
 export function registerHandsTools(pi: ExtensionAPI, deps: HandsToolDeps): void {
 	const taskCounts = new Map<string, number>();
+	const snapshots = new Map<string, CachedSnapshot>();
 	pi.registerTool({
 		name: "her_hands_snapshot",
 		label: "Her Hands Snapshot",
@@ -69,10 +91,12 @@ export function registerHandsTools(pi: ExtensionAPI, deps: HandsToolDeps): void 
 						pid: windowRef.pid,
 						window_id: windowRef.window_id,
 						include_screenshot: false,
+						session: CUA_DRIVER_M0.session,
 					},
 					config,
 				);
 				const outcome = result.ok ? "ok" : "error";
+				if (result.ok) cacheSnapshot(snapshots, windowRef, result.stdout);
 				await recordTrail(deps.mem, `snapshot ${params.process}`, [
 					entry("snapshot", params.process, "background", outcome, detail(result)),
 				]);
@@ -93,6 +117,7 @@ export function registerHandsTools(pi: ExtensionAPI, deps: HandsToolDeps): void 
 		description: "Execute a batch of whitelisted desktop actions through cua-driver.",
 		parameters: Type.Object({
 			process: Type.String(),
+			windowTitleHint: Type.Optional(Type.String()),
 			taskLabel: Type.String(),
 			actions: Type.Array(
 				Type.Object({
@@ -117,16 +142,25 @@ export function registerHandsTools(pi: ExtensionAPI, deps: HandsToolDeps): void 
 			const policyStop = firstPolicyStop(params.process, actions, config);
 			const executable = policyStop ? actions.slice(0, policyStop.index) : actions;
 			if (executable.some((item) => WRITE_ACTIONS.includes(item.action))) {
-				const confirmed = await ctx.ui.confirm(`Samantha 要操作 ${params.process}`, summarizeActions(executable));
+				const confirmed = await ctx.ui.confirm(
+					`Samantha requests desktop control: ${params.process}`,
+					summarizeActions(executable),
+				);
 				if (!confirmed)
 					return await denyBatch(deps, params.taskLabel, params.process, "confirm denied", executable[0]?.action);
 			}
 			const trail: HandsTrailEntry[] = [];
 			try {
 				if (executable.length > 0) {
-					const windowRef = await findWindow(deps.driver, params.process, undefined, config);
+					const windowRef = await findWindow(deps.driver, params.process, params.windowTitleHint, config);
+					const cachedSnapshot = snapshots.get(windowKey(windowRef));
 					for (const item of executable) {
-						const result = await callDriver(deps.driver, item.action, actionPayload(item, windowRef), config);
+						const result = await callDriver(
+							deps.driver,
+							item.action,
+							actionPayload(item, windowRef, cachedSnapshot),
+							config,
+						);
 						const outcome = result.ok ? "ok" : "error";
 						trail.push(
 							entry(item.action, params.process, item.deliveryMode ?? "background", outcome, detail(result)),
@@ -226,12 +260,11 @@ async function findWindow(
 	if (!result.ok) throw new Error(detail(result));
 	const body = JSON.parse(result.stdout) as { windows?: Array<WindowRef & { app_name?: string; title?: string }> };
 	const target = process.trim().toLowerCase();
-	const window = (body.windows ?? []).find((item) => {
-		const app = (item.app_name ?? "").trim().toLowerCase();
-		const title = item.title ?? "";
-		return app === target && (!titleHint || title.toLowerCase().includes(titleHint.toLowerCase()));
-	});
-	if (!window) throw new Error(`no window found for ${process}`);
+	const windows = body.windows ?? [];
+	const titleMatches = (item: { title?: string }) =>
+		!titleHint || (item.title ?? "").toLowerCase().includes(titleHint.toLowerCase());
+	const window = windows.find((item) => (item.app_name ?? "").trim().toLowerCase() === target && titleMatches(item));
+	if (!window) throw new Error(`no window found for ${process}${titleHint ? ` (${titleHint})` : ""}`);
 	return { pid: window.pid, window_id: window.window_id, title: window.title };
 }
 
@@ -244,13 +277,23 @@ async function callDriver(
 	return await driver.run(["call", tool, JSON.stringify(payload)], { timeoutMs: config.desktopActionTimeoutS * 1000 });
 }
 
-function actionPayload(action: ActionInput, window: WindowRef): Record<string, unknown> {
+function actionPayload(action: ActionInput, window: WindowRef, snapshot?: CachedSnapshot): Record<string, unknown> {
 	const payload: Record<string, unknown> = {
 		pid: window.pid,
 		window_id: window.window_id,
 		delivery_mode: action.deliveryMode ?? "background",
+		session: CUA_DRIVER_M0.session,
 	};
-	if (action.elementIndex !== undefined) payload.element_index = action.elementIndex;
+	const hasCoordinates = action.x !== undefined || action.y !== undefined;
+	const frame = action.elementIndex === undefined ? undefined : findCachedFrame(snapshot, action.elementIndex);
+	if (action.elementIndex !== undefined && !hasCoordinates) {
+		if (frame && coordinateClickActions.has(action.action)) {
+			payload.x = Math.round(frame.x + frame.w / 2 - (snapshot?.originX ?? 0));
+			payload.y = Math.round(frame.y + frame.h / 2 - (snapshot?.originY ?? 0));
+		} else {
+			payload.element_index = action.elementIndex;
+		}
+	}
 	if (action.x !== undefined) payload.x = action.x;
 	if (action.y !== undefined) payload.y = action.y;
 	if (action.text !== undefined) payload.text = action.text;
@@ -261,6 +304,30 @@ function actionPayload(action: ActionInput, window: WindowRef): Record<string, u
 	return payload;
 }
 
+function cacheSnapshot(snapshots: Map<string, CachedSnapshot>, window: WindowRef, stdout: string): void {
+	try {
+		const body = JSON.parse(stdout) as { elements?: CachedElement[] };
+		const elements = body.elements ?? [];
+		const frames = elements.map((item) => item.frame).filter((frame): frame is UiFrame => frame !== undefined);
+		snapshots.set(windowKey(window), {
+			pid: window.pid,
+			window_id: window.window_id,
+			originX: frames.length > 0 ? Math.min(...frames.map((frame) => frame.x)) : 0,
+			originY: frames.length > 0 ? Math.min(...frames.map((frame) => frame.y)) : 0,
+			elements,
+		});
+	} catch {
+		// Snapshot text is still returned to the caller; cache misses fall back to driver-native element_index.
+	}
+}
+
+function findCachedFrame(snapshot: CachedSnapshot | undefined, elementIndex: number): UiFrame | undefined {
+	return snapshot?.elements.find((item) => item.element_index === elementIndex)?.frame;
+}
+
+function windowKey(window: WindowRef): string {
+	return `${window.pid}:${window.window_id}`;
+}
 function entry(
 	action: HandsActionKind,
 	targetProcess: string,

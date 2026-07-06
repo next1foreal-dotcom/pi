@@ -19,6 +19,7 @@ export const CUA_DRIVER_M0 = {
 		drag: "drag",
 	},
 	defaultDeliveryMode: "background",
+	session: "her-hands-desktop",
 	backgroundUnavailableSignal: "background_unavailable",
 	notepadSnapshotCommand:
 		'\'{"pid":30048,"window_id":25103322,"include_screenshot":false,"max_elements":80}\' | cua-driver call get_window_state',
