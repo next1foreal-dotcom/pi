@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 import {
 	ensureTaskWorktree,
 	isWorktreeDirty,
+	listTaskWorktrees,
 	removeTaskWorktree,
 	WorktreeDirtyError,
 } from "../src/her-core/long-task-worktree.ts";
@@ -114,5 +115,55 @@ test("T6 removeTaskWorktree removes a clean worktree and its task branch", async
 
 	assert.equal(existsSync(worktree.worktreePath), false);
 	assert.equal((await git(repo, "branch", "--list", "her-task/t6")).stdout.trim(), "");
+	assert.equal(await statusPorcelain(repo), "");
+});
+test("T4 task worktree commits stay off the main branch", async () => {
+	const repo = await tempGitRepo();
+	const worktreeRoot = await tempWorktreeRoot();
+	const env = { ...process.env, HER_LONGTASK_WORKTREE_ROOT: worktreeRoot };
+	const mainBranch = (await git(repo, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim();
+	const worktree = await ensureTaskWorktree(repo, "t4", { env });
+	await writeFile(join(worktree.worktreePath, "task.txt"), "task work\n", "utf8");
+	await git(worktree.worktreePath, "add", "task.txt");
+	await git(worktree.worktreePath, "commit", "-q", "-m", "task-only commit");
+	const taskCommit = (await git(worktree.worktreePath, "rev-parse", "--short", "HEAD")).stdout.trim();
+
+	assert.doesNotMatch((await git(repo, "log", "--oneline", mainBranch)).stdout, new RegExp(taskCommit));
+	assert.match((await git(repo, "branch", "--list", "her-task/t4")).stdout, /her-task\/t4/);
+	assert.equal(await statusPorcelain(repo), "");
+});
+
+test("T7 listTaskWorktrees only returns her-task worktrees", async () => {
+	const repo = await tempGitRepo();
+	const worktreeRoot = await tempWorktreeRoot();
+	const env = { ...process.env, HER_LONGTASK_WORKTREE_ROOT: worktreeRoot };
+	await ensureTaskWorktree(repo, "t7-a", { env });
+	await ensureTaskWorktree(repo, "t7-b", { env });
+
+	const listed = await listTaskWorktrees(repo, { env });
+
+	assert.deepEqual(
+		listed.map((item) => item.branch),
+		["her-task/t7-a", "her-task/t7-b"],
+	);
+	assert.deepEqual(
+		listed.map((item) => item.taskId),
+		["t7-a", "t7-b"],
+	);
+});
+
+test("T8 task worktree operations leave the main checkout clean", async () => {
+	const repo = await tempGitRepo();
+	const worktreeRoot = await tempWorktreeRoot();
+	const env = { ...process.env, HER_LONGTASK_WORKTREE_ROOT: worktreeRoot };
+	await ensureTaskWorktree(repo, "t8-create", { env });
+	await ensureTaskWorktree(repo, "t8-create", { env });
+	const dirty = await ensureTaskWorktree(repo, "t8-dirty", { env });
+	await writeFile(join(dirty.worktreePath, "dirty.txt"), "dirty\n", "utf8");
+	await removeTaskWorktree(repo, "t8-dirty", { env, force: true });
+	const clean = await ensureTaskWorktree(repo, "t8-clean", { env });
+	await removeTaskWorktree(repo, "t8-clean", { env });
+	assert.ok(existsSync(clean.worktreePath) === false);
+
 	assert.equal(await statusPorcelain(repo), "");
 });

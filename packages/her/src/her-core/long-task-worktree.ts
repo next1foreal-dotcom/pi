@@ -82,6 +82,23 @@ export async function removeTaskWorktree(
 	return { removed: true };
 }
 
+export async function listTaskWorktrees(
+	repoRoot: string,
+	opts: { env?: NodeJS.ProcessEnv; gitRun?: GitRun } = {},
+): Promise<TaskWorktree[]> {
+	const gitRun = opts.gitRun ?? git;
+	const tasks: TaskWorktree[] = [];
+	for (const entry of await listAllWorktrees(repoRoot, gitRun)) {
+		if (!entry.branch?.startsWith("her-task/")) continue;
+		const location = {
+			branch: entry.branch,
+			taskId: entry.branch.slice("her-task/".length),
+			worktreePath: resolve(entry.path),
+		};
+		tasks.push(await taskWorktree(location, true, gitRun));
+	}
+	return tasks.sort((a, b) => a.branch.localeCompare(b.branch));
+}
 async function taskWorktree(location: TaskWorktreeLocation, resumed: boolean, gitRun: GitRun): Promise<TaskWorktree> {
 	const baseSha = (await gitRun(location.worktreePath, "rev-parse", "HEAD")).stdout.trim();
 	return { ...location, baseSha, resumed };
