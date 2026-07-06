@@ -1,0 +1,1495 @@
+# cua-driver 0.7.0 M0 evidence
+## version
+cua-driver 0.7.0
+
+## help
+cua-driver 0.7.0 — cross-platform computer-use automation driver
+Usage: cua-driver [SUBCOMMAND] [OPTIONS]
+Subcommands: mcp, list-tools, describe, call, serve, stop, status, config, recording, update, check-update, doctor, diagnose, permissions, autostart, skills, manifest
+
+permissions options (macOS):
+  cua-driver permissions status   Report Accessibility + Screen Recording status. Read-only (no prompt).
+                                  Answers via a running daemon, so the result carries the CuaDriver
+                                  identity (com.trycua.driver). If no daemon is running it reports
+                                  `unknown` rather than your terminal's grants. Add --json for the payload.
+  cua-driver permissions grant    Launch CuaDriver via LaunchServices so the permission dialog attributes
+                                  to com.trycua.driver (not your terminal), wait for the grant, then
+                                  confirm the driver's own status. This is the correct way to grant.
+
+Updating cua-driver:
+  cua-driver check-update         Ask GitHub whether a newer release is available. Read-only.
+                                  Default output is human-friendly text.
+    --json                        Emit a machine-readable JSON payload (same shape as the
+                                  check_for_update MCP tool). Hermes branches on update_available.
+    --no-cache                    Skip the 20h on-disk cache and force a fresh GitHub round-trip.
+  cua-driver update               Same check as above, then suggest --apply if outdated.
+    --apply                       Download + install the latest release via the canonical installer.
+    --json                        Emit the structured check payload (does not change --apply behaviour).
+
+autostart options (Windows-only today):
+  cua-driver autostart enable     Register a logon Scheduled Task so serve starts at every interactive logon.
+  cua-driver autostart disable    Remove the autostart entry. No-op if not registered.
+  cua-driver autostart status     Print whether the entry is registered + whether the daemon is running.
+  cua-driver autostart kick       Start the entry now without re-logging.
+
+skills options (agent skill-pack management, opt-in):
+  cua-driver skills install       Fetch the versioned skill pack from GitHub Releases and symlink it
+                                  into each detected agent's skills/ dir (Claude Code, Codex, OpenClaw,
+                                  OpenCode). Idempotent. Never overwrites existing user links.
+  cua-driver skills update        Re-fetch the skill pack from GitHub, refreshing the local copy + links.
+  cua-driver skills uninstall     Remove the agent symlinks. Add --all to also delete the local copy.
+  cua-driver skills status        Report local install state + per-agent link state. Read-only.
+  cua-driver skills path          Print where the local skill pack lives.
+  --from main                     (install only) Fetch latest from main branch instead of the tagged release.
+
+mcp options (macOS):
+  --no-daemon-relaunch    Stay in-process; skip auto-launching the CuaDriver daemon.
+                          Also: CUA_DRIVER_RS_MCP_NO_RELAUNCH=1
+  --socket <path>         Override the daemon UDS path used by the proxy fallback.
+  --claude-code-computer-use-compat
+                          Select the Claude Code computer-use compat surface.
+                          Now forwarded to the proxy-launched daemon (was a no-op
+                          on the proxy path — the path you actually run — because
+                          the daemon hardcoded compat=false). Note: the compat
+                          screenshot tool itself was removed in #1692, so the flag
+                          has no tool-surface effect today; the wiring is in place
+                          for any future compat-gated tool.
+
+agent cursor overlay (serve / mcp only — needs the daemon UI runloop):
+  The overlay is ON by default: every MCP session automatically gets its own
+  cursor (keyed by session id) that shows where the agent acts without moving the
+  real pointer. It is removed when the session ends. A pure accessibility (AX)
+  action snaps the cursor with a brief pulse on its first action instead of a long
+  glide, so it can be easy to miss — do a pixel click or move_agent_cursor first
+  for a visibly gliding demo. These flags tune the overlay on `serve`/`mcp`:
+  --no-overlay            Disable the cursor overlay entirely for this daemon.
+  --cursor-id <id>        Name the default cursor instance (default: 'default').
+  --cursor-icon <path>    Use a custom PNG / JPEG / SVG / ICO cursor asset.
+  --cursor-shape <name>   Built-in silhouette: 'arrow' | 'teardrop' ('teardrop' is the default —
+                          embedded cursor-up SVG; 'arrow' is the procedural gradient
+                          diamond). Same vocabulary as MCP `cursor_icon`.
+  --cursor-palette <name> Pick a built-in colour palette for the cursor.
+  (These are no-ops for one-shot CLI calls like `cua-driver call` — the overlay
+   needs the long-lived AppKit runloop that only `serve` / `mcp` keep alive.)
+
+manifest options:
+  cua-driver manifest             Emit a stable JSON description of this CLI's surface
+                                  (subcommands, args, MCP invocation, version). Read-only.
+                                  Consumers (Hermes, Claude Code, …) read it to drop
+                                  hardcoded launch argv like _CUA_DRIVER_ARGS = ["mcp"].
+    --pretty / -p                 Pretty-print the JSON.
+
+doctor options:
+  --json                  Emit the probe report as JSON for scripting.
+
+experimental options (default: off):
+  --experimental-pip          Show a small always-on-top window with the latest
+                              post-action screenshot + a 1-line label. macOS only
+                              today; Win/Linux print a not-yet-implemented notice.
+  --experimental-pip-geometry WxH[+X+Y]   Override window size (and optional top-left
+                                          origin). Defaults to 480x360 in the top-right
+                                          corner of the main display.
+
+## manifest --pretty
+{
+  "binary_path": "C:\\Users\\Admin\\AppData\\Local\\Programs\\Cua\\cua-driver\\bin\\cua-driver.exe",
+  "binary_version": "0.7.0",
+  "mcp_invocation": {
+    "args": [
+      "mcp"
+    ],
+    "command": "C:\\Users\\Admin\\AppData\\Local\\Programs\\Cua\\cua-driver\\bin\\cua-driver.exe"
+  },
+  "schema_version": "1",
+  "subcommands": [
+    {
+      "args": [
+        {
+          "description": "Skip the bundle-based TCC auto-relaunch and stay in-process.",
+          "name": "--no-daemon-relaunch",
+          "type": "flag"
+        },
+        {
+          "description": "Override the daemon proxy UDS path.",
+          "name": "--socket",
+          "type": "string"
+        },
+        {
+          "description": "Select the Claude Code computer-use compat tool surface.",
+          "name": "--claude-code-computer-use-compat",
+          "type": "flag"
+        }
+      ],
+      "description": "Run the MCP JSON-RPC server over stdio (the default invocation).",
+      "name": "mcp"
+    },
+    {
+      "args": [
+        {
+          "description": "Override the listen socket path.",
+          "name": "--socket",
+          "type": "string"
+        },
+        {
+          "description": "Skip the macOS TCC first-launch gate.",
+          "name": "--no-permissions-gate",
+          "type": "flag"
+        },
+        {
+          "description": "Forwarded by the MCP proxy when the client asked for the compat surface.",
+          "name": "--claude-code-computer-use-compat",
+          "type": "flag"
+        }
+      ],
+      "description": "Run the long-lived daemon — backs the proxy/auto-relaunch path on macOS and the autostart Session 1+ daemon on Windows.",
+      "name": "serve"
+    },
+    {
+      "args": [
+        {
+          "description": "Override the daemon socket path.",
+          "name": "--socket",
+          "type": "string"
+        }
+      ],
+      "description": "Stop a running daemon by sending it a shutdown request.",
+      "name": "stop"
+    },
+    {
+      "args": [
+        {
+          "description": "Override the daemon socket path.",
+          "name": "--socket",
+          "type": "string"
+        }
+      ],
+      "description": "Report daemon status (running / not / unhealthy).",
+      "name": "status"
+    },
+    {
+      "args": [],
+      "description": "Print the canonical tool name + one-line summary for every registered MCP tool.",
+      "name": "list-tools"
+    },
+    {
+      "args": [
+        {
+          "description": "Tool name.",
+          "name": "tool",
+          "type": "positional-string"
+        }
+      ],
+      "description": "Print a single tool's full description + JSON input schema.",
+      "name": "describe"
+    },
+    {
+      "args": [
+        {
+          "description": "Tool name.",
+          "name": "tool",
+          "type": "positional-string"
+        },
+        {
+          "description": "Tool input JSON (or read from stdin).",
+          "name": "json-args",
+          "type": "positional-json"
+        },
+        {
+          "description": "Write image content to this path instead of emitting base64.",
+          "name": "--screenshot-out-file",
+          "type": "string"
+        },
+        {
+          "description": "Override the daemon socket path used by the in-process forwarding fallback.",
+          "name": "--socket",
+          "type": "string"
+        }
+      ],
+      "description": "Invoke a single tool one-shot — proxies to a running daemon when one is up, otherwise runs in-process.",
+      "name": "call"
+    },
+    {
+      "args": [
+        {
+          "description": "One of: claude, codex, cursor, hermes, antigravity, openclaw, opencode, pi, qwen, droid, zcode. Omit for the generic snippet.",
+          "name": "--client",
+          "type": "string"
+        }
+      ],
+      "description": "Print the MCP server config snippet or a client-specific install command.",
+      "name": "mcp-config"
+    },
+    {
+      "args": [
+        {
+          "description": "Pretty-print the JSON.",
+          "name": "--pretty",
+          "type": "flag"
+        }
+      ],
+      "description": "Emit this machine-readable description of the CLI surface.",
+      "name": "manifest"
+    },
+    {
+      "args": [
+        {
+          "description": "One of: start, stop, status, render. Default: status.",
+          "name": "subcommand",
+          "type": "positional-string"
+        },
+        {
+          "description": "Override the daemon socket path.",
+          "name": "--socket",
+          "type": "string"
+        }
+      ],
+      "description": "Recording sub-API: start | stop | status | render.",
+      "name": "recording"
+    },
+    {
+      "args": [
+        {
+          "description": "Pretty-print.",
+          "name": "--pretty",
+          "type": "flag"
+        },
+        {
+          "description": "Output type.",
+          "name": "--type",
+          "type": "string"
+        }
+      ],
+      "description": "Dump every registered tool's docs as one document (markdown by default, JSON with --type json).",
+      "name": "dump-docs"
+    },
+    {
+      "args": [
+        {
+          "description": "Apply the update.",
+          "name": "--apply",
+          "type": "flag"
+        },
+        {
+          "description": "Emit the structured check payload.",
+          "name": "--json",
+          "type": "flag"
+        }
+      ],
+      "description": "Check GitHub for a newer release; with --apply, download and install via the canonical installer.",
+      "name": "update"
+    },
+    {
+      "args": [
+        {
+          "description": "Emit the structured check payload.",
+          "name": "--json",
+          "type": "flag"
+        },
+        {
+          "description": "Force a fresh GitHub round-trip.",
+          "name": "--no-cache",
+          "type": "flag"
+        }
+      ],
+      "description": "Read-only release-check verb (mirror of the check_for_update MCP tool).",
+      "name": "check-update"
+    },
+    {
+      "args": [
+        {
+          "description": "Machine-readable doctor report.",
+          "name": "--json",
+          "type": "flag"
+        }
+      ],
+      "description": "Self-diagnose probes for runtime prerequisites (permissions, accessibility, capture, etc.).",
+      "name": "doctor"
+    },
+    {
+      "args": [],
+      "description": "Emit a developer-focused diagnostic dump suitable for bug reports.",
+      "name": "diagnose"
+    },
+    {
+      "args": [
+        {
+          "description": "status | grant",
+          "name": "subcommand",
+          "type": "positional-string"
+        },
+        {
+          "description": "Machine-readable payload.",
+          "name": "--json",
+          "type": "flag"
+        }
+      ],
+      "description": "Inspect / raise TCC permission grants (macOS).",
+      "name": "permissions"
+    },
+    {
+      "args": [
+        {
+          "description": "show | get | set | reset",
+          "name": "subcommand",
+          "type": "positional-string"
+        },
+        {
+          "description": "Config key (for get/set).",
+          "name": "key",
+          "type": "positional-string"
+        },
+        {
+          "description": "Config value (for set).",
+          "name": "value",
+          "type": "positional-string"
+        },
+        {
+          "description": "Override the daemon socket path.",
+          "name": "--socket",
+          "type": "string"
+        }
+      ],
+      "description": "Read / write the persistent driver config.",
+      "name": "config"
+    },
+    {
+      "args": [
+        {
+          "description": "enable | disable | status | kick",
+          "name": "subcommand",
+          "type": "positional-string"
+        }
+      ],
+      "description": "Platform-native auto-start so `cua-driver serve` comes up on every logon.",
+      "name": "autostart"
+    },
+    {
+      "args": [
+        {
+          "description": "install | update | uninstall | status | path. Default: status.",
+          "name": "subcommand",
+          "type": "positional-string"
+        }
+      ],
+      "description": "Manage the cua-driver agent skill pack (install / update / uninstall / status / path).",
+      "name": "skills"
+    }
+  ]
+}
+
+## list-tools
+bring_to_front: Activate `pid`'s window (or `window_id` if specified) -- bring it to the OS foreground
+check_for_update: Check whether a newer cua-driver-rs release is available on GitHub
+check_permissions: Check required permissions for cua-driver-rs on Windows
+click: Left-click against a target pid
+debug_window_info: Diagnostic: dump everything cua-driver sees about a pid's top-level windows from the daemon's session perspective
+double_click: Double-click against a target pid
+drag: Press-drag-release gesture from (from_x, from_y) to (to_x, to_y) in window-local screenshot pixels
+end_session: End a session declared with `start_session`: removes its agent cursor, stops any recording it owns, and clears its per-session config
+get_accessibility_tree: Return a lightweight snapshot of the desktop: running processes and on-screen visible windows with their bounds and owner pid
+get_agent_cursor_state: Report the current agent-cursor configuration: enabled flag, motion knobs (startHandle, endHandle, arcSize, arcFlow, spring), glide duration, post-click dwell, and idle-hide delay
+get_config: Report the current persistent driver config
+get_cursor_position: Return the current mouse cursor position in screen points (origin top-left)
+get_desktop_state: Capture a full-display vision screenshot in true screen pixels (no downscale), for capture_scope="desktop" GUI loops where the agent then drives click(x,y)/scroll(x,y) with no pid/window_id
+get_recording_state: Report the current trajectory recorder state: whether recording is enabled, the output directory (when enabled), and the 1-based counter for the next turn folder that will be written
+get_screen_size: Return the size of the main display in physical pixels plus its display scale factor
+get_window_state: Walk a running app's UIA tree and return BOTH a structured `elements` array (preferred) AND a Markdown rendering of the same tree (back-compat)
+health_report: Single-call end-to-end driver diagnostics
+hotkey: Press a combination of keys simultaneously — e.g
+install_ffmpeg: Install the ffmpeg binary used by start_recording's video capture (Linux/Windows; macOS records natively and needs no ffmpeg)
+kill_app: Force-terminate a process by pid
+launch_app: Launch a Windows app hidden — the driver never brings the target to the foreground, the target's window is launched with SW_SHOWNOACTIVATE so it does not steal focus from whatever is currently frontmost
+list_apps: List Windows apps — both currently running and installed-but-not-running — with per-app state flags:
+list_windows: List every top-level window currently known to the window manager
+move_cursor: Move the agent cursor overlay to (x, y)
+page: Interact with the browser page loaded in a running app
+press_key: Press and release a single key, delivered directly to the target pid's top-level window via PostMessage(WM_KEYDOWN/WM_KEYUP)
+replay_trajectory: Replay a recorded trajectory by re-invoking every turn's tool call in lexical order
+right_click: Right-click against a target pid
+scroll: Scroll the target pid's focused region
+set_agent_cursor_enabled: Toggle the visual agent-cursor overlay
+set_agent_cursor_motion: Configure the visual appearance and motion curve of an agent cursor instance
+set_agent_cursor_style: Update the visual style of the agent cursor overlay
+set_config: Write a setting into the persistent driver config
+set_value: Set a value on a UIA element via the ValuePattern interface
+start_recording: Start trajectory recording
+start_session: Declare a session — a named, color-coded identity for THIS agent run
+stop_recording: Stop trajectory recording
+type_text: Insert text into the target pid via character-by-character PostMessage(WM_CHAR) to the focused window
+zoom: Zoom into a rectangular region of a window screenshot at full (native) resolution
+
+## describe get_window_state
+name: get_window_state
+
+description:
+Walk a running app's UIA tree and return BOTH a structured `elements` array (preferred) AND a Markdown rendering of the same tree (back-compat). Every actionable element is tagged with [element_index N] in the markdown and as `element_index` in the structured array — pass those indices to `click`, `type_text`, `scroll`, etc.
+
+INVARIANT: call `get_window_state` once per turn per (pid, window_id) before any element-indexed action against that window. The index map is replaced by the next snapshot of the same (pid, window_id).
+
+PREFERRED CONSUMERS read `structuredContent.elements` (one entry per indexed row with `element_index`, `role`, `label`, `frame: {x,y,w,h}`, `parent_index`, `depth`). The markdown `tree_markdown` stays available and unchanged in shape for existing text-parsing callers — but new fields will only be added to the structured side.
+
+The UIA tree walked is the window's tree (HWND-scoped); the screenshot and window bounds reported come from the same `window_id`. This is the source of truth for which window the caller intends to reason about — the driver never picks a window implicitly.
+
+`window_id` MUST belong to `pid`; the call returns `isError: true` otherwise. The driver does not auto-fall-back to a different window.
+
+Set `query` to a case-insensitive substring to filter `tree_markdown` down to matching lines plus their ancestor chain. element_index values and `element_count` are unchanged — the filter only trims the rendered Markdown.
+
+Always returns BOTH the element tree AND a screenshot — ground on both and cross-check (the tree lies on some surfaces). Choose the modality at ACTION time: an element ax action (element_index/element_token → accessibility rung) or an element px action (x,y → pixel rung off this screenshot). capture_mode is deprecated and ignored.
+
+Uses `IUIAutomationCacheRequest` to batch-fetch all element properties in a single COM call (Chrome's ~5000-element tree returns in ~2-3s instead of timing out at 4s with per-property RPCs).
+
+Optional `max_elements` / `max_depth` bound the UIA walk to mitigate context-window blow-up on Electron / large web apps that produce 10k+ element trees (#22865). When applied, BOTH the markdown and the structured elements are truncated identically. Omit both for current default behaviour (≤5 000 elements, depth ≤25).
+
+Windows requires no special permissions.
+
+input_schema:
+{
+  "additionalProperties": false,
+  "properties": {
+    "capture_mode": {
+      "description": "DEPRECATED and ignored. get_window_state always returns BOTH the element tree and a screenshot — ground on both. The modality is chosen at action time by how you address the target: an element ax action (element_index/element_token) or an element px action (x,y). Any value (including the old \"som\"/\"screenshot\" aliases) is accepted but has no effect.",
+      "enum": [
+        "ax",
+        "vision"
+      ],
+      "type": "string"
+    },
+    "include_screenshot": {
+      "description": "Default true — returns a grounding screenshot alongside the tree. Set false to skip the grab and return tree only (the cheap path for re-indexing before an element ax action).",
+      "type": "boolean"
+    },
+    "max_depth": {
+      "description": "Cap on the UIA-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25). Lower for deep menu / Electron trees (#22865).",
+      "minimum": 1,
+      "type": "integer"
+    },
+    "max_elements": {
+      "description": "Cap on the total number of UIA nodes walked. Truncates depth-first; markdown and structured elements truncate together. Omit for the default (5 000). Lower for Electron / large web apps that produce 10k+ element trees (#22865).",
+      "minimum": 1,
+      "type": "integer"
+    },
+    "pid": {
+      "description": "Process ID from `list_apps`.",
+      "type": "integer"
+    },
+    "query": {
+      "description": "Optional case-insensitive substring. When set, `tree_markdown` only contains lines that match plus their ancestor chain; element indices and `element_count` are unchanged.",
+      "type": "string"
+    },
+    "screenshot_out_file": {
+      "description": "When set, write the PNG to this file path instead of embedding base64 in the response. The structured output will contain `screenshot_file_path` instead.",
+      "type": "string"
+    },
+    "session": {
+      "description": "Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less.",
+      "type": "string"
+    },
+    "window_id": {
+      "description": "HWND of the target window. Must belong to `pid`. Enumerate via `list_windows` or read from `launch_app`'s `windows` array.",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "pid",
+    "window_id"
+  ],
+  "type": "object"
+}
+
+## describe click
+name: click
+
+description:
+Left-click against a target pid. **Prefer `element_index` over pixel coordinates** — element_index works on backgrounded / minimized / hidden / off-desktop windows, surfaces a stable handle that survives rebuilds, and tells you what you're clicking via the cached element's role + label. Reach for `x, y` only when the target is a canvas / video / WebGL / custom-drawn surface that doesn't appear in the UIA tree.
+
+Two addressing modes:
+
+- `element_index` + `window_id` (from the last `get_window_state` snapshot of that window) — performs the UIA Invoke pattern on the cached element via PostMessage. No cursor move, no focus steal. Requires a prior `get_window_state(pid, window_id)` in this turn; the element_index cache is scoped per (pid, window_id) and is replaced by the next snapshot of the same window.
+
+- `x`, `y` (window-local screenshot pixels, top-left origin of the PNG returned by `get_window_state`). On `delivery_mode:"background"` (the default), cua-driver FIRST does a UIA hit-test at the resolved screen position: if the deepest invokable element under that point exposes `InvokePattern`, it's invoked through the accessibility channel — same background-safe path as the `element_index` mode, no foreground swap, no visible flash. **This makes pixel clicks on UWP / WinUI3 / Win11 packaged apps work flash-free out of the box** — agents should default to `delivery_mode:"background"` even on XAML hosts whose CoreInput dispatcher drops raw PostMessage. The PostMessage(WM_LBUTTONDOWN/UP) fallback only runs when the UIA hit-test misses (canvas / video / WebGL / custom-drawn surfaces with no UIA peer), and on those targets `delivery_mode:"background"` returns a structured `background_unavailable` error if PostMessage is known to drop too — at which point you switch to `delivery_mode:"foreground"`. **Always try the default `background` click first and let that error be your signal — do NOT pass `foreground` preemptively because the target 'looks like' GTK/Chromium/etc. The driver decides when background is impossible; a guessed foreground click needlessly steals the user's focus.** `count: 2` posts two down/up pairs for a double-click. Pixel clicks need a visible on-screen window to anchor the coordinate conversion (errors with `pid X has no on-screen window` otherwise).
+
+Exactly one of `element_index` or (`x` AND `y`) must be provided. `pid` is required in both modes. `window_id` is required when `element_index` is used (scopes the cache lookup). After a `zoom` call, pass `from_zoom=true` to auto-translate zoom-image coords back to full-window space.
+
+Windows-only convenience: `button: "left"|"right"|"middle"` switches the mouse button (Swift exposes right-click as a separate `right_click` tool). The Swift-only `action` / `modifier` / `debug_image_out` schema fields aren't supported yet.
+
+input_schema:
+{
+  "additionalProperties": false,
+  "properties": {
+    "button": {
+      "description": "Mouse button. Default \"left\".",
+      "enum": [
+        "left",
+        "right",
+        "middle"
+      ],
+      "type": "string"
+    },
+    "count": {
+      "description": "Click count — 1 (single), 2 (double), 3 (triple). Default 1.",
+      "maximum": 3,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "delivery_mode": {
+      "description": "Input delivery mode. 'background' (default) never swaps foreground: it routes through UIA Invoke / PostMessage and the window is never raised. For targets whose input stack silently drops posted events (Chromium/Electron content, GTK buttons, VCL/LibreOffice accelerators) the tool returns a structured background_unavailable error rather than fronting. 'foreground' is the explicit escalation: a brief SetForegroundWindow swap + SendInput, restoring the prior foreground afterward (call bring_to_front first to avoid the flash). IMPORTANT: 'background' is not a hint to weigh — it is the mandatory first attempt. Do NOT pass 'foreground' preemptively because a target 'looks like' GTK/Chromium/Electron; the DRIVER decides when background is impossible and tells you so via a background_unavailable error (or a verified no-op). Only THEN re-issue the same action with 'foreground'. The lists above are the driver's detectors, not a checklist for you to front on a guess — fronting up-front needlessly steals the user's focus and is a bug, not a shortcut. Matches the macOS delivery_mode surface.",
+      "enum": [
+        "background",
+        "foreground"
+      ],
+      "type": "string"
+    },
+    "element_index": {
+      "description": "Element index from the last get_window_state. REQUIRES `pid` and `window_id` alongside it — element_index alone (no pid) fails fast, it is not a silent no-op.",
+      "type": "integer"
+    },
+    "element_token": {
+      "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both are supplied. Returns an explicit \"stale\" error once a newer snapshot supersedes it — re-snapshot in that case.",
+      "type": "string"
+    },
+    "from_zoom": {
+      "description": "When true, x and y are pixel coordinates in the last `zoom` image for this pid. The driver maps them back to window coords.",
+      "type": "boolean"
+    },
+    "modifier": {
+      "description": "Modifier keys held during the action: cmd, shift, option/alt, ctrl.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "pid": {
+      "description": "Target process ID. Required UNLESS using window-less desktop-scope clicks: with capture_scope=\"desktop\" and no pid/window_id, x/y are treated as TRUE SCREEN pixels (call get_desktop_state first).",
+      "type": "integer"
+    },
+    "session": {
+      "description": "Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less.",
+      "type": "string"
+    },
+    "window_id": {
+      "description": "HWND for the window whose get_window_state produced the element_index. Required when element_index is used. Optional when element_token is supplied (the token carries it).",
+      "type": "integer"
+    },
+    "x": {
+      "description": "X in window-local screenshot pixels — same space as the PNG get_window_state returns. Must be provided together with y.",
+      "type": "number"
+    },
+    "y": {
+      "description": "Y in window-local screenshot pixels. Must be provided together with x.",
+      "type": "number"
+    }
+  },
+  "type": "object"
+}
+
+## describe double_click
+name: double_click
+
+description:
+Double-click against a target pid. Two addressing modes:
+
+- `element_index` + `window_id` (from the last `get_window_state` snapshot of that window) — synthesizes a stamped pixel double-click at the element's cached on-screen center via PostMessage. (Windows has no AXOpen analogue; Swift's AXOpen-first path falls through to the same pixel recipe when the element doesn't advertise AXOpen, so the user-visible behavior matches.)
+
+- `x`, `y` (window-local screenshot pixels, top-left origin of the PNG returned by `get_window_state`) — posts two WM_LBUTTONDOWN/UP pairs in quick succession to the deepest child window at that point.
+
+Exactly one of `element_index` or (`x` AND `y`) must be provided. `pid` is required in both modes. `window_id` is required when `element_index` is used. The macOS-only `modifier` field is accepted for parity (no-op on Windows — PostMessage doesn't propagate modifier-key state).
+
+input_schema:
+{
+  "additionalProperties": false,
+  "properties": {
+    "delivery_mode": {
+      "description": "Input delivery mode. 'background' (default) never swaps foreground: it routes through UIA Invoke / PostMessage and the window is never raised. For targets whose input stack silently drops posted events (Chromium/Electron content, GTK buttons, VCL/LibreOffice accelerators) the tool returns a structured background_unavailable error rather than fronting. 'foreground' is the explicit escalation: a brief SetForegroundWindow swap + SendInput, restoring the prior foreground afterward (call bring_to_front first to avoid the flash). IMPORTANT: 'background' is not a hint to weigh — it is the mandatory first attempt. Do NOT pass 'foreground' preemptively because a target 'looks like' GTK/Chromium/Electron; the DRIVER decides when background is impossible and tells you so via a background_unavailable error (or a verified no-op). Only THEN re-issue the same action with 'foreground'. The lists above are the driver's detectors, not a checklist for you to front on a guess — fronting up-front needlessly steals the user's focus and is a bug, not a shortcut. Matches the macOS delivery_mode surface.",
+      "enum": [
+        "background",
+        "foreground"
+      ],
+      "type": "string"
+    },
+    "element_index": {
+      "description": "Element index from the last get_window_state. REQUIRES `pid` and `window_id` alongside it — element_index alone (no pid) fails fast, it is not a silent no-op.",
+      "type": "integer"
+    },
+    "element_token": {
+      "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both are supplied. Returns an explicit \"stale\" error once a newer snapshot supersedes it — re-snapshot in that case.",
+      "type": "string"
+    },
+    "from_zoom": {
+      "description": "After a zoom call, pass true to translate zoom-image coords back to window space.",
+      "type": "boolean"
+    },
+    "modifier": {
+      "description": "Modifier keys held during the action: cmd, shift, option/alt, ctrl.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "pid": {
+      "description": "Target process ID.",
+      "type": "integer"
+    },
+    "session": {
+      "description": "Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less.",
+      "type": "string"
+    },
+    "window_id": {
+      "description": "HWND for the target window. Required when element_index is used. Optional when element_token is supplied (the token carries it).",
+      "type": "integer"
+    },
+    "x": {
+      "description": "X in window-local screenshot pixels. Must be provided together with y.",
+      "type": "number"
+    },
+    "y": {
+      "description": "Y in window-local screenshot pixels. Must be provided together with x.",
+      "type": "number"
+    }
+  },
+  "required": [
+    "pid"
+  ],
+  "type": "object"
+}
+
+## describe right_click
+name: right_click
+
+description:
+Right-click against a target pid. Two addressing modes:
+
+- `element_index` + `window_id` (from the last `get_window_state` snapshot of that window) — posts WM_RBUTTONDOWN/UP at the element's cached on-screen center via PostMessage. (Windows has no AXShowMenu analogue wired up yet; Swift's AX-action path falls through to the same pixel recipe on non-advertising elements, so user-visible behavior matches.)
+
+- `x`, `y` (window-local screenshot pixels, top-left origin of the PNG returned by `get_window_state`) — posts WM_RBUTTONDOWN/UP to the deepest child window at that point.
+
+Exactly one of `element_index` or (`x` AND `y`) must be provided. `pid` is required in both modes. `window_id` is required when `element_index` is used. `modifier` is accepted for parity (no-op on Windows — PostMessage doesn't propagate modifier-key state).
+
+input_schema:
+{
+  "additionalProperties": false,
+  "properties": {
+    "delivery_mode": {
+      "description": "Input delivery mode. 'background' (default) never swaps foreground: it routes through UIA Invoke / PostMessage and the window is never raised. For targets whose input stack silently drops posted events (Chromium/Electron content, GTK buttons, VCL/LibreOffice accelerators) the tool returns a structured background_unavailable error rather than fronting. 'foreground' is the explicit escalation: a brief SetForegroundWindow swap + SendInput, restoring the prior foreground afterward (call bring_to_front first to avoid the flash). IMPORTANT: 'background' is not a hint to weigh — it is the mandatory first attempt. Do NOT pass 'foreground' preemptively because a target 'looks like' GTK/Chromium/Electron; the DRIVER decides when background is impossible and tells you so via a background_unavailable error (or a verified no-op). Only THEN re-issue the same action with 'foreground'. The lists above are the driver's detectors, not a checklist for you to front on a guess — fronting up-front needlessly steals the user's focus and is a bug, not a shortcut. Matches the macOS delivery_mode surface.",
+      "enum": [
+        "background",
+        "foreground"
+      ],
+      "type": "string"
+    },
+    "element_index": {
+      "description": "Element index from the last get_window_state. REQUIRES `pid` and `window_id` alongside it — element_index alone (no pid) fails fast, it is not a silent no-op.",
+      "type": "integer"
+    },
+    "element_token": {
+      "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both are supplied. Returns an explicit \"stale\" error once a newer snapshot supersedes it — re-snapshot in that case.",
+      "type": "string"
+    },
+    "from_zoom": {
+      "description": "After a zoom call, pass true to translate zoom-image coords back to window space.",
+      "type": "boolean"
+    },
+    "modifier": {
+      "description": "Modifier keys held during the action: cmd, shift, option/alt, ctrl.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "pid": {
+      "description": "Target process ID.",
+      "type": "integer"
+    },
+    "session": {
+      "description": "Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less.",
+      "type": "string"
+    },
+    "window_id": {
+      "description": "HWND for the target window. Required when element_index is used. Optional when element_token is supplied (the token carries it).",
+      "type": "integer"
+    },
+    "x": {
+      "description": "X in window-local screenshot pixels. Must be provided together with y.",
+      "type": "number"
+    },
+    "y": {
+      "description": "Y in window-local screenshot pixels. Must be provided together with x.",
+      "type": "number"
+    }
+  },
+  "required": [
+    "pid"
+  ],
+  "type": "object"
+}
+
+## describe scroll
+name: scroll
+
+description:
+Scroll the target pid's focused region.
+
+Windows transport: WM_VSCROLL / WM_HSCROLL posted to the window — the same events the OS sends when scrollbars or trackpads scroll, so any window that handles scrollbars correctly responds to this. Swift uses synthesized keystrokes (PageDown / arrow keys) via auth-signed SLEventPostToPid; both approaches reach backgrounded windows.
+
+Mapping: `by: "page"` → SB_PAGEDOWN/UP/LEFT/RIGHT × amount; `by: "line"` → SB_LINEDOWN/UP/LEFT/RIGHT × amount.
+
+Note: `element_index` is accepted for cross-platform parity but currently no-op on Windows (UIA SetFocus not wired up yet — same caveat as `press_key`).
+
+input_schema:
+{
+  "additionalProperties": false,
+  "properties": {
+    "amount": {
+      "description": "Number of scroll ticks. Default 3.",
+      "maximum": 50,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "by": {
+      "description": "Scroll granularity. Default: line.",
+      "enum": [
+        "line",
+        "page"
+      ],
+      "type": "string"
+    },
+    "delivery_mode": {
+      "description": "Input delivery mode. 'background' (default) never swaps foreground: it routes through UIA Invoke / PostMessage and the window is never raised. For targets whose input stack silently drops posted events (Chromium/Electron content, GTK buttons, VCL/LibreOffice accelerators) the tool returns a structured background_unavailable error rather than fronting. 'foreground' is the explicit escalation: a brief SetForegroundWindow swap + SendInput, restoring the prior foreground afterward (call bring_to_front first to avoid the flash). IMPORTANT: 'background' is not a hint to weigh — it is the mandatory first attempt. Do NOT pass 'foreground' preemptively because a target 'looks like' GTK/Chromium/Electron; the DRIVER decides when background is impossible and tells you so via a background_unavailable error (or a verified no-op). Only THEN re-issue the same action with 'foreground'. The lists above are the driver's detectors, not a checklist for you to front on a guess — fronting up-front needlessly steals the user's focus and is a bug, not a shortcut. Matches the macOS delivery_mode surface.",
+      "enum": [
+        "background",
+        "foreground"
+      ],
+      "type": "string"
+    },
+    "direction": {
+      "enum": [
+        "up",
+        "down",
+        "left",
+        "right"
+      ],
+      "type": "string"
+    },
+    "element_index": {
+      "description": "Optional element_index. Accepted for parity; currently no-op on Windows.",
+      "type": "integer"
+    },
+    "element_token": {
+      "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both are supplied. Returns an explicit \"stale\" error once a newer snapshot supersedes it — re-snapshot in that case.",
+      "type": "string"
+    },
+    "pid": {
+      "description": "Target process ID. Required UNLESS using window-less desktop-scope scroll: with capture_scope=\"desktop\" and no pid/window_id, x/y are TRUE SCREEN pixels and the wheel routes to the window under that point.",
+      "type": "integer"
+    },
+    "session": {
+      "description": "Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less.",
+      "type": "string"
+    },
+    "window_id": {
+      "description": "HWND of the target window. Required when element_index is used; otherwise auto-resolves the pid's first visible window.",
+      "type": "integer"
+    },
+    "x": {
+      "description": "Screen-absolute X (desktop scope only) — wheel routes to the window under (x,y). Must be paired with y and no pid/window_id.",
+      "type": "number"
+    },
+    "y": {
+      "description": "Screen-absolute Y (desktop scope only). Must be paired with x and no pid/window_id.",
+      "type": "number"
+    }
+  },
+  "required": [
+    "direction"
+  ],
+  "type": "object"
+}
+
+## describe type_text
+name: type_text
+
+description:
+Insert text into the target pid via character-by-character PostMessage(WM_CHAR) to the focused window. No focus steal.
+
+Special keys (Return, Escape, arrows, Tab) go through `press_key` / `hotkey` — they are not text.
+
+**Routing on Windows.** When the target's owning EXE or top-level window class identifies it as a XAML / WinUI3 / UWP host (modern Notepad, Calculator, Photos, Settings, etc.), the tool requires `element_index` + `window_id` and routes through UI Automation's `ValuePattern.SetValue` — same backend as the `set_value` tool. PostMessage WM_CHAR doesn't reach those hosts (their CoreInput dispatcher only consumes events from the system input queue), so the fallback path silently dropped chars. If you call `type_text(pid, text)` on a XAML host without `element_index`, the tool returns an actionable error pointing you at `get_window_state` first. Legacy Win32 apps still use the PostMessage path, preserving the no-focus-steal property.
+
+`delay_ms` (0–200, default 30) spaces successive characters on the PostMessage path so autocomplete and IME can keep up. Ignored on the UIA path (SetValue is atomic).
+
+input_schema:
+{
+  "additionalProperties": false,
+  "properties": {
+    "delay_ms": {
+      "description": "Milliseconds between characters. Default 30.",
+      "maximum": 200,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "delivery_mode": {
+      "description": "Input delivery mode. 'background' (default) never swaps foreground: it routes through UIA Invoke / PostMessage and the window is never raised. For targets whose input stack silently drops posted events (Chromium/Electron content, GTK buttons, VCL/LibreOffice accelerators) the tool returns a structured background_unavailable error rather than fronting. 'foreground' is the explicit escalation: a brief SetForegroundWindow swap + SendInput, restoring the prior foreground afterward (call bring_to_front first to avoid the flash). IMPORTANT: 'background' is not a hint to weigh — it is the mandatory first attempt. Do NOT pass 'foreground' preemptively because a target 'looks like' GTK/Chromium/Electron; the DRIVER decides when background is impossible and tells you so via a background_unavailable error (or a verified no-op). Only THEN re-issue the same action with 'foreground'. The lists above are the driver's detectors, not a checklist for you to front on a guess — fronting up-front needlessly steals the user's focus and is a bug, not a shortcut. Matches the macOS delivery_mode surface.",
+      "enum": [
+        "background",
+        "foreground"
+      ],
+      "type": "string"
+    },
+    "element_index": {
+      "description": "Element index from the last get_window_state for the same (pid, window_id). When supplied, type_text (1) writes via UIA ValuePattern.SetValue on that element (works for WPF/WinForms/UWP/XAML without focus steal) and (2) verifies by reading that element's value back by handle — focus-independent, so the structured `verify` reaches `confirmed`/`unchanged` even when the target isn't foreground. Strongly preferred over typing into 'whatever is focused' (no element_index), which falls back to PostMessage WM_CHAR + a foreground-only focused-element read-back. Requires window_id.",
+      "type": "integer"
+    },
+    "element_token": {
+      "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both are supplied. Returns an explicit \"stale\" error once a newer snapshot supersedes it — re-snapshot in that case.",
+      "type": "string"
+    },
+    "pid": {
+      "description": "Target process ID.",
+      "type": "integer"
+    },
+    "session": {
+      "description": "Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less.",
+      "type": "string"
+    },
+    "text": {
+      "description": "Text to insert at the focused element's cursor.",
+      "type": "string"
+    },
+    "window_id": {
+      "description": "HWND of the target window. Required when element_index is used. Optional when element_token is supplied (the token carries it).",
+      "type": "integer"
+    },
+    "x": {
+      "description": "Window-local screenshot-pixel X of the field to type into — the element px action form. Pass x,y (no element_index) and the tool pixel-clicks there to establish real renderer focus, then types. Use for Chromium/Electron inputs the UIA/WM_CHAR path can't reach. Read straight off the get_window_state PNG, same convention as click.",
+      "type": "number"
+    },
+    "y": {
+      "description": "Window-local screenshot-pixel Y of the field (see x).",
+      "type": "number"
+    }
+  },
+  "required": [
+    "pid",
+    "text"
+  ],
+  "type": "object"
+}
+
+## describe press_key
+name: press_key
+
+description:
+Press and release a single key, delivered directly to the target pid's top-level window via PostMessage(WM_KEYDOWN/WM_KEYUP). The target does NOT need to be frontmost — no focus steal.
+
+Optional `window_id` selects a specific HWND when the pid owns more than one; without it the first visible top-level window for the pid is used.
+
+Key vocabulary: return, tab, escape, up/down/left/right, space, delete, home, end, pageup, pagedown, f1-f12, plus any letter or digit. Optional `modifiers` array takes ctrl/shift/alt/win. For true combinations (ctrl+c), `hotkey` is a cleaner surface.
+
+Note: `element_index` is accepted for cross-platform parity with macOS but currently no-op on Windows (no UIA SetFocus path wired up yet).
+
+input_schema:
+{
+  "additionalProperties": false,
+  "properties": {
+    "delivery_mode": {
+      "description": "Input delivery mode. 'background' (default) never swaps foreground: it routes through UIA Invoke / PostMessage and the window is never raised. For targets whose input stack silently drops posted events (Chromium/Electron content, GTK buttons, VCL/LibreOffice accelerators) the tool returns a structured background_unavailable error rather than fronting. 'foreground' is the explicit escalation: a brief SetForegroundWindow swap + SendInput, restoring the prior foreground afterward (call bring_to_front first to avoid the flash). IMPORTANT: 'background' is not a hint to weigh — it is the mandatory first attempt. Do NOT pass 'foreground' preemptively because a target 'looks like' GTK/Chromium/Electron; the DRIVER decides when background is impossible and tells you so via a background_unavailable error (or a verified no-op). Only THEN re-issue the same action with 'foreground'. The lists above are the driver's detectors, not a checklist for you to front on a guess — fronting up-front needlessly steals the user's focus and is a bug, not a shortcut. Matches the macOS delivery_mode surface.",
+      "enum": [
+        "background",
+        "foreground"
+      ],
+      "type": "string"
+    },
+    "element_index": {
+      "description": "Optional element_index. Accepted for parity; currently no-op on Windows.",
+      "type": "integer"
+    },
+    "element_token": {
+      "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded.",
+      "type": "string"
+    },
+    "key": {
+      "description": "Key name (return, tab, escape, up, down, left, right, space, delete, home, end, pageup, pagedown, f1-f12, letter, digit).",
+      "type": "string"
+    },
+    "modifiers": {
+      "description": "Optional modifier names held while the key is pressed (ctrl/shift/alt/win).",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "pid": {
+      "description": "Target process ID.",
+      "type": "integer"
+    },
+    "session": {
+      "description": "Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less.",
+      "type": "string"
+    },
+    "window_id": {
+      "description": "HWND for the target window. Required when element_index is used; otherwise auto-resolves the pid's first visible window.",
+      "type": "integer"
+    },
+    "x": {
+      "description": "Window-local screenshot-pixel X — the element px action form: pixel-click there to focus, then send the key. Use when the key must go to a Chromium/Electron surface the UIA path can't focus. Pass with y, no element_index.",
+      "type": "number"
+    },
+    "y": {
+      "description": "Window-local screenshot-pixel Y (see x).",
+      "type": "number"
+    }
+  },
+  "required": [
+    "pid",
+    "key"
+  ],
+  "type": "object"
+}
+
+## describe hotkey
+name: hotkey
+
+description:
+Press a combination of keys simultaneously — e.g. `["ctrl", "c"]` for Copy, `["ctrl", "shift", "t"]` for reopen-closed-tab. Dispatch is target-aware:
+
+- **Modern XAML / WinUI / UWP targets** route through UI Automation: the driver walks the target's accessibility subtree, finds a descendant whose AcceleratorKey matches the combo, and invokes it. No focus steal, no system-queue input.
+
+- **Legacy Win32 targets with modifiers** (Ctrl+S, Alt+Tab, etc.) route through `SendInput` against the system input queue, with a brief `SetForegroundWindow` swap so the events land on the target. This path is necessary because PostMessage(WM_KEYDOWN, VK_CONTROL) does NOT update the OS-wide modifier state visible to `GetKeyState` / `TranslateAccelerator`, so Win32 apps that bind accelerators via `TranslateAccelerator` (LibreOffice, FAR, classic Notepad, etc.) never see the combo as a real accelerator on the PostMessage-only path. Trade-off: brief foreground swap (mitigated by restoring the previous foreground after the keystrokes flush). Requires the daemon to have UIAccess integrity so `SetForegroundWindow` is permitted — the MCP proxy auto-prefers the `cua-driver-uia.exe` worker pipe when both daemons are running.
+
+- **Legacy Win32 targets without modifiers** (plain `enter`, `tab`, `f5`, etc.) route through `PostMessage(WM_KEYDOWN/UP)` — no focus steal, no need to update modifier state.
+
+The target does NOT need to be frontmost in any branch.
+
+**`window_id`** (optional): explicit HWND when the pid owns more than one window; otherwise the pid's first visible window is used.
+
+Recognized modifiers: ctrl/control, shift, alt, win/windows. Non-modifier keys use the same vocabulary as `press_key` (return, tab, escape, up/down/left/right, space, delete, home, end, pageup, pagedown, f1-f12, letters, digits). Order: modifiers first, one non-modifier last.
+
+input_schema:
+{
+  "additionalProperties": false,
+  "properties": {
+    "delivery_mode": {
+      "description": "Input delivery mode. 'background' (default) never swaps foreground: it routes through UIA Invoke / PostMessage and the window is never raised. For targets whose input stack silently drops posted events (Chromium/Electron content, GTK buttons, VCL/LibreOffice accelerators) the tool returns a structured background_unavailable error rather than fronting. 'foreground' is the explicit escalation: a brief SetForegroundWindow swap + SendInput, restoring the prior foreground afterward (call bring_to_front first to avoid the flash). IMPORTANT: 'background' is not a hint to weigh — it is the mandatory first attempt. Do NOT pass 'foreground' preemptively because a target 'looks like' GTK/Chromium/Electron; the DRIVER decides when background is impossible and tells you so via a background_unavailable error (or a verified no-op). Only THEN re-issue the same action with 'foreground'. The lists above are the driver's detectors, not a checklist for you to front on a guess — fronting up-front needlessly steals the user's focus and is a bug, not a shortcut. Matches the macOS delivery_mode surface.",
+      "enum": [
+        "background",
+        "foreground"
+      ],
+      "type": "string"
+    },
+    "keys": {
+      "description": "Modifier(s) and one non-modifier key, e.g. [\"ctrl\", \"c\"].",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 2,
+      "type": "array"
+    },
+    "pid": {
+      "description": "Target process ID.",
+      "type": "integer"
+    },
+    "session": {
+      "description": "Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less.",
+      "type": "string"
+    },
+    "window_id": {
+      "description": "Explicit HWND when the pid owns multiple windows.",
+      "type": "integer"
+    },
+    "x": {
+      "description": "Window-local screenshot-pixel X — the element px action form: pixel-click there to focus, then send the combo (so e.g. Ctrl+V pastes into that field). Pass with y. Use for Chromium/Electron surfaces the background combo can't reach.",
+      "type": "number"
+    },
+    "y": {
+      "description": "Window-local screenshot-pixel Y (see x).",
+      "type": "number"
+    }
+  },
+  "required": [
+    "pid",
+    "keys"
+  ],
+  "type": "object"
+}
+
+## describe drag
+name: drag
+
+description:
+Press-drag-release gesture from (from_x, from_y) to (to_x, to_y) in window-local screenshot pixels. duration_ms (default 500) is the wall-clock budget; steps (default 20) interpolates intermediate WM_MOUSEMOVE events along the path. No focus steal. After a zoom call, pass from_zoom=true.
+
+input_schema:
+{
+  "additionalProperties": false,
+  "properties": {
+    "button": {
+      "description": "Mouse button. Default \"left\".",
+      "enum": [
+        "left",
+        "right",
+        "middle"
+      ],
+      "type": "string"
+    },
+    "delivery_mode": {
+      "description": "Input delivery mode. 'background' (default) never swaps foreground: it routes through UIA Invoke / PostMessage and the window is never raised. For targets whose input stack silently drops posted events (Chromium/Electron content, GTK buttons, VCL/LibreOffice accelerators) the tool returns a structured background_unavailable error rather than fronting. 'foreground' is the explicit escalation: a brief SetForegroundWindow swap + SendInput, restoring the prior foreground afterward (call bring_to_front first to avoid the flash). IMPORTANT: 'background' is not a hint to weigh — it is the mandatory first attempt. Do NOT pass 'foreground' preemptively because a target 'looks like' GTK/Chromium/Electron; the DRIVER decides when background is impossible and tells you so via a background_unavailable error (or a verified no-op). Only THEN re-issue the same action with 'foreground'. The lists above are the driver's detectors, not a checklist for you to front on a guess — fronting up-front needlessly steals the user's focus and is a bug, not a shortcut. Matches the macOS delivery_mode surface.",
+      "enum": [
+        "background",
+        "foreground"
+      ],
+      "type": "string"
+    },
+    "duration_ms": {
+      "description": "Wall-clock duration of drag path. Default: 500.",
+      "maximum": 10000,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "from_x": {
+      "description": "Drag-start X in window-local screenshot pixels.",
+      "type": "number"
+    },
+    "from_y": {
+      "description": "Drag-start Y in window-local screenshot pixels.",
+      "type": "number"
+    },
+    "from_zoom": {
+      "description": "When true, coordinates are in the last zoom image for this pid.",
+      "type": "boolean"
+    },
+    "modifier": {
+      "description": "Modifier keys held during the action: cmd, shift, option/alt, ctrl.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "pid": {
+      "description": "Target process ID.",
+      "type": "integer"
+    },
+    "session": {
+      "description": "Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less.",
+      "type": "string"
+    },
+    "steps": {
+      "description": "Number of intermediate WM_MOUSEMOVE events. Default: 20.",
+      "maximum": 200,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "to_x": {
+      "description": "Drag-end X in window-local screenshot pixels.",
+      "type": "number"
+    },
+    "to_y": {
+      "description": "Drag-end Y in window-local screenshot pixels.",
+      "type": "number"
+    },
+    "window_id": {
+      "description": "Target window handle (HWND). Optional — driver picks frontmost window of pid when omitted.",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "pid",
+    "from_x",
+    "from_y",
+    "to_x",
+    "to_y"
+  ],
+  "type": "object"
+}
+
+## notepad snapshot command
+'{"pid":30048,"window_id":25103322,"include_screenshot":false,"max_elements":80}' | cua-driver call get_window_state
+## notepad snapshot output
+{
+  "_note": "Prefer `elements` — `tree_markdown` will continue to work but new fields will only be added to the structured side. Issue #22865: use `max_elements` / `max_depth` to bound the UIA walk on apps with very large trees.",
+  "element_count": 29,
+  "elements": [
+    {
+      "depth": 2,
+      "element_index": 0,
+      "element_token": "s0001:0",
+      "frame": {
+        "h": 1370,
+        "w": 2064,
+        "x": 636,
+        "y": 661
+      },
+      "label": "文本编辑器",
+      "role": "Document"
+    },
+    {
+      "depth": 4,
+      "element_index": 1,
+      "element_token": "s0001:1",
+      "frame": {
+        "h": 48,
+        "w": 372,
+        "x": 699,
+        "y": 563
+      },
+      "label": "TabListView",
+      "role": "List"
+    },
+    {
+      "depth": 5,
+      "element_index": 2,
+      "element_token": "s0001:2",
+      "frame": {
+        "h": 48,
+        "w": 369,
+        "x": 702,
+        "y": 563
+      },
+      "label": "无标题. 未修改。",
+      "parent_index": 1,
+      "role": "TabItem"
+    },
+    {
+      "depth": 6,
+      "element_index": 3,
+      "element_token": "s0001:3",
+      "frame": {
+        "h": 23,
+        "w": 55,
+        "x": 721,
+        "y": 575
+      },
+      "label": "无标题",
+      "parent_index": 2,
+      "role": "Text"
+    },
+    {
+      "depth": 6,
+      "element_index": 4,
+      "element_token": "s0001:4",
+      "frame": {
+        "h": 36,
+        "w": 48,
+        "x": 1010,
+        "y": 569
+      },
+      "label": "关闭标签页",
+      "parent_index": 2,
+      "role": "Button"
+    },
+    {
+      "depth": 4,
+      "element_index": 5,
+      "element_token": "s0001:5",
+      "frame": {
+        "h": 36,
+        "w": 48,
+        "x": 1076,
+        "y": 572
+      },
+      "label": "添加新标签页",
+      "role": "Button"
+    },
+    {
+      "depth": 4,
+      "element_index": 6,
+      "element_token": "s0001:6",
+      "frame": {
+        "h": 48,
+        "w": 72,
+        "x": 642,
+        "y": 611
+      },
+      "label": "文件",
+      "role": "MenuItem"
+    },
+    {
+      "depth": 4,
+      "element_index": 7,
+      "element_token": "s0001:7",
+      "frame": {
+        "h": 48,
+        "w": 72,
+        "x": 726,
+        "y": 611
+      },
+      "label": "编辑",
+      "role": "MenuItem"
+    },
+    {
+      "depth": 4,
+      "element_index": 8,
+      "element_token": "s0001:8",
+      "frame": {
+        "h": 48,
+        "w": 72,
+        "x": 810,
+        "y": 611
+      },
+      "label": "查看",
+      "role": "MenuItem"
+    },
+    {
+      "depth": 3,
+      "element_index": 9,
+      "element_token": "s0001:9",
+      "frame": {
+        "h": 48,
+        "w": 84,
+        "x": 1422,
+        "y": 611
+      },
+      "label": "标题",
+      "role": "Button"
+    },
+    {
+      "depth": 3,
+      "element_index": 10,
+      "element_token": "s0001:10",
+      "frame": {
+        "h": 48,
+        "w": 84,
+        "x": 1506,
+        "y": 611
+      },
+      "label": "列表",
+      "role": "Button"
+    },
+    {
+      "depth": 3,
+      "element_index": 11,
+      "element_token": "s0001:11",
+      "frame": {
+        "h": 48,
+        "w": 48,
+        "x": 1590,
+        "y": 611
+      },
+      "label": "加粗(Ctrl+B)",
+      "role": "Button"
+    },
+    {
+      "depth": 3,
+      "element_index": 12,
+      "element_token": "s0001:12",
+      "frame": {
+        "h": 48,
+        "w": 48,
+        "x": 1638,
+        "y": 611
+      },
+      "label": "斜体(Ctrl+I)",
+      "role": "Button"
+    },
+    {
+      "depth": 3,
+      "element_index": 13,
+      "element_token": "s0001:13",
+      "frame": {
+        "h": 48,
+        "w": 48,
+        "x": 1686,
+        "y": 611
+      },
+      "label": "删除线(Ctrl+Shift+X)",
+      "role": "Button"
+    },
+    {
+      "depth": 3,
+      "element_index": 14,
+      "element_token": "s0001:14",
+      "frame": {
+        "h": 48,
+        "w": 48,
+        "x": 1734,
+        "y": 611
+      },
+      "label": "链接(Ctrl+K)",
+      "role": "Button"
+    },
+    {
+      "depth": 3,
+      "element_index": 15,
+      "element_token": "s0001:15",
+      "frame": {
+        "h": 48,
+        "w": 84,
+        "x": 1782,
+        "y": 611
+      },
+      "label": "表",
+      "role": "Button"
+    },
+    {
+      "depth": 3,
+      "element_index": 16,
+      "element_token": "s0001:16",
+      "frame": {
+        "h": 48,
+        "w": 48,
+        "x": 1866,
+        "y": 611
+      },
+      "label": "清除格式设置(Ctrl+空格)",
+      "role": "Button"
+    },
+    {
+      "depth": 3,
+      "element_index": 17,
+      "element_token": "s0001:17",
+      "frame": {
+        "h": 45,
+        "w": 45,
+        "x": 2592,
+        "y": 613
+      },
+      "label": "最近更新",
+      "role": "Button"
+    },
+    {
+      "depth": 3,
+      "element_index": 18,
+      "element_token": "s0001:18",
+      "frame": {
+        "h": 48,
+        "w": 45,
+        "x": 2643,
+        "y": 611
+      },
+      "label": "设置",
+      "role": "Button"
+    },
+    {
+      "depth": 3,
+      "element_index": 19,
+      "element_token": "s0001:19",
+      "frame": {
+        "h": 24,
+        "w": 94,
+        "x": 660,
+        "y": 2043
+      },
+      "label": "行 1，\n列 1",
+      "role": "Text"
+    },
+    {
+      "depth": 3,
+      "element_index": 20,
+      "element_token": "s0001:20",
+      "frame": {
+        "h": 24,
+        "w": 69,
+        "x": 794,
+        "y": 2043
+      },
+      "label": "0 个字符",
+      "role": "Text"
+    },
+    {
+      "depth": 3,
+      "element_index": 21,
+      "element_token": "s0001:21",
+      "frame": {
+        "h": 48,
+        "w": 72,
+        "x": 1097,
+        "y": 2031
+      },
+      "label": "纯文本",
+      "role": "Text"
+    },
+    {
+      "depth": 3,
+      "element_index": 22,
+      "element_token": "s0001:22",
+      "frame": {
+        "h": 24,
+        "w": 49,
+        "x": 2144,
+        "y": 2043
+      },
+      "label": "缩放",
+      "role": "Text"
+    },
+    {
+      "depth": 3,
+      "element_index": 23,
+      "element_token": "s0001:23",
+      "frame": {
+        "h": 24,
+        "w": 134,
+        "x": 2246,
+        "y": 2043
+      },
+      "label": " Windows (CRLF)",
+      "role": "Text"
+    },
+    {
+      "depth": 3,
+      "element_index": 24,
+      "element_token": "s0001:24",
+      "frame": {
+        "h": 24,
+        "w": 53,
+        "x": 2498,
+        "y": 2043
+      },
+      "label": " UTF-8",
+      "role": "Text"
+    },
+    {
+      "depth": 3,
+      "element_index": 25,
+      "element_token": "s0001:25",
+      "frame": {
+        "h": 33,
+        "w": 33,
+        "x": 638,
+        "y": 560
+      },
+      "label": "系统",
+      "role": "MenuItem"
+    },
+    {
+      "depth": 2,
+      "element_index": 26,
+      "element_token": "s0001:26",
+      "frame": {
+        "h": 44,
+        "w": 71,
+        "x": 2489,
+        "y": 550
+      },
+      "label": "最小化",
+      "role": "Button"
+    },
+    {
+      "depth": 2,
+      "element_index": 27,
+      "element_token": "s0001:27",
+      "frame": {
+        "h": 44,
+        "w": 70,
+        "x": 2560,
+        "y": 550
+      },
+      "label": "最大化",
+      "role": "Button"
+    },
+    {
+      "depth": 2,
+      "element_index": 28,
+      "element_token": "s0001:28",
+      "frame": {
+        "h": 44,
+        "w": 71,
+        "x": 2630,
+        "y": 550
+      },
+      "label": "关闭",
+      "role": "Button"
+    }
+  ],
+  "pid": 30048,
+  "snapshot_id": "s0001",
+  "tree_markdown": "- Window \"无标题 - Notepad\"\n    - [0] Document \"文本编辑器\" [actions=[set_value,text,scroll]]\n        - [1] List [id=TabListView actions=[scroll]]\n          - [2] TabItem \"无标题. 未修改。\" [actions=[select]]\n            - [3] Text \"无标题\" [actions=[text]]\n            - [4] Button \"关闭标签页\" [id=CloseButton actions=[invoke]]\n        - [5] Button \"添加新标签页\" [id=AddButton actions=[invoke]]\n        - [6] MenuItem \"文件\" [id=File actions=[invoke,expand]]\n        - [7] MenuItem \"编辑\" [id=Edit actions=[invoke,expand]]\n        - [8] MenuItem \"查看\" [id=View actions=[invoke,expand]]\n      - [9] Button \"标题\" [actions=[invoke,expand]]\n      - [10] Button \"列表\" [actions=[invoke,expand]]\n      - [11] Button \"加粗(Ctrl+B)\" [actions=[toggle]]\n      - [12] Button \"斜体(Ctrl+I)\" [actions=[toggle]]\n      - [13] Button \"删除线(Ctrl+Shift+X)\" [actions=[toggle]]\n      - [14] Button \"链接(Ctrl+K)\" [actions=[toggle]]\n      - [15] Button \"表\" [actions=[invoke,expand]]\n      - [16] Button \"清除格式设置(Ctrl+空格)\" [actions=[toggle]]\n      - [17] Button \"最近更新\" [id=FREButton actions=[invoke]]\n      - [18] Button \"设置\" [id=SettingsButton actions=[invoke]]\n      - Pane \"本地 AI 模型必须完成下载才可在注销后使用此功能。\"\n      - [19] Text \"行 1，\n列 1\" [id=ContentTextBlock actions=[text]]\n      - [20] Text \"0 个字符\" [id=ContentTextBlock actions=[text]]\n      - [21] Text \"纯文本\" [id=ContentTextBlock actions=[text]]\n      - [22] Text \"缩放\" [id=ContentTextBlock actions=[text]]\n      - [23] Text \" Windows (CRLF)\" [id=ContentTextBlock actions=[text]]\n      - [24] Text \" UTF-8\" [id=ContentTextBlock actions=[text]]\n  - TitleBar = \"无标题 - Notepad\"\n    - MenuBar \"系统\"\n      - [25] MenuItem \"系统\" [actions=[expand]]\n    - [26] Button \"最小化\" [actions=[invoke]]\n    - [27] Button \"最大化\" [actions=[invoke]]\n    - [28] Button \"关闭\" [actions=[invoke]]\n",
+  "window_id": 25103322
+}
