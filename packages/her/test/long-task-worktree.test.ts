@@ -6,7 +6,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import { ensureTaskWorktree } from "../src/her-core/long-task-worktree.ts";
+import {
+	ensureTaskWorktree,
+	isWorktreeDirty,
+	removeTaskWorktree,
+	WorktreeDirtyError,
+} from "../src/her-core/long-task-worktree.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -83,4 +88,31 @@ test("T3 ensureTaskWorktree reattaches a task branch after the worktree director
 	assert.equal((await git(second.worktreePath, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim(), "her-task/t3");
 	assert.equal((await git(second.worktreePath, "rev-parse", "HEAD")).stdout.trim(), taskCommit);
 	assert.match((await git(second.worktreePath, "log", "--oneline")).stdout, /task commit/);
+});
+test("T5 removeTaskWorktree refuses a dirty worktree unless force is explicit", async () => {
+	const repo = await tempGitRepo();
+	const worktreeRoot = await tempWorktreeRoot();
+	const env = { ...process.env, HER_LONGTASK_WORKTREE_ROOT: worktreeRoot };
+	const worktree = await ensureTaskWorktree(repo, "t5", { env });
+	await writeFile(join(worktree.worktreePath, "dirty.txt"), "dirty\n", "utf8");
+
+	assert.equal(await isWorktreeDirty(worktree.worktreePath), true);
+	await assert.rejects(() => removeTaskWorktree(repo, "t5", { env }), WorktreeDirtyError);
+	assert.ok(existsSync(worktree.worktreePath));
+
+	assert.deepEqual(await removeTaskWorktree(repo, "t5", { env, force: true }), { removed: true });
+	assert.equal(existsSync(worktree.worktreePath), false);
+});
+
+test("T6 removeTaskWorktree removes a clean worktree and its task branch", async () => {
+	const repo = await tempGitRepo();
+	const worktreeRoot = await tempWorktreeRoot();
+	const env = { ...process.env, HER_LONGTASK_WORKTREE_ROOT: worktreeRoot };
+	const worktree = await ensureTaskWorktree(repo, "t6", { env });
+
+	assert.deepEqual(await removeTaskWorktree(repo, "t6", { env }), { removed: true });
+
+	assert.equal(existsSync(worktree.worktreePath), false);
+	assert.equal((await git(repo, "branch", "--list", "her-task/t6")).stdout.trim(), "");
+	assert.equal(await statusPorcelain(repo), "");
 });
