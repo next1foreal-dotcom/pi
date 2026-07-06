@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { execPath } from "node:process";
 import test from "node:test";
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { governedTools } from "../src/extension.ts";
 import { CuaCliDriver, type DriverResult, FakeDriver } from "../src/hands/driver.ts";
 import {
 	evaluateHandsPolicy,
@@ -16,6 +17,7 @@ import { registerHandsTools } from "../src/hands/tools.ts";
 import { recordTrail, renderTrailCard } from "../src/hands/trail.ts";
 import { DEFAULT_CONFIG, type HerConfig } from "../src/her-core/config.ts";
 import { initStore, Memory, readText } from "../src/her-core/index.ts";
+import { validateMemoryProvenance } from "../src/her-core/privacy.ts";
 
 function hands(overrides: Partial<HerConfig["hands"]> = {}): HandsResolvedConfig {
 	return resolveHandsConfig({ ...DEFAULT_CONFIG.hands, enabled: true, desktopEnabled: true, ...overrides });
@@ -170,6 +172,14 @@ test("T12 recordTrail writes private her-acted raw memory", async () => {
 	assert.match(raw, /provenance: her-acted/);
 });
 
+test("T13 validateMemoryProvenance accepts her-acted", () => {
+	assert.equal(validateMemoryProvenance("her-acted"), "her-acted");
+});
+
+test("T14 governedTools includes both hands tools as non-destructive", () => {
+	assert.deepEqual(governedTools.her_hands_snapshot, { destructive: false });
+	assert.deepEqual(governedTools.her_hands_act, { destructive: false });
+});
 test("T15b hands tools require live UI and do not touch driver", async () => {
 	const { tools, driver } = await handsHarness();
 	const snapshot = tools.get("her_hands_snapshot");
@@ -271,6 +281,80 @@ test("T16 snapshot wraps screen content in injection fence", async () => {
 	);
 });
 
+test("T17 batch act stops at policy denial after prior actions and records skipped", async () => {
+	const { tools, driver } = await handsHarness([listWindowsResult(), okCase(/click/)], {
+		desktopAllowedApps: "notepad.exe",
+		desktopTier: 1,
+	});
+	const act = tools.get("her_hands_act");
+	assert.ok(act);
+
+	const result = await executeHands(
+		act,
+		{
+			process: "notepad.exe",
+			taskLabel: "policy stop",
+			actions: [
+				{ action: "click", elementIndex: 0 },
+				{ action: "type_text", elementIndex: 0, text: "blocked" },
+				{ action: "click", elementIndex: 1 },
+			],
+		},
+		ctx().context,
+	);
+
+	assert.match(firstText(result), /tier 2/);
+	assert.match(firstText(result), /1 skipped/);
+	assert.deepEqual(
+		driver.calls.map((call) => call[1]),
+		["list_windows", "click"],
+	);
+	const trail = (result.details as { trail: Array<{ outcome: string; detail: string }> }).trail;
+	assert.deepEqual(
+		trail.map((entry) => entry.outcome),
+		["ok", "denied"],
+	);
+	assert.match(trail[1].detail, /1 skipped/);
+});
+
+test("T18 batch act stops on driver background_unavailable and returns raw error", async () => {
+	const { tools, driver } = await handsHarness(
+		[
+			listWindowsResult(),
+			okCase(/click/),
+			failCase(/double_click/, "background_unavailable: target dropped posted events"),
+		],
+		{ desktopAllowedApps: "notepad.exe" },
+	);
+	const act = tools.get("her_hands_act");
+	assert.ok(act);
+
+	const result = await executeHands(
+		act,
+		{
+			process: "notepad.exe",
+			taskLabel: "driver stop",
+			actions: [
+				{ action: "click", elementIndex: 0 },
+				{ action: "double_click", elementIndex: 0 },
+				{ action: "click", elementIndex: 1 },
+			],
+		},
+		ctx().context,
+	);
+
+	assert.match(firstText(result), /background_unavailable/);
+	assert.deepEqual(
+		driver.calls.map((call) => call[1]),
+		["list_windows", "click", "double_click"],
+	);
+	const trail = (result.details as { trail: Array<{ outcome: string; detail: string }> }).trail;
+	assert.deepEqual(
+		trail.map((entry) => entry.outcome),
+		["ok", "error"],
+	);
+	assert.match(trail[1].detail, /background_unavailable/);
+});
 async function tempMemory(): Promise<{ root: string; mem: Memory }> {
 	const root = await mkdtemp(join(tmpdir(), "her-hands-"));
 	await initStore(root);
@@ -331,4 +415,8 @@ function listWindowsResult() {
 
 function okCase(match: string[] | RegExp, stdout = "ok") {
 	return { match, result: { ok: true, exitCode: 0, stdout, stderr: "", timedOut: false } satisfies DriverResult };
+}
+
+function failCase(match: string[] | RegExp, stdout = "error") {
+	return { match, result: { ok: false, exitCode: 1, stdout, stderr: "", timedOut: false } satisfies DriverResult };
 }

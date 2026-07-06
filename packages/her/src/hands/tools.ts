@@ -114,30 +114,39 @@ export function registerHandsTools(pi: ExtensionAPI, deps: HandsToolDeps): void 
 			const actions = params.actions as ActionInput[];
 			const limit = enforceTaskLimit(taskCounts, params.taskLabel, actions.length, config);
 			if (limit) return await denyBatch(deps, params.taskLabel, params.process, limit);
-			const policyDenied = firstPolicyDeny(params.process, actions, config);
-			if (policyDenied) return await denyBatch(deps, params.taskLabel, params.process, policyDenied);
-			if (actions.some((item) => WRITE_ACTIONS.includes(item.action))) {
-				const confirmed = await ctx.ui.confirm(`Samantha 要操作 ${params.process}`, summarizeActions(actions));
-				if (!confirmed) return await denyBatch(deps, params.taskLabel, params.process, "confirm denied");
+			const policyStop = firstPolicyStop(params.process, actions, config);
+			const executable = policyStop ? actions.slice(0, policyStop.index) : actions;
+			if (executable.some((item) => WRITE_ACTIONS.includes(item.action))) {
+				const confirmed = await ctx.ui.confirm(`Samantha 要操作 ${params.process}`, summarizeActions(executable));
+				if (!confirmed)
+					return await denyBatch(deps, params.taskLabel, params.process, "confirm denied", executable[0]?.action);
 			}
 			const trail: HandsTrailEntry[] = [];
 			try {
-				const windowRef = await findWindow(deps.driver, params.process, undefined, config);
-				for (const item of actions) {
-					const result = await callDriver(deps.driver, item.action, actionPayload(item, windowRef), config);
-					const outcome = result.ok ? "ok" : "error";
+				if (executable.length > 0) {
+					const windowRef = await findWindow(deps.driver, params.process, undefined, config);
+					for (const item of executable) {
+						const result = await callDriver(deps.driver, item.action, actionPayload(item, windowRef), config);
+						const outcome = result.ok ? "ok" : "error";
+						trail.push(
+							entry(item.action, params.process, item.deliveryMode ?? "background", outcome, detail(result)),
+						);
+						if (!result.ok) break;
+					}
+				}
+				if (!trail.some((item) => item.outcome === "error") && policyStop) {
 					trail.push(
-						entry(item.action, params.process, item.deliveryMode ?? "background", outcome, detail(result)),
+						entry(
+							policyStop.action,
+							params.process,
+							policyStop.deliveryMode,
+							"denied",
+							`${policyStop.reason}; ${actions.length - policyStop.index - 1} skipped`,
+						),
 					);
-					if (!result.ok) break;
 				}
 				await recordTrail(deps.mem, params.taskLabel, trail);
-				return textResult(
-					trail.some((item) => item.outcome === "error")
-						? `hands act error:\n${lastDetail(trail)}`
-						: "hands act ok",
-					{ trail },
-				);
+				return textResult(renderActSummary(trail), { trail });
 			} catch (error) {
 				const message = errorMessage(error);
 				trail.push(entry(actions[trail.length]?.action ?? "click", params.process, "background", "error", message));
@@ -164,16 +173,32 @@ async function denyPolicy(deps: HandsToolDeps, action: HandsActionKind, process:
 	return textResult(text, { outcome: "denied", reason: text });
 }
 
-async function denyBatch(deps: HandsToolDeps, taskLabel: string, process: string, reason: string) {
-	const trail = [entry("click", process, "background", "denied", reason)];
+async function denyBatch(
+	deps: HandsToolDeps,
+	taskLabel: string,
+	process: string,
+	reason: string,
+	action: HandsActionKind = "click",
+) {
+	const trail = [entry(action, process, "background", "denied", reason)];
 	await recordTrail(deps.mem, taskLabel, trail);
 	return textResult(reason, { outcome: "denied", trail });
 }
 
-function firstPolicyDeny(process: string, actions: ActionInput[], config: HandsResolvedConfig): string | undefined {
-	for (const item of actions) {
+function firstPolicyStop(
+	process: string,
+	actions: ActionInput[],
+	config: HandsResolvedConfig,
+): { index: number; action: HandsActionKind; deliveryMode: "background" | "foreground"; reason: string } | undefined {
+	for (const [index, item] of actions.entries()) {
 		const decision = evaluateHandsPolicy({ surface: "desktop", action: item.action, targetProcess: process, config });
-		if (!decision.allow) return decision.reason;
+		if (!decision.allow)
+			return {
+				index,
+				action: item.action,
+				deliveryMode: item.deliveryMode ?? "background",
+				reason: decision.reason,
+			};
 	}
 	return undefined;
 }
@@ -257,8 +282,12 @@ function detail(result: { stdout: string; stderr: string; exitCode: number | nul
 		.join("\n");
 }
 
-function lastDetail(trail: HandsTrailEntry[]): string {
-	return trail.at(-1)?.detail ?? "unknown error";
+function renderActSummary(trail: HandsTrailEntry[]): string {
+	const error = trail.find((item) => item.outcome === "error");
+	if (error) return `hands act error:\n${error.detail}`;
+	const denied = trail.find((item) => item.outcome === "denied");
+	if (denied) return `hands act denied:\n${denied.detail}`;
+	return "hands act ok";
 }
 
 function summarizeActions(actions: ActionInput[]): string {
