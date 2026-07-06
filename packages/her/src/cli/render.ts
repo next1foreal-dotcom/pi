@@ -35,6 +35,7 @@ import type {
 	CliTelegramConfirmationPayload,
 	CliTelegramOutboxPayload,
 	CliTelegramPollPayload,
+	CliVoiceTaskCompleteNotifyPayload,
 	CliVoiceTaskEnqueuePayload,
 } from "./types.ts";
 
@@ -453,6 +454,18 @@ export function renderSelfNarrative(payload: CliSelfNarrativePayload): string {
 	return [`Her self narrative synthesized: ${payload.result.commit}`, "", renderStatus(payload)].join("\n");
 }
 
+export function renderVoiceTaskCompleteNotify(payload: CliVoiceTaskCompleteNotifyPayload): string {
+	return [
+		`Her voice task completion queued: ${payload.result.path}`,
+		`objective: ${payload.result.objective}`,
+		`outcome: ${payload.result.outcome}`,
+		payload.result.taskPath ? `task: ${payload.result.taskPath}` : undefined,
+		"",
+		renderStatus(payload),
+	]
+		.filter((line) => line !== undefined)
+		.join("\n");
+}
 export function renderVoiceTaskEnqueue(payload: CliVoiceTaskEnqueuePayload): string {
 	return [
 		`Her voice task queued: ${payload.result.path}`,
@@ -516,6 +529,7 @@ export function usage(): string {
   her telegram-push-outbox [--limit <n>] [--dry-run] [--json]
   her topic-maps [--json]
   her voice-task-enqueue --objective <text> [--json]
+  her voice-task-notify-complete --objective <text> --outcome <text> [--task-path <path>] [--json]
 
 Memory root:
   HER_MEMORY_DIR, defaulting to ../her-memory from the current working directory.

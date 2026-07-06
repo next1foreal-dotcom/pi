@@ -142,7 +142,8 @@ export type CliCommand =
 	| { kind: "telegram-poll"; json: boolean; limit?: number; offset?: number; timeoutSeconds?: number }
 	| { kind: "telegram-push-outbox"; dryRun: boolean; json: boolean; limit?: number }
 	| { kind: "topic-maps"; json: boolean }
-	| { kind: "voice-task-enqueue"; json: boolean; objective: string };
+	| { kind: "voice-task-enqueue"; json: boolean; objective: string }
+	| { kind: "voice-task-notify-complete"; json: boolean; objective: string; outcome: string; taskPath?: string };
 
 export interface CliStatusPayload {
 	memoryDir: string;
@@ -153,6 +154,9 @@ export interface CliStatusPayload {
 
 export interface CliVoiceTaskEnqueuePayload extends CliStatusPayload {
 	result: { created: string; objective: string; path: string; status: "queued" };
+}
+export interface CliVoiceTaskCompleteNotifyPayload extends CliStatusPayload {
+	result: { created: string; objective: string; outcome: string; path: string; taskPath?: string };
 }
 export interface CliSyncPayload extends CliStatusPayload {
 	result: Awaited<ReturnType<Memory["sync"]>>;

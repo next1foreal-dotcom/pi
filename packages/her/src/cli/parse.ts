@@ -63,6 +63,7 @@ export function parseArgs(argv: string[]): CliCommand {
 	if (command === "telegram-push-outbox") return parseTelegramPushOutbox(rest);
 	if (command === "topic-maps") return parseJsonOnly("topic-maps", rest);
 	if (command === "voice-task-enqueue") return parseVoiceTaskEnqueue(rest);
+	if (command === "voice-task-notify-complete") return parseVoiceTaskNotifyComplete(rest);
 	throw new UsageError(`unknown Her command: ${command}`);
 }
 
@@ -437,6 +438,39 @@ function parseVoiceTaskEnqueue(argv: string[]): CliCommand {
 		throw new UsageError(`unknown voice-task-enqueue option: ${arg}`);
 	}
 	return { kind: "voice-task-enqueue", json, objective: requireNonBlank(objective, "objective") };
+}
+function parseVoiceTaskNotifyComplete(argv: string[]): CliCommand {
+	let json = false;
+	let objective: string | undefined;
+	let outcome: string | undefined;
+	let taskPath: string | undefined;
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--objective") {
+			objective = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--outcome") {
+			outcome = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--task-path") {
+			taskPath = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		throw new UsageError(`unknown voice-task-notify-complete option: ${arg}`);
+	}
+	return {
+		kind: "voice-task-notify-complete",
+		json,
+		objective: requireNonBlank(objective, "objective"),
+		outcome: requireNonBlank(outcome, "outcome"),
+		...(taskPath ? { taskPath } : {}),
+	};
 }
 function parseDecay(argv: string[]): CliCommand {
 	let json = false;

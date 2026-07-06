@@ -46,6 +46,7 @@ import {
 	renderTelegramOutbox,
 	renderTelegramPoll,
 	renderTopicMaps,
+	renderVoiceTaskCompleteNotify,
 	renderVoiceTaskEnqueue,
 	usage,
 	writeLine,
@@ -57,6 +58,7 @@ import {
 	type CliIo,
 	type CliStatusPayload,
 	type CliSurfaceUpdateResult,
+	type CliVoiceTaskCompleteNotifyPayload,
 	type CliVoiceTaskEnqueuePayload,
 	defaultTelegramResponderTools,
 	type TelegramBridgeAcknowledgement,
@@ -231,6 +233,13 @@ export async function runHerCli(
 		const result = await queueVoiceTask(memoryDir, command.objective);
 		const payload: CliVoiceTaskEnqueuePayload = { ...(await buildFreshStatusPayload(memoryDir, env)), result };
 		writePayload(io.stdout, payload, command.json, renderVoiceTaskEnqueue);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "voice-task-notify-complete") {
+		const result = await queueVoiceTaskCompletion(memoryDir, command.objective, command.outcome, command.taskPath);
+		const payload: CliVoiceTaskCompleteNotifyPayload = { ...(await buildFreshStatusPayload(memoryDir, env)), result };
+		writePayload(io.stdout, payload, command.json, renderVoiceTaskCompleteNotify);
 		return payload.status.status === "unknown" ? 1 : 0;
 	}
 
@@ -953,6 +962,35 @@ async function queueVoiceTask(root: string, rawObjective: string): Promise<CliVo
 	return { created: now, objective, path, status: "queued" };
 }
 
+async function queueVoiceTaskCompletion(
+	root: string,
+	rawObjective: string,
+	rawOutcome: string,
+	taskPath?: string,
+): Promise<CliVoiceTaskCompleteNotifyPayload["result"]> {
+	const objective = redactSecrets(rawObjective.trim());
+	const outcome = redactSecrets(rawOutcome.trim());
+	if (!objective) throw new UsageError("voice-task-notify-complete requires --objective <text>");
+	if (!outcome) throw new UsageError("voice-task-notify-complete requires --outcome <text>");
+	const created = new Date().toISOString();
+	const path = `outbox/${safeVoiceTimestamp(created)}-voice-complete-${randomUUID().slice(0, 8)}.md`;
+	const safeTaskPath = taskPath?.trim() ? redactSecrets(taskPath.trim()) : undefined;
+	await writeText(
+		join(root, path),
+		[
+			`完成通知：${objective}`,
+			"",
+			`结果：${outcome}`,
+			"",
+			"来源：voice",
+			safeTaskPath ? `任务：${safeTaskPath}` : undefined,
+			"",
+		]
+			.filter((line) => line !== undefined)
+			.join("\n"),
+	);
+	return { created, objective, outcome, path, ...(safeTaskPath ? { taskPath: safeTaskPath } : {}) };
+}
 function safeVoiceTimestamp(value: string): string {
 	return value.replace(/[:.]/g, "-").replace(/[^A-Za-z0-9_-]/g, "-");
 }

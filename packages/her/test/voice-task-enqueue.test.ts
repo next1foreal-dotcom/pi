@@ -41,3 +41,45 @@ test("voice-task-enqueue queues a voice task in inbox without activating it", as
 	assert.match(parsed.body, /# Voice Inbox Item/);
 	assert.deepEqual(await readdir(join(store, "tasks", "active")), []);
 });
+
+test("voice-task-notify-complete queues completion text for telegram outbox", async () => {
+	const store = await mkdtemp(join(tmpdir(), "her-voice-complete-"));
+	await initStore(store);
+	await execFileAsync("git", ["init"], { cwd: store });
+	await execFileAsync("git", ["config", "user.name", "Her Voice Test"], { cwd: store });
+	await execFileAsync("git", ["config", "user.email", "her-voice-test@example.com"], { cwd: store });
+	await execFileAsync("git", ["add", "-A"], { cwd: store });
+	await execFileAsync("git", ["commit", "-m", "memory: init"], { cwd: store });
+
+	const result = await runCli(
+		[
+			"voice-task-notify-complete",
+			"--objective",
+			"verify Telegram completion loop",
+			"--outcome",
+			"M4 test completed",
+			"--task-path",
+			"tasks/inbox/example.md",
+			"--json",
+		],
+		store,
+	);
+	const payload = JSON.parse(result.stdout);
+
+	assert.equal(payload.result.path.startsWith("outbox/"), true);
+	const text = await readFile(join(store, payload.result.path), "utf8");
+	assert.match(text, /完成通知：verify Telegram completion loop/);
+	assert.match(text, /结果：M4 test completed/);
+	assert.match(text, /任务：tasks\/inbox\/example.md/);
+
+	const dryRun = await execFileAsync(
+		process.execPath,
+		["--import", "tsx", "packages/her/src/cli.ts", "telegram-push-outbox", "--dry-run", "--json"],
+		{
+			cwd: repoRoot,
+			env: { ...process.env, HER_MEMORY_DIR: store, HER_TELEGRAM_BOT_TOKEN: "token", HER_TELEGRAM_CHAT_ID: "123" },
+		},
+	);
+	const dryRunPayload = JSON.parse(dryRun.stdout);
+	assert.equal(dryRunPayload.result.sent[0].path, payload.result.path);
+});
