@@ -1,3 +1,4 @@
+import { renderEvalTrendReport } from "../her-core/index.ts";
 import type {
 	CliApprovePayload,
 	CliBackfillPayload,
@@ -7,6 +8,7 @@ import type {
 	CliConsolidatePayload,
 	CliDecayPayload,
 	CliDispatchPayload,
+	CliEvalTrendPayload,
 	CliGoalCompletePayload,
 	CliGoalListPayload,
 	CliGoalNextPayload,
@@ -141,6 +143,15 @@ export function renderGoldenEval(payload: CliGoldenEvalPayload): string {
 	].join("\n");
 }
 
+export function renderEvalTrend(payload: CliEvalTrendPayload): string {
+	const latest = payload.report.latest ? `${payload.report.latest.score}/${payload.report.latest.maxScore}` : "(none)";
+	return [
+		`Her eval trend ${payload.report.status}: ${payload.report.direction}, latest ${latest}.`,
+		renderEvalTrendReport(payload.report).trimEnd(),
+		"",
+		renderStatus(payload),
+	].join("\n");
+}
 export function renderLint(payload: CliLintPayload): string {
 	return [
 		`Her memory lint ${payload.result.status}: ${payload.result.counts.brokenLinks} broken wikilink(s), ${payload.result.counts.orphans} orphan note(s), ${payload.result.counts.supersessionIssues} supersession issue(s).`,
@@ -507,6 +518,7 @@ export function usage(): string {
   her decay [--older-than-days <days>] [--now <YYYY-MM-DD>] [--json]
   her dispatch <handoff.md> --executor pi:<model>|codex [--budget-usd <usd>] [--cwd <dir>] [--label <text>] [--timeout-min <n>] [--json]
   her eval-golden [--write-baseline] [--now <ISO>] [--json]
+  her eval-trend [--json]
   her goal-start --objective <text> [--source <text>] [--owner <text>] [--next <text>] [--json]
   her goal-checkpoint --id <id> --summary <text> [--status active|blocked] [--next <text>] [--evidence <ref>] [--json]
   her goal-complete --id <id> --outcome <text> [--remember <text>] [--json]

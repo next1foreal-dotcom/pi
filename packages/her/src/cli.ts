@@ -16,6 +16,7 @@ import {
 	renderConsolidate,
 	renderDecay,
 	renderDispatch,
+	renderEvalTrend,
 	renderGoal,
 	renderGoalComplete,
 	renderGoalList,
@@ -90,6 +91,7 @@ import {
 	readUrlForWorldNote,
 	recordTelegramConfirmationFromText,
 	runDispatch,
+	runEvalTrend,
 	runGoldenEvals,
 	runMemoryLint,
 	StorePaths,
@@ -305,6 +307,12 @@ export async function runHerCli(
 		return result.status === "pass" ? 0 : 1;
 	}
 
+	if (command.kind === "eval-trend") {
+		const report = await runEvalTrend(memoryDir);
+		const payload = { ...(await buildStatusPayload(memoryDir, memory)), report };
+		writePayload(io.stdout, payload, command.json, renderEvalTrend);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
 	if (command.kind === "lint") {
 		const result = await runMemoryLint(memoryDir);
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };

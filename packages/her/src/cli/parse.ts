@@ -32,6 +32,7 @@ export function parseArgs(argv: string[]): CliCommand {
 	if (command === "decay") return parseDecay(rest);
 	if (command === "dispatch") return parseDispatch(rest);
 	if (command === "eval-golden") return parseEvalGolden(rest);
+	if (command === "eval-trend") return parseJsonOnly("eval-trend", rest);
 	if (command === "goal-checkpoint") return parseGoalCheckpoint(rest);
 	if (command === "goal-complete") return parseGoalComplete(rest);
 	if (command === "goal-list") return parseGoalList(rest);
@@ -71,6 +72,7 @@ export function parseArgs(argv: string[]): CliCommand {
 function parseJsonOnly(
 	kind:
 		| "choice-model"
+		| "eval-trend"
 		| "ideas"
 		| "lint"
 		| "privacy-audit"

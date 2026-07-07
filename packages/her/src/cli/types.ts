@@ -4,6 +4,7 @@ import type {
 	ConsolidateResult,
 	DecaySweepResult,
 	DispatchResult,
+	EvalTrendReport,
 	GoldenEvalReport,
 	JudgmentFields,
 	LongTaskRecord,
@@ -55,6 +56,7 @@ export type CliCommand =
 			timeoutMin?: number;
 	  }
 	| { kind: "eval-golden"; json: boolean; now?: string; writeBaseline: boolean }
+	| { kind: "eval-trend"; json: boolean }
 	| {
 			kind: "goal-checkpoint";
 			evidence: string[];
@@ -170,6 +172,10 @@ export interface CliDecayPayload extends CliStatusPayload {
 
 export interface CliGoldenEvalPayload extends CliStatusPayload {
 	result: GoldenEvalReport;
+}
+
+export interface CliEvalTrendPayload extends CliStatusPayload {
+	report: EvalTrendReport;
 }
 
 export interface CliLintPayload extends CliStatusPayload {

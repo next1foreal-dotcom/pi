@@ -45,6 +45,8 @@ export {
 	runDispatch,
 } from "./dispatch.ts";
 export { createEmbeddingSearch } from "./embedding-search.ts";
+export type { EvalTrendPoint, EvalTrendReport, TrendDirection } from "./eval-trend.ts";
+export { computeEvalTrend, renderEvalTrendReport, runEvalTrend } from "./eval-trend.ts";
 export type {
 	GoldenEvalAlert,
 	GoldenEvalCategory,
