@@ -131,7 +131,10 @@ export async function syncMemory(paths: StorePaths, message: string): Promise<Me
 		await git(paths.root, "merge", "--ff-only", upstream);
 	}
 
-	await git(paths.root, "add", "-A");
+	// Stage all memory content but never per-machine runtime state under .her/;
+	// it must not travel across machines even when a file there is not yet
+	// gitignored (see her-memory .her/ ignore rules).
+	await git(paths.root, "add", "-A", "--", ".", ":(exclude).her");
 	if ((await git(paths.root, "diff", "--cached", "--name-only")).stdout.trim()) {
 		await git(paths.root, "commit", "-m", message);
 		ahead += 1;

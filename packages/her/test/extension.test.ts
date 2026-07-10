@@ -1059,7 +1059,13 @@ test("extension syncs memory after capture debounce", async () => {
 	});
 
 	assert.match((await git(remote, "log", "--oneline", "-1")).stdout, /memory\(sync\): capture/);
-	assert.equal((await git(store, "status", "--porcelain")).stdout.trim(), "");
+	// Sync commits all memory content; only per-machine .her/ runtime state may
+	// remain uncommitted (it must never travel across machines).
+	const dirtyOutsideHer = (await git(store, "status", "--porcelain")).stdout
+		.split(/\r?\n/)
+		.map((line) => line.trim())
+		.filter((line) => line && !line.includes(".her/"));
+	assert.deepEqual(dirtyOutsideHer, []);
 });
 
 test("extension publishes Her sync status for the powerline footer", async () => {

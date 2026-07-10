@@ -29,7 +29,8 @@ async function gitBackedStore(): Promise<{ store: string; remote: string }> {
 	await git(remote, "init", "--bare");
 	await git(store, "init");
 	await configRepo(store, "Her Sync Test", "her-sync-test@example.com");
-	await git(store, "add", "-A");
+	// Mirror real her-memory: runtime state under .her/ is never tracked.
+	await git(store, "add", "-A", "--", ".", ":(exclude).her");
 	await git(store, "commit", "-m", "memory: init");
 	await git(store, "branch", "-M", "master");
 	await git(store, "remote", "add", "origin", remote);
@@ -119,6 +120,29 @@ test("syncMemory fast-forwards remote work then pushes local growth cleanly", as
 	assert.equal(await git(store, "rev-list", "--count", "--merges", "HEAD"), "0");
 	const log = await git(store, "log", "--oneline");
 	assert.ok(log.includes("other machine capture") && log.includes("growth"));
+});
+
+test("syncMemory never stages per-machine runtime state under .her/", async () => {
+	const { store, remote } = await gitBackedStore();
+	// A memory capture (should sync) alongside un-ignored .her/ runtime state
+	// (must NOT sync, per addendum B).
+	await writeCapture(store, "episodic", "2026-07-10.md", "# local capture\n");
+	await writeCapture(store, ".her", "claude_cursor.json", '{"machine":"4080S"}\n');
+	await writeCapture(store, ".her", "last-capture-claude-code.json", '{"at":"now"}\n');
+
+	const result = await syncMemory(new StorePaths(store), "memory(sync): exclude .her");
+
+	assert.equal(result.status, "pushed");
+	// The pushed tree carries the episodic capture but nothing under .her/.
+	const tracked = await git(store, "ls-files");
+	assert.ok(tracked.includes("episodic/2026-07-10.md"));
+	assert.equal(
+		tracked.split(/\r?\n/).some((p) => p.startsWith(".her/")),
+		false,
+	);
+	// The runtime files remain on disk, just untracked.
+	assert.match(await git(store, "status", "--porcelain", "--untracked-files=all"), /\.her\/claude_cursor\.json/);
+	assert.equal(await git(store, "rev-parse", "HEAD"), await git(remote, "rev-parse", "HEAD"));
 });
 
 test("syncMemory reports clean when nothing changed on either side", async () => {
