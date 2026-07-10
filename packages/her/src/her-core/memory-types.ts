@@ -149,8 +149,9 @@ export interface ChoiceRuleRecord {
 }
 
 export interface MemorySyncResult {
-	status: "clean" | "pushed";
+	status: "clean" | "pushed" | "fast-forwarded";
 	commit?: string;
+	behind?: number;
 }
 
 export interface MemorySyncStatus {

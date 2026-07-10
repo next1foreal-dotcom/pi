@@ -68,7 +68,9 @@ export function renderSync(payload: CliSyncPayload): string {
 	const result =
 		payload.result.status === "clean"
 			? "Her memory is already synced."
-			: `Her memory pushed: ${payload.result.commit}`;
+			: payload.result.status === "fast-forwarded"
+				? `Her memory fast-forwarded ${payload.result.behind ?? 0} commit(s) from origin.`
+				: `Her memory pushed: ${payload.result.commit}`;
 	return `${result}\n\n${renderStatus(payload)}`;
 }
 

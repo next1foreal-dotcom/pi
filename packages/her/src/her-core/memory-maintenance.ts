@@ -96,15 +96,56 @@ export async function restoreArchivedSemantic(
 	return { key: safeKey, restored: true };
 }
 
-export async function syncMemory(paths: StorePaths, message: string): Promise<MemorySyncResult> {
-	await git(paths.root, "add", "-A");
-	const staged = await git(paths.root, "diff", "--cached", "--name-only");
-	if (!staged.stdout.trim()) return { status: "clean" };
+function countRevs(result: { stdout: string }): number {
+	return Number.parseInt(result.stdout.trim(), 10) || 0;
+}
 
-	await git(paths.root, "commit", "-m", message);
-	const commit = (await git(paths.root, "rev-parse", "--short", "HEAD")).stdout.trim();
-	await git(paths.root, "push");
-	return { status: "pushed", commit };
+// Dual-machine safe sync for the shared her-memory repo. Mirrors the hourly
+// tools/sync-her-memory.ps1 philosophy: fetch first, fast-forward only, fail
+// loud on divergence — never merge-commit, never rebase, never force. A push
+// rejected by a concurrent remote advance also throws, so the caller retreats
+// and retries on the next round instead of racing for the lock.
+export async function syncMemory(paths: StorePaths, message: string): Promise<MemorySyncResult> {
+	const branch = (await git(paths.root, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim();
+	if (!branch || branch === "HEAD") {
+		throw new Error(`her-memory sync refused: detached HEAD (branch resolved to "${branch}")`);
+	}
+	const upstream = `origin/${branch}`;
+
+	// Learn the remote state before touching history; never push blind.
+	await git(paths.root, "fetch", "origin", branch);
+	let ahead = countRevs(await git(paths.root, "rev-list", "--count", `${upstream}..HEAD`));
+	const behind = countRevs(await git(paths.root, "rev-list", "--count", `HEAD..${upstream}`));
+
+	// Both sides advanced: fail loud, leave history untouched.
+	if (behind > 0 && ahead > 0) {
+		throw new Error(
+			`her-memory sync refused: ${branch} diverged from ${upstream} (${ahead} ahead, ${behind} behind). ` +
+				"Resolve by hand; automation never merges diverged history or force-pushes.",
+		);
+	}
+
+	// Remote moved ahead only: fast-forward down before committing local growth
+	// on top, so a routine capture never manufactures a divergence.
+	if (behind > 0) {
+		await git(paths.root, "merge", "--ff-only", upstream);
+	}
+
+	await git(paths.root, "add", "-A");
+	if ((await git(paths.root, "diff", "--cached", "--name-only")).stdout.trim()) {
+		await git(paths.root, "commit", "-m", message);
+		ahead += 1;
+	}
+
+	// Publish any unpushed commits. A rejected push (remote advanced mid-window)
+	// throws, so we retreat and retry next round rather than force.
+	if (ahead > 0) {
+		await git(paths.root, "push", "origin", branch);
+		const commit = (await git(paths.root, "rev-parse", "--short", "HEAD")).stdout.trim();
+		return { status: "pushed", commit };
+	}
+	if (behind > 0) return { status: "fast-forwarded", behind };
+	return { status: "clean" };
 }
 
 export async function syncStatus(paths: StorePaths): Promise<MemorySyncStatus> {
