@@ -51,6 +51,29 @@ export interface CostSummaryOptions {
 	month?: string;
 }
 
+export interface CostDayBucket extends CostBucket {
+	date: string;
+}
+
+export interface CostProviderBucket extends CostBucket {
+	provider: string;
+}
+
+export interface CostBreakdown {
+	byDay: CostDayBucket[];
+	byProvider: CostProviderBucket[];
+	entries: number;
+	month: string;
+	monthUsd: number;
+	today: string;
+	todayUsd: number;
+}
+
+export interface CostBreakdownOptions {
+	month?: string;
+	now?: string;
+}
+
 export async function summarizeAuditCosts(root: string, opts: CostSummaryOptions = {}): Promise<CostSummary> {
 	const month = opts.month ?? new Date().toISOString().slice(0, 7);
 	const entries = await readAuditEntries(root, month);
@@ -67,6 +90,48 @@ export async function summarizeAuditCosts(root: string, opts: CostSummaryOptions
 		byPurpose[purpose] = bucket;
 	}
 	return { month, entries: entries.length, totalUsd: roundUsd(totalUsd), byPurpose };
+}
+
+/**
+ * Reads the same audit ledger as summarizeAuditCosts but breaks costs down by calendar day and by
+ * provider, plus a same-day total, so `her cost` never needs a second recomputation of the ledger.
+ */
+export async function summarizeCostBreakdown(root: string, opts: CostBreakdownOptions = {}): Promise<CostBreakdown> {
+	const now = opts.now ?? new Date().toISOString();
+	const month = opts.month ?? now.slice(0, 7);
+	const today = now.slice(0, 10);
+	const entries = await readAuditEntries(root, month);
+	const byDayMap: Record<string, CostBucket> = {};
+	const byProviderMap: Record<string, CostBucket> = {};
+	let monthUsd = 0;
+	for (const entry of entries) {
+		if (!entry.cost || !Number.isFinite(entry.cost.usd)) continue;
+		const usd = entry.cost.usd;
+		monthUsd += usd;
+		const date = entry.ts.slice(0, 10);
+		const dayBucket = byDayMap[date] ?? { count: 0, usd: 0 };
+		dayBucket.count += 1;
+		dayBucket.usd = roundUsd(dayBucket.usd + usd);
+		byDayMap[date] = dayBucket;
+		const provider = entry.cost.provider ?? "unknown";
+		const providerBucket = byProviderMap[provider] ?? { count: 0, usd: 0 };
+		providerBucket.count += 1;
+		providerBucket.usd = roundUsd(providerBucket.usd + usd);
+		byProviderMap[provider] = providerBucket;
+	}
+	return {
+		byDay: Object.entries(byDayMap)
+			.sort(([left], [right]) => left.localeCompare(right))
+			.map(([date, bucket]) => ({ date, ...bucket })),
+		byProvider: Object.entries(byProviderMap)
+			.sort(([left], [right]) => left.localeCompare(right))
+			.map(([provider, bucket]) => ({ provider, ...bucket })),
+		entries: entries.length,
+		month,
+		monthUsd: roundUsd(monthUsd),
+		today,
+		todayUsd: byDayMap[today]?.usd ?? 0,
+	};
 }
 
 export async function writeCostReport(root: string, opts: CostReportOptions = {}): Promise<CostReport> {

@@ -2,14 +2,18 @@ export type { HerConfig } from "./config.ts";
 export { DEFAULT_CONFIG, loadConfig, renderConfig } from "./config.ts";
 export type {
 	AuditCost,
+	CostBreakdown,
+	CostBreakdownOptions,
 	CostBucket,
+	CostDayBucket,
 	CostLedgerAuditEntry,
+	CostProviderBucket,
 	CostReport,
 	CostReportOptions,
 	CostSummary,
 	CostSummaryOptions,
 } from "./cost-ledger.ts";
-export { enforceDailyCostCap, summarizeAuditCosts, writeCostReport } from "./cost-ledger.ts";
+export { enforceDailyCostCap, summarizeAuditCosts, summarizeCostBreakdown, writeCostReport } from "./cost-ledger.ts";
 export type {
 	DelegatedOperation,
 	DelegationDecision,

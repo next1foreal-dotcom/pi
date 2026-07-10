@@ -29,6 +29,7 @@ export function parseArgs(argv: string[]): CliCommand {
 	if (command === "capture") return parseCapture(rest);
 	if (command === "choice-model") return parseJsonOnly("choice-model", rest);
 	if (command === "consolidate") return parseConsolidate(rest);
+	if (command === "cost") return parseCost(rest);
 	if (command === "decay") return parseDecay(rest);
 	if (command === "dispatch") return parseDispatch(rest);
 	if (command === "eval-golden") return parseEvalGolden(rest);
@@ -213,6 +214,26 @@ function parseConsolidate(argv: string[]): CliCommand {
 		throw new UsageError(`unknown consolidate option: ${arg}`);
 	}
 	return { kind: "consolidate", json, limit };
+}
+
+function parseCost(argv: string[]): CliCommand {
+	let json = false;
+	let now: string | undefined;
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--now") {
+			const value = argv[++i];
+			if (!value) throw new UsageError(`${arg} requires a value`);
+			now = value;
+			continue;
+		}
+		throw new UsageError(`unknown cost option: ${arg}`);
+	}
+	return { kind: "cost", json, now };
 }
 
 function parseSynthesize(argv: string[]): CliCommand {

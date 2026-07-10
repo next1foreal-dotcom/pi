@@ -2,6 +2,7 @@ import type {
 	BackfillRunResult,
 	ChoiceModelUpdateResult,
 	ConsolidateResult,
+	CostBreakdown,
 	DecaySweepResult,
 	DispatchResult,
 	EvalTrendReport,
@@ -44,6 +45,7 @@ export type CliCommand =
 	| { kind: "capture"; json: boolean; text: string; project?: string; sessionId?: string; timestamp?: string }
 	| { kind: "choice-model"; json: boolean }
 	| { kind: "consolidate"; json: boolean; limit?: number }
+	| { kind: "cost"; json: boolean; now?: string }
 	| { kind: "decay"; json: boolean; olderThanDays?: number; now?: string }
 	| {
 			budgetUsd?: number;
@@ -168,6 +170,10 @@ export interface CliSyncPayload extends CliStatusPayload {
 
 export interface CliDecayPayload extends CliStatusPayload {
 	result: DecaySweepResult;
+}
+
+export interface CliCostPayload extends CliStatusPayload {
+	result: CostBreakdown;
 }
 
 export interface CliGoldenEvalPayload extends CliStatusPayload {

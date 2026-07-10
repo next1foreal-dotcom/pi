@@ -14,6 +14,7 @@ import {
 	renderCapture,
 	renderChoiceModel,
 	renderConsolidate,
+	renderCost,
 	renderDecay,
 	renderDispatch,
 	renderEvalTrend,
@@ -97,6 +98,7 @@ import {
 	StorePaths,
 	sendTelegramMessage,
 	startLongTask,
+	summarizeCostBreakdown,
 	type TelegramConfirmationResult,
 	trimTelegramText,
 	type UrlMarkdownReader,
@@ -272,6 +274,13 @@ export async function runHerCli(
 		const result = await memory.consolidate(command.limit);
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderConsolidate);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "cost") {
+		const result = await summarizeCostBreakdown(memoryDir, { now: command.now });
+		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
+		writePayload(io.stdout, payload, command.json, renderCost);
 		return payload.status.status === "unknown" ? 1 : 0;
 	}
 

@@ -6,6 +6,7 @@ import type {
 	CliCapturePayload,
 	CliChoiceModelPayload,
 	CliConsolidatePayload,
+	CliCostPayload,
 	CliDecayPayload,
 	CliDispatchPayload,
 	CliEvalTrendPayload,
@@ -120,6 +121,30 @@ export function renderDecay(payload: CliDecayPayload): string {
 		`Her memory decay sweep archived ${payload.result.archived} note(s).`,
 		`archived keys: ${archived}`,
 		`kept notes: ${payload.result.kept}`,
+		"",
+		renderStatus(payload),
+	].join("\n");
+}
+
+export function renderCost(payload: CliCostPayload): string {
+	const { result } = payload;
+	const byDay = result.byDay.length
+		? result.byDay.map((bucket) => `  ${bucket.date}  $${bucket.usd.toFixed(4)}  (${bucket.count})`).join("\n")
+		: "  (none)";
+	const byProvider = result.byProvider.length
+		? result.byProvider
+				.map((bucket) => `  ${bucket.provider}  $${bucket.usd.toFixed(4)}  (${bucket.count})`)
+				.join("\n")
+		: "  (none)";
+	return [
+		`Her cost ${result.month}: $${result.monthUsd.toFixed(4)} across ${result.entries} entr${result.entries === 1 ? "y" : "ies"}.`,
+		`today (${result.today}): $${result.todayUsd.toFixed(4)}`,
+		"",
+		"By day:",
+		byDay,
+		"",
+		"By provider:",
+		byProvider,
 		"",
 		renderStatus(payload),
 	].join("\n");
@@ -515,6 +540,7 @@ export function usage(): string {
   her capture --text <text> [--project <name>] [--session <id>] [--timestamp <ISO>] [--json]
   her choice-model [--json]
   her consolidate [--limit <n>] [--json]
+  her cost [--now <ISO>] [--json]
   her decay [--older-than-days <days>] [--now <YYYY-MM-DD>] [--json]
   her dispatch <handoff.md> --executor pi:<model>|codex [--budget-usd <usd>] [--cwd <dir>] [--label <text>] [--timeout-min <n>] [--json]
   her eval-golden [--write-baseline] [--now <ISO>] [--json]
