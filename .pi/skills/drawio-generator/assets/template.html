@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<!--
+  drawio-generator 预览包装模板。
+
+  下方 data-mxgraph 属性里那个占位符（本文件唯一一处、放在 xml 字段值的位置）的转义规则
+  （生成 <图名>.html 时必须严格按顺序执行，两步都不能省。注意：替换时只能定位并替换 data-mxgraph
+  属性里的那一处，不要对本注释做全文字符串替换——本注释里不会再重复写出占位符原文，
+  避免和实际替换目标产生歧义）：
+
+  第一步 —— JSON 字符串转义（把原始 mxfile XML 变成一个合法的 JSON 字符串内容）：
+    先转 \  ->  \\ （反斜杠必须最先转，否则会重复转义后面新产生的反斜杠）
+    再转 "  ->  \"
+    再转换行符 -> \n（以及其他必须转义的控制字符）
+    这一步等价于 JSON.stringify(原始XML) 之后去掉最外层的一对引号。
+
+  第二步 —— HTML 属性值转义（把第一步的结果嵌入 data-mxgraph 这个双引号包裹的属性）：
+    先转 &  ->  &amp; （必须最先转，否则会把第二步自己产生的实体再转一遍）
+    再转 "  ->  &quot;
+    再转 <  ->  &lt;
+    把第二步的结果整体替换掉下方 data-mxgraph 属性里 xml 字段值的那个占位符。
+
+  为什么必须两步都做：mxfile XML 内部本身带双引号属性（如 id="0"），如果只做 HTML 转义
+  不做 JSON 转义，浏览器解析 data-mxgraph 属性时会先把 &quot; 还原成 "，得到的 JSON 文本
+  里 "xml" 字段内部出现未转义的裸双引号，JSON.parse 会在第一个裸引号处提前截断字符串，
+  解析失败或拿到被截断的 xml。两步都做之后，解码顺序是：HTML 实体解码（&quot;->" 等，
+  浏览器/DOM parser 自动做）还原出合法 JSON 文本 -> JSON.parse 再还原出 \" -> "、\n -> 换行，
+  得到与原始 XML 完全一致的字符串。
+
+  模板里 {&quot;nav&quot;:...} 这部分本身就是第二步产物的"壳"，已经写死在下面，
+  生成脚本只需要把第一步+第二步转义后的 XML 塞进 data-mxgraph 属性里 xml 字段值的占位符位置，
+  不要改动壳的其余部分，也不要用不加限定的全文字符串替换（否则可能连本注释一起误替换）。
+-->
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <title>drawio preview</title>
+  <style>
+    html, body {
+      margin: 0;
+      background: #ffffff;
+    }
+    body {
+      padding: 16px;
+    }
+  </style>
+</head>
+<body>
+  <!-- .mxgraph 必须直接挂在 body 下，不要加任何 flex/grid 居中包裹层：
+       GraphViewer 渲染前会测量容器宽度，空内容 flex item 的计算宽度为 0，
+       viewer 会静默放弃渲染（无报错、无 SVG）。页面留白只用 body padding 实现。 -->
+  <div class="mxgraph" style="max-width:100%;border:none;" data-mxgraph="{&quot;nav&quot;:true,&quot;resize&quot;:true,&quot;toolbar&quot;:&quot;zoom&quot;,&quot;xml&quot;:&quot;__DRAWIO_XML__&quot;}"></div>
+  <script src="./viewer.min.js"></script>
+</body>
+</html>
