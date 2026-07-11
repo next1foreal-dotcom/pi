@@ -39,6 +39,7 @@ import type {
 	CliTelegramConfirmationPayload,
 	CliTelegramOutboxPayload,
 	CliTelegramPollPayload,
+	CliTriggerStatsPayload,
 	CliVoiceTaskCompleteNotifyPayload,
 	CliVoiceTaskEnqueuePayload,
 } from "./types.ts";
@@ -175,6 +176,20 @@ export function renderEvalTrend(payload: CliEvalTrendPayload): string {
 	return [
 		`Her eval trend ${payload.report.status}: ${payload.report.direction}, latest ${latest}.`,
 		renderEvalTrendReport(payload.report).trimEnd(),
+		"",
+		renderStatus(payload),
+	].join("\n");
+}
+
+export function renderTriggerStats(payload: CliTriggerStatsPayload): string {
+	const sessions = Object.keys(payload.result.bySession).length;
+	return [
+		`Her trigger stats: ${payload.result.total} trigger(s).`,
+		`surfaced: ${payload.result.byOutcome.surfaced}`,
+		`cooldown: ${payload.result.byOutcome.cooldown}`,
+		`empty: ${payload.result.byOutcome.empty}`,
+		`engaged rate: ${(payload.result.engagedRate * 100).toFixed(1)}%`,
+		`sessions: ${sessions}`,
 		"",
 		renderStatus(payload),
 	].join("\n");
@@ -547,6 +562,7 @@ export function usage(): string {
   her dispatch <handoff.md> --executor pi:<model>|codex [--budget-usd <usd>] [--cwd <dir>] [--label <text>] [--timeout-min <n>] [--json]
   her eval-golden [--write-baseline] [--now <ISO>] [--json]
   her eval-trend [--json]
+  her trigger-stats [--json]
   her goal-start --objective <text> [--source <text>] [--owner <text>] [--next <text>] [--json]
   her goal-checkpoint --id <id> --summary <text> [--status active|blocked] [--next <text>] [--evidence <ref>] [--json]
   her goal-complete --id <id> --outcome <text> [--remember <text>] [--json]

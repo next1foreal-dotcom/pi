@@ -109,6 +109,7 @@ import {
 	writeText,
 } from "./store.ts";
 import { storeLock } from "./store-lock.ts";
+import { appendTriggerEvent } from "./trigger-log.ts";
 
 const DEFAULT_CONSOLIDATE_EPISODE_CHARS = 8000;
 const DEFAULT_CONSOLIDATE_BATCH_CHARS = 240000;
@@ -404,17 +405,27 @@ export class Memory {
 				};
 			}>(this.paths.stateFile, {});
 			const sessionId = opts.sessionId ?? "global";
+			const query = opts.query?.trim();
 			const cooldownMs = (opts.cooldownMinutes ?? 30) * 60000;
 			const lastAt = state.mirror?.lastAtBySession?.[sessionId];
-			if (lastAt && cooldownMs > 0 && Date.now() - Date.parse(lastAt) < cooldownMs) return undefined;
+			if (lastAt && cooldownMs > 0 && Date.now() - Date.parse(lastAt) < cooldownMs) {
+				await appendTriggerEvent(this.paths, { sessionId, outcome: "cooldown", hasQuery: Boolean(query) }).catch(
+					() => {},
+				);
+				return undefined;
+			}
 
 			const surfaced = new Set(state.mirror?.surfacedBySession?.[sessionId] ?? []);
 			const corpus = await buildCorpus(this.paths);
-			const query = opts.query?.trim();
 			const ranked = query ? await rrfSearch(query, corpus, { k: 20, semanticSearch: this.semanticSearch }) : [];
 			const candidates = ranked.length > 0 ? ranked : corpus.map((doc) => ({ ...doc, score: 0 }));
 			const hit = candidates.find((note) => !surfaced.has(note.id));
-			if (!hit) return undefined;
+			if (!hit) {
+				await appendTriggerEvent(this.paths, { sessionId, outcome: "empty", hasQuery: Boolean(query) }).catch(
+					() => {},
+				);
+				return undefined;
+			}
 
 			surfaced.add(hit.id);
 			await writeJson(this.paths.stateFile, {
@@ -432,6 +443,12 @@ export class Memory {
 				},
 			});
 			await recordAccess(this.paths, [hit.id]);
+			await appendTriggerEvent(this.paths, {
+				sessionId,
+				outcome: "surfaced",
+				hasQuery: Boolean(query),
+				...(isProtectedSurfaceId(hit.id) ? {} : { noteId: hit.id }),
+			}).catch(() => {});
 			return hit;
 		});
 	}
@@ -1107,6 +1124,10 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 		}
 		return { moments: moments.trim(), recognitions: recognitions.sort((a, b) => a.ref.localeCompare(b.ref)) };
 	}
+}
+
+function isProtectedSurfaceId(noteId: string): boolean {
+	return /^samantha\/(?:wants|journal)(?:\/|$)/.test(noteId);
 }
 
 function isMemoryOptions(value: ModelLike | MemoryOptions | undefined): value is MemoryOptions {

@@ -23,6 +23,7 @@ import type {
 	TelegramConfirmationResult,
 	TelegramOutboxResult,
 	TelegramPollResult,
+	TriggerStats,
 	WorldNoteData,
 } from "../her-core/index.ts";
 
@@ -59,6 +60,7 @@ export type CliCommand =
 	  }
 	| { kind: "eval-golden"; json: boolean; now?: string; writeBaseline: boolean }
 	| { kind: "eval-trend"; json: boolean }
+	| { kind: "trigger-stats"; json: boolean }
 	| {
 			kind: "goal-checkpoint";
 			evidence: string[];
@@ -182,6 +184,9 @@ export interface CliGoldenEvalPayload extends CliStatusPayload {
 
 export interface CliEvalTrendPayload extends CliStatusPayload {
 	report: EvalTrendReport;
+}
+export interface CliTriggerStatsPayload extends CliStatusPayload {
+	result: TriggerStats;
 }
 
 export interface CliLintPayload extends CliStatusPayload {

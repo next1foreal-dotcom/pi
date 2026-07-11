@@ -49,6 +49,7 @@ import {
 	renderTelegramOutbox,
 	renderTelegramPoll,
 	renderTopicMaps,
+	renderTriggerStats,
 	renderVoiceTaskCompleteNotify,
 	renderVoiceTaskEnqueue,
 	usage,
@@ -61,6 +62,7 @@ import {
 	type CliIo,
 	type CliStatusPayload,
 	type CliSurfaceUpdateResult,
+	type CliTriggerStatsPayload,
 	type CliVoiceTaskCompleteNotifyPayload,
 	type CliVoiceTaskEnqueuePayload,
 	defaultTelegramResponderTools,
@@ -89,6 +91,7 @@ import {
 	pollTelegramInbox,
 	pushTelegramOutbox,
 	readPathForWorldNote,
+	readTriggerStats,
 	readUrlForWorldNote,
 	recordTelegramConfirmationFromText,
 	runDispatch,
@@ -320,6 +323,13 @@ export async function runHerCli(
 		const report = await runEvalTrend(memoryDir);
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), report };
 		writePayload(io.stdout, payload, command.json, renderEvalTrend);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "trigger-stats") {
+		const result = await readTriggerStats(new StorePaths(memoryDir));
+		const payload: CliTriggerStatsPayload = { ...(await buildStatusPayload(memoryDir, memory)), result };
+		writePayload(io.stdout, payload, command.json, renderTriggerStats);
 		return payload.status.status === "unknown" ? 1 : 0;
 	}
 	if (command.kind === "lint") {
