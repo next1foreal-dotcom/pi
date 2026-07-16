@@ -31,6 +31,6 @@ Roughdraft 已装在本机（NEXT1），服务端口 **7300**（默认 7373 被 
 
 ## 注意
 
-- 升级 roughdraft 用 npm 不用 pnpm（包内有 file: 依赖 pnpm 装不了）；升级后若崩报缺 yaml，进它的全局安装目录 `npm i yaml --no-save`。
+- 升级 roughdraft 用 npm 不用 pnpm（包内有 file: 依赖 pnpm 装不了）；升级后若崩报缺 yaml，进它的全局安装目录 `npm i yaml --no-save`；升级后还要重打本地 CSS 补丁（`powershell -File ~\.claude\skills\roughdraft-review\scripts\patch-embed-fill.ps1`，然后重启服务）——补丁让文档卡片在嵌入面板时撑满视口。
 - 服务是全局单例（`~/.roughdraft/server.json`），别 stop——其他会话可能也在用。
 - 批注在文件里 = 文件被改了。改前该有基线的（git）先确认有基线。
