@@ -10,7 +10,6 @@ import { Type } from "typebox";
 import { CuaCliDriver } from "./hands/driver.ts";
 import { resolveHandsConfig } from "./hands/policy.ts";
 import { registerHandsTools } from "./hands/tools.ts";
-import { registerPreviewTools } from "./preview/tools.ts";
 import {
 	applyMemoryRetraction,
 	type ChoiceModelDomain,
@@ -53,6 +52,7 @@ import {
 } from "./her-core/index.ts";
 import { appendAuditLog } from "./lib/audit.ts";
 import { evaluate, policyEnvelope } from "./lib/cedar.ts";
+import { registerPreviewTools } from "./preview/tools.ts";
 import { createSummaryModel } from "./summary-model.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));

@@ -127,7 +127,9 @@ test("HER_UI_BASE_URL env override sends the request to the overridden base", as
 });
 
 test("a 401 response reports the LAN/token limitation for either tool, no throw", async () => {
-	const fetchImpl = fakeFetch(() => new Response(JSON.stringify({ ok: false, error: "unauthorized" }), { status: 401 }));
+	const fetchImpl = fakeFetch(
+		() => new Response(JSON.stringify({ ok: false, error: "unauthorized" }), { status: 401 }),
+	);
 	const tools = previewHarness({ fetchImpl });
 
 	const previewText = await run(tools.get("preview_open_review"), { url: "http://localhost:7300" });
