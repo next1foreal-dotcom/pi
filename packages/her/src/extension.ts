@@ -52,6 +52,7 @@ import {
 } from "./her-core/index.ts";
 import { appendAuditLog } from "./lib/audit.ts";
 import { evaluate, policyEnvelope } from "./lib/cedar.ts";
+import { registerPreviewTools } from "./preview/tools.ts";
 import { createSummaryModel } from "./summary-model.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -123,6 +124,8 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	her_memory_status: { destructive: false },
 	her_hands_snapshot: { destructive: false },
 	her_hands_act: { destructive: false },
+	preview_open_review: { destructive: false },
+	browser_navigate: { destructive: false },
 };
 const claimLedgerSchema = Type.Array(
 	Type.Object({
@@ -1619,4 +1622,5 @@ export default function her(pi: ExtensionAPI): void {
 			},
 		},
 	});
+	registerPreviewTools(pi);
 }
