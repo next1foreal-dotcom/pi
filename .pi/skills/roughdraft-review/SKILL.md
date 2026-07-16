@@ -12,6 +12,10 @@ Roughdraft 已装在本机（NEXT1），服务端口 **7300**（默认 7373 被 
 1. **确保服务在跑**：`roughdraft status --json`；没跑则 `roughdraft start --port 7300`。
 2. **打开文档**（绝对路径）：
 
+   首选调用 `preview_open_review` 工具，`url` 传 `http://localhost:7300/?path=<绝对路径正斜杠>`——直接开进 Fei 的 preview 面板"审阅"视图，无需弹浏览器。
+
+   工具不可用或 UI 没开时才 fallback：
+
    ```
    roughdraft open "D:\path\to\doc.md" --no-watch
    ```
