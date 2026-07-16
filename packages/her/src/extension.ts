@@ -10,6 +10,7 @@ import { Type } from "typebox";
 import { CuaCliDriver } from "./hands/driver.ts";
 import { resolveHandsConfig } from "./hands/policy.ts";
 import { registerHandsTools } from "./hands/tools.ts";
+import { registerPreviewTools } from "./preview/tools.ts";
 import {
 	applyMemoryRetraction,
 	type ChoiceModelDomain,
@@ -123,6 +124,8 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	her_memory_status: { destructive: false },
 	her_hands_snapshot: { destructive: false },
 	her_hands_act: { destructive: false },
+	preview_open_review: { destructive: false },
+	browser_navigate: { destructive: false },
 };
 const claimLedgerSchema = Type.Array(
 	Type.Object({
@@ -1619,4 +1622,5 @@ export default function her(pi: ExtensionAPI): void {
 			},
 		},
 	});
+	registerPreviewTools(pi);
 }
