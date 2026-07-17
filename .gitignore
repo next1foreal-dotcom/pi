@@ -12,6 +12,9 @@ packages/*/dist-firefox/
 # Environment
 .env
 
+# Real MCP connector manifest (may reference local paths/commands); commit only the example
+.her/connectors.json
+
 # Editor files
 .vscode/
 .zed/

@@ -6,7 +6,9 @@
     { "id": "her_archive", "name": "打包解压", "description": "zip/7z/rar,含密码", "icon": "archive" },
     { "id": "her_imgmin", "name": "图片瘦身", "description": "无损为主的图片压缩", "icon": "image-down" },
     { "id": "her_pdf", "name": "PDF 工具箱", "description": "合并/抽页/加解密/瘦身", "icon": "file-stack" },
-    { "id": "her_show_widget", "name": "画草图", "description": "对话内递可视化草图", "icon": "brush" }
+    { "id": "her_show_widget", "name": "画草图", "description": "对话内递可视化草图", "icon": "brush" },
+    { "id": "her_mcp_list", "name": "外接服务清点", "description": "查看已配置外接服务与可用工具", "icon": "plug" },
+    { "id": "her_mcp_call", "name": "外接服务调用", "description": "调用外接服务的只读工具", "icon": "cable" }
   ],
   "core": [
     { "id": "her_recall", "name": "记忆召回", "description": "从她的记忆里想起来", "icon": "brain" },

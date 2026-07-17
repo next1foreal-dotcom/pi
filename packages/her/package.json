@@ -7,6 +7,10 @@
 		"clean": "shx rm -rf dist"
 	},
 	"dependencies": {
+		"@modelcontextprotocol/sdk": "1.29.0",
 		"undici": "8.5.0"
+	},
+	"devDependencies": {
+		"@modelcontextprotocol/server-filesystem": "2026.7.10"
 	}
 }

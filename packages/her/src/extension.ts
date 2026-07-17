@@ -52,6 +52,7 @@ import {
 } from "./her-core/index.ts";
 import { appendAuditLog } from "./lib/audit.ts";
 import { evaluate, policyEnvelope } from "./lib/cedar.ts";
+import { registerMcpTools } from "./mcp/tools.ts";
 import { registerPreviewTools } from "./preview/tools.ts";
 import { registerShowWidgetTools } from "./show-widget/tools.ts";
 import { createSummaryModel } from "./summary-model.ts";
@@ -135,6 +136,8 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	her_archive: { destructive: false },
 	her_imgmin: { destructive: false },
 	her_pdf: { destructive: false },
+	her_mcp_list: { destructive: false },
+	her_mcp_call: { destructive: false },
 };
 const claimLedgerSchema = Type.Array(
 	Type.Object({
@@ -1634,4 +1637,5 @@ export default function her(pi: ExtensionAPI): void {
 	registerPreviewTools(pi);
 	registerShowWidgetTools(pi);
 	registerFileToolkit(pi);
+	registerMcpTools(pi);
 }

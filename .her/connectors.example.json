@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "connectors": [
+    {
+      "slug": "filesystem",
+      "label": "本地文件目录",
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "C:/path/to/read-only-directory"],
+      "env": {
+        "EXAMPLE_TOKEN": "$HER_CONNECTOR_FILESYSTEM_TOKEN"
+      }
+    }
+  ]
+}
