@@ -55,6 +55,7 @@ import { evaluate, policyEnvelope } from "./lib/cedar.ts";
 import { registerPreviewTools } from "./preview/tools.ts";
 import { registerShowWidgetTools } from "./show-widget/tools.ts";
 import { createSummaryModel } from "./summary-model.ts";
+import { registerFileToolkit } from "./tools/index.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const packageRoot = resolve(here, "..");
@@ -128,6 +129,11 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	preview_open_review: { destructive: false },
 	browser_navigate: { destructive: false },
 	her_show_widget: { destructive: false },
+	her_convert: { destructive: false },
+	her_ocr: { destructive: false },
+	her_archive: { destructive: false },
+	her_imgmin: { destructive: false },
+	her_pdf: { destructive: false },
 };
 const claimLedgerSchema = Type.Array(
 	Type.Object({
@@ -1626,4 +1632,5 @@ export default function her(pi: ExtensionAPI): void {
 	});
 	registerPreviewTools(pi);
 	registerShowWidgetTools(pi);
+	registerFileToolkit(pi);
 }

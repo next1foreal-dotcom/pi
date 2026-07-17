@@ -1,3 +1,5 @@
+<!-- 已器官化为 her_convert 工具（G-53）。本文仅作行为规格存档，不再作为 skill 加载。 -->
+
 ---
 name: convert
 description: 万能文件格式转换路由:文档(md/html/epub/docx/rst/latex)互转、Office 转 PDF、音视频转码、图片格式转换。触发:"把 X 转成 Y"、"转个格式"、"导出成 pdf/mp4/png"等任何跨格式转换需求。

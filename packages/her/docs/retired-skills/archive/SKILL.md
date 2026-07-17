@@ -1,3 +1,5 @@
+<!-- 已器官化为 her_archive 工具（G-53）。本文仅作行为规格存档，不再作为 skill 加载。 -->
+
 ---
 name: archive
 description: 文件打包压缩与解压(zip/7z/rar/tar.gz)。触发:"打包"、"压缩成 zip"、"解压"、拿到 zip/7z/rar/tar.gz 文件需要处理。
