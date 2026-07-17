@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "tools": [
+    { "id": "her_convert", "name": "格式转换", "description": "文档/Office/音视频/图片互转", "icon": "repeat" },
+    { "id": "her_ocr", "name": "取字", "description": "图片与扫描件文字提取", "icon": "scan-text" },
+    { "id": "her_archive", "name": "打包解压", "description": "zip/7z/rar,含密码", "icon": "archive" },
+    { "id": "her_imgmin", "name": "图片瘦身", "description": "无损为主的图片压缩", "icon": "image-down" },
+    { "id": "her_pdf", "name": "PDF 工具箱", "description": "合并/抽页/加解密/瘦身", "icon": "file-stack" },
+    { "id": "her_show_widget", "name": "画草图", "description": "对话内递可视化草图", "icon": "brush" }
+  ],
+  "core": [
+    { "id": "her_recall", "name": "记忆召回", "description": "从她的记忆里想起来", "icon": "brain" },
+    { "id": "her_memory_family", "name": "记忆读写", "description": "capture/consolidate/approve 一族", "icon": "database" },
+    { "id": "her_task_family", "name": "任务与目标", "description": "task/goal/proposal 一族", "icon": "list-checks" },
+    { "id": "preview_tools", "name": "preview 面板", "description": "真浏览器共驾与审阅", "icon": "app-window" },
+    { "id": "her_hands", "name": "桌面之手", "description": "hands 桌面控制", "icon": "hand" }
+  ]
+}
