@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, rm } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { StorePaths } from "./paths.ts";
@@ -343,7 +343,11 @@ function relativeGoalPath(id: string): string {
 
 function makeLongTaskId(now: string, objective: string): string {
 	const stamp = now.replace(/\D/g, "").slice(0, 14) || "task";
-	const hash = createHash("sha256").update(`${now}\n${objective}`).digest("hex").slice(0, 8);
+	// The random nonce keeps the id unique even when two concurrent calls share the same objective AND
+	// the same timestamp -- e.g. two dispatches landing in one low-resolution Windows timer tick
+	// (Date.now() ~15.6ms). Without it the hash is a pure function of (now, objective) and collides,
+	// which breaks dispatch.ts (it derives the git worktree path and `dispatch/<id>` branch from this).
+	const hash = createHash("sha256").update(`${now}\n${objective}\n${randomUUID()}`).digest("hex").slice(0, 8);
 	return safeLongTaskId(`goal-${stamp}-${hash}`);
 }
 
