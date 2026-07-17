@@ -62,7 +62,8 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 		description:
 			"Publish an HTML file you have already written (give its absolute local path) to Fei's preview panel " +
 			"'artifacts' view, where it renders sandboxed via srcdoc. Re-publishing the same source path updates that " +
-			"artifact in place instead of creating a duplicate.",
+			"artifact in place instead of creating a duplicate. Write the path with FORWARD slashes " +
+			"(C:/Users/... not C:\\Users\\...) — backslashes risk invalid JSON escapes in the tool call.",
 		parameters: Type.Object({ path: Type.String() }),
 		async execute(_toolCallId, params, signal) {
 			const base = uiBase();
