@@ -6,7 +6,10 @@ import test from "node:test";
 const herRoot = join(process.cwd(), "packages", "her");
 const projectAgentsRoot = join(process.cwd(), ".pi", "agents");
 const projectPromptsRoot = join(process.cwd(), ".pi", "prompts");
-const subagentPin = "git:github.com/nicobailon/pi-subagents@efa7120047eaf76a32620eed0ec7d038b6cfa44e";
+// 7/16 package convergence: the old pi-subagents git package is no longer pinned on
+// its own — it now ships transitively through this single local preset package
+// (see the preset's package.json dependencies, which still lists pi-subagents).
+const convergedPresetPin = "D:/@Her/fei-pi-preset";
 const quarantinedReadTools = ["fetch_content", "find", "get_search_content", "grep", "ls", "read", "web_search"].sort();
 
 const parseSimpleFrontmatter = (text: string): { frontmatter: Record<string, string>; body: string } => {
@@ -20,6 +23,10 @@ const parseSimpleFrontmatter = (text: string): { frontmatter: Record<string, str
 	}
 	return { frontmatter, body: normalized.slice(endIndex + 4).trim() };
 };
+
+// project agents now carry an extra per-agent `model:` routing pin on top of the
+// shared packages/her/pi-package/agents template; strip it before comparing the two.
+const stripModelPin = (text: string): string => text.replace(/^model:.*\r?\n/m, "");
 
 test("her-intake skill encodes the universal inbox contract", async () => {
 	const skill = await readFile(join(herRoot, "pi-package", "skills", "her-intake", "SKILL.md"), "utf8");
@@ -104,7 +111,8 @@ test("her-intake encodes quarantine rules for untrusted source text", async () =
 test("deep-reader subagent is quarantined from Her memory writes", async () => {
 	const packageText = await readFile(join(herRoot, "pi-package", "agents", "deep-reader.md"), "utf8");
 	const projectText = await readFile(join(projectAgentsRoot, "deep-reader.md"), "utf8");
-	assert.equal(projectText, packageText);
+	assert.equal(stripModelPin(projectText), packageText);
+	assert.match(projectText, /^model: \S+$/m);
 
 	const { frontmatter, body } = parseSimpleFrontmatter(projectText);
 	const tools = (frontmatter.tools ?? "")
@@ -135,7 +143,8 @@ test("deep-reader subagent is quarantined from Her memory writes", async () => {
 test("claim-verifier subagent verifies claims without Her memory writes", async () => {
 	const packageText = await readFile(join(herRoot, "pi-package", "agents", "claim-verifier.md"), "utf8");
 	const projectText = await readFile(join(projectAgentsRoot, "claim-verifier.md"), "utf8");
-	assert.equal(projectText, packageText);
+	assert.equal(stripModelPin(projectText), packageText);
+	assert.match(projectText, /^model: \S+$/m);
 
 	const { frontmatter, body } = parseSimpleFrontmatter(projectText);
 	const tools = (frontmatter.tools ?? "")
@@ -178,7 +187,10 @@ test("Pi project includes curl.md for public URL to markdown intake", async () =
 	const settings = JSON.parse(await readFile(join(process.cwd(), ".pi", "settings.json"), "utf8")) as {
 		packages?: string[];
 	};
-	assert.ok(settings.packages?.includes("npm:@curl.md/pi@0.1.2"), "curl.md Pi extension must stay pinned");
+	assert.ok(
+		settings.packages?.includes(convergedPresetPin),
+		"curl.md Pi extension now ships via the converged fei-pi-preset package",
+	);
 });
 
 test("Pi project pins defuddle for local article and X URL intake", async () => {
@@ -265,7 +277,8 @@ test("Her subagents are project-discoverable and inherit memory context", async 
 	for (const file of packageAgents) {
 		const packageText = await readFile(join(packageAgentsRoot, file), "utf8");
 		const projectText = await readFile(join(projectAgentsRoot, file), "utf8");
-		assert.equal(projectText, packageText);
+		assert.equal(stripModelPin(projectText), packageText);
+		assert.match(projectText, /^model: \S+$/m);
 		assert.match(packageText, /^systemPromptMode: append$/m);
 		assert.match(packageText, /^inheritProjectContext: true$/m);
 		assert.match(packageText, /^defaultContext: fork$/m);
@@ -281,12 +294,16 @@ test("Her Seam-2 subagents carry recall and durable writeback instructions", asy
 	const settings = JSON.parse(await readFile(join(process.cwd(), ".pi", "settings.json"), "utf8")) as {
 		packages?: string[];
 	};
-	assert.ok(settings.packages?.includes(subagentPin), "pi-subagents must stay pinned for project subagent runtime");
+	assert.ok(
+		settings.packages?.includes(convergedPresetPin),
+		"fei-pi-preset (bundling pi-subagents) must stay pinned for project subagent runtime",
+	);
 
 	for (const agentName of ["coder", "explorer", "reviewer"]) {
 		const projectText = await readFile(join(projectAgentsRoot, `${agentName}.md`), "utf8");
 		const packageText = await readFile(join(herRoot, "pi-package", "agents", `${agentName}.md`), "utf8");
-		assert.equal(projectText, packageText);
+		assert.equal(stripModelPin(projectText), packageText);
+		assert.match(projectText, /^model: \S+$/m);
 
 		const { frontmatter, body } = parseSimpleFrontmatter(projectText);
 		assert.equal(frontmatter.name, agentName);

@@ -16,7 +16,11 @@ async function json<T = Record<string, unknown>>(...parts: string[]): Promise<T>
 
 test("Phase 6 organs are project-pinned and documented", async () => {
 	const settings = await json<{ packages: string[]; extensions: string[] }>(".pi", "settings.json");
-	const required = [
+	// 7/16 package convergence: these organs are no longer pinned individually in
+	// .pi/settings.json. They now ship transitively through the single local
+	// "D:/@Her/fei-pi-preset" package (see that preset's package.json dependencies).
+	// This list is still used below to confirm ORGANS.md documents each organ.
+	const documented = [
 		"git:github.com/nicobailon/pi-subagents@efa7120047eaf76a32620eed0ec7d038b6cfa44e",
 		"git:github.com/Michaelliv/pi-dynamic-workflows@31b2aca0f1cb195aafbfc5e3ee2b8c83ad3f21a2",
 		"git:github.com/fitchmultz/pi-codex-goal@e1fd927fc8df5b13c3b96e1a23788204b6173c5f",
@@ -30,7 +34,10 @@ test("Phase 6 organs are project-pinned and documented", async () => {
 	];
 
 	assert.deepEqual(settings.extensions, ["./extensions/her/index.ts"]);
-	for (const spec of required) assert.ok(settings.packages.includes(spec), `${spec} is pinned in .pi/settings.json`);
+	assert.ok(
+		settings.packages.includes("D:/@Her/fei-pi-preset"),
+		"fei-pi-preset is pinned in .pi/settings.json after package convergence",
+	);
 
 	for (const spec of settings.packages) {
 		if (spec.startsWith("git:")) assert.match(spec, /^git:github\.com\/[^@]+@[0-9a-f]{40}$/);
@@ -38,7 +45,7 @@ test("Phase 6 organs are project-pinned and documented", async () => {
 	}
 
 	const organs = await text("packages", "her", "ORGANS.md");
-	for (const spec of required) {
+	for (const spec of documented) {
 		const marker = spec
 			.replace(/^git:github\.com\//, "")
 			.replace(/^npm:/, "")
