@@ -177,3 +177,90 @@ test("both preview tools are registered as non-destructive governed tools", () =
 	assert.equal(governedTools.preview_open_review?.destructive, false);
 	assert.equal(governedTools.browser_navigate?.destructive, false);
 });
+
+test("artifact_publish posts the source path and reports the slug on 200 {ok:true, slug, seq}", async () => {
+	const fetchImpl = fakeFetch(
+		() => new Response(JSON.stringify({ ok: true, slug: "demo-a1b2c3d4", seq: 1 }), { status: 200 }),
+	);
+	const tools = previewHarness({ fetchImpl });
+
+	const text = await run(tools.get("artifact_publish"), { path: "D:/artifacts/demo.html" });
+
+	assert.match(text, /已发布到作品面板: demo-a1b2c3d4/);
+	assert.equal(fetchImpl.calls.length, 1);
+	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:3000/api/preview/artifact");
+	assert.equal(fetchImpl.calls[0].init.method, "POST");
+	assert.deepEqual(JSON.parse(String(fetchImpl.calls[0].init.body)), { path: "D:/artifacts/demo.html" });
+});
+
+test("artifact_publish reports a human-readable prompt when HER_ARTIFACTS_DIR is not configured (500)", async () => {
+	const fetchImpl = fakeFetch(
+		() => new Response(JSON.stringify({ ok: false, error: "artifacts_dir_not_configured" }), { status: 500 }),
+	);
+	const tools = previewHarness({ fetchImpl });
+
+	const text = await run(tools.get("artifact_publish"), { path: "D:/artifacts/demo.html" });
+
+	assert.match(text, /HER_ARTIFACTS_DIR/);
+	assert.match(text, /Fei/);
+});
+
+test("artifact_publish passes through the original error text on 400", async () => {
+	const fetchImpl = fakeFetch(() => new Response(JSON.stringify({ ok: false, error: "bad_path" }), { status: 400 }));
+	const tools = previewHarness({ fetchImpl });
+
+	const text = await run(tools.get("artifact_publish"), { path: "relative/path.html" });
+
+	assert.match(text, /bad_path/);
+});
+
+test("artifact_publish reports a clear connection-refused error including UI_BASE, no throw", async () => {
+	const fetchImpl = fakeFetch(() => {
+		throw new TypeError("fetch failed", {
+			cause: Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:3000"), { code: "ECONNREFUSED" }),
+		});
+	});
+	const tools = previewHarness({ fetchImpl });
+
+	const text = await run(tools.get("artifact_publish"), { path: "D:/artifacts/demo.html" });
+
+	assert.match(text, /127\.0\.0\.1:3000/);
+	assert.match(text, /connection refused/i);
+});
+
+test("artifact_publish reports the LAN/token limitation on 401, no throw", async () => {
+	const fetchImpl = fakeFetch(
+		() => new Response(JSON.stringify({ ok: false, error: "unauthorized" }), { status: 401 }),
+	);
+	const tools = previewHarness({ fetchImpl });
+
+	const text = await run(tools.get("artifact_publish"), { path: "D:/artifacts/demo.html" });
+
+	assert.match(text, /LAN/);
+	assert.match(text, /token/i);
+});
+
+test("artifact_publish times out and returns a timeout error instead of hanging forever", async () => {
+	const fetchImpl = neverRespondingFetch();
+	const tools = previewHarness({ fetchImpl, timeoutMs: 30 });
+
+	const text = await run(tools.get("artifact_publish"), { path: "D:/artifacts/demo.html" });
+
+	assert.match(text, /timeout|did not respond/i);
+});
+
+test("artifact_publish reports a non-JSON response with a clear error instead of throwing", async () => {
+	const fetchImpl = fakeFetch(() => new Response("<html>not json</html>", { status: 200 }));
+	const tools = previewHarness({ fetchImpl });
+
+	const text = await run(tools.get("artifact_publish"), { path: "D:/artifacts/demo.html" });
+
+	assert.match(text, /non-JSON/i);
+});
+
+test("artifact_publish is registered as a destructive governed tool", () => {
+	const tools = previewHarness({ fetchImpl: fakeFetch(() => new Response("{}", { status: 200 })) });
+
+	assert.ok(tools.has("artifact_publish"));
+	assert.equal(governedTools.artifact_publish?.destructive, true);
+});

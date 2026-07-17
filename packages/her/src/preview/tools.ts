@@ -14,6 +14,8 @@ export interface PreviewToolDeps {
 interface PreviewApiBody {
 	ok?: boolean;
 	error?: string;
+	slug?: string;
+	seq?: number;
 }
 
 export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {}): void {
@@ -53,6 +55,25 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 			});
 		},
 	});
+
+	pi.registerTool({
+		name: "artifact_publish",
+		label: "Artifact Publish",
+		description:
+			"Publish an HTML file you have already written (give its absolute local path) to Fei's preview panel " +
+			"'artifacts' view, where it renders sandboxed via srcdoc. Re-publishing the same source path updates that " +
+			"artifact in place instead of creating a duplicate.",
+		parameters: Type.Object({ path: Type.String() }),
+		async execute(_toolCallId, params, signal) {
+			const base = uiBase();
+			return await postJson(fetchImpl, base, "/api/preview/artifact", { path: params.path }, signal, timeoutMs, {
+				successText: (parsed) => `已发布到作品面板: ${parsed?.slug ?? ""}`,
+				notConfiguredText: () =>
+					"Her UI has not configured HER_ARTIFACTS_DIR, so it cannot save published artifacts yet. " +
+					"Ask Fei to set HER_ARTIFACTS_DIR on the UI host, then try again.",
+			});
+		},
+	});
 }
 
 function uiBase(): string {
@@ -66,7 +87,11 @@ async function postJson(
 	body: Record<string, unknown>,
 	signal: AbortSignal | undefined,
 	timeoutMs: number,
-	opts: { successText: () => string; controlOwnerDeniedText?: () => string },
+	opts: {
+		successText: (parsed: PreviewApiBody | undefined) => string;
+		controlOwnerDeniedText?: () => string;
+		notConfiguredText?: () => string;
+	},
 ) {
 	let response: Response;
 	try {
@@ -97,10 +122,13 @@ async function postJson(
 	if (parsed?.error === "control-owner-denied" && opts.controlOwnerDeniedText) {
 		return textResult(opts.controlOwnerDeniedText());
 	}
+	if (parsed?.error === "artifacts_dir_not_configured" && opts.notConfiguredText) {
+		return textResult(opts.notConfiguredText());
+	}
 	if (!response.ok || parsed?.ok === false) {
 		return textResult(`Her UI rejected the request (HTTP ${response.status}): ${parsed?.error ?? "unknown error"}`);
 	}
-	return textResult(opts.successText(), { status: response.status });
+	return textResult(opts.successText(parsed), { status: response.status });
 }
 
 function combineSignals(signal: AbortSignal | undefined, timeoutMs: number): AbortSignal {

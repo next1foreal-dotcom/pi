@@ -599,6 +599,65 @@ test("extension gates governed tool calls with Cedar and writes audit JSONL", as
 	});
 });
 
+test("extension Cedar permits artifact_publish despite destructive:true, while other destructive tools stay denied", async () => {
+	const store = await tempStore();
+	const ctx = createContext(store);
+
+	await withMemoryDir(store, async () => {
+		const fake = createFakePi();
+		her(fake.pi);
+
+		const toolCall = fake.handlers.get("tool_call")?.[0];
+		assert.ok(toolCall);
+
+		assert.equal(governedTools.artifact_publish?.destructive, true);
+
+		const publishAllow = await toolCall(
+			{
+				type: "tool_call",
+				toolCallId: "call-artifact-1",
+				toolName: "artifact_publish",
+				input: { path: "D:/artifacts/demo.html" },
+			},
+			ctx,
+		);
+		assert.equal(publishAllow, undefined);
+
+		const writeDeny = (await toolCall(
+			{ type: "tool_call", toolCallId: "call-write-1", toolName: "write", input: {} },
+			ctx,
+		)) as { block?: boolean; reason?: string };
+		assert.equal(writeDeny.block, true);
+		assert.match(writeDeny.reason ?? "", /forbid_destructive_tool/);
+
+		const bashDeny = (await toolCall(
+			{ type: "tool_call", toolCallId: "call-bash-1", toolName: "bash", input: { command: "rm -rf ." } },
+			ctx,
+		)) as { block?: boolean; reason?: string };
+		assert.equal(bashDeny.block, true);
+		assert.match(bashDeny.reason ?? "", /forbid_destructive_tool/);
+
+		const auditFiles = await readdir(join(store, "audit"));
+		const entries = (
+			await Promise.all(
+				auditFiles.sort().map(async (file) => ((await readText(join(store, "audit", file))) ?? "").trim()),
+			)
+		)
+			.join("\n")
+			.split("\n")
+			.filter(Boolean)
+			.map((line) => JSON.parse(line) as { tool: string; verdict: string; rule: string | null });
+		assert.deepEqual(
+			entries.map((entry) => [entry.tool, entry.verdict, entry.rule]),
+			[
+				["artifact_publish", "ALLOW", "permit_artifact_publish"],
+				["write", "DENY", "forbid_destructive_tool"],
+				["bash", "DENY", "forbid_destructive_tool"],
+			],
+		);
+	});
+});
+
 test("extension Cedar registry covers every registered Her tool", async () => {
 	const store = await tempStore();
 
