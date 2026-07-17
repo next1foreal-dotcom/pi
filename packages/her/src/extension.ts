@@ -53,6 +53,7 @@ import {
 import { appendAuditLog } from "./lib/audit.ts";
 import { evaluate, policyEnvelope } from "./lib/cedar.ts";
 import { registerPreviewTools } from "./preview/tools.ts";
+import { registerShowWidgetTools } from "./show-widget/tools.ts";
 import { createSummaryModel } from "./summary-model.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -126,6 +127,7 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	her_hands_act: { destructive: false },
 	preview_open_review: { destructive: false },
 	browser_navigate: { destructive: false },
+	her_show_widget: { destructive: false },
 };
 const claimLedgerSchema = Type.Array(
 	Type.Object({
@@ -1623,4 +1625,5 @@ export default function her(pi: ExtensionAPI): void {
 		},
 	});
 	registerPreviewTools(pi);
+	registerShowWidgetTools(pi);
 }
