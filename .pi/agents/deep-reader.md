@@ -1,6 +1,7 @@
 ---
 name: deep-reader
 description: Deep-read sources for Her intake with explicit coverage.
+model: deepseek/deepseek-v4-flash
 systemPromptMode: append
 inheritProjectContext: true
 defaultContext: fork

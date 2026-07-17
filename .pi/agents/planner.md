@@ -1,6 +1,7 @@
 ---
 name: planner
 description: Turn fuzzy goals into staged plans with verification gates.
+model: claude-bridge/claude-opus-4-8
 systemPromptMode: append
 inheritProjectContext: true
 defaultContext: fork

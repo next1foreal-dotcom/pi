@@ -1,6 +1,7 @@
 ---
 name: explorer
 description: Read-only code and memory exploration before planning or implementation.
+model: deepseek/deepseek-v4-flash
 systemPromptMode: append
 inheritProjectContext: true
 defaultContext: fork

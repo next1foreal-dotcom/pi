@@ -1,6 +1,7 @@
 ---
 name: code-reviewer
 description: Review code for bugs, regressions, security, and missing verification.
+model: openai-codex/gpt-5.5:xhigh
 systemPromptMode: append
 inheritProjectContext: true
 defaultContext: fork

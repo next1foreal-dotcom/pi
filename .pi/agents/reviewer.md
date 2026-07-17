@@ -1,6 +1,7 @@
 ---
 name: reviewer
 description: Review memory or narrative updates before approval.
+model: claude-bridge/claude-sonnet-5
 systemPromptMode: append
 inheritProjectContext: true
 defaultContext: fork
