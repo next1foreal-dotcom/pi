@@ -25,9 +25,23 @@
 
 import { readFileSync, writeFileSync, copyFileSync, existsSync, renameSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { homedir } from "node:os";
 import { dirname, resolve, join } from "node:path";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// pi honors a project-level .pi/settings.json defaultProvider ONLY for trusted
+// projects (see coding-agent settings-manager: scope==="project" && !trusted →
+// project settings ignored). samantha is not in the trust store, so the GLOBAL
+// ~/.pi/agent/settings.json defaultProvider is what actually drives Samantha's
+// brain — and global is unconditional (no trust gate). So the brain switch
+// targets GLOBAL by default; --project is available for trusted-project scoping.
+function globalSettingsPath() {
+  return resolve(homedir(), ".pi", "agent", "settings.json");
+}
+function projectSettingsPath() {
+  return resolve(__dirname, "..", "..", "..", ".pi", "settings.json");
+}
 
 function parseArgs(argv) {
   const args = { _: [] };
@@ -37,6 +51,8 @@ function parseArgs(argv) {
     else if (a === "--status") args.status = true;
     else if (a === "--list") args.list = true;
     else if (a === "--restore") args.restore = true;
+    else if (a === "--global") args.global = true;
+    else if (a === "--project") args.project = true;
     else if (a === "--to") args.to = argv[++i];
     else if (a === "--settings") args.settings = argv[++i];
     else if (a === "--lanes") args.lanes = argv[++i];
@@ -93,10 +109,15 @@ function writeAtomic(path, content) {
 function main() {
   const args = parseArgs(process.argv.slice(2));
   const lanesPath = args.lanes ? resolve(args.lanes) : resolve(__dirname, "..", "brain-lanes.json");
-  // Default live settings: <repo>/samantha/.pi/settings.json — three up from scripts/.
+  // Brain switch targets GLOBAL settings by default (unconditional; project-level
+  // is trust-gated and ignored for untrusted projects like samantha). --project
+  // forces the project scope; --settings <path> overrides entirely.
+  const scope = args.project ? "project" : "global";
   const settingsPath = args.settings
     ? resolve(args.settings)
-    : resolve(__dirname, "..", "..", "..", ".pi", "settings.json");
+    : scope === "project"
+      ? projectSettingsPath()
+      : globalSettingsPath();
 
   const cfg = loadLanes(lanesPath);
   const lanes = cfg.lanes;
@@ -116,7 +137,7 @@ function main() {
     const provider = s.defaultProvider ?? "(inherits global)";
     const model = s.defaultModel ?? "(inherits global)";
     const lane = s.defaultProvider && s.defaultModel ? matchLane(lanes, s.defaultProvider, s.defaultModel) : null;
-    console.log(`settings: ${settingsPath}`);
+    console.log(`scope: ${scope} (${settingsPath})`);
     console.log(`brain: provider=${provider} model=${model}`);
     if (s.defaultProvider) {
       console.log(`lane: ${lane ?? "(no matching lane — custom override)"}`);
