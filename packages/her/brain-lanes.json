@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "note": "Her brain lane config — single source of truth for which provider/model each brain lane maps to. The brain-switch script (scripts/brain-switch.mjs) reads this to point Samantha's live .pi/settings.json at a Her-controlled provider instead of the borrowed claude-bridge. Lanes are the ONLY thing Her code/config should reference; the concrete provider/model behind a lane can change here without touching consumers. envKey names only — real key values live in the environment (.env / setx), never here.",
+  "lanes": {
+    "brain-main": {
+      "provider": "deepseek",
+      "model": "deepseek-v4-pro",
+      "envKey": "DEEPSEEK_API_KEY",
+      "note": "日常大脑。DeepSeek v4-pro,DEEPSEEK_API_KEY 已在环境,工具透传实测通过。这是 claude-bridge 的默认替代。"
+    },
+    "brain-bulk": {
+      "provider": "deepseek",
+      "model": "deepseek-v4-flash",
+      "envKey": "DEEPSEEK_API_KEY",
+      "note": "批处理/低成本车道(消化道类)。v4-flash 更便宜。"
+    },
+    "brain-kimi": {
+      "provider": "kimi-coding",
+      "model": "kimi-k2.7-code",
+      "envKey": "MOONSHOT_API_KEY",
+      "note": "Kimi Code 大脑候选。等 MOONSHOT_API_KEY 进环境后即可切;pi 内置 kimi-coding provider。"
+    },
+    "brain-glm": {
+      "provider": "zai",
+      "model": "glm-5.1",
+      "envKey": "GLM_API_KEY",
+      "note": "智谱 GLM 大脑候选。等 GLM_API_KEY 进环境后可切;pi 内置 zai provider。"
+    },
+    "claude-bridge": {
+      "provider": "claude-bridge",
+      "model": "claude-opus-4-8",
+      "envKey": "CLAUDE_BRIDGE_SUBSCRIPTION",
+      "note": "原借用大脑(借 Fei 的 Claude 订阅,keyless)。Fei 有 Claude 访问权时可回切;CLAUDE_BRIDGE_SUBSCRIPTION 是哨兵值,永不解析成真 key。"
+    }
+  },
+  "default": "brain-main",
+  "fallback": "claude-bridge"
+}
