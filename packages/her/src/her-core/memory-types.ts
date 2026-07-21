@@ -37,6 +37,18 @@ export interface WorldNoteData {
 	possibleMoves: string[];
 	privacy?: MemoryPrivacy;
 	provenance?: MemoryProvenance;
+	/** palate T1 (taste-card): board tags this taste belongs to; presence is what triggers frontmatter output. */
+	boards?: string[];
+	/** palate T1 (taste-card): Fei's half-sentence on this taste, appended (not overwritten) on repeat intake. */
+	fei?: string;
+	/** palate T1 (taste-card): where the original captured material lives, relative to the her-memory root. */
+	snapshot?: WorldNoteSnapshot;
+}
+
+export interface WorldNoteSnapshot {
+	text: string;
+	screenshot: string | null;
+	media: string[];
 }
 
 export interface ClaimLedgerEntry {

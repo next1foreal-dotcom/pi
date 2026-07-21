@@ -10,7 +10,10 @@ export async function writeWorldNote(paths: StorePaths, data: WorldNoteData): Pr
 	const memoryStatusReason = normalizeMemoryStatusReason(data.memoryStatus, data.memoryStatusReason);
 	const seen = await readJson<Record<string, string>>(paths.seenFile, {});
 	const existing = seen[data.contentHash];
-	if (existing) return existing;
+	if (existing) {
+		if (data.sourceType === "taste-card") return updateTasteCardOnRepeatIntake(paths, existing, data);
+		return existing;
+	}
 
 	let noteSlug = slug(data.title);
 	let path = join(paths.world, `${noteSlug}.md`);
@@ -24,7 +27,7 @@ export async function writeWorldNote(paths: StorePaths, data: WorldNoteData): Pr
 	}
 
 	const id = genId(data.contentHash, noteSlug);
-	const fm = {
+	const fm: Record<string, unknown> = {
 		id,
 		title: data.title,
 		source_url: data.sourceUrl,
@@ -41,10 +44,39 @@ export async function writeWorldNote(paths: StorePaths, data: WorldNoteData): Pr
 		insufficient_claims: data.claims?.filter((claim) => claim.verdict === "insufficient_evidence").length ?? 0,
 		response_version: 1,
 	};
+	// palate T1: these keys only ever appear when a taste-card intake sets them, so pre-existing
+	// intake-source/intake-url/intake-path/bootstrap-feed callers keep byte-identical frontmatter.
+	if (data.boards !== undefined) fm.boards = data.boards;
+	if (data.fei !== undefined) fm.fei = data.fei;
+	if (data.snapshot !== undefined) fm.snapshot = data.snapshot;
 	await writeText(path, `${frontmatter(fm)}${worldBody(data, memoryStatusReason)}`);
 	seen[data.contentHash] = id;
 	await writeJson(paths.seenFile, seen);
 	return id;
+}
+
+/**
+ * palate T1: a repeat taste-card intake (same contentHash) does not create a duplicate card.
+ * Instead it merges the incoming boards (union) and appends a new fei half-sentence (never
+ * overwriting the existing one) onto the card that is already on disk.
+ */
+async function updateTasteCardOnRepeatIntake(paths: StorePaths, noteId: string, data: WorldNoteData): Promise<string> {
+	const path = await findWorldNote(paths, noteId);
+	const text = await readText(path);
+	const parsed = parseFrontmatter(text);
+
+	const existingBoards = Array.isArray(parsed.data.boards) ? (parsed.data.boards as string[]) : [];
+	const mergedBoards = Array.from(new Set([...existingBoards, ...(data.boards ?? [])]));
+	if (mergedBoards.length > 0) parsed.data.boards = mergedBoards;
+
+	const existingFei = typeof parsed.data.fei === "string" ? parsed.data.fei : "";
+	const incomingFei = data.fei?.trim() ?? "";
+	if (incomingFei && incomingFei !== existingFei) {
+		parsed.data.fei = existingFei ? `${existingFei}\n${incomingFei}` : incomingFei;
+	}
+
+	await writeText(path, `${frontmatter(parsed.data)}${parsed.body}`);
+	return noteId;
 }
 
 export async function recordJudgment(paths: StorePaths, noteId: string, fields: JudgmentFields): Promise<void> {

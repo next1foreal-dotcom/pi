@@ -17,6 +17,7 @@ import type {
 	CliGoldenEvalPayload,
 	CliIntakePathPayload,
 	CliIntakeSourcePayload,
+	CliIntakeTastePayload,
 	CliIntakeUrlPayload,
 	CliJournalPayload,
 	CliJudgmentPayload,
@@ -482,6 +483,18 @@ export function renderIntakePath(payload: CliIntakePathPayload): string {
 	].join("\n");
 }
 
+export function renderIntakeTaste(payload: CliIntakeTastePayload): string {
+	return [
+		`Her taste card saved: ${payload.result.noteId}`,
+		`boards: ${payload.result.boards.join(", ") || "(none)"}`,
+		`fei: ${payload.result.fei || "(none)"}`,
+		`snapshot: ${payload.result.snapshotText}`,
+		`content hash: ${payload.result.contentHash}`,
+		"",
+		renderStatus(payload),
+	].join("\n");
+}
+
 export function renderBootstrapFeed(payload: CliBootstrapFeedPayload): string {
 	const files =
 		payload.result.files.length > 0
@@ -571,6 +584,7 @@ export function usage(): string {
   her ideas [--json]
   her intake-source --title <title> --source-url <url> --source-type <kind> --extracted <text> --coverage <text> --read <text> --take <text> [--memory-status active|archive_only|needs_deep_read] [--memory-status-reason <text>] [--claim-json <json>] [--steal <text>] [--connection <id>] [--possible-move <text>] [--update-surfaces] [--json]
   her intake-path --path <file> [--source-type <kind>] [--max-bytes <n>] [--update-surfaces] [--json]
+  her intake-taste <url|path|-> [--fei <text>] [--boards <a,b>] [--json]
   her intake-url --url <url> [--max-bytes <n>] [--update-surfaces] [--json]
   her judgment --note <id> [--choice <text>] [--correction <text>] [--reason <text>] [--attraction <text>] [--inferred-intent <text>] [--rejection <text>] [--hesitation <text>] [--outcome <text>] [--json]
   her journal --kind daily|weekly --text <text> [--title <text>] [--source <text>] [--timestamp <ISO>] [--run <memory-path>] [--json]

@@ -43,6 +43,7 @@ export function parseArgs(argv: string[]): CliCommand {
 	if (command === "ideas") return parseJsonOnly("ideas", rest);
 	if (command === "intake-path") return parseIntakePath(rest);
 	if (command === "intake-source") return parseIntakeSource(rest);
+	if (command === "intake-taste") return parseIntakeTaste(rest);
 	if (command === "intake-url") return parseIntakeUrl(rest);
 	if (command === "judgment") return parseJudgment(rest);
 	if (command === "journal") return parseJournal(rest);
@@ -1014,6 +1015,39 @@ function parseIntakePath(argv: string[]): CliCommand {
 		...(maxBytes ? { maxBytes } : {}),
 		...(sourceType ? { sourceType } : {}),
 	};
+}
+
+function parseIntakeTaste(argv: string[]): CliCommand {
+	let json = false;
+	let source: string | undefined;
+	let fei: string | undefined;
+	const boards: string[] = [];
+
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--fei") {
+			fei = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		if (arg === "--boards") {
+			const value = requireOptionValue(argv[++i], arg);
+			for (const board of value.split(",")) {
+				const trimmed = board.trim();
+				if (trimmed) boards.push(trimmed);
+			}
+			continue;
+		}
+		if (arg.startsWith("--")) throw new UsageError(`unknown intake-taste option: ${arg}`);
+		if (source !== undefined) throw new UsageError("intake-taste accepts only one source argument");
+		source = arg;
+	}
+
+	if (!source?.trim()) throw new UsageError("intake-taste requires a source: her intake-taste <url|path|->");
+	return { kind: "intake-taste", boards, json, source, ...(fei !== undefined ? { fei } : {}) };
 }
 
 function parseBootstrapFeed(argv: string[]): CliCommand {
