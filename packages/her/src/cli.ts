@@ -2,7 +2,7 @@ import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { appendFile, mkdir, readFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, extname, join, resolve } from "node:path";
 import { text as readStreamText } from "node:stream/consumers";
 import { setTimeout as sleep } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
@@ -77,6 +77,8 @@ import {
 import { errorMessage, intakeContentHash, parseOptionalPositiveNumber, requireEnv, UsageError } from "./cli/utils.ts";
 import {
 	assemblePrior,
+	buildLocalPdfTasteData,
+	captureTasteSnapshot,
 	checkMemoryExport,
 	checkpointLongTask,
 	claimNextLongTask,
@@ -85,6 +87,8 @@ import {
 	completeLongTask,
 	createEmbeddingSearch,
 	createTelegramConfirmationRequest,
+	extractLocalPdfText,
+	fetchVideoTasteMetadata,
 	frontmatter,
 	listLongTasks,
 	loadConfig,
@@ -96,6 +100,7 @@ import {
 	readTriggerStats,
 	readUrlForWorldNote,
 	recordTelegramConfirmationFromText,
+	resolveTasteToolConfig,
 	runDispatch,
 	runEvalTrend,
 	runGoldenEvals,
@@ -104,6 +109,7 @@ import {
 	sendTelegramMessage,
 	startLongTask,
 	summarizeCostBreakdown,
+	type TasteSnapshotKind,
 	type TelegramConfirmationResult,
 	trimTelegramText,
 	type UrlMarkdownReader,
@@ -546,18 +552,30 @@ export async function runHerCli(
 				? await readStdinTasteData(io.stdin ?? process.stdin)
 				: /^https?:\/\//i.test(command.source)
 					? await readUrlTasteData(command.source, env, cwd)
-					: await readPathForWorldNote(resolve(cwd, command.source), { rootDir: cwd });
+					: extname(command.source).toLowerCase() === ".pdf"
+						? await readLocalPdfTasteData(resolve(cwd, command.source), env)
+						: await readLocalOtherTasteData(resolve(cwd, command.source), cwd);
 
 		const snapshotSlug = `${tasteSlug(base.data.title)}-${base.data.contentHash.slice(0, 8)}`;
 		const snapshotText = `world/_snapshots/${snapshotSlug}/original.md`;
 		await writeText(join(memoryDir, snapshotText), base.data.extracted);
+
+		const capture = await captureTasteSnapshot({
+			kind: base.kind,
+			...(base.localPath ? { localPath: base.localPath } : {}),
+			memoryDir,
+			slug: snapshotSlug,
+			sourceUrl: base.data.sourceUrl,
+			tools: resolveTasteToolConfig(env),
+		});
+		for (const warning of capture.warnings) writeLine(io.stderr, `intake-taste: ${warning}`);
 
 		const data: WorldNoteData = {
 			...base.data,
 			sourceType: "taste-card",
 			boards: command.boards,
 			fei,
-			snapshot: { text: snapshotText, screenshot: null, media: [] },
+			snapshot: { text: snapshotText, screenshot: capture.screenshot, media: capture.media },
 		};
 		const noteId = await memory.writeWorldNote(data);
 		const payload = {
@@ -569,6 +587,7 @@ export async function runHerCli(
 				fei,
 				noteId,
 				snapshotText,
+				...(capture.warnings.length > 0 ? { warnings: capture.warnings } : {}),
 			},
 		};
 		writePayload(io.stdout, payload, command.json, renderIntakeTaste);
@@ -700,6 +719,10 @@ export function getMemoryDir(env: NodeJS.ProcessEnv = process.env, cwd = process
 interface TasteIntakeBase {
 	data: WorldNoteData;
 	bytesRead: number;
+	/** palate T2: which snapshot capture path (if any) intake-taste should run for this base. */
+	kind: TasteSnapshotKind;
+	/** palate T2: absolute path to the original file; only set (and only used) for kind "local-pdf". */
+	localPath?: string;
 }
 
 async function readUrlTasteData(sourceUrl: string, env: NodeJS.ProcessEnv, cwd: string): Promise<TasteIntakeBase> {
@@ -708,7 +731,45 @@ async function readUrlTasteData(sourceUrl: string, env: NodeJS.ProcessEnv, cwd: 
 		markdownReader: createArticleMarkdownReader(env, cwd),
 		xMarkdownReader: createDefuddleMarkdownReader(env, cwd),
 	});
-	return { data: intake.data, bytesRead: intake.bytesRead };
+	if (intake.data.sourceType === "x-thread") return { data: intake.data, bytesRead: intake.bytesRead, kind: "tweet" };
+	if (intake.data.sourceType === "video") return enhanceVideoTasteData(intake.data, env);
+	if (intake.data.sourceType === "article") {
+		return { data: intake.data, bytesRead: intake.bytesRead, kind: "webpage" };
+	}
+	return { data: intake.data, bytesRead: intake.bytesRead, kind: "other" };
+}
+
+/**
+ * palate T2 (contract §4, video/audio): grab.py has no metadata-only mode, so title+description
+ * for the taste card come from a narrow yt-dlp --dump-json call. Degrades to intake.ts's existing
+ * "video sources are not fetched" stub (bytesRead/data unchanged) when yt-dlp is missing or fails.
+ */
+async function enhanceVideoTasteData(data: WorldNoteData, env: NodeJS.ProcessEnv): Promise<TasteIntakeBase> {
+	const meta = await fetchVideoTasteMetadata(data.sourceUrl, resolveTasteToolConfig(env).ytdlpBin);
+	if (!meta.ok) return { data, bytesRead: Buffer.byteLength(data.extracted, "utf8"), kind: "video" };
+	const { memoryStatusReason: _staleReason, ...withoutStaleReason } = data;
+	const title = meta.title || data.title;
+	const extracted = [`# ${title}`, meta.description?.trim() || "(no description available)"].join("\n\n");
+	const enhanced: WorldNoteData = {
+		...withoutStaleReason,
+		coverage: `Read video title and description via yt-dlp metadata for ${data.sourceUrl}.`,
+		extracted,
+		memoryStatus: "active",
+		title,
+	};
+	return { data: enhanced, bytesRead: Buffer.byteLength(extracted, "utf8"), kind: "video" };
+}
+
+async function readLocalPdfTasteData(absolutePath: string, env: NodeJS.ProcessEnv): Promise<TasteIntakeBase> {
+	const tools = resolveTasteToolConfig(env);
+	const pdfText = await extractLocalPdfText(absolutePath, tools);
+	const built = buildLocalPdfTasteData(absolutePath, pdfText);
+	return { data: built.data, bytesRead: built.bytesRead, kind: "local-pdf", localPath: absolutePath };
+}
+
+async function readLocalOtherTasteData(absolutePath: string, cwd: string): Promise<TasteIntakeBase> {
+	const intake = await readPathForWorldNote(absolutePath, { rootDir: cwd });
+	return { data: intake.data, bytesRead: intake.bytesRead, kind: "other" };
 }
 
 async function readStdinTasteData(stdin: NodeJS.ReadableStream): Promise<TasteIntakeBase> {
@@ -732,6 +793,7 @@ async function readStdinTasteData(stdin: NodeJS.ReadableStream): Promise<TasteIn
 			possibleMoves: ["Assign this taste card to a board once its theme is clearer."],
 		},
 		bytesRead: Buffer.byteLength(raw, "utf8"),
+		kind: "other",
 	};
 }
 

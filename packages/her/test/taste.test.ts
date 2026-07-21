@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -147,4 +148,124 @@ test("CLI intake-taste rejects an internal URL under SSRF protection", async () 
 		() => runTasteCli(["intake-taste", "http://127.0.0.1/x", "--json"], store),
 		/blocked (private|local) URL host/,
 	);
+});
+
+async function withFixtureServer(html: string, run: (url: string) => Promise<void>): Promise<void> {
+	const server = createServer((_req, res) => {
+		res.writeHead(200, { "content-type": "text/html" });
+		res.end(html);
+	});
+	await new Promise<void>((resolvePromise) => server.listen(0, "127.0.0.1", resolvePromise));
+	const address = server.address();
+	if (!address || typeof address === "string") throw new Error("expected a TCP address");
+	try {
+		await run(`http://127.0.0.1:${address.port}/fixture`);
+	} finally {
+		await new Promise<void>((resolvePromise) => server.close(() => resolvePromise()));
+	}
+}
+
+test("CLI intake-taste captures a full-page screenshot for a webpage URL (palate T2, real agent-browser run)", async () => {
+	const { store } = await gitBackedTasteStore();
+	const html = [
+		"<!doctype html><html><head><title>Palate T2 Webpage Fixture</title></head>",
+		'<body style="margin:0"><h1 style="padding:40px">Palate T2 CLI Screenshot Test</h1>',
+		'<div style="height:1200px;background:linear-gradient(#eee,#999)"></div></body></html>',
+	].join("\n");
+	await withFixtureServer(html, async (url) => {
+		const stdout = stringWritable();
+		const stderr = stringWritable();
+		const code = await runHerCli(
+			["intake-taste", url, "--boards", "web", "--json"],
+			{
+				...process.env,
+				HER_ALLOW_LOCAL_URLS: "1",
+				HER_MEMORY_DIR: store,
+			},
+			store,
+			{ stdout: stdout.stream, stderr: stderr.stream },
+		);
+		assert.equal(code, 0, stderr.read());
+
+		const payload = JSON.parse(stdout.read());
+		const worldFiles = (await readdir(join(store, "world"))).filter((entry) => entry.endsWith(".md"));
+		const world = await readFile(join(store, "world", worldFiles[0]), "utf8");
+		const parsed = parseFrontmatter(world);
+		const snapshot = parsed.data.snapshot as { text: string; screenshot: string; media: unknown[] };
+		assert.match(snapshot.screenshot, /^world\/_snapshots\/.+\/page\.png$/);
+		assert.deepEqual(snapshot.media, []);
+
+		const stats = await stat(join(store, snapshot.screenshot));
+		assert.ok(stats.size > 1000, `expected a real PNG, got ${stats.size} bytes`);
+		assert.equal(payload.result.contentHash, parsed.data.content_hash);
+	});
+});
+
+test("CLI intake-taste copies a local PDF original into taste-media and extracts its text layer (palate T2)", async () => {
+	const { store } = await gitBackedTasteStore();
+	const sourceRoot = await mkdtemp(join(tmpdir(), "her-taste-pdf-source-"));
+	const pdfPath = join(sourceRoot, "field-notes.pdf");
+	const minimalPdf = [
+		"%PDF-1.4",
+		"1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj",
+		"2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj",
+		"3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj",
+		"4 0 obj<</Length 58>>stream",
+		"BT /F1 24 Tf 20 100 Td (Hello Taste PDF) Tj ET",
+		"endstream",
+		"endobj",
+		"5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj",
+		"trailer<</Size 6/Root 1 0 R>>",
+		"%%EOF",
+	].join("\n");
+	await writeFile(pdfPath, minimalPdf, "utf8");
+
+	const result = await runTasteCli(["intake-taste", pdfPath, "--boards", "reading", "--json"], store);
+	assert.equal(result.code, 0, result.stderr);
+
+	const worldFiles = (await readdir(join(store, "world"))).filter((entry) => entry.endsWith(".md"));
+	const world = await readFile(join(store, "world", worldFiles[0]), "utf8");
+	const parsed = parseFrontmatter(world);
+	const snapshot = parsed.data.snapshot as { text: string; screenshot: unknown; media: string[] };
+	assert.equal(snapshot.screenshot, null);
+	assert.equal(snapshot.media.length, 1);
+	assert.match(snapshot.media[0] ?? "", /^taste-media\/.+\/field-notes\.pdf$/);
+
+	const copied = await readFile(join(store, snapshot.media[0] ?? ""), "utf8");
+	assert.equal(copied, minimalPdf);
+
+	const snapshotText = await readFile(join(store, snapshot.text), "utf8");
+	assert.match(snapshotText, /Hello Taste PDF/);
+});
+
+test("CLI intake-taste degrades gracefully when the screenshot tool binary is missing (palate T2)", async () => {
+	const { store } = await gitBackedTasteStore();
+	const html = "<!doctype html><html><body><h1>Unreachable tool fixture</h1></body></html>";
+	await withFixtureServer(html, async (url) => {
+		const stdout = stringWritable();
+		const stderr = stringWritable();
+		const code = await runHerCli(
+			["intake-taste", url, "--json"],
+			{
+				...process.env,
+				HER_ALLOW_LOCAL_URLS: "1",
+				HER_AGENT_BROWSER_BIN: join(store, "no-such-agent-browser.exe"),
+				HER_MEMORY_DIR: store,
+			},
+			store,
+			{ stdout: stdout.stream, stderr: stderr.stream },
+		);
+		assert.equal(code, 0, stderr.read());
+		assert.match(stderr.read(), /intake-taste:.*screenshot capture failed/);
+
+		const worldFiles = (await readdir(join(store, "world"))).filter((entry) => entry.endsWith(".md"));
+		const world = await readFile(join(store, "world", worldFiles[0]), "utf8");
+		const parsed = parseFrontmatter(world);
+		const snapshot = parsed.data.snapshot as { text: string; screenshot: unknown; media: unknown[] };
+		assert.equal(snapshot.screenshot, null);
+		assert.deepEqual(snapshot.media, []);
+		// text still lands even though the screenshot failed (degrade, don't lose the card).
+		const snapshotText = await readFile(join(store, snapshot.text), "utf8");
+		assert.ok(snapshotText.length > 0);
+	});
 });
