@@ -82,7 +82,13 @@ import {
 	validateChoiceModelDomain,
 	validateFeedbackWeight,
 } from "./memory-utils.ts";
-import { recordJudgment, setMemoryStatus, writeWorldNote } from "./memory-world.ts";
+import {
+	applyTasteBoard,
+	recordJudgment,
+	setMemoryStatus,
+	type TasteBoardApplyResult,
+	writeWorldNote,
+} from "./memory-world.ts";
 import type { ModelLike } from "./model.ts";
 import { StorePaths } from "./paths.ts";
 import type { PriorMode, PriorResult } from "./prior.ts";
@@ -866,6 +872,10 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 		reason: string,
 	): Promise<void> {
 		await setMemoryStatus(this.paths, noteId, status, reason);
+	}
+
+	async applyTasteBoard(cardId: string, board: string): Promise<TasteBoardApplyResult> {
+		return applyTasteBoard(this.paths, cardId, board);
 	}
 
 	async sync(message = `memory(sync): ${new Date().toISOString()}`): Promise<MemorySyncResult> {
