@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { text as readStreamText } from "node:stream/consumers";
 import { setTimeout as sleep } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
@@ -26,6 +27,7 @@ import {
 	renderIdeas,
 	renderIntakePath,
 	renderIntakeSource,
+	renderIntakeTaste,
 	renderIntakeUrl,
 	renderJournal,
 	renderJudgment,
@@ -72,7 +74,7 @@ import {
 	type TelegramReplyMode,
 	telegramResponderReadOnlyTools,
 } from "./cli/types.ts";
-import { errorMessage, parseOptionalPositiveNumber, requireEnv, UsageError } from "./cli/utils.ts";
+import { errorMessage, intakeContentHash, parseOptionalPositiveNumber, requireEnv, UsageError } from "./cli/utils.ts";
 import {
 	assemblePrior,
 	checkMemoryExport,
@@ -105,6 +107,7 @@ import {
 	type TelegramConfirmationResult,
 	trimTelegramText,
 	type UrlMarkdownReader,
+	type WorldNoteData,
 	writeText,
 } from "./her-core/index.ts";
 import { redactSecrets } from "./her-core/store.ts";
@@ -536,6 +539,42 @@ export async function runHerCli(
 		return payload.status.status === "unknown" ? 1 : 0;
 	}
 
+	if (command.kind === "intake-taste") {
+		const fei = command.fei ?? "";
+		const base =
+			command.source === "-"
+				? await readStdinTasteData(io.stdin ?? process.stdin)
+				: /^https?:\/\//i.test(command.source)
+					? await readUrlTasteData(command.source, env, cwd)
+					: await readPathForWorldNote(resolve(cwd, command.source), { rootDir: cwd });
+
+		const snapshotSlug = `${tasteSlug(base.data.title)}-${base.data.contentHash.slice(0, 8)}`;
+		const snapshotText = `world/_snapshots/${snapshotSlug}/original.md`;
+		await writeText(join(memoryDir, snapshotText), base.data.extracted);
+
+		const data: WorldNoteData = {
+			...base.data,
+			sourceType: "taste-card",
+			boards: command.boards,
+			fei,
+			snapshot: { text: snapshotText, screenshot: null, media: [] },
+		};
+		const noteId = await memory.writeWorldNote(data);
+		const payload = {
+			...(await buildStatusPayload(memoryDir, memory)),
+			result: {
+				bytesRead: base.bytesRead,
+				boards: data.boards ?? [],
+				contentHash: data.contentHash,
+				fei,
+				noteId,
+				snapshotText,
+			},
+		};
+		writePayload(io.stdout, payload, command.json, renderIntakeTaste);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
 	if (command.kind === "intake-url") {
 		const intake = await readUrlForWorldNote(command.url, {
 			allowLocal: env.HER_ALLOW_LOCAL_URLS === "1" || env.HER_ALLOW_LOCAL_INTAKE === "1",
@@ -656,6 +695,62 @@ export async function runHerCli(
 
 export function getMemoryDir(env: NodeJS.ProcessEnv = process.env, cwd = process.cwd()): string {
 	return resolve(env.HER_MEMORY_DIR ?? resolve(cwd, "..", "her-memory"));
+}
+
+interface TasteIntakeBase {
+	data: WorldNoteData;
+	bytesRead: number;
+}
+
+async function readUrlTasteData(sourceUrl: string, env: NodeJS.ProcessEnv, cwd: string): Promise<TasteIntakeBase> {
+	const intake = await readUrlForWorldNote(sourceUrl, {
+		allowLocal: env.HER_ALLOW_LOCAL_URLS === "1" || env.HER_ALLOW_LOCAL_INTAKE === "1",
+		markdownReader: createArticleMarkdownReader(env, cwd),
+		xMarkdownReader: createDefuddleMarkdownReader(env, cwd),
+	});
+	return { data: intake.data, bytesRead: intake.bytesRead };
+}
+
+async function readStdinTasteData(stdin: NodeJS.ReadableStream): Promise<TasteIntakeBase> {
+	const raw = (await readStreamText(stdin)).replace(/\r\n/g, "\n").trim();
+	if (!raw) throw new UsageError("intake-taste - requires non-empty stdin text");
+	const title = titleFromTasteText(raw);
+	const sourceUrl = "text";
+	return {
+		data: {
+			title,
+			sourceUrl,
+			sourceType: "taste-card",
+			contentHash: intakeContentHash(sourceUrl, raw),
+			memoryStatus: "active",
+			extracted: raw,
+			coverage: `Read ${Buffer.byteLength(raw, "utf8")} bytes of pasted text via intake-taste stdin.`,
+			read: "Samantha read pasted text directly from stdin and preserved it as a taste card.",
+			steal: [],
+			connections: [],
+			take: "Saved through intake-taste so this taste can be recalled and connected to a board later.",
+			possibleMoves: ["Assign this taste card to a board once its theme is clearer."],
+		},
+		bytesRead: Buffer.byteLength(raw, "utf8"),
+	};
+}
+
+function titleFromTasteText(text: string): string {
+	const heading = /^#\s+(.+)$/m.exec(text)?.[1]?.trim();
+	if (heading) return heading;
+	const firstLine = text.split("\n").find((line) => line.trim());
+	if (firstLine) return firstLine.trim().slice(0, 80);
+	return `Taste capture ${new Date().toISOString()}`;
+}
+
+/** palate T1: kept local to cli.ts so this new command doesn't widen her-core's export surface. */
+function tasteSlug(title: string): string {
+	return (
+		title
+			.toLowerCase()
+			.replace(/[^a-z0-9]+/g, "-")
+			.replace(/^-+|-+$/g, "") || "note"
+	);
 }
 
 function createCliMemory(memoryDir: string, env: NodeJS.ProcessEnv): Memory {

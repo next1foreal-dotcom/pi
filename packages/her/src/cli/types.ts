@@ -92,6 +92,7 @@ export type CliCommand =
 			sourceType?: string;
 			updateSurfaces: boolean;
 	  }
+	| { kind: "intake-taste"; boards: string[]; fei?: string; json: boolean; source: string }
 	| { kind: "intake-url"; json: boolean; maxBytes?: number; updateSurfaces: boolean; url: string }
 	| { kind: "judgment"; fields: JudgmentFields; json: boolean; noteId: string }
 	| { kind: "lint"; json: boolean }
@@ -277,6 +278,17 @@ export interface CliIntakePathPayload extends CliStatusPayload {
 	};
 }
 
+export interface CliIntakeTastePayload extends CliStatusPayload {
+	result: {
+		bytesRead: number;
+		boards: string[];
+		contentHash: string;
+		fei: string;
+		noteId: string;
+		snapshotText: string;
+	};
+}
+
 export interface CliBootstrapFeedPayload extends CliStatusPayload {
 	result: {
 		files: Array<{
@@ -418,4 +430,6 @@ export interface CliTelegramConfirmationPayload extends CliStatusPayload {
 export interface CliIo {
 	stdout: NodeJS.WritableStream;
 	stderr: NodeJS.WritableStream;
+	/** intake-taste `-` reads pasted text from here; defaults to process.stdin. */
+	stdin?: NodeJS.ReadableStream;
 }

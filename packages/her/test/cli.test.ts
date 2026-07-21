@@ -1164,6 +1164,57 @@ test("CLI intakes a local path as a world note", async () => {
 	assert.match(world, /Read full local local-markdown file/);
 });
 
+test("CLI intake-source frontmatter keys are unchanged now that taste-card fields exist (snapshot)", async () => {
+	const { store } = await gitBackedStore();
+	const result = await runCli(
+		[
+			"intake-source",
+			"--title",
+			"Snapshot Fixture",
+			"--source-url",
+			"https://example.com/snapshot-fixture",
+			"--source-type",
+			"article",
+			"--extracted",
+			"Snapshot fixture body text.",
+			"--coverage",
+			"Read full snapshot fixture.",
+			"--read",
+			"Samantha read the snapshot fixture.",
+			"--take",
+			"Keep as a snapshot regression fixture.",
+			"--json",
+		],
+		store,
+	);
+	const payload = JSON.parse(result.stdout);
+	const world = await readFile(join(store, "world", "snapshot-fixture.md"), "utf8");
+	const end = world.indexOf("\n---", 3);
+	const block = world.slice(0, end + 4).replace(/captured_at: .+/, "captured_at: <ISO>");
+	assert.equal(
+		block,
+		[
+			"---",
+			`id: ${payload.result.noteId}`,
+			"title: Snapshot Fixture",
+			"source_url: https://example.com/snapshot-fixture",
+			"source_type: article",
+			"captured_at: <ISO>",
+			`content_hash: ${payload.result.contentHash}`,
+			"status: captured",
+			"memory_status: active",
+			"memory_status_reason: Trusted writer marked this source active after intake.",
+			"privacy: public",
+			"provenance: world-ingested",
+			"claim_count: 0",
+			"supported_claims: 0",
+			"insufficient_claims: 0",
+			"response_version: 1",
+			"---",
+		].join("\n"),
+	);
+});
+
 test("CLI bootstrap-feed recursively feeds local text sources", async () => {
 	const { store } = await gitBackedStore();
 	const sourceRoot = await mkdtemp(join(tmpdir(), "her-cli-feed-"));
