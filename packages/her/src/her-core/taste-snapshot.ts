@@ -139,14 +139,27 @@ async function captureWebpageScreenshot(
 	const session = `taste-${createHash("sha256").update(screenshotFile).digest("hex").slice(0, 12)}`;
 	const [width, height] = SCREENSHOT_VIEWPORT;
 	const runStep = (args: string[]) => runAgentBrowserStep(tools.agentBrowserBin, ["--session", session, ...args]);
-	try {
+	const closeSession = () => runAgentBrowserStep(tools.agentBrowserBin, ["--session", session, "close"]);
+	const capture = async () => {
 		await runStep(["open", url]);
 		await runStep(["set", "viewport", String(width), String(height)]);
 		await runStep(["screenshot", "--full", screenshotFile]);
+	};
+	try {
+		await capture();
 	} catch (error) {
-		warnings.push(`agent-browser screenshot capture failed for ${url}: ${errorMessage(error)}`);
+		if (!isAgentBrowserInfrastructureError(error)) {
+			warnings.push(`agent-browser screenshot capture failed for ${url}: ${errorMessage(error)}`);
+		} else {
+			await closeSession().catch(() => undefined);
+			try {
+				await capture();
+			} catch (retryError) {
+				warnings.push(`agent-browser screenshot capture failed for ${url}: ${errorMessage(retryError)}`);
+			}
+		}
 	} finally {
-		await runAgentBrowserStep(tools.agentBrowserBin, ["--session", session, "close"]).catch(() => undefined);
+		await closeSession().catch(() => undefined);
 	}
 	if (!(await pathExists(screenshotFile))) {
 		warnings.push(`no screenshot file was produced for ${url}`);
@@ -159,6 +172,17 @@ async function runAgentBrowserStep(bin: string, args: string[]): Promise<void> {
 	const resolvedBin = resolveExecutableOnPath(bin);
 	const plan = await resolveCmdShimSpawnPlan(resolvedBin, args);
 	await execFileAsync(plan.command, plan.args, { timeout: SCREENSHOT_STEP_TIMEOUT_MS });
+}
+
+function isAgentBrowserInfrastructureError(error: unknown): boolean {
+	if (typeof error !== "object" || error === null) return false;
+	const details = error as { code?: unknown; killed?: unknown; message?: unknown; signal?: unknown };
+	if (details.code === "ECONNREFUSED" || details.code === "ECONNRESET" || details.code === "EPIPE") return true;
+	if (details.killed === true && details.signal === "SIGTERM") return true;
+	return (
+		typeof details.message === "string" &&
+		/(?:timed? out|timeout|connection (?:refused|reset|closed)|socket hang up)/i.test(details.message)
+	);
 }
 
 /**
