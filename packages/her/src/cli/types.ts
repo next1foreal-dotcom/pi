@@ -19,6 +19,11 @@ import type {
 	PriorResult,
 	SamanthaJournalKind,
 	SelfNarrativeUpdateResult,
+	TasteBoardApplyOutcome,
+	TasteCluster,
+	TasteClusterStatus,
+	TasteProposal,
+	TasteReconciliation,
 	TelegramConfirmationRequest,
 	TelegramConfirmationResult,
 	TelegramOutboxResult,
@@ -129,6 +134,8 @@ export type CliCommand =
 			timestamp?: string;
 			title: string;
 	  }
+	| { kind: "taste-weekly"; json: boolean; since?: string }
+	| { kind: "taste-board-apply"; board: string; cardIds: string[]; json: boolean }
 	| {
 			ackText?: string;
 			intervalSeconds: number;
@@ -286,6 +293,29 @@ export interface CliIntakeTastePayload extends CliStatusPayload {
 		fei: string;
 		noteId: string;
 		snapshotText: string;
+	};
+}
+
+export interface CliTasteWeeklyPayload extends CliStatusPayload {
+	result: {
+		week: string;
+		since: string;
+		until: string;
+		generatedAt: string;
+		reconciliation: TasteReconciliation;
+		clusterStatus: TasteClusterStatus;
+		clusters: TasteCluster[];
+		proposals: TasteProposal[];
+		reportPath: string;
+		reportMarkdown: string;
+	};
+}
+
+export interface CliTasteBoardApplyPayload extends CliStatusPayload {
+	result: {
+		board: string;
+		items: Array<{ cardId: string; outcome: TasteBoardApplyOutcome; reason?: string }>;
+		summary: { applied: number; skipped: number; rejected: number; notFound: number };
 	};
 }
 

@@ -46,6 +46,8 @@ import {
 	renderSynthesize,
 	renderSynthesizeDue,
 	renderTaste,
+	renderTasteBoardApply,
+	renderTasteWeekly,
 	renderTelegramBridge,
 	renderTelegramConfirmation,
 	renderTelegramOutbox,
@@ -76,6 +78,7 @@ import {
 } from "./cli/types.ts";
 import { errorMessage, intakeContentHash, parseOptionalPositiveNumber, requireEnv, UsageError } from "./cli/utils.ts";
 import {
+	appendTasteIntakeLog,
 	assemblePrior,
 	buildLocalPdfTasteData,
 	captureTasteSnapshot,
@@ -96,6 +99,8 @@ import {
 	listLongTasks,
 	loadConfig,
 	Memory,
+	type ModelLike,
+	markTasteProposalsAppliedForBoard,
 	OpenAICompatibleModel,
 	pollTelegramInbox,
 	pushTelegramOutbox,
@@ -108,6 +113,7 @@ import {
 	runEvalTrend,
 	runGoldenEvals,
 	runMemoryLint,
+	runTasteWeekly,
 	StorePaths,
 	sendTelegramMessage,
 	startLongTask,
@@ -550,54 +556,73 @@ export async function runHerCli(
 
 	if (command.kind === "intake-taste") {
 		const fei = command.fei ?? "";
-		const base =
-			command.source === "-"
-				? await readStdinTasteData(io.stdin ?? process.stdin)
-				: /^https?:\/\//i.test(command.source)
-					? await readUrlTasteData(command.source, env, cwd)
-					: extname(command.source).toLowerCase() === ".pdf"
-						? await readLocalPdfTasteData(resolve(cwd, command.source), env)
-						: await readLocalOtherTasteData(resolve(cwd, command.source), cwd);
-		for (const warning of base.warnings ?? []) writeLine(io.stderr, `intake-taste: ${warning}`);
+		// palate P2-1: the intake ledger is an append-only side channel next to the existing intake
+		// behavior — it must not change intake-taste's own exit code or output contract, so both the
+		// success and failure paths append a log line and the failure path rethrows unchanged.
+		try {
+			const base =
+				command.source === "-"
+					? await readStdinTasteData(io.stdin ?? process.stdin)
+					: /^https?:\/\//i.test(command.source)
+						? await readUrlTasteData(command.source, env, cwd)
+						: extname(command.source).toLowerCase() === ".pdf"
+							? await readLocalPdfTasteData(resolve(cwd, command.source), env)
+							: await readLocalOtherTasteData(resolve(cwd, command.source), cwd);
+			for (const warning of base.warnings ?? []) writeLine(io.stderr, `intake-taste: ${warning}`);
 
-		const snapshotSlug = `${tasteSlug(base.data.title)}-${base.data.contentHash.slice(0, 8)}`;
-		const snapshotText = `world/_snapshots/${snapshotSlug}/original.md`;
-		await writeText(join(memoryDir, snapshotText), base.data.extracted);
+			const snapshotSlug = `${tasteSlug(base.data.title)}-${base.data.contentHash.slice(0, 8)}`;
+			const snapshotText = `world/_snapshots/${snapshotSlug}/original.md`;
+			await writeText(join(memoryDir, snapshotText), base.data.extracted);
 
-		const capture = await captureTasteSnapshot({
-			kind: base.kind,
-			...(base.localPath ? { localPath: base.localPath } : {}),
-			memoryDir,
-			slug: snapshotSlug,
-			sourceUrl: base.data.sourceUrl,
-			tools: resolveTasteToolConfig(env),
-		});
-		for (const warning of capture.warnings) writeLine(io.stderr, `intake-taste: ${warning}`);
+			const capture = await captureTasteSnapshot({
+				kind: base.kind,
+				...(base.localPath ? { localPath: base.localPath } : {}),
+				memoryDir,
+				slug: snapshotSlug,
+				sourceUrl: base.data.sourceUrl,
+				tools: resolveTasteToolConfig(env),
+			});
+			for (const warning of capture.warnings) writeLine(io.stderr, `intake-taste: ${warning}`);
 
-		const data: WorldNoteData = {
-			...base.data,
-			sourceType: "taste-card",
-			boards: command.boards,
-			fei,
-			snapshot: { text: snapshotText, screenshot: capture.screenshot, media: capture.media },
-		};
-		const noteId = await memory.writeWorldNote(data);
-		const payload = {
-			...(await buildStatusPayload(memoryDir, memory)),
-			result: {
-				bytesRead: base.bytesRead,
-				boards: data.boards ?? [],
-				contentHash: data.contentHash,
+			const data: WorldNoteData = {
+				...base.data,
+				sourceType: "taste-card",
+				boards: command.boards,
 				fei,
+				snapshot: { text: snapshotText, screenshot: capture.screenshot, media: capture.media },
+			};
+			const noteId = await memory.writeWorldNote(data);
+			await appendTasteIntakeLog(memory.paths, {
+				ts: new Date().toISOString(),
+				source: command.source,
+				result: "success",
 				noteId,
-				snapshotText,
-				...(base.warnings?.length || capture.warnings.length > 0
-					? { warnings: [...(base.warnings ?? []), ...capture.warnings] }
-					: {}),
-			},
-		};
-		writePayload(io.stdout, payload, command.json, renderIntakeTaste);
-		return payload.status.status === "unknown" ? 1 : 0;
+			});
+			const payload = {
+				...(await buildStatusPayload(memoryDir, memory)),
+				result: {
+					bytesRead: base.bytesRead,
+					boards: data.boards ?? [],
+					contentHash: data.contentHash,
+					fei,
+					noteId,
+					snapshotText,
+					...(base.warnings?.length || capture.warnings.length > 0
+						? { warnings: [...(base.warnings ?? []), ...capture.warnings] }
+						: {}),
+				},
+			};
+			writePayload(io.stdout, payload, command.json, renderIntakeTaste);
+			return payload.status.status === "unknown" ? 1 : 0;
+		} catch (error) {
+			await appendTasteIntakeLog(memory.paths, {
+				ts: new Date().toISOString(),
+				source: command.source,
+				result: "error",
+				error: errorMessage(error),
+			});
+			throw error;
+		}
 	}
 
 	if (command.kind === "intake-url") {
@@ -666,6 +691,44 @@ export async function runHerCli(
 		});
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderTaste);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "taste-weekly") {
+		const model = createCliModel(memoryDir, env);
+		const result = await runTasteWeekly(memory.paths, model, {
+			...(command.since ? { since: command.since } : {}),
+		});
+		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
+		writePayload(io.stdout, payload, command.json, renderTasteWeekly);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "taste-board-apply") {
+		const items: Array<{
+			cardId: string;
+			outcome: "applied" | "skipped" | "rejected" | "not-found";
+			reason?: string;
+		}> = [];
+		for (const cardId of command.cardIds) {
+			const applied = await memory.applyTasteBoard(cardId, command.board);
+			items.push({ cardId, outcome: applied.outcome, ...(applied.reason ? { reason: applied.reason } : {}) });
+		}
+		if (items.some((item) => item.outcome === "applied")) {
+			await markTasteProposalsAppliedForBoard(memory.paths, command.board);
+		}
+		const summary = {
+			applied: items.filter((item) => item.outcome === "applied").length,
+			skipped: items.filter((item) => item.outcome === "skipped").length,
+			rejected: items.filter((item) => item.outcome === "rejected").length,
+			notFound: items.filter((item) => item.outcome === "not-found").length,
+		};
+		const payload = {
+			...(await buildStatusPayload(memoryDir, memory)),
+			result: { board: command.board, items, summary },
+		};
+		writePayload(io.stdout, payload, command.json, renderTasteBoardApply);
+		if (summary.rejected > 0 || summary.notFound > 0) return 1;
 		return payload.status.status === "unknown" ? 1 : 0;
 	}
 
@@ -853,9 +916,12 @@ function tasteSlug(title: string): string {
 	);
 }
 
+function createCliModel(memoryDir: string, env: NodeJS.ProcessEnv): ModelLike {
+	return createSummaryModel(env) ?? new OpenAICompatibleModel(loadConfig(join(memoryDir, ".her", "config.yaml")), env);
+}
+
 function createCliMemory(memoryDir: string, env: NodeJS.ProcessEnv): Memory {
-	const model =
-		createSummaryModel(env) ?? new OpenAICompatibleModel(loadConfig(join(memoryDir, ".her", "config.yaml")), env);
+	const model = createCliModel(memoryDir, env);
 	return new Memory(memoryDir, { model, semanticSearch: createEmbeddingSearch(env) });
 }
 

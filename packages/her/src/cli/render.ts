@@ -35,7 +35,9 @@ import type {
 	CliSyncPayload,
 	CliSynthesizeDuePayload,
 	CliSynthesizePayload,
+	CliTasteBoardApplyPayload,
 	CliTastePayload,
+	CliTasteWeeklyPayload,
 	CliTelegramBridgePayload,
 	CliTelegramConfirmationPayload,
 	CliTelegramOutboxPayload,
@@ -495,6 +497,20 @@ export function renderIntakeTaste(payload: CliIntakeTastePayload): string {
 	].join("\n");
 }
 
+export function renderTasteWeekly(payload: CliTasteWeeklyPayload): string {
+	return payload.result.reportMarkdown;
+}
+
+export function renderTasteBoardApply(payload: CliTasteBoardApplyPayload): string {
+	const { board, items, summary } = payload.result;
+	return [
+		`Her taste-board-apply "${board}":`,
+		...items.map((item) => `${item.cardId}: ${item.outcome}${item.reason ? ` (${item.reason})` : ""}`),
+		"",
+		`applied: ${summary.applied}, skipped: ${summary.skipped}, rejected: ${summary.rejected}, not-found: ${summary.notFound}`,
+	].join("\n");
+}
+
 export function renderBootstrapFeed(payload: CliBootstrapFeedPayload): string {
 	const files =
 		payload.result.files.length > 0
@@ -603,6 +619,8 @@ export function usage(): string {
   her sync [--message <message>] [--json]
   her status [--json]
   her taste --title <title> --judgment <text> --reason <text> [--differs-from-fei-rule <text>] [--source <text>] [--timestamp <ISO>] [--json]
+  her taste-weekly [--since <ISO>] [--json]
+  her taste-board-apply <board> <cardId|slug>... [--json]
   her telegram-bridge [--timeout <seconds>] [--interval <seconds>] [--limit <n>] [--reply|--reply-mode ack|pi] [--ack-text <text>] [--once] [--json]
   her telegram-confirm-request --action-id <id> --summary <text> [--tier <tier>] [--expires-at <ISO>] [--code <code>] [--json]
   her telegram-poll [--timeout <seconds>] [--limit <n>] [--offset <n>] [--json]

@@ -127,6 +127,10 @@ export class StorePaths {
 		return join(this.root, "reports");
 	}
 
+	get tasteReports(): string {
+		return join(this.root, "taste-reports");
+	}
+
 	get costReports(): string {
 		return join(this.reports, "cost");
 	}

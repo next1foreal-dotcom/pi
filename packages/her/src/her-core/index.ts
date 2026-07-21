@@ -137,6 +137,8 @@ export type {
 	BackfillOptions,
 	BackfillRunResult,
 } from "./memory-backfill.ts";
+export type { TasteBoardApplyOutcome, TasteBoardApplyResult } from "./memory-world.ts";
+export { applyTasteBoard, findWorldNote } from "./memory-world.ts";
 export type { ModelLike } from "./model.ts";
 export { FakeModel, OpenAICompatibleModel } from "./model.ts";
 export { StorePaths } from "./paths.ts";
@@ -240,6 +242,33 @@ export {
 	resolveTasteToolConfig,
 	resolveWithinRoot,
 } from "./taste-snapshot.ts";
+export type {
+	TasteCardSummary,
+	TasteCluster,
+	TasteClusterResult,
+	TasteClusterStatus,
+	TasteIntakeLogEntry,
+	TasteLostEntry,
+	TasteProposal,
+	TasteProposalStatus,
+	TasteProposalsSidecar,
+	TasteReconciliation,
+	TasteWeeklyOptions,
+	TasteWeeklyResult,
+} from "./taste-weekly.ts";
+export {
+	appendTasteIntakeLog,
+	clusterTasteCards,
+	markTasteProposalApplied,
+	markTasteProposalsAppliedForBoard,
+	NEW_BOARD_THRESHOLD,
+	proposeNewBoards,
+	readTasteCards,
+	readTasteProposalsSidecar,
+	reconcileTasteIntake,
+	runTasteWeekly,
+	writeTasteProposalsSidecar,
+} from "./taste-weekly.ts";
 export type {
 	AttentionDigest,
 	AttentionDigestOptions,

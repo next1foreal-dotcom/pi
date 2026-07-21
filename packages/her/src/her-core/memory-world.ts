@@ -118,7 +118,7 @@ export async function setMemoryStatus(
 	await writeText(path, `${frontmatter(parsed.data)}${body}`);
 }
 
-async function findWorldNote(paths: StorePaths, noteId: string): Promise<string> {
+export async function findWorldNote(paths: StorePaths, noteId: string): Promise<string> {
 	const entries = await readdir(paths.world);
 	for (const entry of entries) {
 		if (!entry.endsWith(".md")) continue;
@@ -127,4 +127,41 @@ async function findWorldNote(paths: StorePaths, noteId: string): Promise<string>
 		if (parsed.data.id === noteId || basename(entry, ".md") === noteId) return path;
 	}
 	throw new Error(`world note not found: ${noteId}`);
+}
+
+export type TasteBoardApplyOutcome = "applied" | "skipped" | "rejected" | "not-found";
+
+export interface TasteBoardApplyResult {
+	outcome: TasteBoardApplyOutcome;
+	reason?: string;
+}
+
+/**
+ * palate P2-2: give a taste card a new board tag through the CLI (AC-4's "经 Fei 同意才建" write path).
+ * Reuses the same boards-union semantics as `updateTasteCardOnRepeatIntake` rather than a second
+ * update path. Non-taste-card notes are rejected; already-tagged cards are skipped without a write
+ * so their file bytes (and mtime) are untouched.
+ */
+export async function applyTasteBoard(
+	paths: StorePaths,
+	cardId: string,
+	board: string,
+): Promise<TasteBoardApplyResult> {
+	let path: string;
+	try {
+		path = await findWorldNote(paths, cardId);
+	} catch {
+		return { outcome: "not-found", reason: `world note not found: ${cardId}` };
+	}
+	const parsed = parseFrontmatter(await readText(path));
+	if (parsed.data.source_type !== "taste-card") {
+		return { outcome: "rejected", reason: `not a taste card: ${cardId}` };
+	}
+	const boards = Array.isArray(parsed.data.boards) ? (parsed.data.boards as string[]) : [];
+	if (boards.includes(board)) {
+		return { outcome: "skipped", reason: "already tagged" };
+	}
+	parsed.data.boards = [...boards, board];
+	await writeText(path, `${frontmatter(parsed.data)}${parsed.body}`);
+	return { outcome: "applied" };
 }

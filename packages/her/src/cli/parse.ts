@@ -62,6 +62,8 @@ export function parseArgs(argv: string[]): CliCommand {
 	if (command === "status") return parseStatus(rest);
 	if (command === "sync") return parseSync(rest);
 	if (command === "taste") return parseTaste(rest);
+	if (command === "taste-weekly") return parseTasteWeekly(rest);
+	if (command === "taste-board-apply") return parseTasteBoardApply(rest);
 	if (command === "telegram-bridge") return parseTelegramBridge(rest);
 	if (command === "telegram-confirm-request") return parseTelegramConfirmRequest(rest);
 	if (command === "telegram-poll") return parseTelegramPoll(rest);
@@ -1048,6 +1050,43 @@ function parseIntakeTaste(argv: string[]): CliCommand {
 
 	if (!source?.trim()) throw new UsageError("intake-taste requires a source: her intake-taste <url|path|->");
 	return { kind: "intake-taste", boards, json, source, ...(fei !== undefined ? { fei } : {}) };
+}
+
+function parseTasteWeekly(argv: string[]): CliCommand {
+	let json = false;
+	let since: string | undefined;
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--since") {
+			since = requireOptionValue(argv[++i], arg);
+			continue;
+		}
+		throw new UsageError(`unknown taste-weekly option: ${arg}`);
+	}
+	return { kind: "taste-weekly", json, ...(since !== undefined ? { since } : {}) };
+}
+
+function parseTasteBoardApply(argv: string[]): CliCommand {
+	let json = false;
+	const positional: string[] = [];
+	for (const arg of argv) {
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg.startsWith("--")) throw new UsageError(`unknown taste-board-apply option: ${arg}`);
+		positional.push(arg);
+	}
+	const [board, ...cardIds] = positional;
+	if (!board?.trim()) {
+		throw new UsageError("taste-board-apply requires a board name: her taste-board-apply <board> <cardId...>");
+	}
+	if (cardIds.length === 0) throw new UsageError("taste-board-apply requires at least one card id");
+	return { kind: "taste-board-apply", board, cardIds, json };
 }
 
 function parseBootstrapFeed(argv: string[]): CliCommand {
