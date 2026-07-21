@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, stat, unlink, writeFile } from "node:fs/promises";
-import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -12,6 +11,7 @@ import {
 	resolveTasteToolConfig,
 	resolveWithinRoot,
 } from "../src/her-core/taste-snapshot.ts";
+import { withAgentBrowserTestLock, withSafeFixtureServer } from "./agent-browser-e2e.ts";
 
 // Hand-written minimal PDF (no valid xref table); pdftotext recovers it via its reconstruction
 // path. Verified with a real `pdftotext -layout` run during T2 development (see task report).
@@ -200,42 +200,32 @@ test("captureTasteSnapshot takes a real full-page screenshot of a local fixture 
 		'<body style="margin:0"><h1 style="padding:40px">Taste Snapshot Test Page</h1>',
 		'<div style="height:1400px;background:linear-gradient(#eee,#999)"></div></body></html>',
 	].join("\n");
-	const server = createServer((_req, res) => {
-		res.writeHead(200, { "content-type": "text/html" });
-		res.end(html);
+	await withAgentBrowserTestLock(async () => {
+		await withSafeFixtureServer(html, async (url) => {
+			const memoryDir = await mkdtemp(join(tmpdir(), "her-taste-snapshot-"));
+			const result = await captureTasteSnapshot({
+				kind: "webpage",
+				memoryDir,
+				slug: "webpage-slug",
+				sourceUrl: url,
+				tools: tools(),
+			});
+			assert.equal(result.media.length, 0);
+			assert.ok(result.screenshot, `expected a screenshot path; warnings: ${result.warnings.join("; ")}`);
+			assert.match((result.screenshot ?? "").replace(/\\/g, "/"), /^world\/_snapshots\/webpage-slug\/page\.png$/);
+			const screenshotPath = join(memoryDir, result.screenshot ?? "");
+			const stats = await stat(screenshotPath);
+			assert.ok(stats.size > 1000, `expected a real PNG file, got ${stats.size} bytes`);
+
+			const repeat = await captureTasteSnapshot({
+				kind: "webpage",
+				memoryDir,
+				slug: "webpage-slug",
+				sourceUrl: url,
+				tools: tools({ agentBrowserBin: join(memoryDir, "no-such-agent-browser.exe") }),
+			});
+			assert.equal(repeat.screenshot, result.screenshot);
+			assert.deepEqual(repeat.warnings, []);
+		});
 	});
-	await new Promise<void>((resolvePromise) => server.listen(0, "127.0.0.1", resolvePromise));
-	const address = server.address();
-	if (!address || typeof address === "string") throw new Error("expected a TCP address");
-	const url = `http://127.0.0.1:${address.port}/fixture`;
-
-	try {
-		const memoryDir = await mkdtemp(join(tmpdir(), "her-taste-snapshot-"));
-		const result = await captureTasteSnapshot({
-			kind: "webpage",
-			memoryDir,
-			slug: "webpage-slug",
-			sourceUrl: url,
-			tools: tools(),
-		});
-		assert.equal(result.media.length, 0);
-		assert.ok(result.screenshot, `expected a screenshot path; warnings: ${result.warnings.join("; ")}`);
-		assert.match((result.screenshot ?? "").replace(/\\/g, "/"), /^world\/_snapshots\/webpage-slug\/page\.png$/);
-		const screenshotPath = join(memoryDir, result.screenshot ?? "");
-		const stats = await stat(screenshotPath);
-		assert.ok(stats.size > 1000, `expected a real PNG file, got ${stats.size} bytes`);
-
-		// Idempotent repeat: reuses the file without invoking agent-browser again.
-		const repeat = await captureTasteSnapshot({
-			kind: "webpage",
-			memoryDir,
-			slug: "webpage-slug",
-			sourceUrl: url,
-			tools: tools({ agentBrowserBin: join(memoryDir, "no-such-agent-browser.exe") }),
-		});
-		assert.equal(repeat.screenshot, result.screenshot);
-		assert.deepEqual(repeat.warnings, []);
-	} finally {
-		await new Promise<void>((resolvePromise) => server.close(() => resolvePromise()));
-	}
 });
