@@ -649,6 +649,20 @@ async function assertSafeHttpUrl(
 	return { address: { address: first.address, family: first.family === 6 ? 6 : 4 }, url };
 }
 
+/**
+ * palate T2fix2: validates `sourceUrl` through the same SSRF gate as readUrlForWorldNote, without
+ * fetching it. Used before concatenating a URL into another request (e.g. a reader-proxy prefix)
+ * so the embedded URL itself is proven safe, not just the proxy host.
+ */
+export async function assertPubliclyFetchableUrl(
+	sourceUrl: string,
+	opts: Pick<UrlIntakeOptions, "allowLocal" | "lookup"> = {},
+): Promise<URL> {
+	const url = normalizeSourceUrl(sourceUrl);
+	await assertSafeHttpUrl(url, opts);
+	return url;
+}
+
 async function readResponseText(
 	response: Response,
 	maxBytes: number,

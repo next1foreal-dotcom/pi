@@ -72,7 +72,12 @@ export type {
 	UrlMarkdownReadOptions,
 	UrlMarkdownReadResult,
 } from "./intake.ts";
-export { collectPathIntakeFiles, readPathForWorldNote, readUrlForWorldNote } from "./intake.ts";
+export {
+	assertPubliclyFetchableUrl,
+	collectPathIntakeFiles,
+	readPathForWorldNote,
+	readUrlForWorldNote,
+} from "./intake.ts";
 export type { MemoryLintBrokenLink, MemoryLintOrphan, MemoryLintReport, MemoryLintSupersessionIssue } from "./lint.ts";
 export { renderMemoryLintReport, runMemoryLint } from "./lint.ts";
 export type {
@@ -270,3 +275,10 @@ export {
 	trimTelegramText,
 } from "./telegram.ts";
 export * from "./trigger-log.ts";
+export type {
+	XArticleFullTextFailure,
+	XArticleFullTextOptions,
+	XArticleFullTextResult,
+	XThreadTitleInput,
+} from "./x-article.ts";
+export { deriveXThreadTitle, extractJinaReaderTitle, fetchXArticleFullText } from "./x-article.ts";

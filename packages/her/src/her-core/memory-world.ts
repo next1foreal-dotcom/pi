@@ -1,6 +1,6 @@
 import { readdir } from "node:fs/promises";
 import { basename, join } from "node:path";
-import type { JudgmentFields, WorldNoteData } from "./memory-types.ts";
+import type { JudgmentFields, WorldNoteData, WorldNoteSnapshot } from "./memory-types.ts";
 import { appendJudgment, genId, normalizeMemoryStatusReason, slug, stripSection, worldBody } from "./memory-utils.ts";
 import type { StorePaths } from "./paths.ts";
 import { defaultWorldPrivacy, validateMemoryProvenance } from "./privacy.ts";
@@ -73,6 +73,22 @@ async function updateTasteCardOnRepeatIntake(paths: StorePaths, noteId: string, 
 	const incomingFei = data.fei?.trim() ?? "";
 	if (incomingFei && incomingFei !== existingFei) {
 		parsed.data.fei = existingFei ? `${existingFei}\n${incomingFei}` : incomingFei;
+	}
+
+	// palate T2fix: a repeat intake (e.g. rerunning the same URL after a capture bug is fixed) may
+	// carry media/a screenshot the on-disk card never got. Backfill only what's currently
+	// empty/missing on disk; never overwrite a value the card already has.
+	if (data.snapshot) {
+		const existingSnapshot = parsed.data.snapshot as WorldNoteSnapshot | undefined;
+		if (!existingSnapshot) {
+			parsed.data.snapshot = data.snapshot;
+		} else {
+			const media = existingSnapshot.media.length > 0 ? existingSnapshot.media : data.snapshot.media;
+			const screenshot = existingSnapshot.screenshot ?? data.snapshot.screenshot;
+			if (media !== existingSnapshot.media || screenshot !== existingSnapshot.screenshot) {
+				parsed.data.snapshot = { ...existingSnapshot, media, screenshot };
+			}
+		}
 	}
 
 	await writeText(path, `${frontmatter(parsed.data)}${parsed.body}`);

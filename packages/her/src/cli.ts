@@ -87,8 +87,11 @@ import {
 	completeLongTask,
 	createEmbeddingSearch,
 	createTelegramConfirmationRequest,
+	deriveXThreadTitle,
+	extractJinaReaderTitle,
 	extractLocalPdfText,
 	fetchVideoTasteMetadata,
+	fetchXArticleFullText,
 	frontmatter,
 	listLongTasks,
 	loadConfig,
@@ -555,6 +558,7 @@ export async function runHerCli(
 					: extname(command.source).toLowerCase() === ".pdf"
 						? await readLocalPdfTasteData(resolve(cwd, command.source), env)
 						: await readLocalOtherTasteData(resolve(cwd, command.source), cwd);
+		for (const warning of base.warnings ?? []) writeLine(io.stderr, `intake-taste: ${warning}`);
 
 		const snapshotSlug = `${tasteSlug(base.data.title)}-${base.data.contentHash.slice(0, 8)}`;
 		const snapshotText = `world/_snapshots/${snapshotSlug}/original.md`;
@@ -587,7 +591,9 @@ export async function runHerCli(
 				fei,
 				noteId,
 				snapshotText,
-				...(capture.warnings.length > 0 ? { warnings: capture.warnings } : {}),
+				...(base.warnings?.length || capture.warnings.length > 0
+					? { warnings: [...(base.warnings ?? []), ...capture.warnings] }
+					: {}),
 			},
 		};
 		writePayload(io.stdout, payload, command.json, renderIntakeTaste);
@@ -723,6 +729,8 @@ interface TasteIntakeBase {
 	kind: TasteSnapshotKind;
 	/** palate T2: absolute path to the original file; only set (and only used) for kind "local-pdf". */
 	localPath?: string;
+	/** palate T2fix2: non-fatal degradation warnings (e.g. the x-article full-text fetch failing). */
+	warnings?: string[];
 }
 
 async function readUrlTasteData(sourceUrl: string, env: NodeJS.ProcessEnv, cwd: string): Promise<TasteIntakeBase> {
@@ -731,12 +739,42 @@ async function readUrlTasteData(sourceUrl: string, env: NodeJS.ProcessEnv, cwd: 
 		markdownReader: createArticleMarkdownReader(env, cwd),
 		xMarkdownReader: createDefuddleMarkdownReader(env, cwd),
 	});
-	if (intake.data.sourceType === "x-thread") return { data: intake.data, bytesRead: intake.bytesRead, kind: "tweet" };
+	if (intake.data.sourceType === "x-thread") return enhanceXThreadTasteData(intake.data, env);
 	if (intake.data.sourceType === "video") return enhanceVideoTasteData(intake.data, env);
 	if (intake.data.sourceType === "article") {
 		return { data: intake.data, bytesRead: intake.bytesRead, kind: "webpage" };
 	}
 	return { data: intake.data, bytesRead: intake.bytesRead, kind: "other" };
+}
+
+/**
+ * palate T2fix2 (AC-2 + contract §4): an x-status intake only ever carried the tweet's own text
+ * (plus whatever defuddle's article intro grabbed) — an article-type tweet's linked long-form
+ * piece never made it into the taste card, and the title fell back to a naked status ID. Fetches
+ * the linked article's full text through r.jina.ai's reader proxy and re-derives the title;
+ * degrades to the existing tweet-only text (title still fixed) on any full-text fetch failure.
+ */
+async function enhanceXThreadTasteData(data: WorldNoteData, env: NodeJS.ProcessEnv): Promise<TasteIntakeBase> {
+	const allowLocal = env.HER_ALLOW_LOCAL_URLS === "1" || env.HER_ALLOW_LOCAL_INTAKE === "1";
+	const fullText = await fetchXArticleFullText(data.sourceUrl, { allowLocal });
+	if (!fullText.ok) {
+		const title = deriveXThreadTitle({ fallbackTitle: data.title, tweetText: data.extracted });
+		return {
+			bytesRead: Buffer.byteLength(data.extracted, "utf8"),
+			data: { ...data, title },
+			kind: "tweet",
+			warnings: [fullText.warning],
+		};
+	}
+	const articleTitle = extractJinaReaderTitle(fullText.markdown);
+	const title = deriveXThreadTitle({ articleTitle, fallbackTitle: data.title, tweetText: data.extracted });
+	const enhanced: WorldNoteData = {
+		...data,
+		coverage: `Read the tweet text for ${data.sourceUrl} and its linked article's full text via a reader proxy; ${fullText.bytesRead} bytes read from the full-text proxy.`,
+		extracted: fullText.markdown,
+		title,
+	};
+	return { data: enhanced, bytesRead: fullText.bytesRead, kind: "tweet" };
 }
 
 /**

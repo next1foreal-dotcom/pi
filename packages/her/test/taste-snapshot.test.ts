@@ -83,6 +83,32 @@ test("captureTasteSnapshot is idempotent: an already-populated media dir is reus
 	assert.deepEqual(result.warnings, []);
 });
 
+test("captureTasteSnapshot recursively collects media nested under subdirectories (grab.py's twitter/<user>/ layout)", async () => {
+	const memoryDir = await mkdtemp(join(tmpdir(), "her-taste-snapshot-"));
+	const mediaRoot = resolveTasteMediaRoot(memoryDir);
+	const mediaDir = join(mediaRoot, "nested-slug");
+	const nestedDir = join(mediaDir, "twitter", "lukaivanovic");
+	await mkdir(nestedDir, { recursive: true });
+	await writeFile(join(nestedDir, "one.jpg"), "fake-bytes-1");
+	await writeFile(join(nestedDir, "two.jpg"), "fake-bytes-2");
+
+	// Deliberately broken tool config: if the recursive listing worked, existing files are found
+	// and grab.py is never invoked; if it stayed non-recursive, the dir would look empty, grab.py
+	// would run (and fail against this broken binary), and a spurious "no media" warning would fire.
+	const result = await captureTasteSnapshot({
+		kind: "tweet",
+		memoryDir,
+		slug: "nested-slug",
+		sourceUrl: "https://x.com/lukaivanovic/status/2079178687409279303",
+		tools: tools({ grabPyPython: join(memoryDir, "no-such-python-binary.exe") }),
+	});
+	assert.deepEqual([...result.media].sort(), [
+		"taste-media/nested-slug/twitter/lukaivanovic/one.jpg",
+		"taste-media/nested-slug/twitter/lukaivanovic/two.jpg",
+	]);
+	assert.deepEqual(result.warnings, []);
+});
+
 test("captureTasteSnapshot copies a local PDF original into taste-media and is idempotent on repeat", async () => {
 	const memoryDir = await mkdtemp(join(tmpdir(), "her-taste-snapshot-"));
 	const sourceDir = await mkdtemp(join(tmpdir(), "her-taste-pdf-source-"));
