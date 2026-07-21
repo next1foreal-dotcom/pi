@@ -8,7 +8,7 @@ import { Readable, Writable } from "node:stream";
 import test from "node:test";
 import { promisify } from "node:util";
 import { runHerCli } from "../src/cli.ts";
-import { initStore, parseFrontmatter } from "../src/her-core/index.ts";
+import { initStore, Memory, parseFrontmatter } from "../src/her-core/index.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -122,6 +122,82 @@ test("CLI intake-taste on a repeat contentHash merges boards and keeps fei", asy
 	const parsed = parseFrontmatter(world);
 	assert.deepEqual([...(parsed.data.boards as string[])].sort(), ["agent", "design", "motion"]);
 	assert.equal(parsed.data.fei, "keep me");
+});
+
+function baseTasteData(overrides: Partial<Parameters<Memory["writeWorldNote"]>[0]> = {}) {
+	return {
+		title: "Repeat Intake Backfill",
+		sourceUrl: "https://x.com/lukaivanovic/status/2079178687409279303",
+		sourceType: "taste-card" as const,
+		contentHash: "repeat-backfill-hash",
+		memoryStatus: "active" as const,
+		extracted: "Two nested jpgs from twitter/lukaivanovic/.",
+		coverage: "Read full tweet.",
+		read: "The useful point is the nested media layout.",
+		steal: [],
+		connections: [],
+		take: "Worth stealing.",
+		possibleMoves: [],
+		boards: ["design"],
+		fei: "",
+		...overrides,
+	};
+}
+
+test("writeWorldNote backfills a repeat taste-card's stale-empty snapshot.media/screenshot without overwriting existing values", async () => {
+	const store = await mkdtemp(join(tmpdir(), "her-taste-backfill-"));
+	await initStore(store);
+	const memory = new Memory(store);
+
+	// First intake: simulates the pre-fix bug where listExistingFiles was non-recursive and
+	// registered an empty media array + no screenshot despite real captured material on disk.
+	const firstId = await memory.writeWorldNote(
+		baseTasteData({
+			snapshot: { text: "world/_snapshots/repeat-backfill/original.md", screenshot: null, media: [] },
+		}),
+	);
+
+	// Repeat intake (same contentHash, e.g. a rerun after the fix): incoming snapshot now carries
+	// the real media/screenshot the fixed capture found. The on-disk card must be backfilled.
+	const secondId = await memory.writeWorldNote(
+		baseTasteData({
+			snapshot: {
+				text: "world/_snapshots/repeat-backfill/original.md",
+				screenshot: "world/_snapshots/repeat-backfill/page.png",
+				media: ["taste-media/repeat-backfill/twitter/lukaivanovic/one.jpg"],
+			},
+		}),
+	);
+	assert.equal(secondId, firstId);
+
+	const worldFiles = (await readdir(join(store, "world"))).filter((entry) => entry.endsWith(".md"));
+	assert.deepEqual(worldFiles, ["repeat-intake-backfill.md"]);
+	const text = await readFile(join(store, "world", worldFiles[0]), "utf8");
+	const parsed = parseFrontmatter(text);
+	const snapshotAfterBackfill = parsed.data.snapshot as { text: string; screenshot: string | null; media: string[] };
+	assert.equal(snapshotAfterBackfill.screenshot, "world/_snapshots/repeat-backfill/page.png");
+	assert.deepEqual(snapshotAfterBackfill.media, ["taste-media/repeat-backfill/twitter/lukaivanovic/one.jpg"]);
+
+	// A third intake with different incoming media must NOT overwrite the now-populated values.
+	const thirdId = await memory.writeWorldNote(
+		baseTasteData({
+			snapshot: {
+				text: "world/_snapshots/repeat-backfill/original.md",
+				screenshot: "world/_snapshots/repeat-backfill/different.png",
+				media: ["taste-media/repeat-backfill/should-not-appear.jpg"],
+			},
+		}),
+	);
+	assert.equal(thirdId, firstId);
+	const textAfterThird = await readFile(join(store, "world", worldFiles[0]), "utf8");
+	const parsedAfterThird = parseFrontmatter(textAfterThird);
+	const snapshotAfterThird = parsedAfterThird.data.snapshot as {
+		text: string;
+		screenshot: string | null;
+		media: string[];
+	};
+	assert.equal(snapshotAfterThird.screenshot, "world/_snapshots/repeat-backfill/page.png");
+	assert.deepEqual(snapshotAfterThird.media, ["taste-media/repeat-backfill/twitter/lukaivanovic/one.jpg"]);
 });
 
 test("CLI intake-taste reads stdin text as a taste card", async () => {

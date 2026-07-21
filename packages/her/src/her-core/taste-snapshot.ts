@@ -301,10 +301,27 @@ export async function fetchVideoTasteMetadata(url: string, ytdlpBin: string): Pr
 	}
 }
 
-async function listExistingFiles(dir: string): Promise<string[]> {
+const LIST_EXISTING_FILES_MAX_DEPTH = 4;
+
+/**
+ * Recursively collects file names (relative to `dir`, forward-slash separated) under `dir`.
+ * grab.py nests platform media under subdirectories (e.g. `twitter/<user>/`), so a non-recursive
+ * listing sees an empty directory and misreports a fresh capture as having produced no media.
+ */
+async function listExistingFiles(dir: string, depth = 0): Promise<string[]> {
+	if (depth > LIST_EXISTING_FILES_MAX_DEPTH) return [];
 	try {
 		const entries = await readdir(dir, { withFileTypes: true });
-		return entries.filter((entry) => entry.isFile()).map((entry) => entry.name);
+		const results: string[] = [];
+		for (const entry of entries) {
+			if (entry.isFile()) {
+				results.push(entry.name);
+			} else if (entry.isDirectory()) {
+				const nested = await listExistingFiles(join(dir, entry.name), depth + 1);
+				for (const name of nested) results.push(`${entry.name}/${name}`);
+			}
+		}
+		return results;
 	} catch {
 		return [];
 	}
