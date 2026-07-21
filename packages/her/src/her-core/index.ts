@@ -75,7 +75,6 @@ export type {
 export {
 	assertPubliclyFetchableUrl,
 	collectPathIntakeFiles,
-	fetchUrlSafely,
 	readPathForWorldNote,
 	readUrlForWorldNote,
 } from "./intake.ts";
