@@ -649,6 +649,36 @@ async function assertSafeHttpUrl(
 	return { address: { address: first.address, family: first.family === 6 ? 6 : 4 }, url };
 }
 
+/**
+ * palate T2fix2: validates `sourceUrl` through the same SSRF gate as readUrlForWorldNote, without
+ * fetching it. Used before concatenating a URL into another request (e.g. a reader-proxy prefix)
+ * so the embedded URL itself is proven safe, not just the proxy host.
+ */
+export async function assertPubliclyFetchableUrl(
+	sourceUrl: string,
+	opts: Pick<UrlIntakeOptions, "allowLocal" | "lookup"> = {},
+): Promise<URL> {
+	const url = normalizeSourceUrl(sourceUrl);
+	await assertSafeHttpUrl(url, opts);
+	return url;
+}
+
+/**
+ * palate T2fix2: fetches `sourceUrl` through the same SSRF-safe, pinned-DNS, redirect-capped path
+ * readUrlForWorldNote uses internally, exposed for callers (like the x-article full-text reader)
+ * that need one more safe HTTP request outside the main intake flow.
+ */
+export async function fetchUrlSafely(
+	sourceUrl: string,
+	opts: Pick<UrlIntakeOptions, "allowLocal" | "fetcher" | "lookup"> = {},
+): Promise<Response> {
+	const fetcher = opts.fetcher ?? fetch;
+	const lookup = opts.lookup ?? dnsLookup;
+	const url = normalizeSourceUrl(sourceUrl);
+	const safe = await assertSafeHttpUrl(url, { allowLocal: opts.allowLocal, lookup });
+	return fetchWithSafeRedirects(safe, { allowLocal: opts.allowLocal, fetcher, lookup });
+}
+
 async function readResponseText(
 	response: Response,
 	maxBytes: number,
