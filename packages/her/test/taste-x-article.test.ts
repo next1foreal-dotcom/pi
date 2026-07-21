@@ -180,3 +180,13 @@ test("deriveXThreadTitle falls back to the caller's existing title when the twee
 	const title = deriveXThreadTitle({ fallbackTitle: "2079178687409279303", tweetText: "   \n  " });
 	assert.equal(title, "2079178687409279303");
 });
+
+test("deriveXThreadTitle skips a leading avatar-image markdown line (real-fire finding, luka URL: defuddle's raw markdown leads with the tweet author's avatar image link, not human text)", () => {
+	const tweetText = [
+		"[![user avatar](https://pbs.twimg.com/profile_images/000/avatar.jpg)](https://x.com/lukaivanovic)",
+		"",
+		"How to create your own design tool: a quick guide",
+	].join("\n");
+	const title = deriveXThreadTitle({ fallbackTitle: "2079178687409279303", tweetText });
+	assert.equal(title, "How to create your own design tool: a quick guide");
+});

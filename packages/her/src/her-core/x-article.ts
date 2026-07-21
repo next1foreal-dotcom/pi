@@ -143,6 +143,26 @@ const TWEET_FIRST_LINE_MAX_CHARS = 80;
 // tweet text, so it must not be mistaken for a human-readable title tier (real-fire finding, luka
 // URL: defuddle isn't installed in every environment, so x-thread reads often degrade to this stub).
 const DIAGNOSTIC_STUB_LINE = /^Requested URL:/i;
+const MARKDOWN_IMAGE = /!\[[^\]]*\]\([^)]*\)/g;
+const MARKDOWN_LINK = /\[([^\]]*)\]\([^)]*\)/g;
+const MARKDOWN_LINE_PREFIX = /^(#+\s+|>\s+|[*-]\s+)/;
+
+/**
+ * palate T2fix3 (real-fire finding, luka URL): defuddle's raw markdown output leads with the
+ * tweet author's avatar image link (e.g. `[![user avatar](https://pbs.twimg.com/...)](https://x.com/...)`),
+ * not human-readable text. Tier-2 title derivation must read *plain text* lines, not raw markdown
+ * source, or that image/link syntax itself becomes the title. This strips markdown image syntax
+ * entirely (no alt-text fallback — an avatar's alt text is not article content either), reduces
+ * links to their anchor text, strips heading/quote/list-item prefixes, and drops now-empty lines.
+ */
+function stripMarkdownToPlainLines(markdown: string): string[] {
+	return markdown
+		.replace(MARKDOWN_IMAGE, "")
+		.replace(MARKDOWN_LINK, "$1")
+		.split("\n")
+		.map((line) => line.replace(MARKDOWN_LINE_PREFIX, "").trim())
+		.filter(Boolean);
+}
 
 /**
  * palate T2fix2 (contract §4): an x-status taste card's title must never be a naked numeric
@@ -152,10 +172,7 @@ const DIAGNOSTIC_STUB_LINE = /^Requested URL:/i;
 export function deriveXThreadTitle(input: XThreadTitleInput): string {
 	const articleTitle = input.articleTitle?.trim();
 	if (articleTitle && !BARE_URL.test(articleTitle)) return articleTitle;
-	const firstLine = input.tweetText
-		.split("\n")
-		.map((line) => line.trim())
-		.find(Boolean);
+	const firstLine = stripMarkdownToPlainLines(input.tweetText).find(Boolean);
 	if (firstLine && !DIAGNOSTIC_STUB_LINE.test(firstLine)) return firstLine.slice(0, TWEET_FIRST_LINE_MAX_CHARS);
 	return input.fallbackTitle;
 }
