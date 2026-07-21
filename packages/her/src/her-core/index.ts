@@ -219,6 +219,23 @@ export type {
 } from "./task.ts";
 export { createHerTask, herTaskStatuses, listHerTasks, updateHerTask, verifyStep } from "./task.ts";
 export type {
+	LocalPdfTextResult,
+	TasteSnapshotInput,
+	TasteSnapshotKind,
+	TasteSnapshotOutput,
+	TasteToolConfig,
+	VideoTasteMetadata,
+} from "./taste-snapshot.ts";
+export {
+	buildLocalPdfTasteData,
+	captureTasteSnapshot,
+	extractLocalPdfText,
+	fetchVideoTasteMetadata,
+	resolveTasteMediaRoot,
+	resolveTasteToolConfig,
+	resolveWithinRoot,
+} from "./taste-snapshot.ts";
+export type {
 	AttentionDigest,
 	AttentionDigestOptions,
 	AttentionItem,
