@@ -225,6 +225,12 @@ function registerProviderPool(pi: ExtensionAPI): void {
 			"Her ChatGPT Pro/Codex OAuth",
 			model("gpt-5-codex", "GPT-5 Codex for Samantha (OAuth)", "openai-codex-responses", true),
 		),
+		oauthLane(
+			findBuiltinProvider("xai"),
+			"her-grok-oauth",
+			"Her Grok SuperGrok/X Premium OAuth",
+			model("grok-4.5", "Grok 4.5 for Samantha (OAuth)", "openai-responses", true),
+		),
 		[
 			"her-codex",
 			{
