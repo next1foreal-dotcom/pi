@@ -119,7 +119,7 @@ export function parseFrontmatter(text: string | undefined): {
 	if (!text?.startsWith("---")) return { data: {}, body: text ?? "" };
 	const end = text.indexOf("\n---", 3);
 	if (end < 0) return { data: {}, body: text };
-	const raw = text.slice(4, end);
+	const raw = text.slice(4, end).replace(/\r/g, "");
 	const body = text.slice(end + 4).replace(/^\r?\n/, "");
 	const data: Record<string, unknown> = {};
 	const lines = raw.split(/\r?\n/);
