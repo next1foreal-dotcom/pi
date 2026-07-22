@@ -103,3 +103,26 @@ test("applyTasteBoard reports not-found for an id that does not exist", async ()
 	const result = await memory.applyTasteBoard("no-such-card", "慢出场");
 	assert.equal(result.outcome, "not-found");
 });
+
+test("applyTasteBoard preserves existing boards for a CRLF file with an inline flow array", async () => {
+	const paths = await tempStore();
+	const text = [
+		"---",
+		"id: card-crlf",
+		"title: card-crlf",
+		"source_type: taste-card",
+		'boards: ["浓缩"]',
+		"---",
+		"",
+		"Body card-crlf.",
+		"",
+	].join("\r\n");
+	await writeFile(join(paths.world, "card-crlf.md"), text, "utf8");
+
+	const memory = new Memory(paths.root);
+	const result = await memory.applyTasteBoard("card-crlf", "慢出场");
+
+	assert.equal(result.outcome, "applied");
+	const parsed = parseFrontmatter(await readFile(join(paths.world, "card-crlf.md"), "utf8"));
+	assert.deepEqual(parsed.data.boards, ["浓缩", "慢出场"]);
+});
