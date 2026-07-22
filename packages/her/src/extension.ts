@@ -4,8 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AuthorizationCall } from "@cedar-policy/cedar-wasm/nodejs";
 import { type Api, type Model, type Provider, StringEnum } from "@earendil-works/pi-ai";
-import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
-import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
+import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import type { ExtensionAPI, ExtensionContext, ProviderConfig } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { CuaCliDriver } from "./hands/driver.ts";
@@ -196,10 +195,16 @@ function oauthLane<TApi extends Api>(
 	};
 }
 
+function findBuiltinProvider(id: string): Provider {
+	const provider = builtinProviders().find((candidate) => candidate.id === id);
+	if (!provider) throw new Error(`builtinProviders() did not include a provider with id "${id}"`);
+	return provider;
+}
+
 function registerProviderPool(pi: ExtensionAPI): void {
 	const providers: Array<Provider | [string, ProviderConfig]> = [
 		oauthLane(
-			anthropicProvider(),
+			findBuiltinProvider("anthropic"),
 			"her-claude-oauth",
 			"Her Claude Pro/Max OAuth",
 			model("claude-sonnet-4-6", "Claude Sonnet 4.6 for Samantha (OAuth)", "anthropic-messages", true),
@@ -215,7 +220,7 @@ function registerProviderPool(pi: ExtensionAPI): void {
 			},
 		],
 		oauthLane(
-			openaiCodexProvider(),
+			findBuiltinProvider("openai-codex"),
 			"her-codex-oauth",
 			"Her ChatGPT Pro/Codex OAuth",
 			model("gpt-5-codex", "GPT-5 Codex for Samantha (OAuth)", "openai-codex-responses", true),
