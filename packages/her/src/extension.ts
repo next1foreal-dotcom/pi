@@ -3,8 +3,9 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AuthorizationCall } from "@cedar-policy/cedar-wasm/nodejs";
-import { StringEnum } from "@earendil-works/pi-ai";
-import { anthropicOAuthProvider, openaiCodexOAuthProvider } from "@earendil-works/pi-ai/oauth";
+import { type Api, type Model, type Provider, StringEnum } from "@earendil-works/pi-ai";
+import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
+import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
 import type { ExtensionAPI, ExtensionContext, ProviderConfig } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { CuaCliDriver } from "./hands/driver.ts";
@@ -158,31 +159,51 @@ interface SessionMeta {
 	cwd: string;
 }
 
-function model(id: string, name: string, api: string, reasoning: boolean) {
+function model<TApi extends Api>(
+	id: string,
+	name: string,
+	api: TApi,
+	reasoning: boolean,
+): Omit<Model<TApi>, "provider" | "baseUrl"> {
 	return {
 		id,
 		name,
 		api,
 		reasoning,
-		input: ["text"] as ("text" | "image")[],
+		input: ["text"],
 		cost: zeroCost,
 		contextWindow: 128000,
 		maxTokens: 8192,
 	};
 }
 
+function oauthLane<TApi extends Api>(
+	base: Provider<TApi>,
+	id: string,
+	name: string,
+	oauthModel: Omit<Model<TApi>, "provider" | "baseUrl">,
+): Provider<TApi> {
+	const oauth = base.auth.oauth;
+	if (!oauth) throw new Error(`${base.id} provider does not support OAuth`);
+	const baseUrl = base.baseUrl;
+	if (!baseUrl) throw new Error(`${base.id} provider does not define a base URL`);
+	return {
+		...base,
+		id,
+		name,
+		auth: { oauth },
+		getModels: () => [{ ...oauthModel, provider: id, baseUrl }],
+	};
+}
+
 function registerProviderPool(pi: ExtensionAPI): void {
-	const providers: Array<[string, ProviderConfig]> = [
-		[
+	const providers: Array<Provider | [string, ProviderConfig]> = [
+		oauthLane(
+			anthropicProvider(),
 			"her-claude-oauth",
-			{
-				name: "Her Claude Pro/Max OAuth",
-				baseUrl: "https://api.anthropic.com",
-				api: "anthropic-messages",
-				oauth: anthropicOAuthProvider,
-				models: [model("claude-sonnet-4-6", "Claude Sonnet 4.6 for Samantha (OAuth)", "anthropic-messages", true)],
-			},
-		],
+			"Her Claude Pro/Max OAuth",
+			model("claude-sonnet-4-6", "Claude Sonnet 4.6 for Samantha (OAuth)", "anthropic-messages", true),
+		),
 		[
 			"her-claude",
 			{
@@ -193,16 +214,12 @@ function registerProviderPool(pi: ExtensionAPI): void {
 				models: [model("claude-sonnet-4-6", "Claude Sonnet 4.6 for Samantha", "anthropic-messages", true)],
 			},
 		],
-		[
+		oauthLane(
+			openaiCodexProvider(),
 			"her-codex-oauth",
-			{
-				name: "Her ChatGPT Pro/Codex OAuth",
-				baseUrl: "https://chatgpt.com/backend-api",
-				api: "openai-codex-responses",
-				oauth: openaiCodexOAuthProvider,
-				models: [model("gpt-5-codex", "GPT-5 Codex for Samantha (OAuth)", "openai-codex-responses", true)],
-			},
-		],
+			"Her ChatGPT Pro/Codex OAuth",
+			model("gpt-5-codex", "GPT-5 Codex for Samantha (OAuth)", "openai-codex-responses", true),
+		),
 		[
 			"her-codex",
 			{
@@ -248,8 +265,9 @@ function registerProviderPool(pi: ExtensionAPI): void {
 		],
 	];
 
-	for (const [name, config] of providers) {
-		pi.registerProvider(name, config);
+	for (const provider of providers) {
+		if (Array.isArray(provider)) pi.registerProvider(provider[0], provider[1]);
+		else pi.registerProvider(provider);
 	}
 }
 

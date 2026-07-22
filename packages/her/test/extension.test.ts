@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
+import type { Provider } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, ProviderConfig, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import her, { governedTools } from "../src/extension.ts";
 import { initStore, Memory, readJson, readText, startLongTask, writeText } from "../src/her-core/index.ts";
@@ -16,7 +17,7 @@ interface FakePi {
 	pi: ExtensionAPI;
 	handlers: Map<string, Handler[]>;
 	tools: Map<string, ToolDefinition>;
-	providers: Map<string, ProviderConfig>;
+	providers: Map<string, ProviderConfig | Provider>;
 	entries: Array<{ customType: string; data?: unknown }>;
 	messages: Array<{ message: unknown; options?: unknown }>;
 }
@@ -44,7 +45,7 @@ async function waitFor(assertion: () => boolean | Promise<boolean>, timeoutMs = 
 function createFakePi(): FakePi {
 	const handlers = new Map<string, Handler[]>();
 	const tools = new Map<string, ToolDefinition>();
-	const providers = new Map<string, ProviderConfig>();
+	const providers = new Map<string, ProviderConfig | Provider>();
 	const entries: Array<{ customType: string; data?: unknown }> = [];
 	const messages: Array<{ message: unknown; options?: unknown }> = [];
 	const pi = {
@@ -54,8 +55,13 @@ function createFakePi(): FakePi {
 		registerTool(tool: ToolDefinition) {
 			tools.set(tool.name, tool);
 		},
-		registerProvider(name: string, config: ProviderConfig) {
-			providers.set(name, config);
+		registerProvider(providerOrName: Provider | string, config?: ProviderConfig) {
+			if (typeof providerOrName === "string") {
+				if (!config) throw new Error("provider config is required");
+				providers.set(providerOrName, config);
+				return;
+			}
+			providers.set(providerOrName.id, providerOrName);
 		},
 		appendEntry(customType: string, data?: unknown) {
 			entries.push({ customType, data });
@@ -227,8 +233,36 @@ test("extension injects Her context and captures completed turns", async () => {
 		assert.equal(fake.providers.has("her-claude-oauth"), true);
 		assert.equal(fake.providers.has("her-codex"), true);
 		assert.equal(fake.providers.has("her-codex-oauth"), true);
-		assert.match(fake.providers.get("her-claude-oauth")?.oauth?.name ?? "", /Claude Pro/);
-		assert.match(fake.providers.get("her-codex-oauth")?.oauth?.name ?? "", /ChatGPT/);
+		const claudeOAuth = fake.providers.get("her-claude-oauth");
+		assert.ok(claudeOAuth && "auth" in claudeOAuth);
+		assert.match(claudeOAuth.auth.oauth?.name ?? "", /Claude Pro/);
+		assert.equal(claudeOAuth.auth.apiKey, undefined);
+		assert.deepEqual(
+			claudeOAuth.getModels().map(({ provider, id, api, baseUrl }) => ({ provider, id, api, baseUrl })),
+			[
+				{
+					provider: "her-claude-oauth",
+					id: "claude-sonnet-4-6",
+					api: "anthropic-messages",
+					baseUrl: "https://api.anthropic.com",
+				},
+			],
+		);
+		const codexOAuth = fake.providers.get("her-codex-oauth");
+		assert.ok(codexOAuth && "auth" in codexOAuth);
+		assert.match(codexOAuth.auth.oauth?.name ?? "", /ChatGPT/);
+		assert.equal(codexOAuth.auth.apiKey, undefined);
+		assert.deepEqual(
+			codexOAuth.getModels().map(({ provider, id, api, baseUrl }) => ({ provider, id, api, baseUrl })),
+			[
+				{
+					provider: "her-codex-oauth",
+					id: "gpt-5-codex",
+					api: "openai-codex-responses",
+					baseUrl: "https://chatgpt.com/backend-api",
+				},
+			],
+		);
 		assert.equal(fake.tools.has("her_recall"), true);
 		assert.equal(fake.tools.has("her_remember"), true);
 		assert.equal(fake.tools.has("her_idea"), true);
