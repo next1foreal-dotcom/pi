@@ -1,11 +1,22 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { MockAgent } from "undici";
-import { deriveXThreadTitle, extractJinaReaderTitle, fetchXArticleFullText } from "../src/her-core/x-article.ts";
+import {
+	deriveXThreadTitle,
+	extractJinaReaderTitle,
+	fetchXArticleFullText,
+	fetchXArticleViaFxtwitter,
+	resolveXArticleFullText,
+} from "../src/her-core/x-article.ts";
 
 function fakeFetcher(handler: (url: string, init?: Record<string, unknown>) => Response): typeof fetch {
 	return (async (input: string | URL, init?: Record<string, unknown>) => handler(String(input), init)) as typeof fetch;
 }
+
+const lukaFxtwitterFixture = JSON.parse(
+	readFileSync(new URL("./fixtures/luka-fxtwitter.json", import.meta.url), "utf8"),
+);
 
 test("fetchXArticleFullText fetches the linked article's full text through the reader proxy", async () => {
 	const tweetUrl = "https://x.com/lukaivanovic/status/2079178687409279303";
@@ -189,4 +200,136 @@ test("deriveXThreadTitle skips a leading avatar-image markdown line (real-fire f
 	].join("\n");
 	const title = deriveXThreadTitle({ fallbackTitle: "2079178687409279303", tweetText });
 	assert.equal(title, "How to create your own design tool: a quick guide");
+});
+
+// palate G-79: fxtwitter (api.fxtwitter.com) is a key-free, cookie-free, login-free JSON mirror for
+// x-status lookups. Article-type tweets carry their linked long-form piece's full text as a
+// Draft.js-shaped block array (`tweet.article.content.blocks`/`entityMap`) instead of scraped
+// markdown, so it is now tried before the r.jina.ai reader-proxy channel.
+
+test("fetchXArticleViaFxtwitter rebuilds the luka fixture's full article markdown with all chapters and embedded prompts", async () => {
+	const fetcher = fakeFetcher((url) => {
+		assert.equal(url, "https://api.fxtwitter.com/status/2079178687409279303");
+		return new Response(JSON.stringify(lukaFxtwitterFixture), { status: 200 });
+	});
+
+	const result = await fetchXArticleViaFxtwitter("https://x.com/lukaivanovic/status/2079178687409279303", {
+		fetcher,
+	});
+	assert.equal(result.ok, true);
+	if (!result.ok) throw new Error("unreachable");
+	assert.equal(result.articleTitle, "How to create your own design tool");
+	assert.equal(result.channel, "fxtwitter");
+	for (const heading of [
+		"Chapter 1: Getting your layers",
+		"Chapter 2: Provide context",
+		"Chapter 3: Create your artboards",
+		"Chapter 4: Go wild",
+		"Additional: Editing and exporting videos",
+	]) {
+		assert.match(result.markdown, new RegExp(`## ${heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+	}
+	assert.match(result.markdown, /Write a CLI script \(e\.g\. pnpm design:extract route/);
+});
+
+test("fetchXArticleViaFxtwitter degrades when fxtwitter's code is not 200", async () => {
+	const fetcher = fakeFetcher(() => new Response(JSON.stringify({ code: 404 }), { status: 200 }));
+	const result = await fetchXArticleViaFxtwitter("https://x.com/someone/status/1", { fetcher });
+	assert.equal(result.ok, false);
+});
+
+test("fetchXArticleViaFxtwitter falls back to the tweet's own text when there is no article", async () => {
+	const fetcher = fakeFetcher(
+		() =>
+			new Response(JSON.stringify({ code: 200, tweet: { text: "just a normal tweet, no article" } }), {
+				status: 200,
+			}),
+	);
+	const result = await fetchXArticleViaFxtwitter("https://x.com/someone/status/2", { fetcher });
+	assert.equal(result.ok, true);
+	if (!result.ok) throw new Error("unreachable");
+	assert.equal(result.markdown, "just a normal tweet, no article");
+	assert.equal(result.articleTitle, undefined);
+});
+
+test("fetchXArticleViaFxtwitter skips an atomic block whose entity has no markdown (e.g. a media/image entity) instead of crashing", async () => {
+	const body = {
+		code: 200,
+		tweet: {
+			article: {
+				content: {
+					blocks: [
+						{ entityRanges: [], text: "before the image", type: "unstyled" },
+						{ entityRanges: [{ key: 0, length: 1, offset: 0 }], text: " ", type: "atomic" },
+						{ entityRanges: [], text: "after the image", type: "unstyled" },
+					],
+					entityMap: [{ key: "0", value: { data: { mediaItems: [] }, mutability: "Immutable", type: "MEDIA" } }],
+				},
+				title: "Piece with an image",
+			},
+		},
+	};
+	const fetcher = fakeFetcher(() => new Response(JSON.stringify(body), { status: 200 }));
+	const result = await fetchXArticleViaFxtwitter("https://x.com/someone/status/3", { fetcher });
+	assert.equal(result.ok, true);
+	if (!result.ok) throw new Error("unreachable");
+	assert.equal(result.markdown, "before the image\n\nafter the image");
+});
+
+test("fetchXArticleViaFxtwitter fails gracefully when no status id can be extracted from the URL", async () => {
+	let fetcherCalled = false;
+	const fetcher = fakeFetcher(() => {
+		fetcherCalled = true;
+		return new Response("should never be reached", { status: 200 });
+	});
+	const result = await fetchXArticleViaFxtwitter("https://example.com/not-a-tweet", { fetcher });
+	assert.equal(result.ok, false);
+	if (result.ok) throw new Error("unreachable");
+	assert.match(result.warning, /status id/);
+	assert.equal(fetcherCalled, false);
+});
+
+test("resolveXArticleFullText falls back to the r.jina.ai reader-proxy channel when fxtwitter misses", async () => {
+	let fxtwitterCalled = false;
+	let jinaCalled = false;
+	const fxtwitterFetcher = fakeFetcher(() => {
+		fxtwitterCalled = true;
+		return new Response(JSON.stringify({ code: 404 }), { status: 200 });
+	});
+	const jinaFetcher = fakeFetcher((url) => {
+		jinaCalled = true;
+		assert.match(url, /^https:\/\/r\.jina\.ai\//);
+		return new Response("Title: fallback\n\nfull text via reader proxy", { status: 200 });
+	});
+
+	const result = await resolveXArticleFullText("https://x.com/someone/status/4", {
+		fetcher: jinaFetcher,
+		fxtwitterFetcher,
+	});
+	assert.equal(result.ok, true);
+	if (!result.ok) throw new Error("unreachable");
+	assert.equal(fxtwitterCalled, true);
+	assert.equal(jinaCalled, true);
+	assert.equal(result.channel, "reader-proxy");
+	assert.match(result.markdown, /full text via reader proxy/);
+});
+
+test("resolveXArticleFullText returns the fxtwitter result directly and never calls the jina fallback on a hit", async () => {
+	let jinaCalled = false;
+	const fxtwitterFetcher = fakeFetcher(
+		() => new Response(JSON.stringify({ code: 200, tweet: { text: "hit on the first channel" } }), { status: 200 }),
+	);
+	const jinaFetcher = fakeFetcher(() => {
+		jinaCalled = true;
+		return new Response("should never be reached", { status: 200 });
+	});
+
+	const result = await resolveXArticleFullText("https://x.com/someone/status/5", {
+		fetcher: jinaFetcher,
+		fxtwitterFetcher,
+	});
+	assert.equal(result.ok, true);
+	if (!result.ok) throw new Error("unreachable");
+	assert.equal(result.channel, "fxtwitter");
+	assert.equal(jinaCalled, false);
 });

@@ -94,7 +94,6 @@ import {
 	extractJinaReaderTitle,
 	extractLocalPdfText,
 	fetchVideoTasteMetadata,
-	fetchXArticleFullText,
 	frontmatter,
 	listLongTasks,
 	loadConfig,
@@ -109,6 +108,7 @@ import {
 	readUrlForWorldNote,
 	recordTelegramConfirmationFromText,
 	resolveTasteToolConfig,
+	resolveXArticleFullText,
 	runDispatch,
 	runEvalTrend,
 	runGoldenEvals,
@@ -814,12 +814,17 @@ async function readUrlTasteData(sourceUrl: string, env: NodeJS.ProcessEnv, cwd: 
  * palate T2fix2 (AC-2 + contract §4): an x-status intake only ever carried the tweet's own text
  * (plus whatever defuddle's article intro grabbed) — an article-type tweet's linked long-form
  * piece never made it into the taste card, and the title fell back to a naked status ID. Fetches
- * the linked article's full text through r.jina.ai's reader proxy and re-derives the title;
- * degrades to the existing tweet-only text (title still fixed) on any full-text fetch failure.
+ * the linked article's full text and re-derives the title; degrades to the existing tweet-only
+ * text (title still fixed) on any full-text fetch failure.
+ *
+ * palate G-79: the full-text fetch now tries the key-free fxtwitter channel first (clean article
+ * JSON, no login wall) and only falls back to the r.jina.ai reader-proxy channel on a miss — see
+ * resolveXArticleFullText. fxtwitter's own article title (when present) is used directly instead of
+ * re-deriving one from scraped markdown via extractJinaReaderTitle.
  */
 async function enhanceXThreadTasteData(data: WorldNoteData, env: NodeJS.ProcessEnv): Promise<TasteIntakeBase> {
 	const allowLocal = env.HER_ALLOW_LOCAL_URLS === "1" || env.HER_ALLOW_LOCAL_INTAKE === "1";
-	const fullText = await fetchXArticleFullText(data.sourceUrl, { allowLocal });
+	const fullText = await resolveXArticleFullText(data.sourceUrl, { allowLocal });
 	if (!fullText.ok) {
 		const title = deriveXThreadTitle({ fallbackTitle: data.title, tweetText: data.extracted });
 		return {
@@ -829,11 +834,12 @@ async function enhanceXThreadTasteData(data: WorldNoteData, env: NodeJS.ProcessE
 			warnings: [fullText.warning],
 		};
 	}
-	const articleTitle = extractJinaReaderTitle(fullText.markdown);
+	const articleTitle = fullText.articleTitle ?? extractJinaReaderTitle(fullText.markdown);
 	const title = deriveXThreadTitle({ articleTitle, fallbackTitle: data.title, tweetText: data.extracted });
+	const channelLabel = fullText.channel === "fxtwitter" ? "fxtwitter" : "reader-proxy";
 	const enhanced: WorldNoteData = {
 		...data,
-		coverage: `Read the tweet text for ${data.sourceUrl} and its linked article's full text via a reader proxy; ${fullText.bytesRead} bytes read from the full-text proxy.`,
+		coverage: `Read the tweet text for ${data.sourceUrl} and its linked article's full text via ${channelLabel}; ${fullText.bytesRead} bytes read.`,
 		extracted: fullText.markdown,
 		title,
 	};

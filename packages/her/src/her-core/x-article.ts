@@ -53,7 +53,11 @@ export interface XArticleFullTextOptions {
 }
 
 export interface XArticleFullTextResult {
+	/** the linked article's own title (fxtwitter channel only; the r.jina.ai channel has no equivalent). */
+	articleTitle?: string;
 	bytesRead: number;
+	/** palate G-79: which full-text channel produced this result, for coverage-text/diagnostics. */
+	channel?: "fxtwitter" | "reader-proxy";
 	markdown: string;
 	ok: true;
 }
@@ -105,13 +109,153 @@ export async function fetchXArticleFullText(
 		const maxBytes = opts.maxBytes ?? DEFAULT_MAX_BYTES;
 		const bytes = Buffer.from(text, "utf8");
 		const markdown = bytes.byteLength > maxBytes ? bytes.subarray(0, maxBytes).toString("utf8") : text;
-		return { bytesRead: Buffer.byteLength(markdown, "utf8"), markdown, ok: true };
+		return { bytesRead: Buffer.byteLength(markdown, "utf8"), channel: "reader-proxy", markdown, ok: true };
 	} catch (error) {
 		return {
 			ok: false,
 			warning: `x-article full-text fetch failed for ${tweetUrl}: ${error instanceof Error ? error.message : String(error)}`,
 		};
 	}
+}
+
+const STATUS_ID_PATTERN = /\/status\/(\d+)/;
+const DEFAULT_FXTWITTER_BASE_URL = "https://api.fxtwitter.com/status/";
+const DEFAULT_FXTWITTER_TIMEOUT_MS = 15_000;
+
+interface FxtwitterEntityMapItem {
+	key: string;
+	value: { data?: { markdown?: string } };
+}
+
+interface FxtwitterArticleBlock {
+	entityRanges: Array<{ key: number }>;
+	text: string;
+	type: string;
+}
+
+interface FxtwitterResponseBody {
+	code: number;
+	tweet?: {
+		article?: {
+			content?: { blocks?: FxtwitterArticleBlock[]; entityMap?: FxtwitterEntityMapItem[] };
+			title?: string;
+		};
+		text?: string;
+	};
+}
+
+export interface XArticleFxtwitterOptions {
+	/** test hook; defaults to the real fxtwitter status-lookup prefix. */
+	baseUrl?: string;
+	fetcher?: typeof fetch;
+}
+
+/**
+ * palate G-79: rebuilds an fxtwitter article's ordered Draft.js-shaped content blocks (plus the
+ * embedded prompt/code entities `atomic` blocks point at) into one markdown string. An atomic block
+ * whose entity has no `data.markdown` (e.g. an image/video MEDIA entity, or a DIVIDER) contributes
+ * nothing — it is skipped, not stubbed with a placeholder.
+ */
+function renderFxtwitterArticleMarkdown(blocks: FxtwitterArticleBlock[], entityMap: FxtwitterEntityMapItem[]): string {
+	const entityByKey = new Map(entityMap.map((item) => [item.key, item]));
+	const parts: string[] = [];
+	let orderedListIndex = 0;
+	for (const block of blocks) {
+		if (block.type !== "ordered-list-item") orderedListIndex = 0;
+		if (block.type === "unstyled") parts.push(block.text);
+		else if (block.type === "header-one") parts.push(`# ${block.text}`);
+		else if (block.type === "header-two") parts.push(`## ${block.text}`);
+		else if (block.type === "header-three") parts.push(`### ${block.text}`);
+		else if (block.type === "ordered-list-item") parts.push(`${++orderedListIndex}. ${block.text}`);
+		else if (block.type === "unordered-list-item") parts.push(`- ${block.text}`);
+		else if (block.type === "atomic") {
+			const key = block.entityRanges[0]?.key;
+			const markdown = key === undefined ? undefined : entityByKey.get(String(key))?.value?.data?.markdown;
+			if (markdown) parts.push(markdown);
+		}
+	}
+	return parts.join("\n\n").trim();
+}
+
+/**
+ * palate G-79: fetches an x-status's linked long-form article (or, absent one, the tweet's own
+ * text) via fxtwitter's key-free, cookie-free, login-free JSON mirror (`api.fxtwitter.com`) — a
+ * fixed, trusted host constant, same SSRF posture as r.jina.ai above (only the numeric status id,
+ * validated by STATUS_ID_PATTERN, is attacker-influenceable). Never throws.
+ */
+export async function fetchXArticleViaFxtwitter(
+	tweetUrl: string,
+	opts: XArticleFxtwitterOptions = {},
+): Promise<XArticleFullTextResult | XArticleFullTextFailure> {
+	const statusMatch = STATUS_ID_PATTERN.exec(tweetUrl);
+	if (!statusMatch) return { ok: false, warning: `fxtwitter: could not find a status id in ${tweetUrl}` };
+	try {
+		const requestUrl = `${opts.baseUrl ?? DEFAULT_FXTWITTER_BASE_URL}${statusMatch[1]}`;
+		const fetcher = (opts.fetcher ?? undiciFetch) as (
+			url: string,
+			init: Record<string, unknown>,
+		) => Promise<Response>;
+		const response = await fetcher(requestUrl, { signal: AbortSignal.timeout(DEFAULT_FXTWITTER_TIMEOUT_MS) });
+		if (!response.ok) return { ok: false, warning: `fxtwitter returned HTTP ${response.status} for ${tweetUrl}` };
+		const body = (await response.json()) as FxtwitterResponseBody;
+		if (body.code !== 200 || !body.tweet) {
+			return { ok: false, warning: `fxtwitter returned code ${body.code} (no tweet) for ${tweetUrl}` };
+		}
+		const blocks = body.tweet.article?.content?.blocks;
+		if (blocks?.length) {
+			const markdown = renderFxtwitterArticleMarkdown(blocks, body.tweet.article?.content?.entityMap ?? []);
+			if (markdown) {
+				return {
+					articleTitle: body.tweet.article?.title?.trim() || undefined,
+					bytesRead: Buffer.byteLength(markdown, "utf8"),
+					channel: "fxtwitter",
+					markdown,
+					ok: true,
+				};
+			}
+		}
+		const tweetText = body.tweet.text?.trim();
+		if (tweetText) {
+			return {
+				bytesRead: Buffer.byteLength(tweetText, "utf8"),
+				channel: "fxtwitter",
+				markdown: tweetText,
+				ok: true,
+			};
+		}
+		return { ok: false, warning: `fxtwitter: tweet ${tweetUrl} has no article and no text` };
+	} catch (error) {
+		return {
+			ok: false,
+			warning: `fxtwitter fetch failed for ${tweetUrl}: ${error instanceof Error ? error.message : String(error)}`,
+		};
+	}
+}
+
+export interface ResolveXArticleFullTextOptions extends XArticleFullTextOptions {
+	/** test hook; defaults to the real fxtwitter status-lookup prefix. */
+	fxtwitterBaseUrl?: string;
+	/** test hook; kept separate from `fetcher` (the r.jina.ai fallback's fetcher) so both channels
+	 * can be mocked independently. Defaults to the real undici fetch. */
+	fxtwitterFetcher?: typeof fetch;
+}
+
+/**
+ * palate G-79 (channel order): tries the key-free fxtwitter channel first; on any miss (bad/missing
+ * status id, non-200, no article and no tweet text) falls back to the existing r.jina.ai
+ * reader-proxy channel (fetchXArticleFullText, unchanged). This is the function cli.ts's
+ * enhanceXThreadTasteData now calls instead of fetchXArticleFullText directly.
+ */
+export async function resolveXArticleFullText(
+	tweetUrl: string,
+	opts: ResolveXArticleFullTextOptions = {},
+): Promise<XArticleFullTextResult | XArticleFullTextFailure> {
+	const viaFxtwitter = await fetchXArticleViaFxtwitter(tweetUrl, {
+		baseUrl: opts.fxtwitterBaseUrl,
+		fetcher: opts.fxtwitterFetcher,
+	});
+	if (viaFxtwitter.ok) return viaFxtwitter;
+	return fetchXArticleFullText(tweetUrl, opts);
 }
 
 const BARE_URL = /^https?:\/\//i;

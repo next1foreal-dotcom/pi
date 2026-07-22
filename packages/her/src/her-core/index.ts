@@ -305,9 +305,17 @@ export {
 } from "./telegram.ts";
 export * from "./trigger-log.ts";
 export type {
+	ResolveXArticleFullTextOptions,
 	XArticleFullTextFailure,
 	XArticleFullTextOptions,
 	XArticleFullTextResult,
+	XArticleFxtwitterOptions,
 	XThreadTitleInput,
 } from "./x-article.ts";
-export { deriveXThreadTitle, extractJinaReaderTitle, fetchXArticleFullText } from "./x-article.ts";
+export {
+	deriveXThreadTitle,
+	extractJinaReaderTitle,
+	fetchXArticleFullText,
+	fetchXArticleViaFxtwitter,
+	resolveXArticleFullText,
+} from "./x-article.ts";
