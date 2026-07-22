@@ -57,6 +57,7 @@ import { registerPreviewTools } from "./preview/tools.ts";
 import { registerShowWidgetTools } from "./show-widget/tools.ts";
 import { createSummaryModel } from "./summary-model.ts";
 import { registerFileToolkit } from "./tools/index.ts";
+import { registerUiActionTools } from "./ui-action/tools.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const packageRoot = resolve(here, "..");
@@ -131,6 +132,7 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	browser_navigate: { destructive: false },
 	artifact_publish: { destructive: true },
 	her_show_widget: { destructive: false },
+	her_ui_act: { destructive: false },
 	her_convert: { destructive: false },
 	her_ocr: { destructive: false },
 	her_archive: { destructive: false },
@@ -1636,6 +1638,7 @@ export default function her(pi: ExtensionAPI): void {
 	});
 	registerPreviewTools(pi);
 	registerShowWidgetTools(pi);
+	registerUiActionTools(pi);
 	registerFileToolkit(pi);
 	registerMcpTools(pi);
 }
