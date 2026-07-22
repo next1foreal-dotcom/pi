@@ -48,11 +48,11 @@ import {
 	changedAfter,
 	choiceModelLogBlock,
 	choiceRuleRuntimeStatus,
+	completeJson,
 	contextLogBlock,
 	daysSince,
 	episodeSection,
 	escapeRegExp,
-	extractJson,
 	extractSection,
 	genId,
 	git,
@@ -472,6 +472,7 @@ export class Memory {
 	async consolidate(limit = 25): Promise<ConsolidateResult> {
 		return this.withStoreLock(async () => {
 			if (!this.model) throw new Error("consolidate requires a model");
+			const model = this.model;
 			const state = await readJson<{ cursor?: unknown; last_consolidate?: string | null }>(this.paths.stateFile, {});
 			const cursor = parseConsolidateCursor(state.cursor ?? null);
 			const batch = selectConsolidateBatch(await this.episodesSince(cursor), limit);
@@ -480,10 +481,10 @@ export class Memory {
 
 			const joined = batch.map(({ promptText }) => promptText).join("\n\n");
 			const existing = await markdownStems(this.paths.semantic);
-			const result = extractJson<{
+			const result = await completeJson<{
 				notes?: Array<Record<string, unknown>>;
 				moments?: Array<{ trigger?: string; shift?: string }>;
-			}>(await this.model.complete(consolidatePrompt(joined, existing)));
+			}>(() => model.complete(consolidatePrompt(joined, existing)));
 			const notes = result.notes ?? [];
 			const moments = result.moments ?? [];
 			const newCursor = advanceConsolidateCursor(cursor, episodes);
@@ -625,11 +626,12 @@ export class Memory {
 	async buildTopicMaps(): Promise<string[]> {
 		return this.withStoreLock(async () => {
 			if (!this.model) throw new Error("buildTopicMaps requires a model");
+			const model = this.model;
 			const units = await this.noteSummaries();
 			if (units.length === 0) return [];
 			const lines = units.map((unit) => `- ${unit.key} (${unit.type}): ${unit.title}`).join("\n");
-			const result = extractJson<{ maps?: Array<{ theme?: string; summary?: string; members?: string[] }> }>(
-				await this.model.complete(topicMapPrompt(lines), { strong: true }),
+			const result = await completeJson<{ maps?: Array<{ theme?: string; summary?: string; members?: string[] }> }>(
+				() => model.complete(topicMapPrompt(lines), { strong: true }),
 			);
 			const keyset = new Set(units.map((unit) => unit.key));
 			const written: string[] = [];
@@ -650,12 +652,13 @@ export class Memory {
 	async generateIdeas(): Promise<Array<{ id: string; title: string; kind: string }>> {
 		return this.withStoreLock(async () => {
 			if (!this.model) throw new Error("generateIdeas requires a model");
+			const model = this.model;
 			const units = await this.noteSummaries();
 			if (units.length === 0) return [];
 			const unitLines = units.map((unit) => `- ${unit.key} (${unit.kind}/${unit.type}): ${unit.title}`).join("\n");
 			const topicLines = (await this.topicSummaries()).join("\n") || "(none)";
 			const existing = (await this.existingIdeaTitles()).join("\n") || "(none)";
-			const result = extractJson<{
+			const result = await completeJson<{
 				ideas?: Array<{
 					title?: string;
 					connects?: string[];
@@ -663,7 +666,7 @@ export class Memory {
 					spark?: string;
 					kind?: string;
 				}>;
-			}>(await this.model.complete(ideaEnginePrompt(unitLines, topicLines, existing), { strong: true }));
+			}>(() => model.complete(ideaEnginePrompt(unitLines, topicLines, existing), { strong: true }));
 			const written: Array<{ id: string; title: string; kind: string }> = [];
 			for (const idea of result.ideas ?? []) {
 				if (!idea.title) continue;
