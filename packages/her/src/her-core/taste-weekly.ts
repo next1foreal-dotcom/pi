@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { extractJson, markdownEntries } from "./memory-utils.ts";
 import type { ModelLike } from "./model.ts";
 import type { StorePaths } from "./paths.ts";
-import { appendText, frontmatter, parseFrontmatter, readText, writeJson, writeText } from "./store.ts";
+import { appendText, parseFrontmatter, readText, writeJson, writeText } from "./store.ts";
 
 /** palate P2-1: cluster members (D6 threshold) needed before a new board is proposed. Fable-set default. */
 export const NEW_BOARD_THRESHOLD = 5;
@@ -148,7 +148,16 @@ export async function clusterTasteCards(
 
 function intersectAll(sets: Array<Set<string>>): Set<string> {
 	if (sets.length === 0) return new Set();
-	return sets.reduce((acc, set) => new Set([...acc].filter((value) => set.has(value))));
+	let acc = sets[0];
+	for (let i = 1; i < sets.length; i++) {
+		const set = sets[i];
+		const next = new Set<string>();
+		for (const value of acc) {
+			if (set.has(value)) next.add(value);
+		}
+		acc = next;
+	}
+	return acc;
 }
 
 export type TasteProposalStatus = "pending" | "applied" | "dismissed";
