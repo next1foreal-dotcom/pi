@@ -492,6 +492,25 @@ export function extractJson<T>(text: string): T {
 	}
 }
 
+// LLM output is stochastic: one malformed response must not kill a whole batch run
+// (2026-07-21: consolidate died mid-drain on an unescaped quote). Bounded re-ask,
+// then fail loud with the parse error and the head of the last response.
+export async function completeJson<T>(complete: () => Promise<string> | string, attempts = 3): Promise<T> {
+	let lastError = "";
+	let lastText = "";
+	for (let attempt = 1; attempt <= attempts; attempt++) {
+		lastText = await complete();
+		try {
+			return extractJson<T>(lastText);
+		} catch (error) {
+			lastError = errorMessage(error);
+		}
+	}
+	throw new Error(
+		`model returned invalid JSON in ${attempts} attempts. last: ${lastError}; response head: ${lastText.slice(0, 200)}`,
+	);
+}
+
 export async function markdownEntries(dir: string): Promise<string[]> {
 	try {
 		return (await readdir(dir)).filter((entry) => entry.endsWith(".md")).sort();

@@ -969,6 +969,27 @@ test("consolidate distills raw episodes into typed semantic notes and moments", 
 	);
 });
 
+test("consolidate retries the model on invalid JSON instead of dying", async () => {
+	const store = await tempStore();
+	// Raw episode written directly: capture would consume model calls for its summary.
+	await writeRawEpisode(store, "2026-06-03T1200", "episode-1", "Episode content.");
+	let calls = 0;
+	const memory = new Memory(store, {
+		complete() {
+			calls++;
+			// First response mimics the 2026-07-21 production crash: an unescaped
+			// inner quote that repairJsonEscapes cannot fix.
+			if (calls === 1) return '{"notes": [{"key": "broken", "title": "he said "hi" mid-string"}]}';
+			return JSON.stringify({ notes: [], moments: [{ trigger: "t", shift: "s" }] });
+		},
+	});
+
+	const result = await memory.consolidate();
+
+	assert.equal(calls, 2);
+	assert.deepEqual(result, { episodes: 1, notesTouched: 0, moments: 1 });
+});
+
 test("consolidate truncates long raw episodes in the prompt without changing raw", async () => {
 	const store = await tempStore();
 	const body = "A".repeat(20_000);
