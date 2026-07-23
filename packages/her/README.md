@@ -11,6 +11,24 @@ Rules:
 - Growth-loop owner = TS `packages/her/src/her-core`. Python adapters, if kept, are capture-only and must not run
   `consolidate`, `synthesize`, `approve`, topic maps, or idea generation against `her-memory`.
 
+Cache discipline (2026-07-23, distilled from earendil.com/posts/prompt-caching — prompt prefixes are
+KV-cache keys; changing an early token re-bills the whole session):
+
+- **C1. Frozen prefix.** Memory blocks injected into the system prompt (CONTEXT/FACTS/SOUL/SAMANTHA/
+  CHOICE-MODEL via `composeSystemPrompt`) must be stable within a session: pin the injected content at
+  session start; mid-session memory updates take effect next session or are appended as late messages,
+  never rewritten into the prefix. *Enforcement:* prefix-stability characterization test in
+  `packages/her/test`, to land together with the session-pinning fix (KNOWN VIOLATION as of 2026-07-23:
+  `before_agent_start` re-reads memory every agent run — see extension.ts:673). Until then: distill scan.
+- **C2. Memory append-only on the wire.** Episodic/semantic memory files are append-only from the
+  agent loop's perspective; rewrites happen only through governed synthesize/consolidate paths with
+  reviewable logs. *Enforcement:* pre-commit gate in the `her-memory` repo rejecting modifications or
+  deletions under `episodic/raw` (additions only) — follow-up, must be tested dual-machine before
+  activation so it cannot block live `her_sync`. Until then: distill scan.
+- **C3. Consolidation runs in idle windows.** `synthesize`/`consolidate`/compaction are cache resets;
+  schedule them after idle gaps longer than the provider cache TTL (the cache is already cold, the
+  rewrite is free) — never mid-conversation. *Enforcement:* not machine-judgeable; distill periodic scan.
+
 Current status:
 
 - Provider pool registration is wired for Claude Pro/Max OAuth, ChatGPT Pro/Codex OAuth, Claude API-key, GPT/Codex API-key, relay, DeepSeek, and local OpenAI-compatible providers.
