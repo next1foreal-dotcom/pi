@@ -165,6 +165,9 @@ function parseCapture(argv: string[]): CliCommand {
 	let project: string | undefined;
 	let sessionId: string | undefined;
 	let timestamp: string | undefined;
+	let source: string | undefined;
+	let type: string | undefined;
+	let captureScope: string | undefined;
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i];
 		if (arg === "--json") {
@@ -195,10 +198,28 @@ function parseCapture(argv: string[]): CliCommand {
 			timestamp = value;
 			continue;
 		}
+		if (arg === "--source") {
+			const value = argv[++i];
+			if (!value) throw new UsageError(`${arg} requires a value`);
+			source = value;
+			continue;
+		}
+		if (arg === "--type") {
+			const value = argv[++i];
+			if (!value) throw new UsageError(`${arg} requires a value`);
+			type = value;
+			continue;
+		}
+		if (arg === "--capture-scope") {
+			const value = argv[++i];
+			if (!value) throw new UsageError(`${arg} requires a value`);
+			captureScope = value;
+			continue;
+		}
 		throw new UsageError(`unknown capture option: ${arg}`);
 	}
 	if (!text?.trim()) throw new UsageError("capture requires --text <text>");
-	return { kind: "capture", json, text, project, sessionId, timestamp };
+	return { kind: "capture", json, text, project, sessionId, timestamp, source, type, captureScope };
 }
 
 function parseConsolidate(argv: string[]): CliCommand {

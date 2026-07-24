@@ -903,6 +903,39 @@ test("CLI captures a UI message through TS her-core as JSON", async () => {
 	);
 });
 
+test("CLI capture writes source and type into raw frontmatter", async () => {
+	const { store } = await gitBackedStore();
+	await withLocalChatModel(
+		() => "- glass turn",
+		async (modelEnv) => {
+			await runCli(
+				[
+					"capture",
+					"--text",
+					"typed glass turn",
+					"--project",
+					"voice-mode",
+					"--session-id",
+					"glass-pill-1",
+					"--timestamp",
+					"2026-07-24T0100",
+					"--source",
+					"glass",
+					"--type",
+					"glass_conversation",
+					"--capture-scope",
+					"last_user_and_current_assistant",
+					"--json",
+				],
+				store,
+				modelEnv,
+			);
+			const raw = await readFile(join(store, "episodic", "raw", "2026-07-24T0100--glass-pill-1.md"), "utf8");
+			assert.match(raw, /^---\n[\s\S]*source: glass[\s\S]*type: glass_conversation[\s\S]*---/);
+		},
+	);
+});
+
 test("CLI writes a protected weekly Samantha journal entry", async () => {
 	const { store } = await gitBackedStore();
 
