@@ -208,6 +208,8 @@ export type {
 } from "./retraction.ts";
 export { applyMemoryRetraction, planMemoryRetraction } from "./retraction.ts";
 export type { SearchBackend } from "./retrieval.ts";
+export type { HerRunEvent, HerRunKind, HerRunSnapshot, HerRunStatus } from "./runs.ts";
+export { appendHerRunEvent, herRunKinds, herRunStatuses, listHerRunSnapshots, runsEventsPath } from "./runs.ts";
 export { frontmatter, parseFrontmatter, readJson, readText, writeJson, writeText } from "./store.ts";
 export type {
 	CreateHerTaskOptions,

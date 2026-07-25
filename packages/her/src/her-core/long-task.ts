@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, rm } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { StorePaths } from "./paths.ts";
+import { appendHerRunEvent, type HerRunStatus, longTaskStatusToRunStatus } from "./runs.ts";
 import { frontmatter, parseFrontmatter, readText, redactSecrets, writeNewText, writeText } from "./store.ts";
 
 export const longTaskStatuses = ["active", "blocked", "completed", "cancelled"] as const;
@@ -73,6 +74,7 @@ export async function startLongTask(root: string, opts: LongTaskStartOptions): P
 		path: relativeGoalPath(id),
 	};
 	await writeText(path, renderLongTask(record, startedBody(record, now)));
+	await logLongTaskRun(root, record, "running");
 	return record;
 }
 
@@ -131,6 +133,7 @@ export async function completeLongTask(
 		path,
 		renderLongTask(updated, `${body.trimEnd()}\n\n${completionBody(now, outcome, opts.remember)}`),
 	);
+	await logLongTaskRun(root, updated, longTaskStatusToRunStatus(updated.status));
 	return updated;
 }
 
@@ -371,4 +374,20 @@ function requireNonBlank(value: string, label: string): string {
 	const trimmed = value.trim();
 	if (!trimmed) throw new Error(`Her long task ${label} cannot be blank`);
 	return trimmed;
+}
+
+async function logLongTaskRun(root: string, record: LongTaskRecord, status: HerRunStatus): Promise<void> {
+	try {
+		await appendHerRunEvent(root, {
+			runId: record.id,
+			status,
+			kind: "longtask",
+			source: record.source?.trim() || "her_goal_start",
+			title: record.objective,
+			at: record.updated || record.created,
+			goalId: record.id,
+		});
+	} catch {
+		// Run index is derived; long-task markdown is authoritative.
+	}
 }
