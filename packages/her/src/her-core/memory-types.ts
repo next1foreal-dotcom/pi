@@ -9,6 +9,10 @@ export interface CaptureMeta {
 	session_id?: string;
 	project?: string;
 	type?: string;
+	/** Episodic modality tag (e.g. voice, glass) — written to raw frontmatter when set. */
+	source?: string;
+	capture_scope?: string;
+	transcription_quality?: string;
 	ref?: string;
 	privacy?: MemoryPrivacy;
 	provenance?: MemoryProvenance;

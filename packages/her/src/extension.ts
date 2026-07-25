@@ -54,6 +54,7 @@ import { appendAuditLog } from "./lib/audit.ts";
 import { evaluate, policyEnvelope } from "./lib/cedar.ts";
 import { registerMcpTools } from "./mcp/tools.ts";
 import { registerPreviewTools } from "./preview/tools.ts";
+import { registerRelayProviderTools } from "./providers-relay/tools.ts";
 import { registerShowWidgetTools } from "./show-widget/tools.ts";
 import { createSummaryModel } from "./summary-model.ts";
 import { registerFileToolkit } from "./tools/index.ts";
@@ -133,6 +134,7 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	artifact_publish: { destructive: true },
 	her_show_widget: { destructive: false },
 	her_ui_act: { destructive: false },
+	her_upsert_relay_provider: { destructive: false },
 	her_convert: { destructive: false },
 	her_ocr: { destructive: false },
 	her_archive: { destructive: false },
@@ -1667,6 +1669,7 @@ export default function her(pi: ExtensionAPI): void {
 	});
 	registerPreviewTools(pi);
 	registerShowWidgetTools(pi);
+	registerRelayProviderTools(pi);
 	registerUiActionTools(pi);
 	registerFileToolkit(pi);
 	registerMcpTools(pi);

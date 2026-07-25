@@ -429,6 +429,9 @@ export async function runHerCli(
 			project: command.project ?? "her-cli",
 			sessionId: command.sessionId,
 			timestamp: command.timestamp,
+			source: command.source,
+			type: command.type,
+			capture_scope: command.captureScope,
 		});
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result: { id } };
 		writePayload(io.stdout, payload, command.json, renderCapture);

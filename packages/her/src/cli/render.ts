@@ -583,7 +583,7 @@ export function usage(): string {
   her approve --proposal <id> [--json]
   her backfill [--batch-size <n>] [--max-batches <n>] [--budget-usd <usd>] [--dry-run] [--finalize] [--json]
   her bootstrap-feed --path <file-or-dir> [--path <file-or-dir>] [--max-bytes <n>] [--update-surfaces] [--json]
-  her capture --text <text> [--project <name>] [--session <id>] [--timestamp <ISO>] [--json]
+  her capture --text <text> [--project <name>] [--session <id>] [--timestamp <ISO>] [--source <tag>] [--type <kind>] [--capture-scope <scope>] [--json]
   her choice-model [--json]
   her consolidate [--limit <n>] [--json]
   her cost [--now <ISO>] [--json]

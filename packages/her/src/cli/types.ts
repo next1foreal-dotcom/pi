@@ -48,7 +48,17 @@ export type CliCommand =
 			maxBatches?: number;
 	  }
 	| { kind: "bootstrap-feed"; json: boolean; maxBytes?: number; paths: string[]; updateSurfaces: boolean }
-	| { kind: "capture"; json: boolean; text: string; project?: string; sessionId?: string; timestamp?: string }
+	| {
+			kind: "capture";
+			json: boolean;
+			text: string;
+			project?: string;
+			sessionId?: string;
+			timestamp?: string;
+			source?: string;
+			type?: string;
+			captureScope?: string;
+	  }
 	| { kind: "choice-model"; json: boolean }
 	| { kind: "consolidate"; json: boolean; limit?: number }
 	| { kind: "cost"; json: boolean; now?: string }
