@@ -378,14 +378,16 @@ function requireNonBlank(value: string, label: string): string {
 
 async function logLongTaskRun(root: string, record: LongTaskRecord, status: HerRunStatus): Promise<void> {
 	try {
+		const parentRunId = process.env.HER_ORCHESTRATOR_RUN_ID?.trim();
 		await appendHerRunEvent(root, {
 			runId: record.id,
 			status,
 			kind: "longtask",
-			source: record.source?.trim() || "her_goal_start",
+			source: record.source?.trim() || process.env.HER_RUN_SOURCE?.trim() || "her_goal_start",
 			title: record.objective,
 			at: record.updated || record.created,
 			goalId: record.id,
+			...(parentRunId ? { parentRunId } : {}),
 		});
 	} catch {
 		// Run index is derived; long-task markdown is authoritative.
