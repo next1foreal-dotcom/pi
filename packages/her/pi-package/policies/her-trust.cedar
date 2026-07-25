@@ -12,9 +12,13 @@ permit(
   resource == Tool::"artifact_publish"
 );
 
-@id("forbid_destructive_tool")
-forbid(
-  principal,
+@id("permit_coding_destructive_tools")
+permit(
+  principal == Agent::"samantha",
   action == Action::"CallTool",
   resource
-) when { resource.destructive == true } unless { resource == Tool::"artifact_publish" };
+) when {
+  resource == Tool::"bash" ||
+  resource == Tool::"edit" ||
+  resource == Tool::"write"
+};

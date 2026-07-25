@@ -599,12 +599,11 @@ test("extension gates governed tool calls with Cedar and writes audit JSONL", as
 		);
 		assert.equal(allow, undefined);
 
-		const deny = (await toolCall(
-			{ type: "tool_call", toolCallId: "call-2", toolName: "bash", input: { command: "rm -rf ." } },
+		const codingAllow = await toolCall(
+			{ type: "tool_call", toolCallId: "call-2", toolName: "bash", input: { command: "echo ok" } },
 			ctx,
-		)) as { block?: boolean; reason?: string };
-		assert.equal(deny.block, true);
-		assert.match(deny.reason ?? "", /forbid_destructive_tool/);
+		);
+		assert.equal(codingAllow, undefined);
 
 		const unknown = await toolCall(
 			{ type: "tool_call", toolCallId: "call-3", toolName: "unregistered_tool", input: {} },
@@ -627,13 +626,13 @@ test("extension gates governed tool calls with Cedar and writes audit JSONL", as
 			entries.map((entry) => [entry.tool, entry.verdict, entry.rule]),
 			[
 				["her_recall", "ALLOW", "allow_memory_tools"],
-				["bash", "DENY", "forbid_destructive_tool"],
+				["bash", "ALLOW", "permit_coding_destructive_tools"],
 			],
 		);
 	});
 });
 
-test("extension Cedar permits artifact_publish despite destructive:true, while other destructive tools stay denied", async () => {
+test("extension Cedar permits artifact_publish and coding write/edit/bash", async () => {
 	const store = await tempStore();
 	const ctx = createContext(store);
 
@@ -657,19 +656,17 @@ test("extension Cedar permits artifact_publish despite destructive:true, while o
 		);
 		assert.equal(publishAllow, undefined);
 
-		const writeDeny = (await toolCall(
-			{ type: "tool_call", toolCallId: "call-write-1", toolName: "write", input: {} },
+		const writeAllow = await toolCall(
+			{ type: "tool_call", toolCallId: "call-write-1", toolName: "write", input: { path: "index.html" } },
 			ctx,
-		)) as { block?: boolean; reason?: string };
-		assert.equal(writeDeny.block, true);
-		assert.match(writeDeny.reason ?? "", /forbid_destructive_tool/);
+		);
+		assert.equal(writeAllow, undefined);
 
-		const bashDeny = (await toolCall(
-			{ type: "tool_call", toolCallId: "call-bash-1", toolName: "bash", input: { command: "rm -rf ." } },
+		const bashAllow = await toolCall(
+			{ type: "tool_call", toolCallId: "call-bash-1", toolName: "bash", input: { command: "echo ok" } },
 			ctx,
-		)) as { block?: boolean; reason?: string };
-		assert.equal(bashDeny.block, true);
-		assert.match(bashDeny.reason ?? "", /forbid_destructive_tool/);
+		);
+		assert.equal(bashAllow, undefined);
 
 		const auditFiles = await readdir(join(store, "audit"));
 		const entries = (
@@ -685,8 +682,8 @@ test("extension Cedar permits artifact_publish despite destructive:true, while o
 			entries.map((entry) => [entry.tool, entry.verdict, entry.rule]),
 			[
 				["artifact_publish", "ALLOW", "permit_artifact_publish"],
-				["write", "DENY", "forbid_destructive_tool"],
-				["bash", "DENY", "forbid_destructive_tool"],
+				["write", "ALLOW", "permit_coding_destructive_tools"],
+				["bash", "ALLOW", "permit_coding_destructive_tools"],
 			],
 		);
 	});
@@ -842,25 +839,30 @@ test("extension task tools verify step gates and audit decisions", async () => {
 			create,
 			{
 				id: "task-denied-tool",
-				objective: "Reject destructive tools",
+				objective: "Reject destructive tools in heartbeat Cedar profile",
 				steps: [{ id: "gate", title: "Gate tool use", exitCriteria: ["safe tools only"] }],
 			},
 			ctx,
 		);
 		assert.match(firstText(deniedTask), /task-denied-tool/);
-		const denied = await executeTool(
-			update,
-			{
-				id: "task-denied-tool",
-				stepId: "gate",
-				usedTools: ["bash"],
-				selfReview: "This attempted to use bash.",
-				exitCriteriaResults: [{ criterion: "safe tools only", passed: true }],
-			},
-			ctx,
+		const denied = await withEnv({ HER_CEDAR_PROFILE: "heartbeat" }, async () =>
+			executeTool(
+				update,
+				{
+					id: "task-denied-tool",
+					stepId: "gate",
+					usedTools: ["bash"],
+					selfReview: "This attempted to use bash.",
+					exitCriteriaResults: [{ criterion: "safe tools only", passed: true }],
+				},
+				ctx,
+			),
 		);
 		assert.match(firstText(denied), /blocked/);
-		assert.equal((denied.details as { decision?: { rule?: string } }).decision?.rule, "forbid_destructive_tool");
+		assert.equal(
+			(denied.details as { decision?: { rule?: string } }).decision?.rule,
+			"heartbeat_forbid_destructive_tools",
+		);
 
 		const budgetTask = await executeTool(
 			create,
@@ -902,7 +904,7 @@ test("extension task tools verify step gates and audit decisions", async () => {
 			.map((entry) => entry.rule);
 		assert.ok(rules.includes("allow"));
 		assert.ok(rules.includes("exit-criterion-failed"));
-		assert.ok(rules.includes("forbid_destructive_tool"));
+		assert.ok(rules.includes("heartbeat_forbid_destructive_tools"));
 		assert.ok(rules.includes("budget-exceeded"));
 	});
 });
