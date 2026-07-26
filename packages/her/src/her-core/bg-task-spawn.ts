@@ -170,6 +170,7 @@ export async function spawnBgTask(memoryRoot: string, input: SpawnBgTaskInput): 
 			record.worktree = wt.worktreePath;
 			record.codeRoot = codeRoot;
 			record.worktreeBranch = wt.branch;
+			record.worktreeBaseSha = wt.baseSha;
 		} catch (error) {
 			const detail = error instanceof Error ? error.message : String(error);
 			const failed = migrateBgStatus(record, "failed", {

@@ -18,6 +18,7 @@ import {
 	tasksDir,
 } from "./bg-task-record.ts";
 import { spawnBgTask } from "./bg-task-spawn.ts";
+import { maybeRemoveEmptyTaskWorktree } from "./long-task-worktree.ts";
 import { stopTask } from "./task-executor.ts";
 
 export type WakeEvent = {
@@ -27,6 +28,8 @@ export type WakeEvent = {
 	failureReason?: string;
 	exitCode?: number;
 	retryTaskId?: string;
+	worktreeRemoved?: boolean;
+	worktreeKept?: string;
 };
 
 export type ReconcileOptions = {
@@ -171,6 +174,12 @@ export async function reconcileBgTasks(memoryRoot: string, options: ReconcileOpt
 		let event = result.event;
 
 		if (event && result.record && isTerminal(result.record.status)) {
+			const cleaned = await cleanupEmptyWorktree(result.record);
+			if (cleaned) {
+				event = { ...event, ...cleaned.event };
+				finalRecord = { ...finalRecord, ...cleaned.recordPatch };
+			}
+
 			const reason = result.record.failureReason;
 			if (
 				!options.skipRetry &&
@@ -190,7 +199,9 @@ export async function reconcileBgTasks(memoryRoot: string, options: ReconcileOpt
 					parentTask: result.record.id,
 					retries: Number(result.record.retries ?? 0) + 1,
 					skipGates: true,
-					...(useWorktree ? { worktree: true, ...(codeRoot ? { codeRoot } : {}) } : {}),
+					...(useWorktree && !cleaned?.event.worktreeRemoved
+						? { worktree: true, ...(codeRoot ? { codeRoot } : {}) }
+						: {}),
 				});
 				if (child.status === "running") {
 					event = { ...event, retryTaskId: child.id };
@@ -383,6 +394,34 @@ function wakeFrom(record: BgTaskRecord): WakeEvent {
 	};
 }
 
+async function cleanupEmptyWorktree(record: BgTaskRecord): Promise<{
+	event: Pick<WakeEvent, "worktreeRemoved" | "worktreeKept">;
+	recordPatch: Partial<BgTaskRecord>;
+} | null> {
+	const worktree = typeof record.worktree === "string" ? record.worktree : null;
+	const codeRoot = typeof record.codeRoot === "string" ? record.codeRoot : null;
+	const baseSha = typeof record.worktreeBaseSha === "string" ? record.worktreeBaseSha : null;
+	if (!worktree || !codeRoot || !baseSha) return null;
+	try {
+		const result = await maybeRemoveEmptyTaskWorktree(codeRoot, record.id, baseSha);
+		if (result.removed) {
+			return {
+				event: { worktreeRemoved: true },
+				recordPatch: { worktree: null, worktreeRemovedAt: isoNow() },
+			};
+		}
+		if (result.branch) {
+			return {
+				event: { worktreeKept: result.branch },
+				recordPatch: {},
+			};
+		}
+	} catch {
+		/* keep worktree on cleanup errors — fail soft, surface via next list */
+	}
+	return null;
+}
+
 export function formatWakeMessage(events: WakeEvent[]): string {
 	if (events.length === 0) return "";
 	const lines = events.map((e) => {
@@ -390,6 +429,8 @@ export function formatWakeMessage(events: WakeEvent[]): string {
 		const extra = [
 			typeof e.exitCode === "number" ? `exit ${e.exitCode}` : null,
 			e.retryTaskId ? `retry→ ${e.retryTaskId}` : null,
+			e.worktreeRemoved ? "worktree removed (0 commits)" : null,
+			e.worktreeKept ? `worktree kept: ${e.worktreeKept}` : null,
 			`读取: her_task_output("${e.taskId}")`,
 		]
 			.filter(Boolean)

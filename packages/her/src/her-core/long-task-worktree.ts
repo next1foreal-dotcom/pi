@@ -82,6 +82,31 @@ export async function removeTaskWorktree(
 	return { removed: true };
 }
 
+/**
+ * H.2 / G-126 — on task terminal, remove the worktree when the branch has
+ * zero commits past `baseSha` (empty agent run). Keep it when there are commits.
+ */
+export async function maybeRemoveEmptyTaskWorktree(
+	repoRoot: string,
+	taskId: string,
+	baseSha: string,
+	opts: { env?: NodeJS.ProcessEnv; gitRun?: GitRun } = {},
+): Promise<{ removed: boolean; commits: number; branch?: string }> {
+	const gitRun = opts.gitRun ?? git;
+	const location = taskWorktreeLocation(taskId, opts.env);
+	if (!(await pathExists(location.worktreePath))) {
+		return { removed: false, commits: 0 };
+	}
+	const commits = await gitRun(location.worktreePath, "rev-list", "--count", `${baseSha}..HEAD`)
+		.then((r) => Number(r.stdout.trim()) || 0)
+		.catch(() => 0);
+	if (commits > 0) {
+		return { removed: false, commits, branch: location.branch };
+	}
+	await removeTaskWorktree(repoRoot, taskId, { env: opts.env, force: true, gitRun });
+	return { removed: true, commits: 0 };
+}
+
 export async function listTaskWorktrees(
 	repoRoot: string,
 	opts: { env?: NodeJS.ProcessEnv; gitRun?: GitRun } = {},

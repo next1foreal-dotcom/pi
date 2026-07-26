@@ -70,8 +70,8 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 			return await postJson(fetchImpl, base, "/api/preview/artifact", { path: params.path }, signal, timeoutMs, {
 				successText: (parsed) => `已发布到作品面板: ${parsed?.slug ?? ""}`,
 				notConfiguredText: () =>
-					"Her UI has not configured HER_ARTIFACTS_DIR, so it cannot save published artifacts yet. " +
-					"Ask Fei to set HER_ARTIFACTS_DIR on the UI host, then try again.",
+					"Her UI has no artifacts directory (set HER_MEMORY_DIR for her-memory/published, " +
+					"or HER_ARTIFACTS_DIR to override). Ask Fei to configure the UI host, then try again.",
 			});
 		},
 	});

@@ -201,7 +201,7 @@ test("artifact_publish reports a human-readable prompt when HER_ARTIFACTS_DIR is
 
 	const text = await run(tools.get("artifact_publish"), { path: "D:/artifacts/demo.html" });
 
-	assert.match(text, /HER_ARTIFACTS_DIR/);
+	assert.match(text, /HER_MEMORY_DIR|HER_ARTIFACTS_DIR/);
 	assert.match(text, /Fei/);
 });
 
