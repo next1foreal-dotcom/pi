@@ -21,15 +21,18 @@ import {
 	completeLongTask,
 	createEmbeddingSearch,
 	createHerTask,
+	formatWakeMessage,
 	type GateDecision,
 	type HerProposalRecord,
 	type HerTaskRecord,
 	herProposalFeedbackVerdicts,
 	herProposalStatuses,
+	herTaskOutput,
 	herTaskStatuses,
 	type IdeaData,
 	type JudgmentFields,
 	type LongTaskRecord,
+	listBgTasks,
 	listHerProposals,
 	listHerTasks,
 	listLongTasks,
@@ -41,10 +44,13 @@ import {
 	planMemoryRetraction,
 	queueTelegramInbound,
 	readPathForWorldNote,
+	reconcileBgTasks,
 	recordHerProposal,
 	recordHerProposalFeedback,
 	type SamanthaZoneCategory,
+	spawnBgTask,
 	startLongTask,
+	stopBgTask,
 	summarizeHerProposalStats,
 	updateHerTask,
 	type WorldNoteData,
@@ -98,6 +104,10 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	her_task_create: { destructive: false },
 	her_task_update: { destructive: false },
 	her_task_list: { destructive: false },
+	her_task_spawn: { destructive: true },
+	her_task_stop: { destructive: true },
+	her_task_output: { destructive: false },
+	her_bg_task_list: { destructive: false },
 	her_privacy_audit: { destructive: false },
 	her_privacy_check: { destructive: false },
 	her_memory_retract: { destructive: false },
@@ -674,8 +684,20 @@ export default function her(pi: ExtensionAPI): void {
 
 	pi.on("before_agent_start", async (event) => {
 		const { context, facts, soul, self, choiceModel } = await mem.getContext();
+		let systemPrompt = composeSystemPrompt(event.systemPrompt, context, facts, soul, self, choiceModel);
+		// G-120: harness wake — reconcile .her/tasks and inject completion events (handles, not logs).
+		try {
+			const wakeEvents = await reconcileBgTasks(memoryDir);
+			const wakeBlock = formatWakeMessage(wakeEvents);
+			if (wakeBlock) {
+				systemPrompt = `${systemPrompt}\n\n${wakeBlock}`;
+			}
+		} catch (error) {
+			const detail = error instanceof Error ? error.message : String(error);
+			console.warn(`[her] bg-task reconcile skipped: ${detail}`);
+		}
 		return {
-			systemPrompt: composeSystemPrompt(event.systemPrompt, context, facts, soul, self, choiceModel),
+			systemPrompt,
 			message: {
 				customType: "her-context",
 				content: "Her CONTEXT.md, FACTS.md, SOUL.md, SAMANTHA.md, and CHOICE-MODEL.md were injected for this turn.",
@@ -1654,6 +1676,91 @@ export default function her(pi: ExtensionAPI): void {
 			});
 		},
 	});
+
+	// G-120 — harness background tasks (.her/tasks). Distinct from her_task_* todo cards.
+	pi.registerTool({
+		name: "her_task_spawn",
+		label: "Her Background Task Spawn",
+		description:
+			"Spawn a detached background worker (argv array). Returns immediately with task id; do not poll — harness wakes you on completion. Use her_task_output to read logs by handle.",
+		parameters: Type.Object({
+			objective: Type.String({ maxLength: 200 }),
+			command: Type.Array(Type.String(), { minItems: 1 }),
+			worker: Type.Optional(Type.String()),
+			timeoutMinutes: Type.Optional(Type.Integer({ minimum: 1 })),
+			parentTask: Type.Optional(Type.String()),
+		}),
+		async execute(_toolCallId, params) {
+			const result = await spawnBgTask(memoryDir, {
+				objective: params.objective,
+				command: params.command,
+				...(params.worker ? { worker: params.worker } : {}),
+				...(params.timeoutMinutes ? { timeoutMinutes: params.timeoutMinutes } : {}),
+				...(params.parentTask ? { parentTask: params.parentTask } : {}),
+			});
+			return textResult(JSON.stringify(result), { phase: "G-120", ...result, memoryDir });
+		},
+	});
+
+	pi.registerTool({
+		name: "her_bg_task_list",
+		label: "Her Background Task List",
+		description: "List harness background tasks under .her/tasks (not her_task_list todos).",
+		parameters: Type.Object({
+			status: Type.Optional(Type.String()),
+		}),
+		async execute(_toolCallId, params) {
+			const tasks = await listBgTasks(memoryDir, params.status ? { status: params.status } : undefined);
+			const rows = tasks.map((t) => ({
+				id: t.id,
+				status: t.status,
+				objective: t.objective,
+				worker: t.worker,
+				host: t.host,
+				updated: t.updated,
+				...(t.exitCode !== undefined ? { exitCode: t.exitCode } : {}),
+				...(t.failureReason ? { failureReason: t.failureReason } : {}),
+			}));
+			return textResult(JSON.stringify({ tasks: rows, count: rows.length }), {
+				phase: "G-120",
+				count: rows.length,
+				memoryDir,
+			});
+		},
+	});
+
+	pi.registerTool({
+		name: "her_task_output",
+		label: "Her Background Task Output",
+		description: "Read a background task log by byte offset (paginated). Never dumps full logs into context.",
+		parameters: Type.Object({
+			id: Type.String(),
+			offset: Type.Optional(Type.Integer({ minimum: 0 })),
+			limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 65536 })),
+		}),
+		async execute(_toolCallId, params) {
+			const chunk = await herTaskOutput(memoryDir, params.id, {
+				...(params.offset !== undefined ? { offset: params.offset } : {}),
+				...(params.limit !== undefined ? { limit: params.limit } : {}),
+			});
+			return textResult(JSON.stringify(chunk), { phase: "G-120", ...chunk, memoryDir });
+		},
+	});
+
+	pi.registerTool({
+		name: "her_task_stop",
+		label: "Her Background Task Stop",
+		description: "Stop a harness background task (idempotent kill-tree).",
+		parameters: Type.Object({
+			id: Type.String(),
+			reason: Type.Optional(Type.String()),
+		}),
+		async execute(_toolCallId, params) {
+			const result = await stopBgTask(memoryDir, params.id);
+			return textResult(JSON.stringify(result), { phase: "G-120", ...result, memoryDir });
+		},
+	});
+
 	registerHandsTools(pi, {
 		mem,
 		loadHandsConfig: () => resolveHandsConfig(loadConfig(resolve(memoryDir, ".her", "config.yaml")).hands),

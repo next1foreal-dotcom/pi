@@ -1,3 +1,31 @@
+export { herTaskOutput, readLogChunk, type TaskOutputChunk } from "./bg-task-output.ts";
+export {
+	formatWakeMessage,
+	type ReconcileOptions,
+	reconcileBgTasks,
+	type WakeEvent,
+} from "./bg-task-reconcile.ts";
+export {
+	type BgTaskRecord,
+	type BgTaskStatus,
+	createPendingRecord,
+	isTerminal,
+	loadBgTask,
+	migrateBgStatus,
+	newTaskId,
+	parseBgTaskMarkdown,
+	saveBgTask,
+	serializeBgTask,
+	taskMdPath,
+	tasksDir,
+} from "./bg-task-record.ts";
+export {
+	listBgTasks,
+	type SpawnBgTaskInput,
+	type SpawnBgTaskResult,
+	spawnBgTask,
+	stopBgTask,
+} from "./bg-task-spawn.ts";
 export type { HerConfig } from "./config.ts";
 export { DEFAULT_CONFIG, loadConfig, renderConfig } from "./config.ts";
 export type {
@@ -227,6 +255,14 @@ export type {
 	VerifyStepInput,
 } from "./task.ts";
 export { createHerTask, herTaskStatuses, listHerTasks, updateHerTask, verifyStep } from "./task.ts";
+export {
+	launchTask,
+	type PidInfo,
+	type ResolvedCommand,
+	readPidFile,
+	resolveWorkerCommand,
+	stopTask,
+} from "./task-executor.ts";
 export type {
 	LocalPdfTextResult,
 	TasteSnapshotInput,
