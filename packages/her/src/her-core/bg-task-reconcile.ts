@@ -17,6 +17,7 @@ import {
 	saveBgTask,
 	tasksDir,
 } from "./bg-task-record.ts";
+import { purgeExpiredTaskArtifacts } from "./bg-task-retention.ts";
 import { spawnBgTask } from "./bg-task-spawn.ts";
 import { maybeRemoveEmptyTaskWorktree } from "./long-task-worktree.ts";
 import { stopTask } from "./task-executor.ts";
@@ -223,6 +224,13 @@ export async function reconcileBgTasks(memoryRoot: string, options: ReconcileOpt
 			events.push(event);
 		}
 	}
+
+	// A.8 — drop sentinel files for tasks past retention_days (keep .md)
+	await purgeExpiredTaskArtifacts(memoryRoot, {
+		now,
+		retentionDays: cfg.retentionDays,
+	});
+
 	return events;
 }
 

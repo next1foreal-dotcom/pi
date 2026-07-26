@@ -10,6 +10,7 @@ import { basename, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { PublishConfig } from "./bg-task-config.ts";
 import { DEFAULT_PUBLISH_CONFIG } from "./bg-task-config.ts";
+import { externalizeLargeDataUris } from "./publish-assets.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -36,6 +37,7 @@ export type PublishResult = {
 	url: string;
 	path: string;
 	bytes: number;
+	assets?: string[];
 	commit?: string;
 };
 
@@ -75,15 +77,17 @@ export async function herPublish(
 	}
 
 	const wrapped = wrapPublishedHtml(html, input.title, input.description);
-	await writeFile(resolvedOut, wrapped, "utf8");
-	const bytes = Buffer.byteLength(wrapped, "utf8");
+	const lifted = await externalizeLargeDataUris(wrapped, dir, cfg.inlineThresholdBytes);
+	await writeFile(resolvedOut, lifted.html, "utf8");
+	const bytes = Buffer.byteLength(lifted.html, "utf8");
 
 	await ensurePublishServer(dir, cfg);
 	const url = `http://${cfg.bind}:${cfg.port}/${slug}.html`;
 
 	let commit: string | undefined;
 	try {
-		await execFileAsync("git", ["-C", memoryRoot, "add", "--", `published/${slug}.html`], {
+		const paths = [`published/${slug}.html`, ...lifted.assets.map((a) => `published/${a}`)];
+		await execFileAsync("git", ["-C", memoryRoot, "add", "--", ...paths], {
 			windowsHide: true,
 		});
 		const msg = input.label?.trim() || `publish: ${slug} — ${input.description.slice(0, 80)}`;
@@ -98,7 +102,14 @@ export async function herPublish(
 		// memory repo may be dirty / no identity — publish file still lands
 	}
 
-	return { slug, url, path: `published/${slug}.html`, bytes, ...(commit ? { commit } : {}) };
+	return {
+		slug,
+		url,
+		path: `published/${slug}.html`,
+		bytes,
+		...(lifted.assets.length ? { assets: lifted.assets } : {}),
+		...(commit ? { commit } : {}),
+	};
 }
 
 export function wrapPublishedHtml(body: string, title: string, description: string): string {

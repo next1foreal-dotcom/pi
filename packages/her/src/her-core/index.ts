@@ -36,6 +36,7 @@ export {
 	taskMdPath,
 	tasksDir,
 } from "./bg-task-record.ts";
+export { purgeExpiredTaskArtifacts, type RetentionPurge } from "./bg-task-retention.ts";
 export {
 	type BgTaskListItem,
 	listBgTasks,
@@ -254,6 +255,7 @@ export {
 	recordHerProposalFeedback,
 	summarizeHerProposalStats,
 } from "./proposal.ts";
+export { type ExternalizeResult, externalizeLargeDataUris } from "./publish-assets.ts";
 export type {
 	ApplyMemoryRetractionOptions,
 	MemoryRetractionCandidate,
