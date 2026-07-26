@@ -4,7 +4,7 @@
 
 import { readdir } from "node:fs/promises";
 import { hostname as osHostname } from "node:os";
-import { basename, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { loadRuntimeConfig } from "./bg-task-config.ts";
 import {
 	type BgTaskRecord,
@@ -18,17 +18,21 @@ import {
 } from "./bg-task-record.ts";
 import { enforceDailyCostCap } from "./cost-ledger.ts";
 import { ensureTaskWorktree } from "./long-task-worktree.ts";
+import { redactSecrets, writeText } from "./store.ts";
 import { launchTask, stopTask } from "./task-executor.ts";
+import { buildWorkerEnv, resolveWorkerInvocation, type WorkerProfile } from "./worker-profile.ts";
 
 const DEFAULT_ALLOW = new Set(["node", "nodejs"]);
 
 export type SpawnBgTaskInput = {
 	objective: string;
-	command: string[];
+	/** Bare command mode (G-120 legacy): argv given directly. Mutually exclusive with `brief`. */
+	command?: string[];
+	/** Worker/profile mode (G-129): `worker` names a config profile; brief flows to it via stdin. */
+	brief?: string;
 	worker?: string;
 	parentTask?: string | null;
 	timeoutMinutes?: number;
-	allowExecutables?: string[];
 	heartbeatMs?: number;
 	retries?: number;
 	/** H.2 — isolate worker cwd in a git worktree on the code repo (never memory). */
@@ -38,6 +42,8 @@ export type SpawnBgTaskInput = {
 	/** Test hook: skip budget/concurrency gates */
 	skipGates?: boolean;
 };
+
+type SpawnMode = "worker" | "command";
 
 export type SpawnBgTaskResult =
 	| { id: string; status: "running"; logPath: string; worktree?: string }
@@ -51,7 +57,14 @@ export type SpawnBgTaskResult =
 
 export type BgTaskListItem = BgTaskRecord & { displayStatus: string };
 
-function assertCommandAllowed(command: string[], allowExtra: string[] = []): void {
+/**
+ * D2 — bare command mode allowlist. `argv[0]` must be a bare name (no path separator — same-basename
+ * malicious paths are banned outright) and must not resolve through the cmd.exe shim chain (that
+ * chain is only trusted for worker/profile mode, where argv is static Fei-authored config, not a
+ * model-controlled string). The allowlist is DEFAULT_ALLOW + process.execPath + every configured
+ * worker profile's argv[0] — so a bare name matching a worker profile (e.g. "codex") is permitted.
+ */
+function assertCommandAllowed(command: string[], workers: Record<string, WorkerProfile>): void {
 	if (!Array.isArray(command) || command.length === 0) {
 		throw new Error("command must be a non-empty argv array");
 	}
@@ -59,19 +72,51 @@ function assertCommandAllowed(command: string[], allowExtra: string[] = []): voi
 		throw new Error("command entries must be non-empty strings");
 	}
 	const file = command[0];
+	if (file === process.execPath) return;
+	if (/[\\/]/.test(file)) {
+		throw new Error(`bare command must not contain a path separator: ${file} (use a worker profile for CLIs)`);
+	}
 	const base = basename(file)
 		.toLowerCase()
 		.replace(/\.exe$/i, "");
+	const workerNames = Object.values(workers).map((w) =>
+		basename(w.argv[0])
+			.toLowerCase()
+			.replace(/\.exe$/i, ""),
+	);
 	const allowed = new Set([
 		...DEFAULT_ALLOW,
-		...allowExtra.map((a) => a.toLowerCase()),
+		...workerNames,
 		basename(process.execPath)
 			.toLowerCase()
 			.replace(/\.exe$/i, ""),
 	]);
-	if (file === process.execPath) return;
-	if (allowed.has(base) || allowed.has(file.toLowerCase())) return;
-	throw new Error(`executable not in allowlist: ${file} (allowed: ${[...allowed].join(", ")})`);
+	if (!(allowed.has(base) || allowed.has(file.toLowerCase()))) {
+		throw new Error(`executable not in allowlist: ${file} (allowed: ${[...allowed].join(", ")})`);
+	}
+	if (/\.(cmd|bat)$/i.test(file)) {
+		throw new Error(`bare command must not resolve through cmd.exe — use a worker profile to run CLIs: ${file}`);
+	}
+}
+
+/** D4 — command/brief are mutually exclusive; exactly one selects the spawn mode. */
+function resolveSpawnMode(input: SpawnBgTaskInput): SpawnMode {
+	const hasCommand = input.command !== undefined;
+	const hasBrief = input.brief !== undefined;
+	if (hasCommand && hasBrief) {
+		throw new Error("spawnBgTask: provide either `command` (bare mode) or `brief` (worker mode), not both");
+	}
+	if (!hasCommand && !hasBrief) {
+		throw new Error("spawnBgTask: must provide either `command` (bare mode) or `brief` (worker mode)");
+	}
+	return hasBrief ? "worker" : "command";
+}
+
+/** D1 — brief byte cap enforced before anything is written to disk. */
+function assertBriefWithinCap(brief: string, capBytes: number): void {
+	if (Buffer.byteLength(brief, "utf8") > capBytes) {
+		throw new Error(`brief exceeds tasks.brief_cap_bytes (${capBytes})`);
+	}
 }
 
 function resolveCodeRoot(explicit?: string): string {
@@ -81,13 +126,27 @@ function resolveCodeRoot(explicit?: string): string {
 }
 
 export async function spawnBgTask(memoryRoot: string, input: SpawnBgTaskInput): Promise<SpawnBgTaskResult> {
-	assertCommandAllowed(input.command, input.allowExecutables);
 	const cfg = loadRuntimeConfig(memoryRoot);
+	const mode = resolveSpawnMode(input);
+
+	let command: string[];
+	let workerProfile: WorkerProfile | undefined;
+	let workerName: string | undefined;
+	if (mode === "worker") {
+		workerName = input.worker ?? cfg.tasks.defaultWorker;
+		workerProfile = resolveWorkerInvocation(cfg.workers, workerName);
+		assertBriefWithinCap(input.brief ?? "", cfg.tasks.briefCapBytes);
+		command = workerProfile.argv;
+	} else {
+		assertCommandAllowed(input.command ?? [], cfg.workers);
+		command = input.command ?? [];
+	}
 
 	const record = createPendingRecord({
 		objective: input.objective,
-		worker: input.worker ?? cfg.tasks.defaultWorker,
-		command: input.command,
+		worker: mode === "worker" ? (workerName ?? "") : (input.worker ?? cfg.tasks.defaultWorker),
+		command,
+		mode,
 		parentTask: input.parentTask,
 		timeoutMinutes: input.timeoutMinutes ?? cfg.tasks.defaultTimeoutMinutes,
 		retries: input.retries,
@@ -189,10 +248,21 @@ export async function spawnBgTask(memoryRoot: string, input: SpawnBgTaskInput): 
 
 	await saveBgTask(memoryRoot, record, `# ${record.objective}\n`);
 
+	let briefPath: string | undefined;
+	if (mode === "worker") {
+		briefPath = join(tasksDir(memoryRoot), `${record.id}.brief`);
+		await writeText(briefPath, redactSecrets(input.brief ?? ""));
+	}
+
 	try {
-		const runnerPid = launchTask(tasksDir(memoryRoot), record.id, input.command, {
+		const runnerPid = launchTask(tasksDir(memoryRoot), record.id, command, {
 			heartbeatMs: input.heartbeatMs ?? cfg.tasks.heartbeatSeconds * 1000,
 			...(workerCwd ? { cwd: workerCwd } : {}),
+			...(mode === "worker" && workerProfile ? { env: buildWorkerEnv(workerProfile, record.id) } : {}),
+			...(briefPath ? { stdinPath: briefPath } : {}),
+			// F1 (G-129.1) — the ComSpec chain is trusted only for worker/profile mode's static
+			// config argv; bare command mode must never hand model-controlled argv to cmd.exe.
+			allowComspec: mode === "worker",
 		});
 		const running = migrateBgStatus(record, "running", {
 			startedAt: isoNow(),

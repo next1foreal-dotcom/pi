@@ -3,7 +3,7 @@
  * H.1 lease · H.3 deadline · H.4 auto-retry · H.5 host affinity.
  */
 
-import { readdir, readFile } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile } from "node:fs/promises";
 import { hostname as osHostname } from "node:os";
 import { join } from "node:path";
 import { loadRuntimeConfig } from "./bg-task-config.ts";
@@ -19,6 +19,7 @@ import {
 } from "./bg-task-record.ts";
 import { purgeExpiredTaskArtifacts } from "./bg-task-retention.ts";
 import { spawnBgTask } from "./bg-task-spawn.ts";
+import type { CostLedgerAuditEntry } from "./cost-ledger.ts";
 import { maybeRemoveEmptyTaskWorktree } from "./long-task-worktree.ts";
 import { stopTask } from "./task-executor.ts";
 
@@ -29,6 +30,8 @@ export type WakeEvent = {
 	failureReason?: string;
 	exitCode?: number;
 	retryTaskId?: string;
+	/** F4 (G-129.1) — worker-mode retry was skipped because the parent's .brief was missing. */
+	retrySkipped?: string;
 	worktreeRemoved?: boolean;
 	worktreeKept?: string;
 };
@@ -91,6 +94,46 @@ function clearLease(record: BgTaskRecord): BgTaskRecord {
 	delete next.lockedBy;
 	delete next.lockExpiresAt;
 	return next;
+}
+
+/**
+ * D8 — conservative cost settlement: post the task's reserved budget cap to the cost ledger when it
+ * reaches a terminal state, so budget_daily_cap accumulates real numbers instead of never seeing a
+ * charge. Real usage parsing (claude JSON usage / codex token counts) is a later card; this is
+ * deliberately an overestimate-safe placeholder, labeled as such via `cost.purpose`.
+ *
+ * F3 (G-129.1) — idempotency is checked against the ledger itself, not only `record.costSettledAt`:
+ * a crash between the ledger append and the record save that would have persisted `costSettledAt`
+ * previously caused a double-charge on the next reconcile. Scanning the day's ledger for an existing
+ * `reserved-cap` line for this task id closes that window regardless of which write survived.
+ */
+async function recordCostSettlement(memoryRoot: string, record: BgTaskRecord, now: Date): Promise<void> {
+	const usd = Number(record.budgetReserved ?? 0);
+	if (!Number.isFinite(usd) || usd <= 0) return;
+	const auditDir = join(memoryRoot, "audit");
+	const date = isoNow(now).slice(0, 10);
+	const auditPath = join(auditDir, `${date}.jsonl`);
+	const existing = await readFile(auditPath, "utf8").catch(() => "");
+	const alreadySettled = existing
+		.split("\n")
+		.filter(Boolean)
+		.some((line) => {
+			try {
+				const parsed = JSON.parse(line) as { cost?: { purpose?: string }; context?: { taskId?: string } };
+				return parsed.cost?.purpose === "reserved-cap" && parsed.context?.taskId === record.id;
+			} catch {
+				return false;
+			}
+		});
+	if (alreadySettled) return;
+	const entry: CostLedgerAuditEntry = {
+		ts: isoNow(now),
+		tool: "her_task_reconcile",
+		cost: { usd, purpose: "reserved-cap" },
+		context: { taskId: record.id },
+	};
+	await mkdir(auditDir, { recursive: true });
+	await appendFile(auditPath, `${JSON.stringify(entry)}\n`, "utf8");
 }
 
 export async function reconcileBgTasks(memoryRoot: string, options: ReconcileOptions = {}): Promise<WakeEvent[]> {
@@ -175,6 +218,13 @@ export async function reconcileBgTasks(memoryRoot: string, options: ReconcileOpt
 		let event = result.event;
 
 		if (event && result.record && isTerminal(result.record.status)) {
+			// D8 — post the task's reserved budget to the cost ledger exactly once per task, so
+			// budget_daily_cap accumulates real usage instead of spinning with nothing recorded.
+			if (!result.record.costSettledAt) {
+				await recordCostSettlement(memoryRoot, result.record, now);
+				finalRecord = { ...finalRecord, costSettledAt: isoNow(now) };
+			}
+
 			const cleaned = await cleanupEmptyWorktree(result.record);
 			if (cleaned) {
 				event = { ...event, ...cleaned.event };
@@ -193,20 +243,34 @@ export async function reconcileBgTasks(memoryRoot: string, options: ReconcileOpt
 					typeof result.record.codeRoot === "string" && result.record.codeRoot
 						? String(result.record.codeRoot)
 						: undefined;
-				const child = await spawnBgTask(memoryRoot, {
-					objective: result.record.objective,
-					command: result.record.command,
-					worker: result.record.worker,
-					parentTask: result.record.id,
-					retries: Number(result.record.retries ?? 0) + 1,
-					skipGates: true,
-					...(useWorktree && !cleaned?.event.worktreeRemoved
-						? { worktree: true, ...(codeRoot ? { codeRoot } : {}) }
-						: {}),
-				});
-				if (child.status === "running") {
-					event = { ...event, retryTaskId: child.id };
-					finalRecord = { ...finalRecord, retryTaskId: child.id };
+				// D6 — mode:worker retries rebuild the worker invocation from the parent's own .brief
+				// (worker/brief, not command); mode:command keeps the existing argv-replay behavior.
+				const isWorkerMode = result.record.mode === "worker";
+				const parentBrief = isWorkerMode
+					? await readFile(join(dir, `${result.record.id}.brief`), "utf8").catch(() => undefined)
+					: undefined;
+				if (isWorkerMode && parentBrief === undefined) {
+					// F4 (G-129.1) — fail loud instead of silently retrying with an empty brief: a
+					// worker CLI given no task packet at all is worse than not retrying.
+					event = { ...event, retrySkipped: "brief_missing" };
+					finalRecord = { ...finalRecord, retrySkipped: "brief_missing" };
+				} else {
+					const child = await spawnBgTask(memoryRoot, {
+						objective: result.record.objective,
+						...(isWorkerMode
+							? { worker: result.record.worker, brief: parentBrief }
+							: { command: result.record.command }),
+						parentTask: result.record.id,
+						retries: Number(result.record.retries ?? 0) + 1,
+						skipGates: true,
+						...(useWorktree && !cleaned?.event.worktreeRemoved
+							? { worktree: true, ...(codeRoot ? { codeRoot } : {}) }
+							: {}),
+					});
+					if (child.status === "running") {
+						event = { ...event, retryTaskId: child.id };
+						finalRecord = { ...finalRecord, retryTaskId: child.id };
+					}
 				}
 			}
 		}

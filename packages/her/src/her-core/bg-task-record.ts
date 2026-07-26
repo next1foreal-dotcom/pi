@@ -16,6 +16,8 @@ export type BgTaskRecord = {
 	objective: string;
 	worker: string;
 	command: string[];
+	/** G-129 — "worker" for config-profile CLIs (brief via stdin); missing/undefined = legacy command mode. */
+	mode?: "worker" | "command";
 	created: string;
 	updated: string;
 	retries: number;
@@ -28,6 +30,8 @@ export type BgTaskRecord = {
 	notifiedAt?: string;
 	deadlineAt?: string;
 	parentTask?: string | null;
+	/** G-129/D8 — set once a terminal task's reserved budget has been posted to the cost ledger. */
+	costSettledAt?: string;
 	[key: string]: unknown;
 };
 
@@ -131,6 +135,7 @@ export function createPendingRecord(input: {
 	objective: string;
 	worker: string;
 	command: string[];
+	mode?: "worker" | "command";
 	host?: string;
 	parentTask?: string | null;
 	timeoutMinutes?: number;
@@ -148,6 +153,7 @@ export function createPendingRecord(input: {
 		objective: input.objective.trim().slice(0, 200),
 		worker: input.worker,
 		command: [...input.command],
+		mode: input.mode ?? "command",
 		created,
 		updated: created,
 		retries: Math.max(0, input.retries ?? 0),

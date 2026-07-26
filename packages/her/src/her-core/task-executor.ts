@@ -18,17 +18,54 @@ export type PidInfo = {
 	startedAt: string;
 };
 
-export type ResolvedCommand = { file: string; args: string[] };
+export type ResolvedCommand = { file: string; args: string[]; verbatimArgs?: boolean };
 
-/** Resolve Windows .cmd/.bat shims so spawn(shell:false) does not throw EINVAL. */
-export function resolveWorkerCommand(command: readonly string[]): ResolvedCommand {
+/**
+ * F2 (G-129.1) — quote every token unconditionally (cmd.exe's own `""` escape for an embedded
+ * quote, not backslash — cmd does not treat `\"` as an escape). An unquoted token containing `&`,
+ * `|`, or `^` would let cmd.exe's tokenizer treat it as a command separator/escape once it's past
+ * the outer wrap; wrapping every token in quotes keeps those characters literal.
+ * Residual risk accepted: `%VAR%` environment-variable expansion happens inside cmd.exe regardless
+ * of quoting (quotes only suppress operator/separator parsing, not `%...%` substitution). After F1,
+ * the only argv that ever reaches this function is worker/profile config argv — Fei-authored, trusted
+ * static input, not a model-controlled string — so this residual is accepted rather than defended.
+ */
+function quoteCmdArg(arg: string): string {
+	return `"${arg.replace(/"/g, '""')}"`;
+}
+
+/**
+ * Build the /C payload for cmd.exe as a single pre-quoted token, then wrap the whole thing in one
+ * more layer of quotes. `/S` makes cmd.exe strip only the first and last quote character of the
+ * entire /C string before re-tokenizing — without the extra outer wrap, a spaced .cmd path loses its
+ * protecting quotes at that step and gets split on the space (verified: it truncates at the space and
+ * reports "not recognized"). The double-wrap survives that single strip and leaves the inner quoting
+ * intact. Caller must spawn with `windowsVerbatimArguments: true` so Node does not re-quote this.
+ */
+function buildCmdExeLine(cmd: string, rest: readonly string[]): string {
+	const inner = [quoteCmdArg(cmd), ...rest.map(quoteCmdArg)].join(" ");
+	return `"${inner}"`;
+}
+
+/**
+ * Resolve Windows .cmd/.bat shims so spawn(shell:false) does not throw EINVAL.
+ *
+ * F1 (G-129.1) — `allowComspec` (default true) gates whether resolution may hand off to
+ * cmd.exe at all. Bare-command mode (spawnBgTask) calls this with `allowComspec: false`:
+ * argv there can carry model-controlled strings, and letting it reach cmd.exe's `/C`
+ * re-parser is exactly the injection surface D2 bans — worker/profile mode (static,
+ * Fei-authored config argv) is the only trusted caller of the ComSpec chain.
+ */
+export function resolveWorkerCommand(command: readonly string[], opts?: { allowComspec?: boolean }): ResolvedCommand {
 	if (command.length === 0) throw new Error("command required");
 	const [cmd, ...rest] = command;
 	if (!cmd) throw new Error("command[0] required");
+	const allowComspec = opts?.allowComspec ?? true;
 
 	if (process.platform === "win32" && /\.(cmd|bat)$/i.test(cmd)) {
+		if (!allowComspec) throw new Error("bare command resolves to a cmd.exe shim — use a worker profile");
 		const comspec = process.env.ComSpec || "cmd.exe";
-		return { file: comspec, args: ["/d", "/s", "/c", cmd, ...rest] };
+		return { file: comspec, args: ["/d", "/s", "/c", buildCmdExeLine(cmd, rest)], verbatimArgs: true };
 	}
 
 	if (process.platform === "win32" && !/[\\/]/.test(cmd) && !/\.[a-z0-9]+$/i.test(cmd)) {
@@ -41,13 +78,19 @@ export function resolveWorkerCommand(command: readonly string[]): ResolvedComman
 				.split(/\r?\n/)
 				.map((l) => l.trim())
 				.filter(Boolean);
-			const nonCmd = candidates.find((c) => !/\.(cmd|bat)$/i.test(c));
-			if (nonCmd) return { file: nonCmd, args: rest };
-			if (candidates[0]) {
+			// D7 — npm shims list an extensionless sh script ahead of the .cmd; that script is not a
+			// PE binary and spawn(shell:false) will fail on it. Only a real .exe/.com is safe to spawn
+			// directly; otherwise fall back to the .cmd via cmd.exe. Priority: .exe/.com > .cmd > ignore.
+			const exeOrCom = candidates.find((c) => /\.(exe|com)$/i.test(c));
+			if (exeOrCom) return { file: exeOrCom, args: rest };
+			const cmdShim = candidates.find((c) => /\.(cmd|bat)$/i.test(c));
+			if (cmdShim) {
+				if (!allowComspec) throw new Error("bare command resolves to a cmd.exe shim — use a worker profile");
 				const comspec = process.env.ComSpec || "cmd.exe";
-				return { file: comspec, args: ["/d", "/s", "/c", candidates[0], ...rest] };
+				return { file: comspec, args: ["/d", "/s", "/c", buildCmdExeLine(cmdShim, rest)], verbatimArgs: true };
 			}
-		} catch {
+		} catch (error) {
+			if (error instanceof Error && error.message.includes("use a worker profile")) throw error;
 			/* fall through — spawn may still work for builtins */
 		}
 	}
@@ -59,20 +102,38 @@ export function launchTask(
 	taskDir: string,
 	id: string,
 	command: readonly string[],
-	options?: { env?: NodeJS.ProcessEnv; heartbeatMs?: number; cwd?: string },
+	options?: {
+		env?: NodeJS.ProcessEnv;
+		heartbeatMs?: number;
+		cwd?: string;
+		stdinPath?: string;
+		allowComspec?: boolean;
+	},
 ): number {
-	const resolved = resolveWorkerCommand(command);
-	const env: NodeJS.ProcessEnv = {
-		...process.env,
-		...(options?.env ?? {}),
-		HER_TASK_ID: id,
-	};
+	const resolved = resolveWorkerCommand(command, { allowComspec: options?.allowComspec });
+	// D9 — an explicit `env` is a full replacement (worker mode's minimal allowlist), not merged
+	// with the launcher's own env; bare command mode omits `env` and keeps full inheritance.
+	const base = options?.env ?? process.env;
+	const env: NodeJS.ProcessEnv = {};
+	for (const [key, value] of Object.entries(base)) {
+		if (key.startsWith("HER_TASK_")) continue; // strip inherited residue before setting our own
+		if (value !== undefined) env[key] = value;
+	}
+	env.HER_TASK_ID = id;
 	if (options?.heartbeatMs) {
 		env.HER_TASK_HEARTBEAT_MS = String(options.heartbeatMs);
 	}
 	// Worker cwd (worktree) is separate from taskDir where .pid/.log/.done live.
 	if (options?.cwd) {
 		env.HER_TASK_CWD = options.cwd;
+	}
+	if (options?.stdinPath) {
+		env.HER_TASK_STDIN = options.stdinPath;
+	}
+	if (resolved.verbatimArgs) {
+		// Tell the runner (a separate process re-parsing argv) that resolved.args is a single
+		// pre-quoted cmd.exe line — see buildCmdExeLine's comment for why this is necessary.
+		env.HER_TASK_VERBATIM_ARGS = "1";
 	}
 
 	const child = spawn(process.execPath, [RUNNER, taskDir, id, resolved.file, ...resolved.args], {

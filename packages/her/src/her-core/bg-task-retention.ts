@@ -8,7 +8,9 @@ import { join } from "node:path";
 import { loadRuntimeConfig } from "./bg-task-config.ts";
 import { isTerminal, loadBgTask, tasksDir } from "./bg-task-record.ts";
 
-const SENTINELS = ["log", "pid", "heartbeat", "done", "done.tmp"] as const;
+// G-129/D6 — .brief is a task attachment like .pid/.log: kept past terminal state (retries need
+// it) and purged in the same retention batch once retention_days has elapsed.
+const SENTINELS = ["log", "pid", "heartbeat", "done", "done.tmp", "brief"] as const;
 
 export type RetentionPurge = {
 	taskId: string;

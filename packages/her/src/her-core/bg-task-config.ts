@@ -6,6 +6,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { type HerConfig, loadConfig } from "./config.ts";
+import { parseWorkers, type WorkerProfile } from "./worker-profile.ts";
 
 export type TasksConfig = {
 	defaultWorker: string;
@@ -19,6 +20,7 @@ export type TasksConfig = {
 	logCapBytes: number;
 	logHeadBytes: number;
 	logTailBytes: number;
+	briefCapBytes: number;
 	retentionDays: number;
 	reconcileLeaseSeconds: number;
 	maxRetries: number;
@@ -45,6 +47,7 @@ export const DEFAULT_TASKS_CONFIG: TasksConfig = {
 	logCapBytes: 2_097_152,
 	logHeadBytes: 262_144,
 	logTailBytes: 786_432,
+	briefCapBytes: 1_048_576,
 	retentionDays: 30,
 	reconcileLeaseSeconds: 30,
 	maxRetries: 2,
@@ -62,6 +65,7 @@ export const DEFAULT_PUBLISH_CONFIG: PublishConfig = {
 export type HerRuntimeConfig = HerConfig & {
 	tasks: TasksConfig;
 	publish: PublishConfig;
+	workers: Record<string, WorkerProfile>;
 	warnings: string[];
 };
 
@@ -82,18 +86,21 @@ export function loadRuntimeConfig(memoryRoot: string, opts?: { failLoud?: boolea
 	if (failLoud && warnings.some((w) => w.includes("missing"))) {
 		throw new Error(`Her config fail-loud: ${warnings.join("; ")}`);
 	}
-	return { ...base, tasks, publish, warnings };
+	return { ...base, tasks, publish, workers: raw.workers, warnings };
 }
 
 function readOptionalSections(path: string): {
 	tasks?: Partial<TasksConfig>;
 	publish?: Partial<PublishConfig>;
+	workers: Record<string, WorkerProfile>;
 } {
+	let text: string;
 	try {
-		return parseTasksPublish(readFileSync(path, "utf8"));
+		text = readFileSync(path, "utf8");
 	} catch {
-		return {};
+		return { workers: {} };
 	}
+	return { ...parseTasksPublish(text), workers: parseWorkers(text) };
 }
 
 /** Exported for tests — parse tasks/publish from yaml-ish text. */
