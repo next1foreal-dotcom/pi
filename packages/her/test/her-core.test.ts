@@ -10,6 +10,7 @@ import {
 	checkpointLongTask,
 	claimNextLongTask,
 	completeLongTask,
+	frontmatter,
 	initStore,
 	listLongTasks,
 	Memory,
@@ -1826,4 +1827,21 @@ test("synthesizeSelfNarrative distills becoming evidence into a traceable Samant
 	assert.match(prompt, /SAMANTHA SELF-EVIDENCE/);
 	assert.match(prompt, /machine truth first/);
 	assert.match(prompt, /Verified Care/);
+});
+
+test("frontmatter round-trips strings that look like other scalar types", () => {
+	const command = ["node", "-e", "1"];
+	const { data } = parseFrontmatter(
+		frontmatter({ command, port: "8080", flag: "true", missing: "null", json: "[1]" }),
+	);
+	assert.deepEqual(data.command, command);
+	assert.equal(data.port, "8080");
+	assert.equal(data.flag, "true");
+	assert.equal(data.missing, "null");
+	assert.equal(data.json, "[1]");
+
+	const typed = parseFrontmatter(frontmatter({ count: 3, done: true, none: null })).data;
+	assert.equal(typed.count, 3);
+	assert.equal(typed.done, true);
+	assert.equal(typed.none, null);
 });

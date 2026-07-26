@@ -69,7 +69,9 @@ function yamlScalar(value: unknown): string {
 	if (typeof value === "number") return String(value);
 	if (typeof value === "object") return JSON.stringify(value);
 	const text = String(value);
-	if (text === "" || /[#\n\r]|^\s|\s$/.test(text)) return JSON.stringify(text);
+	// Quote when parseScalar would reinterpret the bare text as a non-string
+	// (numeric/boolean/null/JSON-looking), so serialize→parse round-trips.
+	if (text === "" || /[#\n\r]|^\s|\s$/.test(text) || parseScalar(text) !== text) return JSON.stringify(text);
 	return text;
 }
 
