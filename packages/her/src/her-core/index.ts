@@ -1,3 +1,19 @@
+export {
+	DEFAULT_PUBLISH_CONFIG,
+	DEFAULT_TASKS_CONFIG,
+	type HerRuntimeConfig,
+	loadRuntimeConfig,
+	type PublishConfig,
+	parseTasksPublish,
+	type TasksConfig,
+} from "./bg-task-config.ts";
+export {
+	DEFAULT_LOG_TRUNCATE,
+	type LogTruncateConfig,
+	truncateLogBuffer,
+	truncateTaskLogIfNeeded,
+} from "./bg-task-log.ts";
+export { enqueueTaskTelegramNotices, formatBgTaskStatusBoard } from "./bg-task-notify.ts";
 export { herTaskOutput, readLogChunk, type TaskOutputChunk } from "./bg-task-output.ts";
 export {
 	formatWakeMessage,
@@ -90,6 +106,15 @@ export type {
 	RunGoldenEvalOptions,
 } from "./evals.ts";
 export { goldenEvalCategories, runGoldenEvals } from "./evals.ts";
+export {
+	ensurePublishServer,
+	herPublish,
+	type PublishResult,
+	publishedDir,
+	slugifyTitle,
+	stopPublishServer,
+	wrapPublishedHtml,
+} from "./her-publish.ts";
 export type {
 	PathIntakeCollectOptions,
 	PathIntakeOptions,

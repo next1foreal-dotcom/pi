@@ -21,12 +21,15 @@ import {
 	completeLongTask,
 	createEmbeddingSearch,
 	createHerTask,
+	enqueueTaskTelegramNotices,
+	formatBgTaskStatusBoard,
 	formatWakeMessage,
 	type GateDecision,
 	type HerProposalRecord,
 	type HerTaskRecord,
 	herProposalFeedbackVerdicts,
 	herProposalStatuses,
+	herPublish,
 	herTaskOutput,
 	herTaskStatuses,
 	type IdeaData,
@@ -37,6 +40,7 @@ import {
 	listHerTasks,
 	listLongTasks,
 	loadConfig,
+	loadRuntimeConfig,
 	longTaskStatuses,
 	Memory,
 	type MemorySyncResult,
@@ -108,6 +112,7 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	her_task_stop: { destructive: true },
 	her_task_output: { destructive: false },
 	her_bg_task_list: { destructive: false },
+	her_publish: { destructive: true },
 	her_privacy_audit: { destructive: false },
 	her_privacy_check: { destructive: false },
 	her_memory_retract: { destructive: false },
@@ -673,6 +678,11 @@ export default function her(pi: ExtensionAPI): void {
 
 	pi.on("session_start", async (_event, ctx) => {
 		ctx.ui.setStatus("her", "Her loaded");
+		try {
+			ctx.ui.setStatus("her-bg", await formatBgTaskStatusBoard(memoryDir));
+		} catch {
+			ctx.ui.setStatus("her-bg", "bg · —");
+		}
 		await publishSyncStatus(ctx);
 		ctx.ui.notify("Her loaded", "info");
 		pi.appendEntry("her-state", {
@@ -682,16 +692,21 @@ export default function her(pi: ExtensionAPI): void {
 		});
 	});
 
-	pi.on("before_agent_start", async (event) => {
+	pi.on("before_agent_start", async (event, ctx) => {
 		const { context, facts, soul, self, choiceModel } = await mem.getContext();
 		let systemPrompt = composeSystemPrompt(event.systemPrompt, context, facts, soul, self, choiceModel);
-		// G-120: harness wake — reconcile .her/tasks and inject completion events (handles, not logs).
+		// G-120…123: reconcile → wake inject → Telegram outbox → TUI board.
 		try {
 			const wakeEvents = await reconcileBgTasks(memoryDir);
 			const wakeBlock = formatWakeMessage(wakeEvents);
 			if (wakeBlock) {
 				systemPrompt = `${systemPrompt}\n\n${wakeBlock}`;
 			}
+			const runtime = loadRuntimeConfig(memoryDir);
+			if (runtime.tasks.telegramNotify && wakeEvents.length > 0) {
+				await enqueueTaskTelegramNotices(memoryDir, wakeEvents);
+			}
+			ctx.ui.setStatus("her-bg", await formatBgTaskStatusBoard(memoryDir));
 		} catch (error) {
 			const detail = error instanceof Error ? error.message : String(error);
 			console.warn(`[her] bg-task reconcile skipped: ${detail}`);
@@ -1758,6 +1773,32 @@ export default function her(pi: ExtensionAPI): void {
 		async execute(_toolCallId, params) {
 			const result = await stopBgTask(memoryDir, params.id);
 			return textResult(JSON.stringify(result), { phase: "G-120", ...result, memoryDir });
+		},
+	});
+
+	pi.registerTool({
+		name: "her_publish",
+		label: "Her Publish",
+		description:
+			"Publish a self-contained HTML/Markdown page to her-memory/published/<slug>.html and serve on loopback. Identity key = slug.",
+		parameters: Type.Object({
+			filePath: Type.String(),
+			title: Type.String(),
+			description: Type.String(),
+			slug: Type.Optional(Type.String()),
+			label: Type.Optional(Type.String()),
+		}),
+		async execute(_toolCallId, params) {
+			const runtime = loadRuntimeConfig(memoryDir);
+			const result = await herPublish(memoryDir, {
+				filePath: params.filePath,
+				title: params.title,
+				description: params.description,
+				...(params.slug ? { slug: params.slug } : {}),
+				...(params.label ? { label: params.label } : {}),
+				publish: runtime.publish,
+			});
+			return textResult(JSON.stringify(result), { phase: "G-124", ...result, memoryDir });
 		},
 	});
 

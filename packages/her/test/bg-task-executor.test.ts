@@ -36,6 +36,7 @@ test("T1: node -e worker completes with exit 0 and log", async () => {
 		objective: "echo ok",
 		command: [process.execPath, "-e", "console.log('OK')"],
 		heartbeatMs: 1000,
+		skipGates: true,
 	});
 	assert.equal(result.status, "running");
 	await waitForDone(root, result.id);
@@ -55,6 +56,7 @@ test("T2: nonzero exit → failed", async () => {
 		objective: "fail",
 		command: [process.execPath, "-e", "process.exit(3)"],
 		heartbeatMs: 1000,
+		skipGates: true,
 	});
 	assert.equal(result.status, "running");
 	await waitForDone(root, result.id);
@@ -70,6 +72,7 @@ test("T6: stop is idempotent", async () => {
 		objective: "long",
 		command: [process.execPath, "-e", "setTimeout(()=>{}, 60000)"],
 		heartbeatMs: 1000,
+		skipGates: true,
 	});
 	assert.equal(result.status, "running");
 	await sleep(200);
@@ -95,6 +98,7 @@ test("her_task_output paginates", async () => {
 		objective: "log",
 		command: [process.execPath, "-e", "console.log('ABCDEFGHIJ')"],
 		heartbeatMs: 1000,
+		skipGates: true,
 	});
 	await waitForDone(root, result.id);
 	const a = await herTaskOutput(root, result.id, { offset: 0, limit: 4 });

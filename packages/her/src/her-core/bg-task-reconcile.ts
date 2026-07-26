@@ -5,6 +5,8 @@
 import { readdir, readFile } from "node:fs/promises";
 import { hostname as osHostname } from "node:os";
 import { join } from "node:path";
+import { loadRuntimeConfig } from "./bg-task-config.ts";
+import { truncateTaskLogIfNeeded } from "./bg-task-log.ts";
 import {
 	type BgTaskRecord,
 	isoNow,
@@ -94,7 +96,15 @@ export async function reconcileBgTasks(memoryRoot: string, options: ReconcileOpt
 		if (result.record) {
 			await saveBgTask(memoryRoot, result.record, body);
 		}
-		if (result.event) events.push(result.event);
+		if (result.event) {
+			const cfg = loadRuntimeConfig(memoryRoot).tasks;
+			truncateTaskLogIfNeeded(memoryRoot, result.event.taskId, {
+				logCapBytes: cfg.logCapBytes,
+				logHeadBytes: cfg.logHeadBytes,
+				logTailBytes: cfg.logTailBytes,
+			});
+			events.push(result.event);
+		}
 	}
 	return events;
 }

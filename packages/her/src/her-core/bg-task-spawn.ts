@@ -1,10 +1,11 @@
 /**
- * G-120 — spawn / stop / list harness background tasks.
+ * G-120/G-122 — spawn / stop / list harness background tasks (+ gates).
  */
 
 import { readdir } from "node:fs/promises";
 import { hostname as osHostname } from "node:os";
 import { basename } from "node:path";
+import { loadRuntimeConfig } from "./bg-task-config.ts";
 import {
 	type BgTaskRecord,
 	createPendingRecord,
@@ -14,6 +15,7 @@ import {
 	saveBgTask,
 	tasksDir,
 } from "./bg-task-record.ts";
+import { enforceDailyCostCap } from "./cost-ledger.ts";
 import { launchTask, stopTask } from "./task-executor.ts";
 
 const DEFAULT_ALLOW = new Set(["node", "nodejs"]);
@@ -24,9 +26,10 @@ export type SpawnBgTaskInput = {
 	worker?: string;
 	parentTask?: string | null;
 	timeoutMinutes?: number;
-	/** Extra allowed executable basenames (plus process.execPath always). */
 	allowExecutables?: string[];
 	heartbeatMs?: number;
+	/** Test hook: skip budget/concurrency gates */
+	skipGates?: boolean;
 };
 
 export type SpawnBgTaskResult =
@@ -36,6 +39,7 @@ export type SpawnBgTaskResult =
 			status: "failed";
 			failureReason: string;
 			error: string;
+			gates?: { name: string; verdict: string; reason: string }[];
 	  };
 
 function assertCommandAllowed(command: string[], allowExtra: string[] = []): void {
@@ -56,7 +60,6 @@ function assertCommandAllowed(command: string[], allowExtra: string[] = []): voi
 			.toLowerCase()
 			.replace(/\.exe$/i, ""),
 	]);
-	// Absolute path to current node is always ok.
 	if (file === process.execPath) return;
 	if (allowed.has(base) || allowed.has(file.toLowerCase())) return;
 	throw new Error(`executable not in allowlist: ${file} (allowed: ${[...allowed].join(", ")})`);
@@ -64,20 +67,74 @@ function assertCommandAllowed(command: string[], allowExtra: string[] = []): voi
 
 export async function spawnBgTask(memoryRoot: string, input: SpawnBgTaskInput): Promise<SpawnBgTaskResult> {
 	assertCommandAllowed(input.command, input.allowExecutables);
+	const cfg = loadRuntimeConfig(memoryRoot);
 	const record = createPendingRecord({
 		objective: input.objective,
-		worker: input.worker ?? "cheap_worker",
+		worker: input.worker ?? cfg.tasks.defaultWorker,
 		command: input.command,
 		parentTask: input.parentTask,
-		timeoutMinutes: input.timeoutMinutes,
+		timeoutMinutes: input.timeoutMinutes ?? cfg.tasks.defaultTimeoutMinutes,
 	});
+
+	if (!input.skipGates) {
+		const runningCount = (await listBgTasks(memoryRoot, { status: "running" })).length;
+		if (runningCount >= cfg.tasks.maxConcurrent) {
+			const gates = [
+				{
+					name: "concurrency",
+					verdict: "DENY",
+					reason: `${runningCount} running >= max_concurrent ${cfg.tasks.maxConcurrent}`,
+				},
+			];
+			const failed = {
+				...migrateBgStatus(record, "failed", {
+					failureReason: "budget_denied",
+					endedAt: isoNow(),
+				}),
+				gates,
+			};
+			await saveBgTask(memoryRoot, failed, `# ${record.objective}\n\nDenied: concurrency.\n`);
+			return {
+				id: failed.id,
+				status: "failed",
+				failureReason: "budget_denied",
+				error: gates[0].reason,
+				gates,
+			};
+		}
+		try {
+			await enforceDailyCostCap(memoryRoot, cfg.tasks.budgetDailyCap);
+		} catch (error) {
+			const detail = error instanceof Error ? error.message : String(error);
+			const gates = [{ name: "budget", verdict: "DENY", reason: detail }];
+			const failed = {
+				...migrateBgStatus(record, "failed", {
+					failureReason: "budget_denied",
+					endedAt: isoNow(),
+				}),
+				gates,
+			};
+			await saveBgTask(memoryRoot, failed, `# ${record.objective}\n\nDenied: budget.\n`);
+			return {
+				id: failed.id,
+				status: "failed",
+				failureReason: "budget_denied",
+				error: detail,
+				gates,
+			};
+		}
+	}
+
 	await saveBgTask(memoryRoot, record, `# ${record.objective}\n`);
 
 	try {
-		const runnerPid = launchTask(tasksDir(memoryRoot), record.id, input.command, { heartbeatMs: input.heartbeatMs });
+		const runnerPid = launchTask(tasksDir(memoryRoot), record.id, input.command, {
+			heartbeatMs: input.heartbeatMs ?? cfg.tasks.heartbeatSeconds * 1000,
+		});
 		const running = migrateBgStatus(record, "running", {
 			startedAt: isoNow(),
 			runnerPid,
+			budgetReserved: cfg.tasks.budgetCap,
 		});
 		await saveBgTask(memoryRoot, running, `# ${record.objective}\n`);
 		return {
