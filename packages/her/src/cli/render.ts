@@ -27,6 +27,7 @@ import type {
 	CliPrivacyAuditPayload,
 	CliPrivacyCheckPayload,
 	CliRecallPayload,
+	CliReflectPayload,
 	CliRestorePayload,
 	CliReviewNarrativePayload,
 	CliSelfNarrativePayload,
@@ -387,6 +388,15 @@ export function renderRecall(payload: CliRecallPayload): string {
 	return [`Her recall hits: ${payload.result.length}`, hits, "", renderStatus(payload)].join("\n");
 }
 
+export function renderReflect(payload: CliReflectPayload): string {
+	const head = !payload.result.ran
+		? "Her reflect skipped: not due."
+		: payload.result.id
+			? `Her reflect wrote recognition: ${payload.result.id}`
+			: "Her reflect found nothing new to surface.";
+	return [head, "", renderStatus(payload)].join("\n");
+}
+
 export function renderReviewNarrative(payload: CliReviewNarrativePayload): string {
 	const action =
 		payload.result.action === "list"
@@ -610,6 +620,7 @@ export function usage(): string {
   her privacy-check --ref <memory-path> [--ref <memory-path>] [--json]
   her prior [--task <text>] [--off|--her-only] [--budget <tokens>] [--json]
   her recall --query <text> [--k <n>] [--archive] [--json]
+  her reflect [--if-due] [--json]
   her review-narrative [--keep <id>|--revert <id>] [--json]
   her restore --semantic <key> [--now <YYYY-MM-DD>] [--json]
   her self-narrative [--json]

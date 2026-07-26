@@ -126,6 +126,7 @@ export type CliCommand =
 	| { kind: "privacy-check"; json: boolean; refs: string[] }
 	| { budget?: number; json: boolean; kind: "prior"; mode: PriorMode; task?: string }
 	| { kind: "recall"; archive: boolean; json: boolean; k?: number; query: string }
+	| { kind: "reflect"; ifDue: boolean; json: boolean }
 	| { action: "list" | "keep" | "revert"; id?: string; json: boolean; kind: "review-narrative" }
 	| { kind: "restore"; json: boolean; semanticKey: string; now?: string }
 	| { kind: "self-narrative"; json: boolean }
@@ -418,6 +419,10 @@ export interface CliDispatchPayload extends CliStatusPayload {
 
 export interface CliRecallPayload extends CliStatusPayload {
 	result: Awaited<ReturnType<Memory["recall"]>>;
+}
+
+export interface CliReflectPayload extends CliStatusPayload {
+	result: Awaited<ReturnType<Memory["reflect"]>>;
 }
 
 export interface CliReviewNarrativePayload extends CliStatusPayload {

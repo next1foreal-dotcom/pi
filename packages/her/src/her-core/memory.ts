@@ -31,6 +31,8 @@ import type {
 	MemoryOptions,
 	MemorySyncResult,
 	MemorySyncStatus,
+	ReflectOptions,
+	ReflectResult,
 	RestoreArchivedSemanticOptions,
 	RestoreArchivedSemanticResult,
 	SamanthaJournalInput,
@@ -99,6 +101,7 @@ import {
 	ideaEnginePrompt,
 	selfNarrativePrompt,
 	summaryPrompt,
+	surfacePrompt,
 	synthesizePrompt,
 	topicMapPrompt,
 } from "./prompts.ts";
@@ -126,6 +129,17 @@ function envPositiveInt(name: string, fallback: number): number {
 	const value = Number(raw);
 	if (!Number.isFinite(value) || value <= 0) throw new Error(`${name} must be a positive number`);
 	return Math.floor(value);
+}
+
+// reflect's cadence.reflect_every_days lives outside this task's write-set (config.ts owns HerConfig
+// and is out of scope here), so it is read defensively off the already-loaded config object instead of
+// a typed HerConfig.cadence field: config.ts's YAML parser is untyped at runtime (parseConfigYaml casts
+// its generic per-section output to Partial<HerConfig>), so a `cadence: { reflect_every_days: N }` block
+// in config.yaml still lands on `config.cadence` at runtime even though HerConfig's cadence type doesn't
+// declare the field statically. Defaults to 1 (reflect daily) when absent or invalid.
+function reflectCadenceDays(config: HerConfig): number {
+	const raw = (config.cadence as { reflectEveryDays?: unknown }).reflectEveryDays;
+	return typeof raw === "number" && Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 1;
 }
 
 function truncateEpisodeText(text: string, maxChars: number): string {
@@ -178,6 +192,8 @@ export type {
 	MemoryOptions,
 	MemorySyncResult,
 	MemorySyncStatus,
+	ReflectOptions,
+	ReflectResult,
 	RestoreArchivedSemanticOptions,
 	RestoreArchivedSemanticResult,
 	SamanthaJournalInput,
@@ -460,6 +476,59 @@ export class Memory {
 				...(isProtectedSurfaceId(hit.id) ? {} : { noteId: hit.id }),
 			}).catch(() => {});
 			return hit;
+		});
+	}
+
+	// ---- reflect (the Mirror Effect, generation) ---------------------------
+	// Generation counterpart of surface() (retrieval-only, above): reflects on the last 5 episodes plus
+	// every existing recognition and may write ONE new pending recognition via a single strong-tier
+	// model call. Mirrors her-core/her/memory.py's Memory.surface (Python names this op "surface"; the
+	// TS port is named "reflect" so it doesn't collide with the existing retrieval-only surface() here).
+	async reflect(opts: ReflectOptions = {}): Promise<ReflectResult> {
+		return this.withStoreLock(async () => {
+			const state = await readJson<{ last_reflect?: string | null }>(this.paths.stateFile, {});
+			const lastReflect = typeof state.last_reflect === "string" ? state.last_reflect : undefined;
+			const cadenceDays = reflectCadenceDays(this.config);
+			const daysSinceLastReflect = daysSince(parseDate(lastReflect));
+			const due = daysSinceLastReflect === undefined || daysSinceLastReflect >= cadenceDays;
+			if (opts.ifDue && !due) return { ran: false, due: false };
+
+			if (!this.model) throw new Error("reflect requires a model");
+			const model = this.model;
+
+			const recent = (await this.episodesSince(null)).slice(-5);
+			const recentText = recent.map((episode) => episode.text).join("\n\n");
+			const existingTexts: string[] = [];
+			for (const entry of await markdownEntries(this.paths.recognitions)) {
+				const body = parseFrontmatter((await readText(join(this.paths.recognitions, entry))) ?? "").body.trim();
+				if (body) existingTexts.push(body);
+			}
+			const existing = existingTexts.join("\n") || "(none)";
+
+			const out = ((await model.complete(surfacePrompt(recentText, existing), { strong: true })) ?? "").trim();
+
+			// A NONE reply is the model's built-in restraint (nothing non-obvious to surface), not a
+			// failure: it still counts as this cadence period's reflection, so last_reflect always
+			// advances on any real run — a deliberate deviation from the Python reference, which has no
+			// cadence tracking at all (Memory.surface there is called on-demand, never gated).
+			await writeJson(this.paths.stateFile, { ...state, last_reflect: today() });
+
+			if (!out || out.toUpperCase() === "NONE") return { ran: true, ...(opts.ifDue ? { due } : {}) };
+
+			const date = today();
+			const id = genId(date, out);
+			const fileName = `${date}--${id}.md`;
+			const fm = {
+				id,
+				status: "pending",
+				created: date,
+				provenance: recent.map((episode) => episode.id),
+				response_episode: null,
+			};
+			await writeText(join(this.paths.recognitions, fileName), `${frontmatter(fm)}${out}\n`);
+			await git(this.paths.root, "add", "--", `recognitions/${fileName}`, ".her/state.json");
+			await git(this.paths.root, "commit", "-m", `memory: reflect recognition ${id}`);
+			return { ran: true, ...(opts.ifDue ? { due } : {}), id, text: out };
 		});
 	}
 

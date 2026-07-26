@@ -37,6 +37,7 @@ import {
 	renderPrivacyAudit,
 	renderPrivacyCheck,
 	renderRecall,
+	renderReflect,
 	renderRestore,
 	renderReviewNarrative,
 	renderSelfNarrative,
@@ -472,6 +473,13 @@ export async function runHerCli(
 		const note = await memory.surface({ sessionId: "samantha-ui", cooldownMinutes: 0 });
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result: { note: note ?? null } };
 		writePayload(io.stdout, payload, command.json, renderSurface);
+		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "reflect") {
+		const result = await memory.reflect({ ifDue: command.ifDue });
+		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
+		writePayload(io.stdout, payload, command.json, renderReflect);
 		return payload.status.status === "unknown" ? 1 : 0;
 	}
 

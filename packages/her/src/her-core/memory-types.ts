@@ -118,6 +118,21 @@ export interface SurfaceOptions {
 	cooldownMinutes?: number;
 }
 
+export interface ReflectOptions {
+	/** When true, skip the reflect pass entirely unless the reflect cadence (cadence.reflect_every_days) is due. */
+	ifDue?: boolean;
+}
+
+export interface ReflectResult {
+	/** Whether a reflect pass actually ran (false only when ifDue gated it out as not-due). */
+	ran: boolean;
+	/** Present only when ifDue was requested: whether the cadence considered this run due. */
+	due?: boolean;
+	/** Present when the model surfaced a non-obvious recognition (absent on a NONE reply). */
+	id?: string;
+	text?: string;
+}
+
 export interface JudgmentFields {
 	attraction?: string;
 	inferredIntent?: string;
