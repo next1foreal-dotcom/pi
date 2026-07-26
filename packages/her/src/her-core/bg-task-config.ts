@@ -26,6 +26,10 @@ export type TasksConfig = {
 	maxRetries: number;
 	retryOn: string[];
 	telegramNotify: boolean;
+	eventWakeEnabled: boolean;
+	eventWakePollSeconds: number;
+	eventWakeDailyMax: number;
+	eventWakeSpawnBlock: boolean;
 };
 
 export type PublishConfig = {
@@ -53,6 +57,12 @@ export const DEFAULT_TASKS_CONFIG: TasksConfig = {
 	maxRetries: 2,
 	retryOn: ["orphaned", "never_started"],
 	telegramNotify: true,
+	// G-132 event-wake (idle-session followUp on task .done). Flat snake_case config
+	// keys, mapped to camelCase by camel() below — same convention as max_concurrent.
+	eventWakeEnabled: true, // event_wake_enabled — 我垫的:默认开,靠 daily_max 配 soak 档
+	eventWakePollSeconds: 45, // event_wake_poll_seconds — 空闲扫描周期,只扫盘
+	eventWakeDailyMax: 6, // event_wake_daily_max — 我垫的:soak 起步,跑稳一周再提
+	eventWakeSpawnBlock: true, // event_wake_spawn_block — 唤醒回合内 her_task_spawn 硬拒
 };
 
 export const DEFAULT_PUBLISH_CONFIG: PublishConfig = {

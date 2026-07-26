@@ -11,6 +11,13 @@ import { CuaCliDriver } from "./hands/driver.ts";
 import { resolveHandsConfig } from "./hands/policy.ts";
 import { registerHandsTools } from "./hands/tools.ts";
 import {
+	EVENT_WAKE_SPAWN_REFUSAL,
+	eventWakeSpawnBlocked,
+	recordEventWake,
+	shouldEventWake,
+	WAKE_TURN_BOUNDARY,
+} from "./her-core/event-wake.ts";
+import {
 	applyMemoryRetraction,
 	type ChoiceModelDomain,
 	checkMemoryExport,
@@ -671,12 +678,92 @@ export default function her(pi: ExtensionAPI): void {
 		syncTimer.unref?.();
 	};
 
+	// G-132 event-wake — wake an idle live session when a background task lands .done.
+	// wakeTurnActive marks the follow-up turn so her_task_spawn is hard-blocked in it;
+	// eventWakeTimer polls the disk while idle; lastEventWakeCtx feeds the poller the
+	// freshest context for its idle check.
+	let wakeTurnActive = false;
+	let eventWakeTimer: ReturnType<typeof setInterval> | undefined;
+	let lastEventWakeCtx: ExtensionContext | undefined;
+
+	// Shared by turn_end and the idle poller. Returns true when a wake follow-up was
+	// sent, so turn_end knows to stop (single triggerTurn) instead of also claiming a
+	// long task. Telegram is enqueued unconditionally before the gate (notify/wake are
+	// decoupled); every failure path degrades gracefully and never throws to the caller.
+	const maybeEventWake = async (ctx: ExtensionContext | undefined): Promise<boolean> => {
+		if (!ctx || !ctx.isIdle() || ctx.hasPendingMessages()) return false;
+		let events: Awaited<ReturnType<typeof reconcileBgTasks>>;
+		try {
+			events = await reconcileBgTasks(memoryDir);
+		} catch (error) {
+			console.warn(`[her] event-wake reconcile skipped: ${errorMessage(error)}`);
+			return false;
+		}
+		if (events.length === 0) return false;
+		const runtime = loadRuntimeConfig(memoryDir);
+		if (runtime.tasks.telegramNotify) {
+			try {
+				await enqueueTaskTelegramNotices(memoryDir, events);
+			} catch (error) {
+				console.warn(`[her] event-wake telegram enqueue failed: ${errorMessage(error)}`);
+			}
+		}
+		const now = new Date();
+		let gate: Awaited<ReturnType<typeof shouldEventWake>>;
+		try {
+			gate = await shouldEventWake(memoryDir, runtime.tasks, now);
+		} catch (error) {
+			console.warn(`[her] event-wake gate check failed: ${errorMessage(error)}`);
+			return false;
+		}
+		if (!gate.ok) {
+			console.warn(`[her] event-wake gated: ${gate.reason}`);
+			return false;
+		}
+		const ids = events.map((e) => e.taskId);
+		wakeTurnActive = true;
+		try {
+			pi.sendMessage(
+				{
+					customType: "her-task-wake",
+					content: `${formatWakeMessage(events)}\n\n${WAKE_TURN_BOUNDARY}`,
+					display: true,
+					details: { taskIds: ids, pinned: true, memoryDir },
+				},
+				{ deliverAs: "followUp", triggerTurn: true },
+			);
+		} catch (error) {
+			// Send failed — no wake turn happened. Roll back the flag and record the miss,
+			// but guard the ledger write so a disk hiccup can't turn the bare-promise
+			// interval path into an unhandled rejection that crashes the session.
+			wakeTurnActive = false;
+			try {
+				await recordEventWake(memoryDir, ids, "failed", now);
+			} catch (ledgerError) {
+				console.warn(`[her] event-wake ledger append failed (failed): ${errorMessage(ledgerError)}`);
+			}
+			console.warn(`[her] event-wake send failed: ${errorMessage(error)}`);
+			return false;
+		}
+		// Send succeeded: the wake turn is real, so return true even if bookkeeping below
+		// fails — turn_end must return to keep a single triggerTurn. A ledger miss here just
+		// means this wake won't count toward daily_cap (acceptable; the warn is observable).
+		try {
+			await recordEventWake(memoryDir, ids, "sent", now);
+			pi.appendEntry("her-state", { phase: "G-132", status: "event-wake-sent", taskIds: ids, memoryDir });
+		} catch (error) {
+			console.warn(`[her] event-wake sent but ledger append failed: ${errorMessage(error)}`);
+		}
+		return true;
+	};
+
 	pi.on("resources_discover", () => ({
 		skillPaths: [skillsDir],
 		promptPaths: [promptsDir],
 	}));
 
 	pi.on("session_start", async (_event, ctx) => {
+		lastEventWakeCtx = ctx;
 		ctx.ui.setStatus("her", "Her loaded");
 		try {
 			ctx.ui.setStatus("her-bg", await formatBgTaskStatusBoard(memoryDir));
@@ -690,6 +777,21 @@ export default function her(pi: ExtensionAPI): void {
 			status: "loaded",
 			memoryDir,
 		});
+		// G-132 — idle poller so a task that finishes between turns still wakes her.
+		// unref so it never keeps the process alive; session_shutdown clears it.
+		if (!eventWakeTimer) {
+			const pollMs = Math.max(1, loadRuntimeConfig(memoryDir).tasks.eventWakePollSeconds) * 1000;
+			eventWakeTimer = setInterval(() => void maybeEventWake(lastEventWakeCtx), pollMs);
+			eventWakeTimer.unref?.();
+		}
+	});
+
+	pi.on("session_shutdown", () => {
+		if (eventWakeTimer) {
+			clearInterval(eventWakeTimer);
+			eventWakeTimer = undefined;
+		}
+		lastEventWakeCtx = undefined;
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
@@ -742,6 +844,12 @@ export default function her(pi: ExtensionAPI): void {
 			memoryDir,
 		});
 		try {
+			// G-132 — this turn_end ends any prior wake turn; clear the flag before the
+			// gate may re-set it. Event-wake runs before the goal chain: a finished task
+			// takes precedence, and gate.ok sends exactly one triggerTurn (no goal claim).
+			lastEventWakeCtx = ctx;
+			wakeTurnActive = false;
+			if (await maybeEventWake(ctx)) return;
 			if (!ctx.isIdle() || ctx.hasPendingMessages() || hasActiveGoal(ctx)) return;
 			const task = await claimNextLongTask(memoryDir, {
 				leaseMinutes: goalLeaseMinutes(),
@@ -1713,6 +1821,15 @@ export default function her(pi: ExtensionAPI): void {
 			worktree: Type.Optional(Type.Boolean()),
 		}),
 		async execute(_toolCallId, params) {
+			// G-132 — hard-block spawning during a wake turn (soft prompt boundary + this
+			// backstop). Only load config on the wake path so the common path stays cheap.
+			if (wakeTurnActive && eventWakeSpawnBlocked(wakeTurnActive, loadRuntimeConfig(memoryDir).tasks)) {
+				return textResult(EVENT_WAKE_SPAWN_REFUSAL, {
+					phase: "G-132",
+					refused: "event_wake_spawn_block",
+					memoryDir,
+				});
+			}
 			const result = await spawnBgTask(memoryDir, {
 				objective: params.objective,
 				...(params.command ? { command: params.command } : {}),
