@@ -1,14 +1,15 @@
 /**
- * G-120/G-122 — spawn / stop / list harness background tasks (+ gates).
+ * G-120/G-122/G-125 — spawn / stop / list harness background tasks (+ gates / worktree).
  */
 
 import { readdir } from "node:fs/promises";
 import { hostname as osHostname } from "node:os";
-import { basename } from "node:path";
+import { basename, resolve } from "node:path";
 import { loadRuntimeConfig } from "./bg-task-config.ts";
 import {
 	type BgTaskRecord,
 	createPendingRecord,
+	formatDisplayStatus,
 	isoNow,
 	loadBgTask,
 	migrateBgStatus,
@@ -16,6 +17,7 @@ import {
 	tasksDir,
 } from "./bg-task-record.ts";
 import { enforceDailyCostCap } from "./cost-ledger.ts";
+import { ensureTaskWorktree } from "./long-task-worktree.ts";
 import { launchTask, stopTask } from "./task-executor.ts";
 
 const DEFAULT_ALLOW = new Set(["node", "nodejs"]);
@@ -28,12 +30,17 @@ export type SpawnBgTaskInput = {
 	timeoutMinutes?: number;
 	allowExecutables?: string[];
 	heartbeatMs?: number;
+	retries?: number;
+	/** H.2 — isolate worker cwd in a git worktree on the code repo (never memory). */
+	worktree?: boolean;
+	/** Code repo root for worktree; defaults to HER_CODE_ROOT / HER_PI_DIR / cwd. */
+	codeRoot?: string;
 	/** Test hook: skip budget/concurrency gates */
 	skipGates?: boolean;
 };
 
 export type SpawnBgTaskResult =
-	| { id: string; status: "running"; logPath: string }
+	| { id: string; status: "running"; logPath: string; worktree?: string }
 	| {
 			id: string;
 			status: "failed";
@@ -41,6 +48,8 @@ export type SpawnBgTaskResult =
 			error: string;
 			gates?: { name: string; verdict: string; reason: string }[];
 	  };
+
+export type BgTaskListItem = BgTaskRecord & { displayStatus: string };
 
 function assertCommandAllowed(command: string[], allowExtra: string[] = []): void {
 	if (!Array.isArray(command) || command.length === 0) {
@@ -65,15 +74,23 @@ function assertCommandAllowed(command: string[], allowExtra: string[] = []): voi
 	throw new Error(`executable not in allowlist: ${file} (allowed: ${[...allowed].join(", ")})`);
 }
 
+function resolveCodeRoot(explicit?: string): string {
+	const fromEnv = process.env.HER_CODE_ROOT?.trim() || process.env.HER_PI_DIR?.trim();
+	const root = explicit?.trim() || fromEnv || process.cwd();
+	return resolve(root);
+}
+
 export async function spawnBgTask(memoryRoot: string, input: SpawnBgTaskInput): Promise<SpawnBgTaskResult> {
 	assertCommandAllowed(input.command, input.allowExecutables);
 	const cfg = loadRuntimeConfig(memoryRoot);
+
 	const record = createPendingRecord({
 		objective: input.objective,
 		worker: input.worker ?? cfg.tasks.defaultWorker,
 		command: input.command,
 		parentTask: input.parentTask,
 		timeoutMinutes: input.timeoutMinutes ?? cfg.tasks.defaultTimeoutMinutes,
+		retries: input.retries,
 	});
 
 	if (!input.skipGates) {
@@ -125,11 +142,56 @@ export async function spawnBgTask(memoryRoot: string, input: SpawnBgTaskInput): 
 		}
 	}
 
+	let workerCwd: string | undefined;
+	let worktreePath: string | undefined;
+	if (input.worktree) {
+		const codeRoot = resolveCodeRoot(input.codeRoot);
+		if (resolve(codeRoot) === resolve(memoryRoot)) {
+			const failed = migrateBgStatus(record, "failed", {
+				failureReason: "never_started",
+				endedAt: isoNow(),
+			});
+			await saveBgTask(
+				memoryRoot,
+				failed,
+				`# ${record.objective}\n\nworktree must not target her-memory (code repo only).\n`,
+			);
+			return {
+				id: failed.id,
+				status: "failed",
+				failureReason: "never_started",
+				error: "worktree must not target her-memory (code repo only)",
+			};
+		}
+		try {
+			const wt = await ensureTaskWorktree(codeRoot, record.id);
+			workerCwd = wt.worktreePath;
+			worktreePath = wt.worktreePath;
+			record.worktree = wt.worktreePath;
+			record.codeRoot = codeRoot;
+			record.worktreeBranch = wt.branch;
+		} catch (error) {
+			const detail = error instanceof Error ? error.message : String(error);
+			const failed = migrateBgStatus(record, "failed", {
+				failureReason: "never_started",
+				endedAt: isoNow(),
+			});
+			await saveBgTask(memoryRoot, failed, `# ${record.objective}\n\nworktree: ${detail}\n`);
+			return {
+				id: failed.id,
+				status: "failed",
+				failureReason: "never_started",
+				error: detail,
+			};
+		}
+	}
+
 	await saveBgTask(memoryRoot, record, `# ${record.objective}\n`);
 
 	try {
 		const runnerPid = launchTask(tasksDir(memoryRoot), record.id, input.command, {
 			heartbeatMs: input.heartbeatMs ?? cfg.tasks.heartbeatSeconds * 1000,
+			...(workerCwd ? { cwd: workerCwd } : {}),
 		});
 		const running = migrateBgStatus(record, "running", {
 			startedAt: isoNow(),
@@ -141,6 +203,7 @@ export async function spawnBgTask(memoryRoot: string, input: SpawnBgTaskInput): 
 			id: running.id,
 			status: "running",
 			logPath: `.her/tasks/${running.id}.log`,
+			...(worktreePath ? { worktree: worktreePath } : {}),
 		};
 	} catch (error) {
 		const detail = error instanceof Error ? error.message : String(error);
@@ -184,8 +247,8 @@ export async function stopBgTask(
 
 export async function listBgTasks(
 	memoryRoot: string,
-	filter?: { status?: string | string[] },
-): Promise<BgTaskRecord[]> {
+	filter?: { status?: string | string[]; hostname?: string },
+): Promise<BgTaskListItem[]> {
 	const dir = tasksDir(memoryRoot);
 	let names: string[];
 	try {
@@ -194,13 +257,17 @@ export async function listBgTasks(
 		return [];
 	}
 	const want = filter?.status ? new Set(Array.isArray(filter.status) ? filter.status : [filter.status]) : null;
-	const out: BgTaskRecord[] = [];
+	const hostname = filter?.hostname ?? osHostname();
+	const out: BgTaskListItem[] = [];
 	for (const name of names) {
 		if (!name.endsWith(".md")) continue;
 		const loaded = await loadBgTask(memoryRoot, name.slice(0, -3));
 		if (!loaded) continue;
 		if (want && !want.has(loaded.record.status)) continue;
-		out.push(loaded.record);
+		out.push({
+			...loaded.record,
+			displayStatus: formatDisplayStatus(loaded.record, hostname),
+		});
 	}
 	out.sort((a, b) => b.updated.localeCompare(a.updated));
 	return out;

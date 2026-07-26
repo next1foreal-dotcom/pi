@@ -15,10 +15,11 @@ const HEARTBEAT_MS = Number(process.env.HER_TASK_HEARTBEAT_MS || 15_000);
 
 const logFd = openSync(p("log"), "a");
 
+const workerCwd = process.env.HER_TASK_CWD?.trim() || taskDir;
 const child = spawn(cmd, args, {
 	stdio: ["ignore", logFd, logFd],
 	windowsHide: true,
-	cwd: taskDir,
+	cwd: workerCwd,
 	env: { ...process.env, HER_TASK_ID: id },
 });
 

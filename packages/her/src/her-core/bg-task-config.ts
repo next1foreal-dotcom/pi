@@ -65,7 +65,7 @@ export type HerRuntimeConfig = HerConfig & {
 	warnings: string[];
 };
 
-export function loadRuntimeConfig(memoryRoot: string): HerRuntimeConfig {
+export function loadRuntimeConfig(memoryRoot: string, opts?: { failLoud?: boolean }): HerRuntimeConfig {
 	const path = join(memoryRoot, ".her", "config.yaml");
 	const base = loadConfig(path);
 	const raw = readOptionalSections(path);
@@ -78,6 +78,10 @@ export function loadRuntimeConfig(memoryRoot: string): HerRuntimeConfig {
 		tasks.staleMultiplier = 3;
 	}
 	const publish = { ...DEFAULT_PUBLISH_CONFIG, ...(raw.publish ?? {}) };
+	const failLoud = opts?.failLoud === true || process.env.HER_TASKS_FAIL_LOUD === "1";
+	if (failLoud && warnings.some((w) => w.includes("missing"))) {
+		throw new Error(`Her config fail-loud: ${warnings.join("; ")}`);
+	}
 	return { ...base, tasks, publish, warnings };
 }
 

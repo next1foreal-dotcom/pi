@@ -134,6 +134,9 @@ export function createPendingRecord(input: {
 	host?: string;
 	parentTask?: string | null;
 	timeoutMinutes?: number;
+	retries?: number;
+	worktree?: string | null;
+	codeRoot?: string | null;
 	now?: Date;
 }): BgTaskRecord {
 	const now = input.now ?? new Date();
@@ -147,13 +150,23 @@ export function createPendingRecord(input: {
 		command: [...input.command],
 		created,
 		updated: created,
-		retries: 0,
+		retries: Math.max(0, input.retries ?? 0),
 		host: input.host ?? osHostname(),
 		parentTask: input.parentTask ?? null,
+		worktree: input.worktree ?? null,
 	};
+	if (input.codeRoot) record.codeRoot = input.codeRoot;
 	if (input.timeoutMinutes && input.timeoutMinutes > 0) {
 		const deadline = new Date(now.getTime() + input.timeoutMinutes * 60_000);
 		record.deadlineAt = isoNow(deadline);
 	}
 	return record;
+}
+
+/** H.5 list display: `running@other-host` for foreign tasks. */
+export function formatDisplayStatus(record: BgTaskRecord, hostname = osHostname()): string {
+	if (record.host && record.host !== hostname) {
+		return `${record.status}@${record.host}`;
+	}
+	return record.status;
 }

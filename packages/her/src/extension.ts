@@ -1704,6 +1704,7 @@ export default function her(pi: ExtensionAPI): void {
 			worker: Type.Optional(Type.String()),
 			timeoutMinutes: Type.Optional(Type.Integer({ minimum: 1 })),
 			parentTask: Type.Optional(Type.String()),
+			worktree: Type.Optional(Type.Boolean()),
 		}),
 		async execute(_toolCallId, params) {
 			const result = await spawnBgTask(memoryDir, {
@@ -1712,6 +1713,7 @@ export default function her(pi: ExtensionAPI): void {
 				...(params.worker ? { worker: params.worker } : {}),
 				...(params.timeoutMinutes ? { timeoutMinutes: params.timeoutMinutes } : {}),
 				...(params.parentTask ? { parentTask: params.parentTask } : {}),
+				...(params.worktree ? { worktree: true } : {}),
 			});
 			return textResult(JSON.stringify(result), { phase: "G-120", ...result, memoryDir });
 		},
@@ -1720,7 +1722,8 @@ export default function her(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "her_bg_task_list",
 		label: "Her Background Task List",
-		description: "List harness background tasks under .her/tasks (not her_task_list todos).",
+		description:
+			"List harness background tasks under .her/tasks (not her_task_list todos). Foreign-host rows use displayStatus like running@host.",
 		parameters: Type.Object({
 			status: Type.Optional(Type.String()),
 		}),
@@ -1729,6 +1732,7 @@ export default function her(pi: ExtensionAPI): void {
 			const rows = tasks.map((t) => ({
 				id: t.id,
 				status: t.status,
+				displayStatus: t.displayStatus,
 				objective: t.objective,
 				worker: t.worker,
 				host: t.host,

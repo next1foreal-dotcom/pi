@@ -1,5 +1,6 @@
 /**
- * G-120 / appendix A.6 — reconcile .her/tasks against sentinel files.
+ * G-120 / G-125 — reconcile .her/tasks against sentinel files.
+ * H.1 lease · H.3 deadline · H.4 auto-retry · H.5 host affinity.
  */
 
 import { readdir, readFile } from "node:fs/promises";
@@ -16,6 +17,8 @@ import {
 	saveBgTask,
 	tasksDir,
 } from "./bg-task-record.ts";
+import { spawnBgTask } from "./bg-task-spawn.ts";
+import { stopTask } from "./task-executor.ts";
 
 export type WakeEvent = {
 	taskId: string;
@@ -23,6 +26,7 @@ export type WakeEvent = {
 	objective: string;
 	failureReason?: string;
 	exitCode?: number;
+	retryTaskId?: string;
 };
 
 export type ReconcileOptions = {
@@ -31,7 +35,15 @@ export type ReconcileOptions = {
 	heartbeatSeconds?: number;
 	staleMultiplier?: number;
 	launchGraceSeconds?: number;
+	reconcileLeaseSeconds?: number;
+	maxRetries?: number;
+	retryOn?: string[];
+	lockId?: string;
 	pidAlive?: (pid: number) => boolean;
+	/** Test hook: skip auto-retry spawn */
+	skipRetry?: boolean;
+	/** Test hook: skip stopTask on timeout */
+	stopTaskFn?: (taskDir: string, id: string) => Promise<"stopped" | "already_gone">;
 };
 
 function defaultPidAlive(pid: number): boolean {
@@ -62,6 +74,21 @@ function parseIso(value: unknown): Date | null {
 	return Number.isNaN(d.getTime()) ? null : d;
 }
 
+function leaseHeldByOther(record: BgTaskRecord, lockId: string, now: Date): boolean {
+	const by = typeof record.lockedBy === "string" ? record.lockedBy : null;
+	if (!by || by === lockId) return false;
+	const exp = parseIso(record.lockExpiresAt);
+	if (!exp) return false;
+	return exp.getTime() > now.getTime();
+}
+
+function clearLease(record: BgTaskRecord): BgTaskRecord {
+	const next = { ...record };
+	delete next.lockedBy;
+	delete next.lockExpiresAt;
+	return next;
+}
+
 export async function reconcileBgTasks(memoryRoot: string, options: ReconcileOptions = {}): Promise<WakeEvent[]> {
 	const dir = tasksDir(memoryRoot);
 	let names: string[];
@@ -71,12 +98,18 @@ export async function reconcileBgTasks(memoryRoot: string, options: ReconcileOpt
 		return [];
 	}
 
+	const cfg = loadRuntimeConfig(memoryRoot).tasks;
 	const hostname = options.hostname ?? osHostname();
 	const now = options.now ?? new Date();
-	const heartbeatSeconds = options.heartbeatSeconds ?? 15;
-	const staleMultiplier = options.staleMultiplier ?? 3;
-	const launchGraceSeconds = options.launchGraceSeconds ?? 60;
+	const heartbeatSeconds = options.heartbeatSeconds ?? cfg.heartbeatSeconds;
+	const staleMultiplier = options.staleMultiplier ?? cfg.staleMultiplier;
+	const launchGraceSeconds = options.launchGraceSeconds ?? cfg.launchGraceSeconds;
+	const reconcileLeaseSeconds = options.reconcileLeaseSeconds ?? cfg.reconcileLeaseSeconds;
+	const maxRetries = options.maxRetries ?? cfg.maxRetries;
+	const retryOn = new Set(options.retryOn ?? cfg.retryOn);
+	const lockId = options.lockId ?? `${hostname}:${process.pid}`;
 	const pidAlive = options.pidAlive ?? defaultPidAlive;
+	const stopTaskFn = options.stopTaskFn ?? stopTask;
 	const staleLimit = heartbeatSeconds * staleMultiplier;
 	const events: WakeEvent[] = [];
 
@@ -86,27 +119,151 @@ export async function reconcileBgTasks(memoryRoot: string, options: ReconcileOpt
 		const loaded = await loadBgTask(memoryRoot, id);
 		if (!loaded) continue;
 		const { record, body } = loaded;
-		const result = await reconcileOne(record, dir, {
-			hostname,
+
+		// H.5 — never touch foreign-host records (avoids lease dirt on git sync)
+		if (record.host && record.host !== hostname) {
+			continue;
+		}
+
+		if (leaseHeldByOther(record, lockId, now)) {
+			continue;
+		}
+
+		// Terminal already notified → no lease needed
+		if (isTerminal(record.status) && record.notifiedAt) {
+			continue;
+		}
+
+		const needsWork = await mayNeedReconcile(record, dir, {
 			now,
 			staleLimit,
 			launchGraceSeconds,
 			pidAlive,
 		});
-		if (result.record) {
-			await saveBgTask(memoryRoot, result.record, body);
+		if (!needsWork) {
+			continue;
 		}
-		if (result.event) {
-			const cfg = loadRuntimeConfig(memoryRoot).tasks;
-			truncateTaskLogIfNeeded(memoryRoot, result.event.taskId, {
+
+		// H.1 — acquire lease before mutate
+		const locked: BgTaskRecord = {
+			...record,
+			lockedBy: lockId,
+			lockExpiresAt: isoNow(new Date(now.getTime() + reconcileLeaseSeconds * 1000)),
+			updated: isoNow(now),
+		};
+		await saveBgTask(memoryRoot, locked, body);
+
+		const recheck = await loadBgTask(memoryRoot, id);
+		if (!recheck || (recheck.record.lockedBy && recheck.record.lockedBy !== lockId)) {
+			continue;
+		}
+
+		const result = await reconcileOne(recheck.record, dir, {
+			hostname,
+			now,
+			staleLimit,
+			launchGraceSeconds,
+			pidAlive,
+			stopTaskFn,
+		});
+
+		let finalRecord = result.record ? clearLease(result.record) : clearLease(recheck.record);
+		let event = result.event;
+
+		if (event && result.record && isTerminal(result.record.status)) {
+			const reason = result.record.failureReason;
+			if (
+				!options.skipRetry &&
+				typeof reason === "string" &&
+				retryOn.has(reason) &&
+				Number(result.record.retries ?? 0) < maxRetries
+			) {
+				const useWorktree = typeof result.record.worktree === "string" && Boolean(result.record.worktree);
+				const codeRoot =
+					typeof result.record.codeRoot === "string" && result.record.codeRoot
+						? String(result.record.codeRoot)
+						: undefined;
+				const child = await spawnBgTask(memoryRoot, {
+					objective: result.record.objective,
+					command: result.record.command,
+					worker: result.record.worker,
+					parentTask: result.record.id,
+					retries: Number(result.record.retries ?? 0) + 1,
+					skipGates: true,
+					...(useWorktree ? { worktree: true, ...(codeRoot ? { codeRoot } : {}) } : {}),
+				});
+				if (child.status === "running") {
+					event = { ...event, retryTaskId: child.id };
+					finalRecord = { ...finalRecord, retryTaskId: child.id };
+				}
+			}
+		}
+
+		if (result.record || recheck.record.lockedBy) {
+			await saveBgTask(memoryRoot, finalRecord, recheck.body);
+		}
+
+		if (event) {
+			truncateTaskLogIfNeeded(memoryRoot, event.taskId, {
 				logCapBytes: cfg.logCapBytes,
 				logHeadBytes: cfg.logHeadBytes,
 				logTailBytes: cfg.logTailBytes,
 			});
-			events.push(result.event);
+			events.push(event);
 		}
 	}
 	return events;
+}
+
+/** Cheap preflight so healthy running tasks don't thrash lease writes. */
+async function mayNeedReconcile(
+	record: BgTaskRecord,
+	dir: string,
+	ctx: {
+		now: Date;
+		staleLimit: number;
+		launchGraceSeconds: number;
+		pidAlive: (pid: number) => boolean;
+	},
+): Promise<boolean> {
+	if (isTerminal(record.status)) return !record.notifiedAt;
+	if (record.status !== "pending" && record.status !== "running") return false;
+
+	const deadline = parseIso(record.deadlineAt);
+	if (deadline && ctx.now.getTime() > deadline.getTime()) return true;
+
+	try {
+		await readFile(join(dir, `${record.id}.done`), "utf8");
+		return true;
+	} catch {
+		/* no done */
+	}
+
+	let beatAge: number | null = null;
+	try {
+		const beatText = (await readFile(join(dir, `${record.id}.heartbeat`), "utf8")).trim();
+		const beatAt = parseIso(beatText);
+		if (beatAt) beatAge = (ctx.now.getTime() - beatAt.getTime()) / 1000;
+	} catch {
+		beatAge = null;
+	}
+
+	if (beatAge !== null && beatAge < ctx.staleLimit) return false;
+	if (beatAge !== null && beatAge >= ctx.staleLimit) {
+		const pidData = await readJson(join(dir, `${record.id}.pid`));
+		const runnerPid =
+			typeof pidData?.runnerPid === "number"
+				? pidData.runnerPid
+				: typeof record.runnerPid === "number"
+					? record.runnerPid
+					: null;
+		if (runnerPid !== null && ctx.pidAlive(runnerPid)) return false;
+		return true;
+	}
+
+	const created = parseIso(record.created);
+	const age = created ? (ctx.now.getTime() - created.getTime()) / 1000 : ctx.launchGraceSeconds + 1;
+	return age > ctx.launchGraceSeconds;
 }
 
 async function reconcileOne(
@@ -118,6 +275,7 @@ async function reconcileOne(
 		staleLimit: number;
 		launchGraceSeconds: number;
 		pidAlive: (pid: number) => boolean;
+		stopTaskFn: (taskDir: string, id: string) => Promise<"stopped" | "already_gone">;
 	},
 ): Promise<{ event: WakeEvent | null; record: BgTaskRecord | null }> {
 	if (isTerminal(record.status)) {
@@ -132,6 +290,17 @@ async function reconcileOne(
 
 	if (record.host !== ctx.hostname) {
 		return { event: null, record: null };
+	}
+
+	// H.3 — hard deadline wall
+	const deadline = parseIso(record.deadlineAt);
+	if (deadline && ctx.now.getTime() > deadline.getTime()) {
+		await ctx.stopTaskFn(dir, record.id);
+		const updated = {
+			...migrateBgStatus(record, "failed", { endedAt: isoNow(ctx.now), failureReason: "timeout" }, isoNow(ctx.now)),
+			notifiedAt: isoNow(ctx.now),
+		};
+		return { event: wakeFrom(updated), record: updated };
 	}
 
 	const done = await readJson(join(dir, `${record.id}.done`));
@@ -210,6 +379,7 @@ function wakeFrom(record: BgTaskRecord): WakeEvent {
 		objective: record.objective,
 		...(record.failureReason ? { failureReason: String(record.failureReason) } : {}),
 		...(typeof record.exitCode === "number" ? { exitCode: record.exitCode } : {}),
+		...(typeof record.retryTaskId === "string" ? { retryTaskId: String(record.retryTaskId) } : {}),
 	};
 }
 
@@ -219,6 +389,7 @@ export function formatWakeMessage(events: WakeEvent[]): string {
 		const tag = e.failureReason ? `${e.status}/${e.failureReason}` : e.status;
 		const extra = [
 			typeof e.exitCode === "number" ? `exit ${e.exitCode}` : null,
+			e.retryTaskId ? `retry→ ${e.retryTaskId}` : null,
 			`读取: her_task_output("${e.taskId}")`,
 		]
 			.filter(Boolean)

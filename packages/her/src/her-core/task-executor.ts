@@ -59,7 +59,7 @@ export function launchTask(
 	taskDir: string,
 	id: string,
 	command: readonly string[],
-	options?: { env?: NodeJS.ProcessEnv; heartbeatMs?: number },
+	options?: { env?: NodeJS.ProcessEnv; heartbeatMs?: number; cwd?: string },
 ): number {
 	const resolved = resolveWorkerCommand(command);
 	const env: NodeJS.ProcessEnv = {
@@ -69,6 +69,10 @@ export function launchTask(
 	};
 	if (options?.heartbeatMs) {
 		env.HER_TASK_HEARTBEAT_MS = String(options.heartbeatMs);
+	}
+	// Worker cwd (worktree) is separate from taskDir where .pid/.log/.done live.
+	if (options?.cwd) {
+		env.HER_TASK_CWD = options.cwd;
 	}
 
 	const child = spawn(process.execPath, [RUNNER, taskDir, id, resolved.file, ...resolved.args], {

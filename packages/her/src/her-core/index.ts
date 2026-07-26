@@ -25,6 +25,7 @@ export {
 	type BgTaskRecord,
 	type BgTaskStatus,
 	createPendingRecord,
+	formatDisplayStatus,
 	isTerminal,
 	loadBgTask,
 	migrateBgStatus,
@@ -36,6 +37,7 @@ export {
 	tasksDir,
 } from "./bg-task-record.ts";
 export {
+	type BgTaskListItem,
 	listBgTasks,
 	type SpawnBgTaskInput,
 	type SpawnBgTaskResult,
