@@ -24,6 +24,7 @@ All organs are pinned to exact git commits or npm versions. Packages in `.pi/set
 | agent-native-hardening | npm:@howaboua/pi-skill-agent-native-hardening | 0.0.2 | settings | Voice/style skill package. |
 | chrome-cdp-skill | npm:@howaboua/pi-skill-chrome-cdp | 0.0.1 | settings | Browser fallback skill. |
 | pi-subagent-review | npm:@howaboua/pi-subagent-review | 0.2.2 | settings | Code review organ. |
+| deer-workflow | git:github.com/deerwork-ai/deer-workflow | db772238debad43952936b08734eb050d6ca0228 (npm 0.1.0) | workers.deer + packages/her bridge | Dynamic Workflow engine (Bun host). Not a pi `.pi/settings` package — launched via bg-task worker `deer` → `deer-workflow-runner.ts` → `bun <deer>/src/cli.ts run --print`. Agent default for Her dogfood = `SamanthaAgent` (`HER_DEER_AGENT=samantha\|fake`). Clone path pin: `D:\@Her\deer-workflow`. Discipline remains G-48 orchestrate skill; deer is the engine only. |
 
 ## W0 workflow capability spike
 
@@ -36,6 +37,14 @@ What is verified at the pinned `pi-dynamic-workflows` commit:
 - The workflow tool has no persisted resume or `/workflows` manager at this pin. Its README explicitly calls this prototype status out.
 - `isolation: "worktree" is prompt-only` in `src/workflow.ts`; it is copied into agent instructions but does not create a git worktree.
 - Quarantine is not a runtime permission boundary here. `WorkflowAgent` defaults to standard coding tools via `createCodingTools(cwd)`, so untrusted-source readers are not automatically read-only and must not be allowed to persist Her memory directly.
+
+## Deer-workflow organ (G-145 / G-146, 2026-07-27)
+
+- **Engine**: deer-workflow keeps control flow in TypeScript (`phase` / `parallel` / `pipeline`) and delegates semantic work to an `Agent`.
+- **Bridge**: `her-core/deer-workflow-bridge.ts` + `deer-workflow-runner.ts`; run kind `workflow` in her-runs envelope.
+- **Agent**: `her-core/deer-samantha-agent.ts` (pi `--print --mode json`). Fake agent for CI via `HER_DEER_AGENT=fake`.
+- **Dogfood**: `packages/her/workflows/{noop,deep-research}.ts`.
+- **Not replacing** `pi-dynamic-workflows` pin above until Fei retires it; both may coexist. G-48 skill = discipline; deer = programmable DAG.
 
 Selected Her path:
 

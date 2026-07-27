@@ -61,6 +61,26 @@ export type {
 	CostSummaryOptions,
 } from "./cost-ledger.ts";
 export { enforceDailyCostCap, summarizeAuditCosts, summarizeCostBreakdown, writeCostReport } from "./cost-ledger.ts";
+export type { Agent, AgentFunction, AgentOptions, AgentSandbox, JsonSchema } from "./deer-agent-types.ts";
+export { bindAgent } from "./deer-agent-types.ts";
+export {
+	createDeerAgentFromEnv,
+	FakeDeerAgent,
+	SamanthaAgent,
+	type SamanthaAgentConfig,
+	type SamanthaAgentSpawnFn,
+} from "./deer-samantha-agent.ts";
+export {
+	applyDeerWorkflowEvent,
+	createDeerBridgeState,
+	DEER_RUN_KIND,
+	DEER_RUN_SOURCE,
+	type DeerBridgePatch,
+	type DeerBridgeState,
+	type DeerWorkflowEvent,
+	defaultDeerRunId,
+	parseDeerWorkflowLine,
+} from "./deer-workflow-bridge.ts";
 export type {
 	DelegatedOperation,
 	DelegationDecision,

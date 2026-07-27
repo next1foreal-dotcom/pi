@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { StorePaths } from "./paths.ts";
 
 /** Derived index only — rebuildable from goals/build logs; not a source of truth. */
-export const herRunKinds = ["orchestrator", "build", "voice", "longtask", "subagent"] as const;
+export const herRunKinds = ["orchestrator", "build", "voice", "longtask", "subagent", "workflow"] as const;
 export type HerRunKind = (typeof herRunKinds)[number];
 
 export const herRunStatuses = ["queued", "running", "done", "failed", "canceled", "aborted"] as const;
