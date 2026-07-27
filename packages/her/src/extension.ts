@@ -10,6 +10,7 @@ import { Type } from "typebox";
 import { CuaCliDriver } from "./hands/driver.ts";
 import { resolveHandsConfig } from "./hands/policy.ts";
 import { registerHandsTools } from "./hands/tools.ts";
+import { registerHerActTools } from "./her-actions/tools.ts";
 import {
 	EVENT_WAKE_SPAWN_REFUSAL,
 	eventWakeSpawnBlocked,
@@ -156,6 +157,7 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	artifact_publish: { destructive: true },
 	her_show_widget: { destructive: false },
 	her_ui_act: { destructive: false },
+	her_act: { destructive: false },
 	her_upsert_relay_provider: { destructive: false },
 	her_convert: { destructive: false },
 	her_ocr: { destructive: false },
@@ -1950,6 +1952,7 @@ export default function her(pi: ExtensionAPI): void {
 	registerShowWidgetTools(pi);
 	registerRelayProviderTools(pi);
 	registerUiActionTools(pi);
+	registerHerActTools(pi);
 	registerFileToolkit(pi);
 	registerMcpTools(pi);
 }
