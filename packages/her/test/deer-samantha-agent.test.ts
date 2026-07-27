@@ -11,6 +11,19 @@ test("FakeDeerAgent returns text and schema object", async () => {
 		schema: { type: "object", properties: { summary: { type: "string" } } },
 	});
 	assert.equal(typeof obj.summary, "string");
+	const verdict = await agent.run<{ keep: boolean; issues: string[]; note: string }>("verify", {
+		schema: {
+			type: "object",
+			properties: {
+				keep: { type: "boolean" },
+				issues: { type: "array" },
+				note: { type: "string" },
+			},
+		},
+	});
+	assert.equal(verdict.keep, true);
+	assert.deepEqual(verdict.issues, []);
+	assert.match(verdict.note, /fake-verifier/);
 });
 
 test("SamanthaAgent builds pi --print argv and parses text field", async () => {

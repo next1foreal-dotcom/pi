@@ -177,6 +177,14 @@ export class FakeDeerAgent implements Agent {
 			return ["Independent angle A", "Independent angle B"] as TOutput;
 		}
 		if (schema && schema.type === "object") {
+			const props = schema.properties;
+			if (props && typeof props === "object" && "keep" in props) {
+				return {
+					keep: true,
+					issues: [],
+					note: "fake-verifier: no blocking issues",
+				} as TOutput;
+			}
 			return {
 				summary: `fake:${prompt.slice(0, 80)}`,
 				sources: ["https://example.com/fake"],

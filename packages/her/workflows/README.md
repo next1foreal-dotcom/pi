@@ -1,35 +1,43 @@
 # Her Dynamic Workflows (deer-workflow organ)
 
-Orchestration engine: [deer-workflow](https://github.com/deerwork-ai/deer-workflow) (Bun host).  
-Discipline layer remains G-48 `orchestrate` skill — this folder is the **engine**.
+Orchestration **engine**: [deer-workflow](https://github.com/deerwork-ai/deer-workflow) (Bun host).  
+**Discipline**: G-48 `orchestrate` skill — do not put control flow only in SKILL.md.  
+**How to start from Samantha**: skill `deer-workflow` → `her_task_spawn({ worker: "deer", brief })`.
+
+Design: `Her-repo/docs/spark/2026-07-27-her-dynamic-workflow-design.md`.
 
 ## Prerequisites
 
 - Bun on PATH
-- Local clone at `D:\@Her\deer-workflow` (or set `HER_DEER_ROOT`)
-- For real agents: Samantha/pi CLI built, or `HER_DEER_AGENT=fake`
+- Local clone at `D:\@Her\deer-workflow` (or `HER_DEER_ROOT`)
+- Agents: `HER_DEER_AGENT=samantha` (default) or `fake` for smoke
 
-## Run (CLI)
+## Recipes
+
+| File | Phases | Notes |
+|---|---|---|
+| `noop.ts` | Alpha → Beta | No model; bridge/runner smoke |
+| `deep-research.ts` | Plan → Research → Verify → Synthesis | Fan-out + light adversarial verify |
+
+## CLI
 
 ```bash
-# noop smoke (no model)
+# noop
 bun D:/@Her/deer-workflow/src/cli.ts run ./noop.ts --print --input-file ./input.json
 
-# deep-research with fake agent
+# deep-research (fake)
 set HER_DEER_AGENT=fake
 bun D:/@Her/deer-workflow/src/cli.ts run ./deep-research.ts --print --input-file ./input.json
 ```
 
-## Run (Samantha bg-task)
-
-`her_task_spawn` with `worker: "deer"` and brief:
+## Samantha `her_task_spawn`
 
 ```json
 {
-  "workflow": "D:/@Her/Her-repo/samantha/packages/her/workflows/noop.ts",
-  "input": { "note": "from-samantha" },
-  "title": "noop smoke"
+  "worker": "deer",
+  "objective": "Deep research: Dynamic Workflows",
+  "brief": "{\"workflow\":\"D:/@Her/Her-repo/samantha/packages/her/workflows/deep-research.ts\",\"input\":{\"question\":\"…\",\"maxAngles\":2},\"title\":\"her-deep-research\"}"
 }
 ```
 
-Requires `workers.deer` in `her-memory/.her/config.yaml` and `HER_MEMORY_DIR` in the Samantha process env.
+Requires `workers.deer` in `her-memory/.her/config.yaml` and `HER_MEMORY_DIR` on the Samantha process.
