@@ -391,6 +391,15 @@ export {
 	trimTelegramText,
 } from "./telegram.ts";
 export * from "./trigger-log.ts";
+export {
+	claimWarmWorktree,
+	clampWarmWorktreePoolSize,
+	drainWarmWorktreePool,
+	ensureWarmWorktreePool,
+	listReadyWarmSlots,
+	WARM_WORKTREE_POOL_MAX,
+	type WarmWorktree,
+} from "./warm-worktree-pool.ts";
 export type {
 	XArticleFullTextFailure,
 	XArticleFullTextOptions,

@@ -20,6 +20,7 @@ import { enforceDailyCostCap } from "./cost-ledger.ts";
 import { ensureTaskWorktree } from "./long-task-worktree.ts";
 import { redactSecrets, writeText } from "./store.ts";
 import { launchTask, stopTask } from "./task-executor.ts";
+import { claimWarmWorktree, clampWarmWorktreePoolSize, ensureWarmWorktreePool } from "./warm-worktree-pool.ts";
 import { buildWorkerEnv, resolveWorkerInvocation, type WorkerProfile } from "./worker-profile.ts";
 
 const DEFAULT_ALLOW = new Set(["node", "nodejs"]);
@@ -223,13 +224,24 @@ export async function spawnBgTask(memoryRoot: string, input: SpawnBgTaskInput): 
 			};
 		}
 		try {
-			const wt = await ensureTaskWorktree(codeRoot, record.id);
+			const warmSize = clampWarmWorktreePoolSize(cfg.tasks.warmWorktreePoolSize);
+			const warm = warmSize > 0 ? await claimWarmWorktree(codeRoot, record.id) : null;
+			if (warmSize > 0) {
+				// Replenish off the request path — never await readiness here.
+				void ensureWarmWorktreePool(codeRoot, warmSize).catch(() => {
+					/* next spawn can cold-miss; fail soft */
+				});
+			}
+			const wt = warm ?? (await ensureTaskWorktree(codeRoot, record.id));
 			workerCwd = wt.worktreePath;
 			worktreePath = wt.worktreePath;
 			record.worktree = wt.worktreePath;
 			record.codeRoot = codeRoot;
 			record.worktreeBranch = wt.branch;
 			record.worktreeBaseSha = wt.baseSha;
+			if (warm) {
+				record.warmWorktreeClaim = true;
+			}
 		} catch (error) {
 			const detail = error instanceof Error ? error.message : String(error);
 			const failed = migrateBgStatus(record, "failed", {
