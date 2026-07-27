@@ -54,6 +54,15 @@ description: 用 deer-workflow 引擎跑可编程 Dynamic Workflow（phase/paral
 
 - Background / Her tasks：`worker=deer` 的 bg-task 记录
 - runs：`kind:"workflow"`，title 随 phase 变（bridge 已写）
+- Studio：`kind=workflow` 任务可展开 phase 条（`runs/events.jsonl` / Her task log JSONL）
+
+## 干完怎么找 Fei（默认写法，不必 Fei 每次口述）
+
+spawn 后 **父会话**负责收尾，不是 workflow 自己写 memory：
+
+1. `objective` / brief `title` 写清人话目标（Tasks 标题）。
+2. 派活后一句意图即可：**「`.done` 后 event-wake 读结果给我结论；要 Telegram 就开 `tasks.telegram_notify`」**（G-132；需 Samantha 会话空闲）。
+3. 唤醒回合内：**不许**再 `her_task_spawn`；读 log / `her_task_output`、摘要给 Fei、该落 episodic 再落。
 
 ## 与 orchestrate 的分工
 
