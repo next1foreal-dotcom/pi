@@ -44,6 +44,9 @@ description: 用 deer-workflow 引擎跑可编程 Dynamic Workflow（phase/paral
 |---|---|---|
 | noop | `D:/@Her/Her-repo/samantha/packages/her/workflows/noop.ts` | `{ "note": "…" }` — 冒烟，无模型 |
 | deep-research | `D:/@Her/Her-repo/samantha/packages/her/workflows/deep-research.ts` | `{ "question": "…", "angles"?: ["…"], "maxAngles"?: 2 }` |
+| map-wire-verify | `D:/@Her/Her-repo/samantha/packages/her/workflows/map-wire-verify.ts` | `{ "objective": "…", "lanes"?: ["…"], "maxLanes"?: 2, "cwd"?: "…", "verifyHint"?: "…" }` — 编码大活三段 |
+
+**何时选 map-wire-verify**：写集触及 >800 行文件、或 ≥4 文件、或要对齐跨文件语义。单文件小改直接做，别开引擎。
 
 新 recipe：落盘到同一目录并 `export meta`（name / phases / exampleArgs），再把路径写进 brief。
 

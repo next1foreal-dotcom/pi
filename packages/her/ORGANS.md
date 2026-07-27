@@ -43,9 +43,9 @@ What is verified at the pinned `pi-dynamic-workflows` commit:
 - **Engine**: deer-workflow keeps control flow in TypeScript (`phase` / `parallel` / `pipeline`) and delegates semantic work to an `Agent`.
 - **Bridge**: `her-core/deer-workflow-bridge.ts` + `deer-workflow-runner.ts`; run kind `workflow` in her-runs envelope.
 - **Agent**: `her-core/deer-samantha-agent.ts` (pi `--print --mode json`). Fake agent for CI via `HER_DEER_AGENT=fake`.
-- **Dogfood**: `packages/her/workflows/{noop,deep-research}.ts` (deep-research = Plan→Research→Verify→Synthesis).
+- **Dogfood**: `packages/her/workflows/{noop,deep-research,map-wire-verify}.ts` (research = Plan→Research→Verify→Synthesis; coding = Map→Wire→Verify).
 - **Trigger skill**: `samantha/.pi/skills/deer-workflow/` — how to `her_task_spawn(worker=deer)`; does **not** encode control flow in prose.
-- **Product design**: `Her-repo/docs/spark/2026-07-27-her-dynamic-workflow-design.md`.
+- **Product design**: `Her-repo/docs/spark/2026-07-27-her-dynamic-workflow-design.md` (G-148 v1 三刀 · G-149 S4 recipe).
 - **Not replacing** `pi-dynamic-workflows` pin above until Fei retires it; both may coexist. G-48 skill = discipline; deer = programmable DAG.
 
 Selected Her path:

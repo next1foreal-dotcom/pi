@@ -178,12 +178,36 @@ export class FakeDeerAgent implements Agent {
 		}
 		if (schema && schema.type === "object") {
 			const props = schema.properties;
-			if (props && typeof props === "object" && "keep" in props) {
-				return {
-					keep: true,
-					issues: [],
-					note: "fake-verifier: no blocking issues",
-				} as TOutput;
+			if (props && typeof props === "object") {
+				if ("keep" in props) {
+					return {
+						keep: true,
+						issues: [],
+						note: "fake-verifier: no blocking issues",
+					} as TOutput;
+				}
+				if ("hits" in props) {
+					return {
+						hits: [
+							{
+								file: "fake.ts",
+								line: 1,
+								snippet: "fake-hit",
+								suggestion: `fake map for: ${prompt.slice(0, 60)}`,
+							},
+						],
+					} as TOutput;
+				}
+				if ("planMarkdown" in props) {
+					return {
+						planMarkdown: `# Fake Wire\n\n${prompt.slice(0, 120)}`,
+						files: ["fake.ts"],
+						notes: "fake-wire",
+					} as TOutput;
+				}
+				if ("exitCode" in props) {
+					return { exitCode: 0, tail: "fake-gate: ok" } as TOutput;
+				}
 			}
 			return {
 				summary: `fake:${prompt.slice(0, 80)}`,

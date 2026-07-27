@@ -24,6 +24,18 @@ test("FakeDeerAgent returns text and schema object", async () => {
 	assert.equal(verdict.keep, true);
 	assert.deepEqual(verdict.issues, []);
 	assert.match(verdict.note, /fake-verifier/);
+	const scout = await agent.run<{ hits: Array<{ file: string }> }>("map", {
+		schema: { type: "object", properties: { hits: { type: "array" } } },
+	});
+	assert.equal(scout.hits[0]?.file, "fake.ts");
+	const gate = await agent.run<{ exitCode: number; tail: string }>("gate", {
+		schema: {
+			type: "object",
+			properties: { exitCode: { type: "number" }, tail: { type: "string" } },
+		},
+	});
+	assert.equal(gate.exitCode, 0);
+	assert.match(gate.tail, /fake-gate/);
 });
 
 test("SamanthaAgent builds pi --print argv and parses text field", async () => {

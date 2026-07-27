@@ -18,6 +18,7 @@ Design: `Her-repo/docs/spark/2026-07-27-her-dynamic-workflow-design.md`.
 |---|---|---|
 | `noop.ts` | Alpha → Beta | No model; bridge/runner smoke |
 | `deep-research.ts` | Plan → Research → Verify → Synthesis | Fan-out + light adversarial verify |
+| `map-wire-verify.ts` | Map → Wire → Verify | Coding大活：并行侦察 → 单写手计划 → gate+对抗复核 |
 
 ## CLI
 
@@ -28,6 +29,9 @@ bun D:/@Her/deer-workflow/src/cli.ts run ./noop.ts --print --input-file ./input.
 # deep-research (fake)
 set HER_DEER_AGENT=fake
 bun D:/@Her/deer-workflow/src/cli.ts run ./deep-research.ts --print --input-file ./input.json
+
+# map-wire-verify (fake)
+bun D:/@Her/deer-workflow/src/cli.ts run ./map-wire-verify.ts --print --input-file ./mwv-input.json
 ```
 
 ## Samantha `her_task_spawn`
@@ -37,6 +41,16 @@ bun D:/@Her/deer-workflow/src/cli.ts run ./deep-research.ts --print --input-file
   "worker": "deer",
   "objective": "Deep research: Dynamic Workflows",
   "brief": "{\"workflow\":\"D:/@Her/Her-repo/samantha/packages/her/workflows/deep-research.ts\",\"input\":{\"question\":\"…\",\"maxAngles\":2},\"title\":\"her-deep-research\"}"
+}
+```
+
+Coding 大活：
+
+```json
+{
+  "worker": "deer",
+  "objective": "Map-Wire-Verify: …",
+  "brief": "{\"workflow\":\"D:/@Her/Her-repo/samantha/packages/her/workflows/map-wire-verify.ts\",\"input\":{\"objective\":\"…\",\"maxLanes\":2,\"verifyHint\":\"npx tsx --test …\"},\"title\":\"her-map-wire-verify\"}"
 }
 ```
 
