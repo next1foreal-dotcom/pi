@@ -11,6 +11,12 @@ export interface CaptureMeta {
 	type?: string;
 	/** Episodic modality tag (e.g. voice, glass) — written to raw frontmatter when set. */
 	source?: string;
+	/** G-156: who wrote this memory (fei | samantha | …). */
+	authored_by?: string;
+	/** G-156: which harness produced it (pi | claude-code | codex | voice | mcp | …). */
+	harness?: string;
+	/** G-156: optional run/tool/session reference. */
+	source_ref?: string;
 	capture_scope?: string;
 	transcription_quality?: string;
 	ref?: string;
