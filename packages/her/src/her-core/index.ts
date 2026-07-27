@@ -391,16 +391,6 @@ export {
 	trimTelegramText,
 } from "./telegram.ts";
 export * from "./trigger-log.ts";
-export {
-	claimWarmSlot,
-	clampWarmPoolSize,
-	drainWarmPool,
-	ensureWarmPool,
-	listReadySlots,
-	WARM_POOL_MAX,
-	waitForWarmReady,
-	warmPoolDir,
-} from "./warm-worker-pool.ts";
 export type {
 	XArticleFullTextFailure,
 	XArticleFullTextOptions,

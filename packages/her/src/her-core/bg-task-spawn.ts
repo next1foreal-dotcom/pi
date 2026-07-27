@@ -20,7 +20,6 @@ import { enforceDailyCostCap } from "./cost-ledger.ts";
 import { ensureTaskWorktree } from "./long-task-worktree.ts";
 import { redactSecrets, writeText } from "./store.ts";
 import { launchTask, stopTask } from "./task-executor.ts";
-import { claimWarmSlot, clampWarmPoolSize, ensureWarmPool, waitForWarmReady } from "./warm-worker-pool.ts";
 import { buildWorkerEnv, resolveWorkerInvocation, type WorkerProfile } from "./worker-profile.ts";
 
 const DEFAULT_ALLOW = new Set(["node", "nodejs"]);
@@ -256,7 +255,7 @@ export async function spawnBgTask(memoryRoot: string, input: SpawnBgTaskInput): 
 	}
 
 	try {
-		const launchOpts = {
+		const runnerPid = launchTask(tasksDir(memoryRoot), record.id, command, {
 			heartbeatMs: input.heartbeatMs ?? cfg.tasks.heartbeatSeconds * 1000,
 			...(workerCwd ? { cwd: workerCwd } : {}),
 			...(mode === "worker" && workerProfile ? { env: buildWorkerEnv(workerProfile, record.id) } : {}),
@@ -264,27 +263,11 @@ export async function spawnBgTask(memoryRoot: string, input: SpawnBgTaskInput): 
 			// F1 (G-129.1) — the ComSpec chain is trusted only for worker/profile mode's static
 			// config argv; bare command mode must never hand model-controlled argv to cmd.exe.
 			allowComspec: mode === "worker",
-		};
-		const taskDir = tasksDir(memoryRoot);
-		const warmSize = clampWarmPoolSize(cfg.tasks.warmPoolSize);
-		let runnerPid: number | null = null;
-		let warmHit = false;
-		if (warmSize > 0) {
-			ensureWarmPool(taskDir, warmSize);
-			waitForWarmReady(taskDir, 1, 3_000);
-			runnerPid = claimWarmSlot(taskDir, record.id, command, launchOpts);
-			warmHit = runnerPid !== null;
-			// Replenish off the request path (fire-and-forget).
-			ensureWarmPool(taskDir, warmSize);
-		}
-		if (runnerPid === null) {
-			runnerPid = launchTask(taskDir, record.id, command, launchOpts);
-		}
+		});
 		const running = migrateBgStatus(record, "running", {
 			startedAt: isoNow(),
 			runnerPid,
 			budgetReserved: cfg.tasks.budgetCap,
-			...(warmHit ? { warmClaim: true } : {}),
 		});
 		await saveBgTask(memoryRoot, running, `# ${record.objective}\n`);
 		return {
