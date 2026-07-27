@@ -20,6 +20,7 @@ import {
 } from "./her-core/event-wake.ts";
 import {
 	applyMemoryRetraction,
+	buildRecallReceipts,
 	type ChoiceModelDomain,
 	checkMemoryExport,
 	checkpointLongTask,
@@ -1043,11 +1044,13 @@ export default function her(pi: ExtensionAPI): void {
 		}),
 		async execute(_toolCallId, params) {
 			const notes = await mem.recall(params.query, { k: params.k });
+			const receipts = buildRecallReceipts(notes);
 			return textResult(renderRecall(notes), {
 				phase: "2",
 				query: params.query,
 				count: notes.length,
 				notes: notes.map((note) => ({ id: note.id, kind: note.kind, path: note.path })),
+				receipts,
 			});
 		},
 	});

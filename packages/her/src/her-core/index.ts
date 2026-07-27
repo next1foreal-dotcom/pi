@@ -276,6 +276,8 @@ export {
 	summarizeHerProposalStats,
 } from "./proposal.ts";
 export { type ExternalizeResult, externalizeLargeDataUris } from "./publish-assets.ts";
+export type { RecallReceipt } from "./recall-receipts.ts";
+export { buildRecallReceipt, buildRecallReceipts, UNKNOWN_PROVENANCE } from "./recall-receipts.ts";
 export type {
 	ApplyMemoryRetractionOptions,
 	MemoryRetractionCandidate,

@@ -82,6 +82,7 @@ import {
 	appendTasteIntakeLog,
 	assemblePrior,
 	buildLocalPdfTasteData,
+	buildRecallReceipts,
 	captureTasteSnapshot,
 	checkMemoryExport,
 	checkpointLongTask,
@@ -443,7 +444,8 @@ export async function runHerCli(
 		const result = command.archive
 			? await memory.recallArchive(command.query, { k: command.k })
 			: await memory.recall(command.query, { k: command.k });
-		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
+		const receipts = buildRecallReceipts(result);
+		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result, receipts };
 		writePayload(io.stdout, payload, command.json, renderRecall);
 		return payload.status.status === "unknown" ? 1 : 0;
 	}
