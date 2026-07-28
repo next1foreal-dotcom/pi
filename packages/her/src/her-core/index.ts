@@ -247,6 +247,26 @@ export {
 	validateMemoryProvenance,
 } from "./privacy.ts";
 export {
+	allVerified,
+	anyInvalidated,
+	applyVerifierDecision,
+	classifyStall,
+	type DoneEvidence,
+	emptyProgressState,
+	type FailureClass,
+	formatProgressCheckpoint,
+	type HerTaskDisplayStatus,
+	type ProgressState,
+	type Requirement,
+	type RequirementStatus,
+	requirementStatus,
+	statusFromDoneEvidence,
+	type UsefulValue,
+	type VerifiedEvidence,
+	type VerifyDecision,
+	withRequirements,
+} from "./progress-state.ts";
+export {
 	choiceModelPrompt,
 	consolidatePrompt,
 	ideaEnginePrompt,

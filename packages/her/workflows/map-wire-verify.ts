@@ -13,6 +13,15 @@ import { parallel, phase } from "../../../../../deer-workflow/src/flow/index.ts"
 import { log } from "../../../../../deer-workflow/src/logging/index.ts";
 import { bindAgent } from "../src/her-core/deer-agent-types.ts";
 import { createDeerAgentFromEnv } from "../src/her-core/deer-samantha-agent.ts";
+import {
+	allVerified,
+	applyVerifierDecision,
+	emptyProgressState,
+	formatProgressCheckpoint,
+	type ProgressState,
+	withRequirements,
+} from "../src/her-core/progress-state.ts";
+
 
 export const meta = {
 	name: "her-map-wire-verify",
@@ -48,6 +57,10 @@ export interface MapWireVerifyOutput {
 	gate: string;
 	review: string;
 	report: string;
+	/** G-160 — verifier-committed progress; actor phases do not auto-verify. */
+	progress: ProgressState;
+	progressOk: boolean;
+	progressCheckpoint: string;
 }
 
 const agent = bindAgent(createDeerAgentFromEnv());
@@ -129,6 +142,11 @@ export default async function mapWireVerify(args: MapWireVerifyInput): Promise<M
 	const maxLanes = clampMaxLanes(args.maxLanes);
 	const cwdHint = args.cwd?.trim() || "(caller cwd / Studio workspace)";
 	const verifyHint = args.verifyHint?.trim() || "run the relevant unit tests for the touched files";
+	let progress = withRequirements(emptyProgressState(), [
+		{ id: "map", check: "Map notes non-empty" },
+		{ id: "wire", check: "Wire plan produced" },
+		{ id: "verify", check: "Gate exit 0 and adversarial keep=true" },
+	]);
 
 	phase("Map");
 	const lanes =
@@ -193,6 +211,17 @@ export default async function mapWireVerify(args: MapWireVerifyInput): Promise<M
 		),
 	);
 	const mapCompleted = mapNotes.filter((n): n is string => typeof n === "string" && n.length > 0);
+	if (mapCompleted.length > 0) {
+		progress = applyVerifierDecision(progress, {
+			action: "verify",
+			requirementIds: ["map"],
+			evidence: {
+				kind: "artifact",
+				summary: `${mapCompleted.length} map lane note(s)`,
+			},
+			values: [{ key: "mapLanes", value: String(mapCompleted.length), fromRequirement: "map" }],
+		});
+	}
 
 	phase("Wire");
 	const wire = await agent<{ planMarkdown: string; files: string[]; notes: string }>(
@@ -224,6 +253,23 @@ export default async function mapWireVerify(args: MapWireVerifyInput): Promise<M
 	log(
 		`## Wire\n- files: ${(wire.files ?? []).join(", ") || "(unlisted)"}\n- notes: ${wire.notes ?? ""}`,
 	);
+	if (wirePlan.trim()) {
+		progress = applyVerifierDecision(progress, {
+			action: "verify",
+			requirementIds: ["wire"],
+			evidence: {
+				kind: "artifact",
+				summary: `wire plan ${wirePlan.length} chars`,
+			},
+			values: [
+				{
+					key: "wireFiles",
+					value: (wire.files ?? []).join(",") || "(unlisted)",
+					fromRequirement: "wire",
+				},
+			],
+		});
+	}
 
 	phase("Verify");
 	const [gateRaw, reviewRaw] = await parallel([
@@ -274,6 +320,33 @@ export default async function mapWireVerify(args: MapWireVerifyInput): Promise<M
 	const gate = typeof gateRaw === "string" ? gateRaw : String(gateRaw);
 	const review = typeof reviewRaw === "string" ? reviewRaw : String(reviewRaw);
 	log(`## Verify\n- gate: ${gate.split("\n")[0] ?? ""}\n- review: ${review.slice(0, 120)}`);
+	const gateExit = (() => {
+		const m = /exitCode\s*=\s*(-?\d+)/i.exec(gate);
+		return m ? Number.parseInt(m[1], 10) : NaN;
+	})();
+	const reviewKeep = /\bkeep\s*=\s*true\b/i.test(review);
+	if (gateExit === 0 && reviewKeep) {
+		progress = applyVerifierDecision(progress, {
+			action: "verify",
+			requirementIds: ["verify"],
+			evidence: {
+				kind: "gate+review",
+				summary: `exitCode=0 keep=true · ${review.slice(0, 160)}`,
+			},
+		});
+	} else {
+		progress = applyVerifierDecision(progress, {
+			action: "invalidate",
+			requirementIds: ["verify"],
+			evidence: {
+				kind: "gate+review",
+				summary: `gateExit=${Number.isFinite(gateExit) ? gateExit : "unknown"} keep=${reviewKeep} · ${gate.split("\n")[0] ?? ""}`,
+			},
+		});
+	}
+	const progressOk = allVerified(progress);
+	const progressCheckpoint = formatProgressCheckpoint(progress);
+	log(progressCheckpoint);
 
 	const report = [
 		`# Map→Wire→Verify · ${objective}`,
@@ -291,6 +364,10 @@ export default async function mapWireVerify(args: MapWireVerifyInput): Promise<M
 		review,
 		"",
 		"_Parent session applies the Wire plan (or re-runs Wire against a worktree). Do not treat this report as her-memory truth until published._",
+		"",
+		progressCheckpoint,
+		"",
+		`_progressOk=${progressOk}_`,
 	].join("\n");
 
 	return {
@@ -301,5 +378,8 @@ export default async function mapWireVerify(args: MapWireVerifyInput): Promise<M
 		gate,
 		review,
 		report,
+		progress,
+		progressOk,
+		progressCheckpoint,
 	};
 }
