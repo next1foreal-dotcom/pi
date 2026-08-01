@@ -42,6 +42,17 @@ async function git(cwd: string, ...args: string[]): Promise<{ stdout: string; st
 	return { stdout, stderr };
 }
 
+// recordFeedback commits (G-170), so its fixtures need a real (local-only) git repo.
+async function gitInitStore(): Promise<string> {
+	const store = await tempStore();
+	await git(store, "init");
+	await git(store, "config", "user.name", "Her Test");
+	await git(store, "config", "user.email", "her-test@example.com");
+	await git(store, "add", "-A");
+	await git(store, "commit", "-m", "memory: fixtures");
+	return store;
+}
+
 function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -393,7 +404,7 @@ test("writeSamanthaTasteJudgment preserves her own protected taste disagreement"
 });
 
 test("recordFeedback writes weighted choice rules and getContext sorts stale rules below active rules", async () => {
-	const store = await tempStore();
+	const store = await gitInitStore();
 	const memory = new Memory(store);
 
 	await memory.recordFeedback({
@@ -433,7 +444,7 @@ test("recordFeedback writes weighted choice rules and getContext sorts stale rul
 });
 
 test("recordFeedback honors explicit feedback weight deltas", async () => {
-	const store = await tempStore();
+	const store = await gitInitStore();
 	const memory = new Memory(store);
 
 	await memory.recordFeedback({
