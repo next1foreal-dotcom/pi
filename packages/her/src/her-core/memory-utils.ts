@@ -33,8 +33,12 @@ const RELATION_TYPE_ALIASES = new Map([
 const CHALLENGE_RELATIONS = new Set(["challenges", "conflicts"]);
 const ACTIVE_MEMORY_TIERS = new Set(["exact", "summarizable", "rule", "decay"]);
 const CHOICE_MODEL_DOMAINS = new Set(["code-style", "writing-style", "design-taste", "communication-tone"]);
-const CHOICE_RULES_MARKER = "her-choice-rules";
+export const CHOICE_RULES_MARKER = "her-choice-rules";
 const CHOICE_RULE_STALE_AFTER_DAYS = 30;
+// Rhythm gate for automatic Memory.synthesizeChoiceModel() triggering (G-170): same order of
+// magnitude as HerConfig.cadence.synthesizeStaleAfterDays (10, see config.ts DEFAULT_CONFIG), kept
+// as a plain constant rather than a config field per the G-170 task packet ("常量集中定义").
+export const CHOICE_MODEL_SYNTHESIZE_AFTER_DAYS = 10;
 
 export async function readChoiceModelRuleFiles(
 	dir: string,

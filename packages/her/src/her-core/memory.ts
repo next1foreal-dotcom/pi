@@ -47,6 +47,7 @@ import type {
 	WorldNoteData,
 } from "./memory-types.ts";
 import {
+	CHOICE_RULES_MARKER,
 	changedAfter,
 	choiceModelLogBlock,
 	choiceRuleRuntimeStatus,
@@ -359,7 +360,18 @@ export class Memory {
 			const at = fields.at ?? new Date().toISOString();
 			await mkdir(this.paths.choiceModelDir, { recursive: true });
 			const path = join(this.paths.choiceModelDir, `${domain}.md`);
-			const existing = parseChoiceRuleRecords((await readText(path)) ?? "");
+			const raw = (await readText(path)) ?? "";
+			const existing = parseChoiceRuleRecords(raw);
+			// Never lose existing rules (G-170): a fresh/seeded domain file legitimately has no
+			// her-choice-rules marker at all, so existing.length === 0 is normal there. But if the marker
+			// IS present and still parses to zero records, parseChoiceRuleRecords swallowed a JSON error
+			// (memory-utils.ts's catch-and-return-[] path) — proceeding would silently overwrite whatever
+			// rules that marker used to hold with just the one new rule. Fail loud instead.
+			if (existing.length === 0 && raw.includes(CHOICE_RULES_MARKER)) {
+				throw new Error(
+					`recordFeedback: ${path} has a her-choice-rules marker that failed to parse; refusing to write (would silently discard existing rules)`,
+				);
+			}
 			const key = normalizeChoiceRule(rule);
 			const found = existing.find((item) => normalizeChoiceRule(item.rule) === key);
 			const evidence = { at, task, diff_summary: diffSummary };
