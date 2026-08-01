@@ -795,6 +795,11 @@ export async function runHerCli(
 	}
 
 	try {
+		// G-170: give choice model synthesis the same automatic rhythm narrative synthesis gets from its
+		// own --if-due CLI flag, but on the routine sync path instead of a separately-scheduled command --
+		// choiceModelSynthesizeDue() only ever says due when synthesizeChoiceModel() has evidence to act on.
+		const choiceModelDue = await memory.choiceModelSynthesizeDue();
+		if (choiceModelDue.due) await memory.synthesizeChoiceModel();
 		const result = await memory.sync(command.message ?? `memory(sync): cli ${new Date().toISOString()}`);
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderSync);

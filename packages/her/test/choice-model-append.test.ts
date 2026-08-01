@@ -1,14 +1,34 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { initStore, Memory, readText, writeText } from "../src/her-core/index.ts";
+import { promisify } from "node:util";
+import { initStore, Memory, readJson, readText, writeJson, writeText } from "../src/her-core/index.ts";
+
+const execFileAsync = promisify(execFile);
 
 async function tempStore(): Promise<string> {
 	const root = await mkdtemp(join(tmpdir(), "her-choice-append-"));
 	await initStore(root);
 	return root;
+}
+
+async function git(cwd: string, ...args: string[]): Promise<{ stdout: string; stderr: string }> {
+	const { stdout, stderr } = await execFileAsync("git", args, { cwd });
+	return { stdout, stderr };
+}
+
+// synthesizeChoiceModel() commits, so any fixture that calls it needs a real (local-only) git repo.
+async function gitInitStore(): Promise<string> {
+	const store = await tempStore();
+	await git(store, "init");
+	await git(store, "config", "user.name", "Her Test");
+	await git(store, "config", "user.email", "her-test@example.com");
+	await git(store, "add", "-A");
+	await git(store, "commit", "-m", "memory: fixtures");
+	return store;
 }
 
 // 8/1 accident replay: real content pulled from D:\@Her\her-memory's git history
@@ -182,4 +202,86 @@ test("rendering buckets a stale rule under Stale Rules and a fresh rule under Ac
 	const activeRule = rules.find((item) => item.rule === "Warm neutrals over cool grays.");
 	assert.equal(staleRule?.status, "stale");
 	assert.equal(activeRule?.status, "active");
+});
+
+// Choice model synthesis previously had no rhythm gate at all (G-170 #2): only two manual triggers
+// existed (the `her choice-model` CLI command and the her_synthesize_choice_model tool), so
+// narrative/CHOICE-MODEL.md never advanced on its own the way narrative/CONTEXT.md does via
+// synthesizeDue(). choiceModelSynthesizeDue() mirrors that shape: due when enough days have passed
+// since the last synthesis AND there is Judgment Trail evidence to distill (the same precondition
+// synthesizeChoiceModel() itself enforces, so a "due" result can always be safely acted on).
+test("choiceModelSynthesizeDue is due with no prior synthesis and Judgment Trail evidence present, and the gated call commits", async () => {
+	const store = await gitInitStore();
+	const memory = new Memory(store, {
+		complete(_input, options) {
+			assert.equal(options?.strong, true);
+			return "# CHOICE MODEL\n\nFei prefers small reversible moves with verified evidence.\n";
+		},
+	});
+
+	const noteId = await memory.writeWorldNote({
+		title: "Mirror Timing",
+		sourceUrl: "https://example.com/mirror",
+		sourceType: "article",
+		contentHash: "hash-due-check",
+		memoryStatus: "active",
+		extracted: "Mirror should wait for the right moment.",
+		coverage: "Read short article.",
+		read: "Timing matters.",
+		steal: [],
+		connections: [],
+		take: "Useful for active-work interruption rules.",
+		possibleMoves: [],
+	});
+	await memory.recordJudgment(noteId, {
+		choice: "keep only if it changes the next action",
+		correction: "Prefer small reversible moves with verified evidence.",
+	});
+	await git(store, "add", "-A");
+	await git(store, "commit", "-m", "memory: judgment fixture");
+
+	const due = await memory.choiceModelSynthesizeDue();
+	assert.equal(due.due, true, "no prior synthesis + Judgment Trail evidence must be due");
+	assert.equal(due.hasJudgmentTrails, true);
+	assert.equal(due.lastChoiceModel, undefined);
+
+	// This is the exact action cli.ts's sync flow takes when choiceModelSynthesizeDue() says due.
+	const result = await memory.synthesizeChoiceModel();
+	assert.match((await git(store, "log", "--oneline", "-1")).stdout, /memory\(choice\): Synthesize choice model/);
+	assert.match(result.commit, /^[0-9a-f]{7,40}$/);
+
+	const state = await readJson<{ last_choice_model?: string }>(join(store, ".her", "state.json"), {});
+	assert.ok(state.last_choice_model, "synthesizeChoiceModel must record last_choice_model for the next due check");
+});
+
+test("choiceModelSynthesizeDue is not due when the last synthesis is more recent than the rhythm threshold", async () => {
+	const store = await tempStore();
+	const memory = new Memory(store);
+
+	const noteId = await memory.writeWorldNote({
+		title: "Recent Evidence",
+		sourceUrl: "https://example.com/recent",
+		sourceType: "article",
+		contentHash: "hash-not-due",
+		memoryStatus: "active",
+		extracted: "Some evidence exists.",
+		coverage: "Read short article.",
+		read: "Noted.",
+		steal: [],
+		connections: [],
+		take: "Kept for context.",
+		possibleMoves: [],
+	});
+	await memory.recordJudgment(noteId, {
+		choice: "keep",
+		correction: "Some rule.",
+	});
+
+	// Synthesized yesterday: well inside the rhythm window regardless of evidence being present.
+	const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+	await writeJson(join(store, ".her", "state.json"), { last_choice_model: yesterday });
+
+	const due = await memory.choiceModelSynthesizeDue();
+	assert.equal(due.due, false, "recent last_choice_model must suppress due regardless of evidence");
+	assert.equal(due.hasJudgmentTrails, true, "evidence is present -- only the rhythm gate should block it");
 });

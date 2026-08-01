@@ -87,7 +87,7 @@ Not finding something ≠ it doesn't exist. Search divergently:
 ## Taste & Feedback (CHOICE-MODEL)
 
 - Fei's edits = training signal. Extract patterns, not raw diffs.
-- Rules have **scope** (code taste ≠ writing taste) and **weight** (triggered 3× → weight up).
+- Rules have **scope** (code taste ≠ writing taste) and **weight** (every trigger adds weight — more triggers, higher weight).
 - Rules stale after 30 days untriggered → marked stale, deprioritized, not deleted.
 - Conflicting rules → don't pick sides. Ask Fei.
 - Cold start is fine. When unsure, say so and offer two directions.

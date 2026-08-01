@@ -17,6 +17,7 @@ import { writeSamanthaJournal, writeSamanthaTasteJudgment, writeSamanthaZoneNote
 import { SEED_CHOICE_MODEL, SEED_CONTEXT, SEED_SELF_NARRATIVE, SEED_SOUL } from "./memory-seeds.ts";
 import type {
 	CaptureMeta,
+	ChoiceModelSynthesizeDueResult,
 	ChoiceModelUpdateResult,
 	ChoiceRuleRecord,
 	ConsolidateResult,
@@ -47,6 +48,7 @@ import type {
 	WorldNoteData,
 } from "./memory-types.ts";
 import {
+	CHOICE_MODEL_SYNTHESIZE_AFTER_DAYS,
 	CHOICE_RULES_MARKER,
 	changedAfter,
 	choiceModelLogBlock,
@@ -179,6 +181,7 @@ export { SEED_CHOICE_MODEL, SEED_CONTEXT, SEED_SELF_NARRATIVE, SEED_SOUL } from 
 export type {
 	CaptureMeta,
 	ChoiceModelDomain,
+	ChoiceModelSynthesizeDueResult,
 	ChoiceModelUpdateResult,
 	ClaimLedgerEntry,
 	ConsolidateResult,
@@ -770,6 +773,31 @@ export class Memory {
 			}
 			return written;
 		});
+	}
+
+	// Rhythm gate for synthesizeChoiceModel() (G-170): mirrors synthesizeDue()'s shape (days-since-last
+	// check plus a "is there anything to distill" check) but combines them with AND rather than
+	// synthesizeDue()'s OR, per the G-170 task packet's explicit spec. hasJudgmentTrails uses the exact
+	// same choiceModelJudgmentTrails() precondition synthesizeChoiceModel() itself throws without, so a
+	// `due: true` result can always be safely followed by calling synthesizeChoiceModel().
+	async choiceModelSynthesizeDue(): Promise<ChoiceModelSynthesizeDueResult> {
+		const state = await readJson<{ last_choice_model?: string | null }>(this.paths.stateFile, {});
+		const lastChoiceModel = typeof state.last_choice_model === "string" ? state.last_choice_model : undefined;
+		const lastTime = parseDate(lastChoiceModel);
+		const daysSinceLastChoiceModel = daysSince(lastTime);
+		const rhythmDue =
+			lastTime === undefined ||
+			(daysSinceLastChoiceModel ?? Number.POSITIVE_INFINITY) >= CHOICE_MODEL_SYNTHESIZE_AFTER_DAYS;
+
+		const hasJudgmentTrails = (await this.choiceModelJudgmentTrails()).length > 0;
+
+		return {
+			due: rhythmDue && hasJudgmentTrails,
+			thresholdDays: CHOICE_MODEL_SYNTHESIZE_AFTER_DAYS,
+			hasJudgmentTrails,
+			lastChoiceModel,
+			daysSinceLastChoiceModel,
+		};
 	}
 
 	async synthesizeChoiceModel(): Promise<ChoiceModelUpdateResult> {
