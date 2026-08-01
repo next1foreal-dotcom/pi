@@ -167,6 +167,7 @@ export interface FeedbackResult {
 	rule: string;
 	weight: number;
 	status: "active" | "stale";
+	commit: string;
 }
 
 export interface ChoiceRuleEvidence {

@@ -407,7 +407,20 @@ export class Memory {
 				status: choiceRuleRuntimeStatus(item, at),
 			}));
 			await writeText(path, renderChoiceRuleFile(domain, renderedRules));
-			return { domain, path, rule: record.rule, weight: record.weight, status: choiceRuleRuntimeStatus(record, at) };
+			// Commit immediately (G-170): an uncommitted feedback write can sit in the working tree for
+			// weeks until a generic sync sweeps it up, leaving the exposure window where git-level
+			// operations (checkout/autocrlf rewrite) can destroy it with no recoverable history.
+			await git(this.paths.root, "add", "--", `choice-model/${domain}.md`);
+			await git(this.paths.root, "commit", "-m", `memory(feedback): ${domain}`);
+			const commit = (await git(this.paths.root, "rev-parse", "--short", "HEAD")).stdout.trim();
+			return {
+				domain,
+				path,
+				rule: record.rule,
+				weight: record.weight,
+				status: choiceRuleRuntimeStatus(record, at),
+				commit,
+			};
 		});
 	}
 

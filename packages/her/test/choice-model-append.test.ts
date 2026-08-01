@@ -38,7 +38,7 @@ async function gitInitStore(): Promise<string> {
 // different rule, same domain) the working tree showed ONLY rule B — rule A's
 // id 155ee91e, weight 3, and evidence were gone.
 test("recordFeedback never drops an existing rule when a non-synonymous rule is recorded (8/1 accident replay)", async () => {
-	const store = await tempStore();
+	const store = await gitInitStore();
 	const memory = new Memory(store);
 
 	await memory.recordFeedback({
@@ -94,7 +94,7 @@ test("recordFeedback never drops an existing rule when a non-synonymous rule is 
 // byte-level condition: rule A's file as recordFeedback would have written it, then flipped to CRLF (as
 // git would do on this machine), then a second, different rule recorded on top.
 test("recordFeedback never drops an existing rule when its domain file has CRLF line endings (real accident mechanism)", async () => {
-	const store = await tempStore();
+	const store = await gitInitStore();
 	const path = join(store, "choice-model", "communication-tone.md");
 	const memory = new Memory(store);
 
@@ -173,7 +173,7 @@ test("recordFeedback refuses to write when an existing her-choice-rules marker f
 });
 
 test("recordFeedback accumulates weight and appends evidence for a synonymous rule instead of adding a new entry", async () => {
-	const store = await tempStore();
+	const store = await gitInitStore();
 	const memory = new Memory(store);
 
 	await memory.recordFeedback({
@@ -215,7 +215,7 @@ test("recordFeedback accumulates weight and appends evidence for a synonymous ru
 });
 
 test("rendering buckets a stale rule under Stale Rules and a fresh rule under Active Rules while retaining both in the JSON block", async () => {
-	const store = await tempStore();
+	const store = await gitInitStore();
 	const memory = new Memory(store);
 
 	// Rule A triggers once, 40 days before rule B is recorded -> stale relative to rule B's "now".
@@ -257,6 +257,47 @@ test("rendering buckets a stale rule under Stale Rules and a fresh rule under Ac
 	const activeRule = rules.find((item) => item.rule === "Warm neutrals over cool grays.");
 	assert.equal(staleRule?.status, "stale");
 	assert.equal(activeRule?.status, "active");
+});
+
+// G-170 follow-up: recordFeedback previously left its choice-model/<domain>.md write sitting
+// uncommitted in the working tree until some later, unrelated sync swept it up -- the real 8/1
+// incident's file sat unstaged for ~7 weeks, exposed to exactly the git-level rewrite
+// (checkout/autocrlf) that destroyed it. recordFeedback must now stage and commit its own write
+// before returning, the same way its synthesizeChoiceModel/synthesizeSelfNarrative/
+// writeContextUpdate siblings already do.
+test("recordFeedback commits its own write immediately instead of leaving it uncommitted", async () => {
+	const store = await gitInitStore();
+	const memory = new Memory(store);
+
+	const result = await memory.recordFeedback({
+		domain: "communication-tone",
+		task: "status summary",
+		diffSummary: "Lead with the verdict.",
+		rule: "Lead with the verdict before the background.",
+		at: "2026-08-02T00:00:00.000Z",
+	});
+
+	assert.equal((await git(store, "log", "-1", "--format=%s")).stdout.trim(), "memory(feedback): communication-tone");
+	assert.equal((await git(store, "status", "--porcelain", "--", "choice-model")).stdout.trim(), "");
+	assert.equal(result.commit, (await git(store, "rev-parse", "--short", "HEAD")).stdout.trim());
+});
+
+// A store whose root isn't a git repo at all must fail loud rather than silently succeed without
+// committing -- a silent success here would just reintroduce the uncommitted-write exposure
+// window under a different name (best-effort commit was explicitly ruled out for this reason).
+test("recordFeedback rejects when the store root is not a git repo", async () => {
+	const store = await tempStore();
+	const memory = new Memory(store);
+
+	await assert.rejects(() =>
+		memory.recordFeedback({
+			domain: "communication-tone",
+			task: "status summary",
+			diffSummary: "Lead with the verdict.",
+			rule: "Lead with the verdict before the background.",
+			at: "2026-08-02T00:00:00.000Z",
+		}),
+	);
 });
 
 // Choice model synthesis previously had no rhythm gate at all (G-170 #2): only two manual triggers
