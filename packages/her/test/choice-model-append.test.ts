@@ -85,6 +85,61 @@ test("recordFeedback never drops an existing rule when a non-synonymous rule is 
 	assert.match(file, /写状态摘要时：最重要的事实放第一句/);
 });
 
+// The 8/1 accident replay above is LF-only, which turned out not to be the real incident: this machine's
+// her-memory checkout runs with core.autocrlf=true, and git confirmed it will rewrite
+// choice-model/communication-tone.md to CRLF "the next time Git touches it" (checkout/reset/stash/a
+// concurrent session -- something git-level, not recordFeedback itself). recordFeedback's own writes are
+// always LF, which is exactly why inspecting the file's CURRENT bytes after the fact showed no CRLF
+// evidence: the bug's own next write erases the CRLF that caused it. This test reproduces that precise
+// byte-level condition: rule A's file as recordFeedback would have written it, then flipped to CRLF (as
+// git would do on this machine), then a second, different rule recorded on top.
+test("recordFeedback never drops an existing rule when its domain file has CRLF line endings (real accident mechanism)", async () => {
+	const store = await tempStore();
+	const path = join(store, "choice-model", "communication-tone.md");
+	const memory = new Memory(store);
+
+	await memory.recordFeedback({
+		domain: "communication-tone",
+		task: "B4 反馈学习验收：120 字以内中文 Her 项目状态摘要",
+		diffSummary:
+			"Fei 反馈第一版状态摘要仍像报告；不喜欢“目前/通过本地验证/仍只是”这类公文化表述。Evidence: B4 feedback round 1. Requested weight: 3.",
+		rule: "给 Fei 写状态摘要时，要更直接、更口语。第一句先说结论，再说下一步；避免“目前/通过本地验证/仍只是”等偏公文措辞。",
+		weight: 3,
+		at: "2026-06-13T10:32:18.792Z",
+	});
+
+	// Simulate git flipping the working-tree file to CRLF (core.autocrlf=true touching it via
+	// checkout/reset/stash/concurrent session) between rule A being recorded and rule B being recorded.
+	const lfContent = (await readText(path)) ?? "";
+	assert.doesNotMatch(lfContent, /\r\n/, "sanity: recordFeedback's own write must be pure LF before the flip");
+	await writeText(path, lfContent.replace(/\n/g, "\r\n"));
+
+	await memory.recordFeedback({
+		domain: "communication-tone",
+		task: "Her 项目今日进展摘要",
+		diffSummary:
+			'Fei 重写了进展摘要：最重要的事实前置（G-101 合入），砍掉过程叙事（"最近一轮代码合流"→"全部收进"，"踩坑后切到"→"定在"），砍掉工具名（BACKLOG），状态报事实不报安排（"已完成"而非"剩下的要等"），例行心跳当脚注收尾。',
+		rule: "写状态摘要时：最重要的事实放第一句，砍掉所有自述过程、工具名、未来安排；例行状态（心跳/同步）放到最后当脚注一句话。",
+		weight: 2,
+		at: "2026-08-01T18:02:30.696Z",
+	});
+
+	const file = (await readText(path)) ?? "";
+	const marker = /<!-- her-choice-rules\n([\s\S]*?)\n-->/.exec(file);
+	assert.ok(marker, "her-choice-rules marker block must be present");
+	const rules = JSON.parse(marker[1]) as Array<{ id: string; rule: string; weight: number; evidence: unknown[] }>;
+
+	assert.equal(rules.length, 2, "both rule A and rule B must survive a CRLF-touched domain file, not just an LF one");
+	const ruleA = rules.find((item) => item.rule.startsWith("给 Fei 写状态摘要时"));
+	assert.ok(ruleA, "rule A (155ee91e's content) must not be dropped when the file was CRLF");
+	assert.equal(ruleA?.weight, 3, "rule A's weight must be unchanged");
+	assert.equal(ruleA?.evidence.length, 1, "rule A's evidence must be unchanged");
+
+	const ruleB = rules.find((item) => item.id === "a36b2946");
+	assert.ok(ruleB, "rule B (a36b2946) must be recorded");
+	assert.equal(ruleB?.weight, 2);
+});
+
 // Defensive hardening: parseChoiceRuleRecords silently returns [] when the her-choice-rules JSON
 // block fails to parse (memory-utils.ts parseChoiceRuleRecords's catch-and-return-[] path). If that
 // ever happens to a domain file that already carries the marker (as opposed to a fresh seed file,
