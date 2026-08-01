@@ -6,6 +6,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# node emits UTF-8 stdout; PowerShell 5.1 would otherwise decode captured
+# native output with the OEM code page, mojibaking Chinese memory paths in
+# the outbox report.
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
 function Resolve-HerRepoRoot {
     if ($RepoRoot) {
         return (Resolve-Path -LiteralPath $RepoRoot).Path
@@ -104,6 +109,9 @@ function Invoke-HeartbeatCommand {
     param([string]$Command, [int]$Timeout)
     $job = Start-Job -ScriptBlock {
         param($CommandText, $WorkingDirectory, $Memory, $CedarProfile)
+        # This job runs in a fresh powershell.exe process with its own
+        # console encoding, so it needs the same UTF-8 guard.
+        [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
         Set-Location -LiteralPath $WorkingDirectory
         $env:HER_MEMORY_DIR = $Memory
         $env:HER_CEDAR_PROFILE = $CedarProfile
@@ -163,6 +171,25 @@ function Clear-HeartbeatFailures {
     if (Test-Path -LiteralPath $script:HeartbeatFailureFile) {
         Remove-Item -LiteralPath $script:HeartbeatFailureFile -Force
     }
+}
+
+function Write-HerRunEnvelope {
+    param(
+        [string]$RunId,
+        [string]$Status,
+        [string]$Title
+    )
+    $append = Join-Path $PSScriptRoot "append-run-event.mjs"
+    if (-not (Test-Path -LiteralPath $append)) {
+        return
+    }
+    & node $append `
+        --memory $script:MemoryDir `
+        --run-id $RunId `
+        --status $Status `
+        --kind longtask `
+        --source heartbeat `
+        --title $Title 2>$null | Out-Null
 }
 
 function Register-HeartbeatFailure {
@@ -226,6 +253,7 @@ $previousCedarProfile = $env:HER_CEDAR_PROFILE
 $env:HER_CEDAR_PROFILE = "heartbeat"
 
 try {
+$heartbeatRunId = $null
 $stopFile = Join-Path $script:MemoryDir "STOP"
 if (Test-Path -LiteralPath $stopFile) {
     Write-Output "Her heartbeat stopped: STOP file exists at $stopFile"
@@ -236,6 +264,8 @@ $outbox = Join-Path $script:MemoryDir "outbox"
 New-Item -ItemType Directory -Force -Path $outbox | Out-Null
 
 $stamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH-mm-ssZ")
+$heartbeatRunId = "heartbeat-$stamp"
+Write-HerRunEnvelope -RunId $heartbeatRunId -Status "running" -Title "Heartbeat $stamp"
 $runFile = Join-Path $outbox "$stamp-heartbeat.md"
 $piCommand = $env:HER_HEARTBEAT_PI_COMMAND
 $dryRun = $env:HER_HEARTBEAT_DRY_RUN -eq "1"
@@ -281,6 +311,7 @@ Invoke-HerHeartbeatJournal -RunFile $runFile -Stamp $stamp
 if ($dryRun) {
     Add-Content -LiteralPath $runFile -Encoding UTF8 -Value "`nDry run enabled; sync skipped."
     Clear-HeartbeatFailures
+    Write-HerRunEnvelope -RunId $heartbeatRunId -Status "done" -Title "Heartbeat dry run $stamp"
     Write-Output "Her heartbeat dry run complete: $runFile"
     exit 0
 }
@@ -291,8 +322,13 @@ Invoke-HerCli -Args @("sync", "--message", "memory(sync): heartbeat $stamp", "--
     Add-Content -LiteralPath $runFile -Encoding UTF8
 
 Clear-HeartbeatFailures
+Write-HerRunEnvelope -RunId $heartbeatRunId -Status "done" -Title "Heartbeat $stamp"
 Write-Output "Her heartbeat complete: $runFile"
 } catch {
+    if ($heartbeatRunId) {
+        $failTitle = if ($stamp) { "Heartbeat failed $stamp" } else { "Heartbeat failed" }
+        Write-HerRunEnvelope -RunId $heartbeatRunId -Status "failed" -Title $failTitle
+    }
     Register-HeartbeatFailure -Message $_.Exception.Message
     throw
 } finally {
