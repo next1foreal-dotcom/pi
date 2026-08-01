@@ -17,6 +17,7 @@ import { writeSamanthaJournal, writeSamanthaTasteJudgment, writeSamanthaZoneNote
 import { SEED_CHOICE_MODEL, SEED_CONTEXT, SEED_SELF_NARRATIVE, SEED_SOUL } from "./memory-seeds.ts";
 import type {
 	CaptureMeta,
+	ChoiceModelSynthesizeDueResult,
 	ChoiceModelUpdateResult,
 	ChoiceRuleRecord,
 	ConsolidateResult,
@@ -47,6 +48,8 @@ import type {
 	WorldNoteData,
 } from "./memory-types.ts";
 import {
+	CHOICE_MODEL_SYNTHESIZE_AFTER_DAYS,
+	CHOICE_RULES_MARKER,
 	changedAfter,
 	choiceModelLogBlock,
 	choiceRuleRuntimeStatus,
@@ -178,6 +181,7 @@ export { SEED_CHOICE_MODEL, SEED_CONTEXT, SEED_SELF_NARRATIVE, SEED_SOUL } from 
 export type {
 	CaptureMeta,
 	ChoiceModelDomain,
+	ChoiceModelSynthesizeDueResult,
 	ChoiceModelUpdateResult,
 	ClaimLedgerEntry,
 	ConsolidateResult,
@@ -359,7 +363,18 @@ export class Memory {
 			const at = fields.at ?? new Date().toISOString();
 			await mkdir(this.paths.choiceModelDir, { recursive: true });
 			const path = join(this.paths.choiceModelDir, `${domain}.md`);
-			const existing = parseChoiceRuleRecords((await readText(path)) ?? "");
+			const raw = (await readText(path)) ?? "";
+			const existing = parseChoiceRuleRecords(raw);
+			// Never lose existing rules (G-170): a fresh/seeded domain file legitimately has no
+			// her-choice-rules marker at all, so existing.length === 0 is normal there. But if the marker
+			// IS present and still parses to zero records, parseChoiceRuleRecords swallowed a JSON error
+			// (memory-utils.ts's catch-and-return-[] path) — proceeding would silently overwrite whatever
+			// rules that marker used to hold with just the one new rule. Fail loud instead.
+			if (existing.length === 0 && raw.includes(CHOICE_RULES_MARKER)) {
+				throw new Error(
+					`recordFeedback: ${path} has a her-choice-rules marker that failed to parse; refusing to write (would silently discard existing rules)`,
+				);
+			}
 			const key = normalizeChoiceRule(rule);
 			const found = existing.find((item) => normalizeChoiceRule(item.rule) === key);
 			const evidence = { at, task, diff_summary: diffSummary };
@@ -758,6 +773,31 @@ export class Memory {
 			}
 			return written;
 		});
+	}
+
+	// Rhythm gate for synthesizeChoiceModel() (G-170): mirrors synthesizeDue()'s shape (days-since-last
+	// check plus a "is there anything to distill" check) but combines them with AND rather than
+	// synthesizeDue()'s OR, per the G-170 task packet's explicit spec. hasJudgmentTrails uses the exact
+	// same choiceModelJudgmentTrails() precondition synthesizeChoiceModel() itself throws without, so a
+	// `due: true` result can always be safely followed by calling synthesizeChoiceModel().
+	async choiceModelSynthesizeDue(): Promise<ChoiceModelSynthesizeDueResult> {
+		const state = await readJson<{ last_choice_model?: string | null }>(this.paths.stateFile, {});
+		const lastChoiceModel = typeof state.last_choice_model === "string" ? state.last_choice_model : undefined;
+		const lastTime = parseDate(lastChoiceModel);
+		const daysSinceLastChoiceModel = daysSince(lastTime);
+		const rhythmDue =
+			lastTime === undefined ||
+			(daysSinceLastChoiceModel ?? Number.POSITIVE_INFINITY) >= CHOICE_MODEL_SYNTHESIZE_AFTER_DAYS;
+
+		const hasJudgmentTrails = (await this.choiceModelJudgmentTrails()).length > 0;
+
+		return {
+			due: rhythmDue && hasJudgmentTrails,
+			thresholdDays: CHOICE_MODEL_SYNTHESIZE_AFTER_DAYS,
+			hasJudgmentTrails,
+			lastChoiceModel,
+			daysSinceLastChoiceModel,
+		};
 	}
 
 	async synthesizeChoiceModel(): Promise<ChoiceModelUpdateResult> {

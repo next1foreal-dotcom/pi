@@ -273,6 +273,14 @@ export interface ChoiceModelUpdateResult {
 	commit: string;
 }
 
+export interface ChoiceModelSynthesizeDueResult {
+	due: boolean;
+	thresholdDays: number;
+	hasJudgmentTrails: boolean;
+	lastChoiceModel?: string;
+	daysSinceLastChoiceModel?: number;
+}
+
 export interface SelfNarrativeUpdateResult {
 	id: string;
 	commit: string;

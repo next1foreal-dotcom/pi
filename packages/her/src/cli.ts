@@ -794,10 +794,27 @@ export async function runHerCli(
 		return payload.status.status === "unknown" ? 1 : 0;
 	}
 
+	// G-170: give choice model synthesis the same automatic rhythm narrative synthesis gets from its own
+	// --if-due CLI flag, but on the routine sync path instead of a separately-scheduled command --
+	// choiceModelSynthesizeDue() only ever says due when synthesizeChoiceModel() has evidence to act on.
+	// Durability first (acceptance ruling): a synthesis failure must never block the underlying git sync,
+	// so it gets its own try/catch, isolated from memory.sync()'s. synthesizeChoiceModel() only writes
+	// state.last_choice_model after its model call succeeds, so a failure here naturally leaves it unset
+	// and the next sync round retries. The command still exits non-zero overall so the failure isn't lost.
+	let choiceModelSynthesisError: string | undefined;
+	try {
+		const choiceModelDue = await memory.choiceModelSynthesizeDue();
+		if (choiceModelDue.due) await memory.synthesizeChoiceModel();
+	} catch (error) {
+		choiceModelSynthesisError = errorMessage(error);
+		writeLine(io.stderr, `Her choice model synthesis failed (sync continuing): ${choiceModelSynthesisError}`);
+	}
+
 	try {
 		const result = await memory.sync(command.message ?? `memory(sync): cli ${new Date().toISOString()}`);
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderSync);
+		if (choiceModelSynthesisError) return 1;
 		return payload.status.status === "unknown" ? 1 : 0;
 	} catch (error) {
 		writeLine(io.stderr, `Her memory sync failed: ${errorMessage(error)}`);

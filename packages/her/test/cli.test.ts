@@ -10,7 +10,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { runHerCli } from "../src/cli.ts";
-import { initStore, Memory, parseFrontmatter, readText } from "../src/her-core/index.ts";
+import { initStore, Memory, parseFrontmatter, readJson, readText } from "../src/her-core/index.ts";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
@@ -1733,6 +1733,64 @@ test("CLI synthesizes choice model as JSON", async () => {
 			assert.equal(prompts.length, 1);
 		},
 	);
+});
+
+// G-170 item C (acceptance ruling): a choice model synthesis failure during the automatic sync-path
+// due-check must never block the underlying memory.sync() -- durability first. cli.ts isolates the
+// due-check+synthesize call in its own try/catch: on failure it prints loudly to stderr, still runs
+// memory.sync(), and the command exits non-zero overall (even though sync itself succeeded) so the
+// failure is never silently lost.
+test("CLI sync completes and reports failure when choice model synthesis errors, without advancing last_choice_model", async () => {
+	const { store, remote } = await gitBackedStore();
+	const memory = new Memory(store);
+	const noteId = await memory.writeWorldNote({
+		title: "Sync Isolation Fixture",
+		sourceUrl: "https://example.com/sync-isolation",
+		sourceType: "article",
+		contentHash: "sync-isolation-fixture",
+		memoryStatus: "active",
+		extracted: "Evidence exists so choiceModelSynthesizeDue() is due.",
+		coverage: "Read short fixture.",
+		read: "Noted.",
+		steal: [],
+		connections: [],
+		take: "Used to force a due synthesis that then fails.",
+		possibleMoves: [],
+	});
+	await memory.recordJudgment(noteId, {
+		choice: "keep",
+		correction: "Force synthesizeChoiceModel to have evidence to act on.",
+	});
+	await git(store, "add", "-A");
+	await git(store, "commit", "-m", "memory: judgment fixture");
+	// Something dirty for memory.sync() to actually commit+push, so "sync still completes" is a
+	// meaningful assertion (otherwise sync would legitimately report "clean" with nothing to do).
+	await memory.remember("Sync should still commit and push this despite the synthesis failure.", "note");
+
+	await withLocalChatModel(
+		() => {
+			throw new Error("model backend unavailable");
+		},
+		async (modelEnv) => {
+			const failure = await runCliFailure(
+				["sync", "--message", "memory(sync): cli isolation test", "--json"],
+				store,
+				modelEnv,
+			);
+			assert.notEqual(failure.code, 0, "the command must exit non-zero overall");
+			assert.match(failure.stderr, /choice model synthesis failed \(sync continuing\)/i);
+			assert.match(failure.stderr, /HTTP 500/);
+
+			// The sync itself must still have completed despite the synthesis failure.
+			const payload = JSON.parse(failure.stdout);
+			assert.equal(payload.result.status, "pushed");
+			assert.equal((await git(store, "status", "--porcelain")).stdout.trim(), "");
+			assert.match((await git(remote, "log", "--oneline", "-1")).stdout, /memory\(sync\): cli isolation test/);
+		},
+	);
+
+	const state = await readJson<{ last_choice_model?: string }>(join(store, ".her", "state.json"), {});
+	assert.equal(state.last_choice_model, undefined, "a failed synthesis must not advance last_choice_model");
 });
 
 test("CLI synthesizes Samantha self narrative as JSON", async () => {
