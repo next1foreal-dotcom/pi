@@ -11,7 +11,7 @@ import { CuaCliDriver } from "./hands/driver.ts";
 import { resolveHandsConfig } from "./hands/policy.ts";
 import { registerHandsTools } from "./hands/tools.ts";
 import { registerHerActTools } from "./her-actions/tools.ts";
-import { formatOwnerTakeoverNote, sortEventsByOwner } from "./her-core/bg-task-owner.ts";
+import { formatOwnerTakeoverNote } from "./her-core/bg-task-owner.ts";
 import {
 	EVENT_WAKE_SPAWN_REFUSAL,
 	eventWakeSpawnBlocked,
@@ -698,7 +698,9 @@ export default function her(pi: ExtensionAPI): void {
 		if (!ctx || !ctx.isIdle() || ctx.hasPendingMessages()) return false;
 		let events: Awaited<ReturnType<typeof reconcileBgTasks>>;
 		try {
-			events = await reconcileBgTasks(memoryDir);
+			// G-185/S1b — reconcile claims ownership-aware: another session's fresh terminal task
+			// advances its status but yields no event here, so this poller never burns her wake.
+			events = await reconcileBgTasks(memoryDir, { sessionId: ctx.sessionManager.getSessionId() });
 		} catch (error) {
 			console.warn(`[her] event-wake reconcile skipped: ${errorMessage(error)}`);
 			return false;
@@ -713,21 +715,6 @@ export default function her(pi: ExtensionAPI): void {
 			}
 		}
 		const now = new Date();
-		// G-185/S1 owner-first — a task spawned by another session is left to that session's
-		// poller until the grace window lapses; ownerless tasks keep the G-132 first-come
-		// behavior. Pure sorting on top of the batch: lease/notifiedAt/wake-ledger untouched.
-		const mySessionId = ctx.sessionManager.getSessionId();
-		const sorted = await sortEventsByOwner(memoryDir, events, mySessionId, now);
-		if (sorted.deferred.length > 0) {
-			pi.appendEntry("her-state", {
-				phase: "G-185",
-				status: "event-wake-deferred",
-				taskIds: sorted.deferred,
-				sessionId: mySessionId,
-				memoryDir,
-			});
-		}
-		if (sorted.deliver.length === 0) return false;
 		let gate: Awaited<ReturnType<typeof shouldEventWake>>;
 		try {
 			gate = await shouldEventWake(memoryDir, runtime.tasks, now);
@@ -739,13 +726,16 @@ export default function her(pi: ExtensionAPI): void {
 			console.warn(`[her] event-wake gated: ${gate.reason}`);
 			return false;
 		}
-		const ids = sorted.deliver.map((e) => e.taskId);
+		const ids = events.map((e) => e.taskId);
+		// G-185/S1b — reconcile already decided who claims; here we only say so when this
+		// session stood in for an owner that never came back.
+		const takeoverNote = formatOwnerTakeoverNote(events.filter((e) => e.takenOver).map((e) => e.taskId));
 		wakeTurnActive = true;
 		try {
 			pi.sendMessage(
 				{
 					customType: "her-task-wake",
-					content: `${formatWakeMessage(sorted.deliver)}${formatOwnerTakeoverNote(sorted.takenOver)}\n\n${WAKE_TURN_BOUNDARY}`,
+					content: `${formatWakeMessage(events)}${takeoverNote}\n\n${WAKE_TURN_BOUNDARY}`,
 					display: true,
 					details: { taskIds: ids, pinned: true, memoryDir },
 				},
@@ -818,10 +808,13 @@ export default function her(pi: ExtensionAPI): void {
 		let systemPrompt = composeSystemPrompt(event.systemPrompt, context, facts, soul, self, choiceModel);
 		// G-120…123: reconcile → wake inject → Telegram outbox → TUI board.
 		try {
-			const wakeEvents = await reconcileBgTasks(memoryDir);
+			// G-185/S1b — same ownership filter as the idle poller: a turn starting in this
+			// session must not consume (or inject) another session's task events either.
+			const wakeEvents = await reconcileBgTasks(memoryDir, { sessionId: ctx.sessionManager.getSessionId() });
 			const wakeBlock = formatWakeMessage(wakeEvents);
 			if (wakeBlock) {
-				systemPrompt = `${systemPrompt}\n\n${wakeBlock}`;
+				const takeoverNote = formatOwnerTakeoverNote(wakeEvents.filter((e) => e.takenOver).map((e) => e.taskId));
+				systemPrompt = `${systemPrompt}\n\n${wakeBlock}${takeoverNote}`;
 			}
 			const runtime = loadRuntimeConfig(memoryDir);
 			if (runtime.tasks.telegramNotify && wakeEvents.length > 0) {

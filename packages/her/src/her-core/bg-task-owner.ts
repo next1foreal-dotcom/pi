@@ -1,38 +1,41 @@
 /**
- * G-185/S1 — owner-first wake sorting (pure; pi-agnostic).
+ * G-185/S1 — owner-first wake ownership (pure; pi-agnostic).
  *
- * A background task now records the session that spawned it (`ownerSessionId`).
- * When its terminal event lands, that session's poller should be the one woken,
- * instead of whichever live session happened to reconcile first. This module owns
- * only the sorting decision:
- *   - shouldDeferToOwner: is this event another session's to deliver (for now)?
- *   - isOwnerTakeover: am I delivering it only because the owner never showed up?
- *   - sortEventsByOwner: split one reconcile batch into deliver / deferred.
+ * A background task records the session that spawned it (`ownerSessionId`). When its
+ * terminal event lands, that session should be the one woken, instead of whichever
+ * live session happened to reconcile first.
  *
- * G-132's lease + notifiedAt + wake-ledger are untouched — this is a pre-send
- * filter on the event batch, not a second dedup mechanism.
+ * This module is the single authority for that verdict. `classifyOwnerWake` is consumed
+ * at the reconcile claim point (G-185/S1b), where stamping `notifiedAt` and emitting a
+ * WakeEvent happen together and only for a session allowed to claim. A session that
+ * defers still advances the task's status but leaves it unstamped, so the owner's next
+ * pass finds the event waiting: letting an event pass never burns it.
  *
- * Failure direction is fixed: when ownership or timing cannot be read (record
- * missing, timestamps unparseable) we deliver rather than defer. A wake landing
- * in the wrong session is recoverable; silence is not.
+ * Failure direction is fixed: when ownership timing cannot be read (timestamps
+ * unparseable) we claim rather than defer. A wake landing in the wrong session is
+ * recoverable; silence is not.
  */
 
-import type { WakeEvent } from "./bg-task-reconcile.ts";
-import { type BgTaskRecord, loadBgTask } from "./bg-task-record.ts";
+import type { BgTaskRecord } from "./bg-task-record.ts";
 
 /** 垫的 (spec §垫的): owner 会话 10 分钟内没接手 → 任何会话可代送。 */
 export const OWNER_WAKE_GRACE_MS = 10 * 60 * 1000;
 
-type OwnerVerdict = "own" | "defer" | "takeover";
+/**
+ * - `own` — mine, or ownerless (legacy records / foreground spawns): claim immediately.
+ * - `defer` — another session's, still inside the grace window: advance state, claim nothing.
+ * - `takeover` — another session's, past the grace window: claim it, and say so in the wake.
+ */
+export type OwnerWakeVerdict = "own" | "defer" | "takeover";
 
 function ownerOf(record: BgTaskRecord): string {
 	return typeof record.ownerSessionId === "string" ? record.ownerSessionId.trim() : "";
 }
 
 /**
- * Anchor for the grace clock. `endedAt` is the terminal moment; `created` is the
- * stable fallback. `updated` is deliberately not used — reconcile bumps it on every
- * lease write, so a takeover anchored on it would never fire.
+ * Anchor for the grace clock. `endedAt` is the terminal moment; `created` is the stable
+ * fallback. `updated` is deliberately not used — reconcile bumps it on every lease write,
+ * so a takeover anchored on it would never fire.
  */
 function graceAnchorMs(record: BgTaskRecord): number | null {
 	for (const value of [record.endedAt, record.created]) {
@@ -43,7 +46,16 @@ function graceAnchorMs(record: BgTaskRecord): number | null {
 	return null;
 }
 
-function classify(record: BgTaskRecord, mySessionId: string | undefined, nowMs: number): OwnerVerdict {
+/**
+ * Who may claim this task's terminal event right now. `mySessionId` undefined = the caller
+ * is not a live session (headless reconcile): it may claim ownerless work immediately, and
+ * owned work only once the owner's grace window has lapsed.
+ */
+export function classifyOwnerWake(
+	record: BgTaskRecord,
+	mySessionId: string | undefined,
+	nowMs: number,
+): OwnerWakeVerdict {
 	const owner = ownerOf(record);
 	if (!owner) return "own"; // ownerless (legacy record / 前台自建) — 现状: 先到先得
 	if (mySessionId && owner === mySessionId) return "own";
@@ -54,57 +66,16 @@ function classify(record: BgTaskRecord, mySessionId: string | undefined, nowMs: 
 
 /** True when the event belongs to another session's poller (still inside the grace window). */
 export function shouldDeferToOwner(record: BgTaskRecord, mySessionId: string | undefined, nowMs: number): boolean {
-	return classify(record, mySessionId, nowMs) === "defer";
+	return classifyOwnerWake(record, mySessionId, nowMs) === "defer";
 }
 
-/** True when this session delivers another session's task because its owner never picked it up. */
+/** True when this session claims another session's task because its owner never picked it up. */
 export function isOwnerTakeover(record: BgTaskRecord, mySessionId: string | undefined, nowMs: number): boolean {
-	return classify(record, mySessionId, nowMs) === "takeover";
+	return classifyOwnerWake(record, mySessionId, nowMs) === "takeover";
 }
 
 /** Annotation appended to the wake message when this session delivers for a gone owner. */
 export function formatOwnerTakeoverNote(taskIds: string[]): string {
 	if (taskIds.length === 0) return "";
 	return `\n(owner session 已不在,代送: ${taskIds.join(", ")})`;
-}
-
-export type OwnerWakeSort = {
-	/** Events this session should wake on. */
-	deliver: WakeEvent[];
-	/** Task ids left to their owner session's poller this round. */
-	deferred: string[];
-	/** Delivered ids whose owner never showed up — annotated in the wake message. */
-	takenOver: string[];
-};
-
-/**
- * Split a reconcile batch by ownership. A record that fails to load is delivered
- * (treated as ownerless) — see the failure-direction note above.
- */
-export async function sortEventsByOwner(
-	memoryRoot: string,
-	events: WakeEvent[],
-	mySessionId: string | undefined,
-	now: Date = new Date(),
-): Promise<OwnerWakeSort> {
-	const nowMs = now.getTime();
-	const deliver: WakeEvent[] = [];
-	const deferred: string[] = [];
-	const takenOver: string[] = [];
-	for (const event of events) {
-		let record: BgTaskRecord | undefined;
-		try {
-			record = (await loadBgTask(memoryRoot, event.taskId))?.record;
-		} catch {
-			record = undefined;
-		}
-		const verdict = record ? classify(record, mySessionId, nowMs) : "own";
-		if (verdict === "defer") {
-			deferred.push(event.taskId);
-			continue;
-		}
-		if (verdict === "takeover") takenOver.push(event.taskId);
-		deliver.push(event);
-	}
-	return { deliver, deferred, takenOver };
 }

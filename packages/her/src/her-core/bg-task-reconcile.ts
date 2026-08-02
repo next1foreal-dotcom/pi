@@ -8,6 +8,7 @@ import { hostname as osHostname } from "node:os";
 import { join } from "node:path";
 import { loadRuntimeConfig } from "./bg-task-config.ts";
 import { truncateTaskLogIfNeeded } from "./bg-task-log.ts";
+import { classifyOwnerWake, type OwnerWakeVerdict } from "./bg-task-owner.ts";
 import {
 	type BgTaskRecord,
 	isoNow,
@@ -34,11 +35,18 @@ export type WakeEvent = {
 	retrySkipped?: string;
 	worktreeRemoved?: boolean;
 	worktreeKept?: string;
+	/** G-185/S1b — claimed by a non-owner session after the owner's grace window lapsed. */
+	takenOver?: boolean;
 };
 
 export type ReconcileOptions = {
 	hostname?: string;
 	now?: Date;
+	/**
+	 * G-185/S1b — identity of the reconciling session, for owner-first claiming. Absent means
+	 * "not a live session": ownerless work is claimable at once, owned work only after grace.
+	 */
+	sessionId?: string;
 	heartbeatSeconds?: number;
 	staleMultiplier?: number;
 	launchGraceSeconds?: number;
@@ -158,6 +166,9 @@ export async function reconcileBgTasks(memoryRoot: string, options: ReconcileOpt
 	const pidAlive = options.pidAlive ?? defaultPidAlive;
 	const stopTaskFn = options.stopTaskFn ?? stopTask;
 	const staleLimit = heartbeatSeconds * staleMultiplier;
+	// G-185/S1b — ownership verdict for the claim point. Single authority: bg-task-owner.ts.
+	const verdictOf = (record: BgTaskRecord): OwnerWakeVerdict =>
+		classifyOwnerWake(record, options.sessionId, now.getTime());
 	const events: WakeEvent[] = [];
 
 	for (const name of names.sort()) {
@@ -178,6 +189,14 @@ export async function reconcileBgTasks(memoryRoot: string, options: ReconcileOpt
 
 		// Terminal already notified → no lease needed
 		if (isTerminal(record.status) && record.notifiedAt) {
+			continue;
+		}
+
+		// G-185/S1b — a terminal event owned by another live session is left unclaimed and
+		// unleased so its owner's next pass produces the wake. Skipping here (rather than
+		// after the lease) also keeps a foreign poller from churning lease writes every cycle.
+		// Everything gated on the claim — cost settlement, worktree cleanup, retry — waits with it.
+		if (isTerminal(record.status) && verdictOf(record) === "defer") {
 			continue;
 		}
 
@@ -212,6 +231,7 @@ export async function reconcileBgTasks(memoryRoot: string, options: ReconcileOpt
 			launchGraceSeconds,
 			pidAlive,
 			stopTaskFn,
+			verdictOf,
 		});
 
 		let finalRecord = result.record ? clearLease(result.record) : clearLease(recheck.record);
@@ -260,6 +280,10 @@ export async function reconcileBgTasks(memoryRoot: string, options: ReconcileOpt
 						...(isWorkerMode
 							? { worker: result.record.worker, brief: parentBrief }
 							: { command: result.record.command }),
+						// G-185/S1b — a retry belongs to the parent's owner, so its own wake comes home too.
+						...(typeof result.record.ownerSessionId === "string" && result.record.ownerSessionId
+							? { ownerSessionId: result.record.ownerSessionId }
+							: {}),
 						parentTask: result.record.id,
 						retries: Number(result.record.retries ?? 0) + 1,
 						skipGates: true,
@@ -349,22 +373,43 @@ async function mayNeedReconcile(
 	return age > ctx.launchGraceSeconds;
 }
 
+type ReconcileOneCtx = {
+	hostname: string;
+	now: Date;
+	staleLimit: number;
+	launchGraceSeconds: number;
+	pidAlive: (pid: number) => boolean;
+	stopTaskFn: (taskDir: string, id: string) => Promise<"stopped" | "already_gone">;
+	verdictOf: (record: BgTaskRecord) => OwnerWakeVerdict;
+};
+
+/**
+ * G-185/S1b — the claim point. Reaching a terminal state and claiming its wake used to be
+ * one act; they are now two. The status transition always lands, but `notifiedAt` (the
+ * G-132 exactly-once stamp) and the WakeEvent are placed only by a session entitled to
+ * claim. A deferring session therefore advances the record without consuming the event —
+ * the owner's next reconcile still finds it unstamped. Concurrency is the existing lease's
+ * job: two eligible sessions serialize on it, the first stamps, the second short-circuits
+ * on `notifiedAt`.
+ */
+function claim(record: BgTaskRecord, ctx: ReconcileOneCtx): { event: WakeEvent | null; record: BgTaskRecord } {
+	const verdict = ctx.verdictOf(record);
+	if (verdict === "defer") return { event: null, record };
+	const notified = { ...record, notifiedAt: isoNow(ctx.now) };
+	return { event: wakeFrom(notified, verdict === "takeover"), record: notified };
+}
+
 async function reconcileOne(
 	record: BgTaskRecord,
 	dir: string,
-	ctx: {
-		hostname: string;
-		now: Date;
-		staleLimit: number;
-		launchGraceSeconds: number;
-		pidAlive: (pid: number) => boolean;
-		stopTaskFn: (taskDir: string, id: string) => Promise<"stopped" | "already_gone">;
-	},
+	ctx: ReconcileOneCtx,
 ): Promise<{ event: WakeEvent | null; record: BgTaskRecord | null }> {
 	if (isTerminal(record.status)) {
 		if (record.notifiedAt) return { event: null, record: null };
-		const notified = { ...record, notifiedAt: isoNow(ctx.now), updated: isoNow(ctx.now) };
-		return { event: wakeFrom(notified), record: notified };
+		const claimed = claim({ ...record, updated: isoNow(ctx.now) }, ctx);
+		// Deferred: nothing to write — the record keeps its state and its empty notifiedAt.
+		if (!claimed.event) return { event: null, record: null };
+		return { event: claimed.event, record: claimed.record };
 	}
 
 	if (record.status !== "pending" && record.status !== "running") {
@@ -379,30 +424,21 @@ async function reconcileOne(
 	const deadline = parseIso(record.deadlineAt);
 	if (deadline && ctx.now.getTime() > deadline.getTime()) {
 		await ctx.stopTaskFn(dir, record.id);
-		const updated = {
-			...migrateBgStatus(record, "failed", { endedAt: isoNow(ctx.now), failureReason: "timeout" }, isoNow(ctx.now)),
-			notifiedAt: isoNow(ctx.now),
-		};
-		return { event: wakeFrom(updated), record: updated };
+		return claim(
+			migrateBgStatus(record, "failed", { endedAt: isoNow(ctx.now), failureReason: "timeout" }, isoNow(ctx.now)),
+			ctx,
+		);
 	}
 
 	const done = await readJson(join(dir, `${record.id}.done`));
 	if (done) {
 		const exitCode = Number(done.exitCode ?? -1);
 		const endedAt = typeof done.endedAt === "string" ? done.endedAt : isoNow(ctx.now);
-		let updated: BgTaskRecord;
-		if (exitCode === 0) {
-			updated = migrateBgStatus(record, "completed", { endedAt, exitCode }, isoNow(ctx.now));
-		} else {
-			updated = migrateBgStatus(
-				record,
-				"failed",
-				{ endedAt, exitCode, failureReason: "nonzero_exit" },
-				isoNow(ctx.now),
-			);
-		}
-		updated = { ...updated, notifiedAt: isoNow(ctx.now) };
-		return { event: wakeFrom(updated), record: updated };
+		const updated =
+			exitCode === 0
+				? migrateBgStatus(record, "completed", { endedAt, exitCode }, isoNow(ctx.now))
+				: migrateBgStatus(record, "failed", { endedAt, exitCode, failureReason: "nonzero_exit" }, isoNow(ctx.now));
+		return claim(updated, ctx);
 	}
 
 	let beatAge: number | null = null;
@@ -430,32 +466,30 @@ async function reconcileOne(
 		if (runnerPid !== null && ctx.pidAlive(runnerPid)) {
 			return { event: null, record: null };
 		}
-		const updated = {
-			...migrateBgStatus(record, "failed", { endedAt: isoNow(ctx.now), failureReason: "orphaned" }, isoNow(ctx.now)),
-			notifiedAt: isoNow(ctx.now),
-		};
-		return { event: wakeFrom(updated), record: updated };
+		return claim(
+			migrateBgStatus(record, "failed", { endedAt: isoNow(ctx.now), failureReason: "orphaned" }, isoNow(ctx.now)),
+			ctx,
+		);
 	}
 
 	const created = parseIso(record.created);
 	const age = created ? (ctx.now.getTime() - created.getTime()) / 1000 : ctx.launchGraceSeconds + 1;
 	if (age > ctx.launchGraceSeconds) {
-		const updated = {
-			...migrateBgStatus(
+		return claim(
+			migrateBgStatus(
 				record,
 				"failed",
 				{ endedAt: isoNow(ctx.now), failureReason: "never_started" },
 				isoNow(ctx.now),
 			),
-			notifiedAt: isoNow(ctx.now),
-		};
-		return { event: wakeFrom(updated), record: updated };
+			ctx,
+		);
 	}
 
 	return { event: null, record: null };
 }
 
-function wakeFrom(record: BgTaskRecord): WakeEvent {
+function wakeFrom(record: BgTaskRecord, takenOver = false): WakeEvent {
 	return {
 		taskId: record.id,
 		status: record.status,
@@ -463,6 +497,7 @@ function wakeFrom(record: BgTaskRecord): WakeEvent {
 		...(record.failureReason ? { failureReason: String(record.failureReason) } : {}),
 		...(typeof record.exitCode === "number" ? { exitCode: record.exitCode } : {}),
 		...(typeof record.retryTaskId === "string" ? { retryTaskId: String(record.retryTaskId) } : {}),
+		...(takenOver ? { takenOver: true } : {}),
 	};
 }
 
