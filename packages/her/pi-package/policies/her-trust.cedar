@@ -34,3 +34,13 @@ permit(
   action == Action::"CallTool",
   resource == Tool::"her_task_spawn"
 );
+
+// G-187 追加 — Fei 拍板 2026-08-02: 派得出就该停得掉。her_task_stop 只杀她自己派的
+// 后台任务(stopBgTask 按 .her/tasks 的 id 定位,且跨主机的记录会拒停),不碰别的进程。
+// her_task_continue 已预批同款 permit,但要等 C2 把工具真造出来再落——不提前加空 permit。
+@id("permit_her_task_stop")
+permit(
+  principal == Agent::"samantha",
+  action == Action::"CallTool",
+  resource == Tool::"her_task_stop"
+);
