@@ -46,8 +46,10 @@ const child = spawn(cmd, args, {
 	env: { ...process.env, HER_TASK_ID: id },
 });
 
+// tmp+rename (same pattern as .done): the launcher already wrote a provisional .pid, and a
+// plain truncate+write here could expose a half-written file to a concurrent stopTask read.
 writeFileSync(
-	p("pid"),
+	p("pid.tmp"),
 	JSON.stringify(
 		{
 			runnerPid: process.pid,
@@ -58,6 +60,7 @@ writeFileSync(
 		2,
 	),
 );
+renameSync(p("pid.tmp"), p("pid"));
 
 const beat = () => {
 	try {

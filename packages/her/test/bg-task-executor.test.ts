@@ -83,6 +83,36 @@ test("T6: stop is idempotent", async () => {
 	assert.ok(second.result === "stopped" || second.result === "already_gone");
 });
 
+test("T6b: stop immediately after spawn kills the runner (no pid-file window)", async () => {
+	const root = await memoryRoot();
+	const result = await spawnBgTask(root, {
+		objective: "long",
+		command: [process.execPath, "-e", "setTimeout(()=>{}, 60000)"],
+		heartbeatMs: 1000,
+		skipGates: true,
+	});
+	assert.equal(result.status, "running");
+	// No sleep: stop lands inside the runner-boot window and must still kill the tree.
+	const stopped = await stopBgTask(root, result.id);
+	assert.equal(stopped.result, "stopped");
+	assert.equal(stopped.status, "cancelled");
+	const pid = JSON.parse(await readFile(join(tasksDir(root), `${result.id}.pid`), "utf8")) as {
+		runnerPid: number;
+	};
+	const start = Date.now();
+	for (;;) {
+		try {
+			process.kill(pid.runnerPid, 0);
+		} catch {
+			break; // runner gone — no orphan
+		}
+		if (Date.now() - start > 10_000) {
+			assert.fail(`runner ${pid.runnerPid} still alive after stop`);
+		}
+		await sleep(50);
+	}
+});
+
 test("T8: UTF-8 safe chunk read", () => {
 	// Chinese "测" is e6 b5 8b — split mid-sequence
 	const bytes = Buffer.from("ab测cd", "utf8");
