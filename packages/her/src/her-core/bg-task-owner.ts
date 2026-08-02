@@ -76,6 +76,22 @@ export function isOwnerTakeover(record: BgTaskRecord, mySessionId: string | unde
 	return classifyOwnerWake(record, mySessionId, nowMs) === "takeover";
 }
 
+/**
+ * G-188 — can a session running in this mode actually deliver a wake?
+ *
+ * Only a resident TUI session can: it is still there after the reconcile, with a next turn to
+ * wake into. Everything else is one-shot — pi `--print`/`--mode json` process one prompt and
+ * exit, and Studio spawns its RPC sessions per command (`pi-build.ts`: "Print mode is one-shot…
+ * we spawn it… send exactly one command… then close stdin"). A one-shot claimer stamps
+ * `notifiedAt`, exits holding the event, and the report is gone — which is exactly how G-148's
+ * deer report was swallowed. Studio's own wakes come from the S3 server watcher instead.
+ *
+ * Unknown modes read as "cannot deliver": waiting is recoverable, swallowing is not.
+ */
+export function canDeliverWake(mode: string): boolean {
+	return mode === "tui";
+}
+
 /** Annotation appended to the wake message when this session delivers for a gone owner. */
 export function formatOwnerTakeoverNote(taskIds: string[]): string {
 	if (taskIds.length === 0) return "";

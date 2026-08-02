@@ -6,7 +6,7 @@
 import { readdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { loadRuntimeConfig } from "./bg-task-config.ts";
-import { isTerminal, loadBgTask, tasksDir } from "./bg-task-record.ts";
+import { isTaskRecordFile, isTerminal, loadBgTask, tasksDir } from "./bg-task-record.ts";
 
 // G-129/D6 — .brief is a task attachment like .pid/.log: kept past terminal state (retries need
 // it) and purged in the same retention batch once retention_days has elapsed.
@@ -35,9 +35,18 @@ export async function purgeExpiredTaskArtifacts(
 	const out: RetentionPurge[] = [];
 
 	for (const name of names) {
-		if (!name.endsWith(".md")) continue;
+		// G-187 — same sidecar/corruption guard as the other `.her/tasks` scans. This one runs at
+		// the tail of every reconcile pass, so a throw here discards that pass's whole event list
+		// even though the records were already claimed and stamped.
+		if (!isTaskRecordFile(name)) continue;
 		const id = name.slice(0, -3);
-		const loaded = await loadBgTask(memoryRoot, id);
+		let loaded: Awaited<ReturnType<typeof loadBgTask>>;
+		try {
+			loaded = await loadBgTask(memoryRoot, id);
+		} catch (error) {
+			console.warn(`[her] skipping unreadable task record ${id}: ${error instanceof Error ? error.message : error}`);
+			continue;
+		}
 		if (!loaded || !isTerminal(loaded.record.status)) continue;
 
 		const ended =

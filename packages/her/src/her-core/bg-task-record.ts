@@ -57,6 +57,22 @@ export function taskMdPath(memoryRoot: string, id: string): string {
 	return join(tasksDir(memoryRoot), `${id}.md`);
 }
 
+/**
+ * G-187 — is this `.her/tasks` entry a task record (exactly `<taskId>.md`)?
+ *
+ * Sidecars share the directory and one of them also ends in `.md`: Codex's
+ * `--output-last-message` writes `<taskId>.result.md`. Task ids never contain a dot, so a
+ * second dot marks a sidecar. Scanning by `.endsWith(".md")` alone is not merely noisy —
+ * live fire (2026-08-02) parsed a `.result.md` as a record, threw "command must be a string
+ * array" out of the entire reconcile pass, and destroyed a wake the same pass had already
+ * stamped `notifiedAt` for. One sidecar took down every task's reconcile.
+ */
+export function isTaskRecordFile(name: string): boolean {
+	if (!name.endsWith(".md")) return false;
+	const id = name.slice(0, -3);
+	return id.length > 0 && !id.includes(".");
+}
+
 export function newTaskId(now = new Date()): string {
 	const y = now.getUTCFullYear();
 	const m = String(now.getUTCMonth() + 1).padStart(2, "0");

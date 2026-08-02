@@ -12,6 +12,7 @@ import { classifyOwnerWake, loadExternalDeliveries, type OwnerWakeVerdict } from
 import {
 	type BgTaskRecord,
 	isoNow,
+	isTaskRecordFile,
 	isTerminal,
 	loadBgTask,
 	migrateBgStatus,
@@ -47,6 +48,15 @@ export type ReconcileOptions = {
 	 * "not a live session": ownerless work is claimable at once, owned work only after grace.
 	 */
 	sessionId?: string;
+	/**
+	 * G-188 — may this session actually *deliver* a wake? A one-shot process (pi `--print`/
+	 * `--mode json`, or Studio's per-command RPC spawn) has no next turn to wake into: if it
+	 * claims, it stamps `notifiedAt` and then exits with the event in its hand, and the report
+	 * is gone for good. Such a session defers everything — including ownerless work — so a
+	 * resident session or the Studio watcher can deliver it later. Default true (a plain
+	 * reconcile keeps its old behavior); the extension sets it from `ctx.mode`.
+	 */
+	deliverable?: boolean;
 	heartbeatSeconds?: number;
 	staleMultiplier?: number;
 	launchGraceSeconds?: number;
@@ -208,8 +218,11 @@ export async function reconcileBgTasks(memoryRoot: string, options: ReconcileOpt
 	const stopTaskFn = options.stopTaskFn ?? stopTask;
 	const staleLimit = heartbeatSeconds * staleMultiplier;
 	// G-185/S1b — ownership verdict for the claim point. Single authority: bg-task-owner.ts.
+	// G-188 — a session that cannot deliver never claims: it advances state and leaves every
+	// announcement (owned and ownerless alike) to a session that has a next turn. Waiting is
+	// recoverable; a swallowed report is not.
 	const verdictOf = (record: BgTaskRecord): OwnerWakeVerdict =>
-		classifyOwnerWake(record, options.sessionId, now.getTime());
+		options.deliverable === false ? "defer" : classifyOwnerWake(record, options.sessionId, now.getTime());
 	// G-185/S5 — Studio's delivery book, read at most once per pass and only when a takeover
 	// is actually on the table (the common pass never touches runs/).
 	let externalIndex: Promise<Set<string>> | undefined;
@@ -225,9 +238,17 @@ export async function reconcileBgTasks(memoryRoot: string, options: ReconcileOpt
 	const events: WakeEvent[] = [];
 
 	for (const name of names.sort()) {
-		if (!name.endsWith(".md")) continue;
+		if (!isTaskRecordFile(name)) continue;
 		const id = name.slice(0, -3);
-		const loaded = await loadBgTask(memoryRoot, id);
+		// G-187 — one corrupt/half-written record must not take the whole pass down with it:
+		// records already claimed earlier in this pass would lose their events on the way out.
+		let loaded: Awaited<ReturnType<typeof loadBgTask>>;
+		try {
+			loaded = await loadBgTask(memoryRoot, id);
+		} catch (error) {
+			console.warn(`[her] skipping unreadable task record ${id}: ${error instanceof Error ? error.message : error}`);
+			continue;
+		}
 		if (!loaded) continue;
 		const { record, body } = loaded;
 

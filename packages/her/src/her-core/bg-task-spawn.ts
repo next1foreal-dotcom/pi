@@ -11,6 +11,7 @@ import {
 	createPendingRecord,
 	formatDisplayStatus,
 	isoNow,
+	isTaskRecordFile,
 	isTerminal,
 	loadBgTask,
 	migrateBgStatus,
@@ -383,8 +384,18 @@ export async function listBgTasks(
 	const hostname = filter?.hostname ?? osHostname();
 	const out: BgTaskListItem[] = [];
 	for (const name of names) {
-		if (!name.endsWith(".md")) continue;
-		const loaded = await loadBgTask(memoryRoot, name.slice(0, -3));
+		// G-187 — same sidecar guard as reconcile; a throw here would break the concurrency
+		// gate too, i.e. block every future spawn.
+		if (!isTaskRecordFile(name)) continue;
+		let loaded: Awaited<ReturnType<typeof loadBgTask>>;
+		try {
+			loaded = await loadBgTask(memoryRoot, name.slice(0, -3));
+		} catch (error) {
+			console.warn(
+				`[her] skipping unreadable task record ${name}: ${error instanceof Error ? error.message : error}`,
+			);
+			continue;
+		}
 		if (!loaded) continue;
 		if (want && !want.has(loaded.record.status)) continue;
 		out.push({

@@ -11,7 +11,7 @@ import { CuaCliDriver } from "./hands/driver.ts";
 import { resolveHandsConfig } from "./hands/policy.ts";
 import { registerHandsTools } from "./hands/tools.ts";
 import { registerHerActTools } from "./her-actions/tools.ts";
-import { formatOwnerTakeoverNote } from "./her-core/bg-task-owner.ts";
+import { canDeliverWake, formatOwnerTakeoverNote } from "./her-core/bg-task-owner.ts";
 import {
 	EVENT_WAKE_SPAWN_REFUSAL,
 	eventWakeSpawnBlocked,
@@ -702,7 +702,10 @@ export default function her(pi: ExtensionAPI): void {
 		try {
 			// G-185/S1b — reconcile claims ownership-aware: another session's fresh terminal task
 			// advances its status but yields no event here, so this poller never burns her wake.
-			events = await reconcileBgTasks(memoryDir, { sessionId: ctx.sessionManager.getSessionId() });
+			events = await reconcileBgTasks(memoryDir, {
+				sessionId: ctx.sessionManager.getSessionId(),
+				deliverable: canDeliverWake(ctx.mode),
+			});
 		} catch (error) {
 			console.warn(`[her] event-wake reconcile skipped: ${errorMessage(error)}`);
 			return false;
@@ -812,7 +815,10 @@ export default function her(pi: ExtensionAPI): void {
 		try {
 			// G-185/S1b — same ownership filter as the idle poller: a turn starting in this
 			// session must not consume (or inject) another session's task events either.
-			const wakeEvents = await reconcileBgTasks(memoryDir, { sessionId: ctx.sessionManager.getSessionId() });
+			const wakeEvents = await reconcileBgTasks(memoryDir, {
+				sessionId: ctx.sessionManager.getSessionId(),
+				deliverable: canDeliverWake(ctx.mode),
+			});
 			const wakeBlock = formatWakeMessage(wakeEvents);
 			if (wakeBlock) {
 				const takeoverNote = formatOwnerTakeoverNote(wakeEvents.filter((e) => e.takenOver).map((e) => e.taskId));
