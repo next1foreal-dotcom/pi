@@ -32,6 +32,8 @@ export type BgTaskRecord = {
 	parentTask?: string | null;
 	/** G-129/D8 — set once a terminal task's reserved budget has been posted to the cost ledger. */
 	costSettledAt?: string;
+	/** G-185/S1 — session that spawned this task; absent = ownerless (legacy records, foreground spawns). */
+	ownerSessionId?: string;
 	[key: string]: unknown;
 };
 
@@ -142,6 +144,7 @@ export function createPendingRecord(input: {
 	retries?: number;
 	worktree?: string | null;
 	codeRoot?: string | null;
+	ownerSessionId?: string;
 	now?: Date;
 }): BgTaskRecord {
 	const now = input.now ?? new Date();
@@ -162,6 +165,8 @@ export function createPendingRecord(input: {
 		worktree: input.worktree ?? null,
 	};
 	if (input.codeRoot) record.codeRoot = input.codeRoot;
+	// G-185/S1 — set only when known, so ownerless tasks keep their exact legacy frontmatter.
+	if (input.ownerSessionId) record.ownerSessionId = input.ownerSessionId;
 	if (input.timeoutMinutes && input.timeoutMinutes > 0) {
 		const deadline = new Date(now.getTime() + input.timeoutMinutes * 60_000);
 		record.deadlineAt = isoNow(deadline);

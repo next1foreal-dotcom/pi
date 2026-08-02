@@ -40,6 +40,8 @@ export type SpawnBgTaskInput = {
 	worktree?: boolean;
 	/** Code repo root for worktree; defaults to HER_CODE_ROOT / HER_PI_DIR / cwd. */
 	codeRoot?: string;
+	/** G-185/S1 — pi session that spawned this task; drives owner-first wake sorting. */
+	ownerSessionId?: string;
 	/** Test hook: skip budget/concurrency gates */
 	skipGates?: boolean;
 };
@@ -151,6 +153,7 @@ export async function spawnBgTask(memoryRoot: string, input: SpawnBgTaskInput): 
 		parentTask: input.parentTask,
 		timeoutMinutes: input.timeoutMinutes ?? cfg.tasks.defaultTimeoutMinutes,
 		retries: input.retries,
+		...(input.ownerSessionId ? { ownerSessionId: input.ownerSessionId } : {}),
 	});
 
 	if (!input.skipGates) {

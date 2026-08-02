@@ -11,6 +11,7 @@ import { CuaCliDriver } from "./hands/driver.ts";
 import { resolveHandsConfig } from "./hands/policy.ts";
 import { registerHandsTools } from "./hands/tools.ts";
 import { registerHerActTools } from "./her-actions/tools.ts";
+import { formatOwnerTakeoverNote, sortEventsByOwner } from "./her-core/bg-task-owner.ts";
 import {
 	EVENT_WAKE_SPAWN_REFUSAL,
 	eventWakeSpawnBlocked,
@@ -712,6 +713,21 @@ export default function her(pi: ExtensionAPI): void {
 			}
 		}
 		const now = new Date();
+		// G-185/S1 owner-first — a task spawned by another session is left to that session's
+		// poller until the grace window lapses; ownerless tasks keep the G-132 first-come
+		// behavior. Pure sorting on top of the batch: lease/notifiedAt/wake-ledger untouched.
+		const mySessionId = ctx.sessionManager.getSessionId();
+		const sorted = await sortEventsByOwner(memoryDir, events, mySessionId, now);
+		if (sorted.deferred.length > 0) {
+			pi.appendEntry("her-state", {
+				phase: "G-185",
+				status: "event-wake-deferred",
+				taskIds: sorted.deferred,
+				sessionId: mySessionId,
+				memoryDir,
+			});
+		}
+		if (sorted.deliver.length === 0) return false;
 		let gate: Awaited<ReturnType<typeof shouldEventWake>>;
 		try {
 			gate = await shouldEventWake(memoryDir, runtime.tasks, now);
@@ -723,13 +739,13 @@ export default function her(pi: ExtensionAPI): void {
 			console.warn(`[her] event-wake gated: ${gate.reason}`);
 			return false;
 		}
-		const ids = events.map((e) => e.taskId);
+		const ids = sorted.deliver.map((e) => e.taskId);
 		wakeTurnActive = true;
 		try {
 			pi.sendMessage(
 				{
 					customType: "her-task-wake",
-					content: `${formatWakeMessage(events)}\n\n${WAKE_TURN_BOUNDARY}`,
+					content: `${formatWakeMessage(sorted.deliver)}${formatOwnerTakeoverNote(sorted.takenOver)}\n\n${WAKE_TURN_BOUNDARY}`,
 					display: true,
 					details: { taskIds: ids, pinned: true, memoryDir },
 				},
@@ -1825,7 +1841,7 @@ export default function her(pi: ExtensionAPI): void {
 			parentTask: Type.Optional(Type.String()),
 			worktree: Type.Optional(Type.Boolean()),
 		}),
-		async execute(_toolCallId, params) {
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			// G-132 — hard-block spawning during a wake turn (soft prompt boundary + this
 			// backstop). Only load config on the wake path so the common path stays cheap.
 			if (wakeTurnActive && eventWakeSpawnBlocked(wakeTurnActive, loadRuntimeConfig(memoryDir).tasks)) {
@@ -1836,6 +1852,8 @@ export default function her(pi: ExtensionAPI): void {
 				});
 			}
 			const result = await spawnBgTask(memoryDir, {
+				// G-185/S1 — stamp the spawning session so its wake comes back here first.
+				ownerSessionId: ctx.sessionManager.getSessionId(),
 				objective: params.objective,
 				...(params.command ? { command: params.command } : {}),
 				...(params.brief !== undefined ? { brief: params.brief } : {}),
