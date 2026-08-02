@@ -737,6 +737,11 @@ test("extension Cedar allows hands tools as governed non-destructive tools", asy
 });
 test("extension her_feedback records weighted choice-model rules", async () => {
 	const store = await tempStore();
+	await git(store, "init");
+	await git(store, "config", "user.name", "Her Test");
+	await git(store, "config", "user.email", "her-test@example.com");
+	await git(store, "add", "-A");
+	await git(store, "commit", "-m", "memory: init");
 	const ctx = createContext(store);
 
 	await withMemoryDir(store, async () => {
