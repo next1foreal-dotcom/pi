@@ -4,7 +4,7 @@
  */
 
 import { execFile, execFileSync, spawn } from "node:child_process";
-import { accessSync, readFileSync } from "node:fs";
+import { accessSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -145,6 +145,28 @@ export function launchTask(
 	});
 	child.unref();
 	if (child.pid === undefined) throw new Error(`launch failed for task ${id}`);
+	// The runner only writes its .pid file after its own node process boots, and stopTask
+	// treats a missing .pid as "already_gone" without killing anything — so a stop issued
+	// inside that boot window would orphan the runner+worker. Write a provisional record
+	// here, synchronously, so stopTask can always tree-kill via runnerPid; the runner
+	// atomically overwrites it with workerPid once the worker is up (runnerPid alone is
+	// enough for the /T tree kill and the POSIX group kill either way).
+	const pidPath = join(taskDir, `${id}.pid`);
+	const tmpPath = join(taskDir, `${id}.pid.launch.tmp`);
+	try {
+		writeFileSync(
+			tmpPath,
+			JSON.stringify({ runnerPid: child.pid, workerPid: null, startedAt: new Date().toISOString() }, null, 2),
+		);
+		renameSync(tmpPath, pidPath);
+	} catch (error) {
+		try {
+			child.kill();
+		} catch {
+			/* already gone */
+		}
+		throw error;
+	}
 	return child.pid;
 }
 
