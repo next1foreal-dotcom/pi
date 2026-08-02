@@ -44,3 +44,14 @@ permit(
   action == Action::"CallTool",
   resource == Tool::"her_task_stop"
 );
+
+// G-187 收尾 — Fei 2026-08-02 预批,工具落地(C2 `2176eff70`)且真身验证通过后同 commit 发证:
+// 真 spawn 的 codex 任务捕到 codexSessionId、result.md 落盘、续跑真接上上下文(暗号 plum-7)。
+// continue 只能续自己账本里、终态、且带 codexSessionId 的 codex 任务(continueBgTask 四道前置),
+// 续不出新权限——它派的仍是一个受同样预算/并发/日额闸管的后台任务。
+@id("permit_her_task_continue")
+permit(
+  principal == Agent::"samantha",
+  action == Action::"CallTool",
+  resource == Tool::"her_task_continue"
+);
