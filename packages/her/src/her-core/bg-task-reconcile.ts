@@ -89,6 +89,47 @@ function parseIso(value: unknown): Date | null {
 	return Number.isNaN(d.getTime()) ? null : d;
 }
 
+const CODEX_SESSION_KEYS = new Set([
+	"session_id",
+	"sessionId",
+	"conversation_id",
+	"conversationId",
+	"thread_id",
+	"threadId",
+]);
+
+function findCodexSessionId(value: unknown, parentKey?: string): string | undefined {
+	if (!value || typeof value !== "object") return undefined;
+	for (const [key, nested] of Object.entries(value)) {
+		if (CODEX_SESSION_KEYS.has(key) && typeof nested === "string" && nested.length > 0) return nested;
+		if (
+			key === "id" &&
+			(parentKey === "session" || parentKey === "conversation" || parentKey === "thread") &&
+			typeof nested === "string" &&
+			nested.length > 0
+		) {
+			return nested;
+		}
+		const found = findCodexSessionId(nested, key);
+		if (found) return found;
+	}
+	return undefined;
+}
+
+/** Parse Codex --json JSONL and return the first session/conversation/thread id verbatim. */
+export function parseCodexSessionId(stream: string): string | undefined {
+	for (const line of stream.split(/\r?\n/)) {
+		const trimmed = line.trim();
+		if (!trimmed) continue;
+		try {
+			const found = findCodexSessionId(JSON.parse(trimmed));
+			if (found) return found;
+		} catch {
+			/* stderr and non-JSON lines are expected in the combined worker log */
+		}
+	}
+	return undefined;
+}
 function leaseHeldByOther(record: BgTaskRecord, lockId: string, now: Date): boolean {
 	const by = typeof record.lockedBy === "string" ? record.lockedBy : null;
 	if (!by || by === lockId) return false;
@@ -431,25 +472,36 @@ async function claim(record: BgTaskRecord, ctx: ReconcileOneCtx): Promise<ClaimR
 	};
 }
 
+async function attachCodexSessionId(record: BgTaskRecord, dir: string): Promise<BgTaskRecord> {
+	if (record.codexSessionId || record.worker.toLowerCase() !== "codex") return record;
+	const log = await readFile(join(dir, `${record.id}.log`), "utf8").catch(() => undefined);
+	if (log === undefined) return record;
+	const codexSessionId = parseCodexSessionId(log);
+	return codexSessionId ? { ...record, codexSessionId } : record;
+}
 async function reconcileOne(
 	record: BgTaskRecord,
 	dir: string,
 	ctx: ReconcileOneCtx,
 ): Promise<{ event: WakeEvent | null; record: BgTaskRecord | null; external?: boolean }> {
+	const enriched = await attachCodexSessionId(record, dir);
+	const recordChanged = enriched !== record;
+	record = enriched;
+
 	if (isTerminal(record.status)) {
-		if (record.notifiedAt) return { event: null, record: null };
+		if (record.notifiedAt) return { event: null, record: recordChanged ? record : null };
 		const claimed = await claim({ ...record, updated: isoNow(ctx.now) }, ctx);
 		// Deferred: nothing to write — the record keeps its state and its empty notifiedAt.
-		if (!claimed.event) return { event: null, record: null };
+		if (!claimed.event) return { event: null, record: recordChanged ? record : null };
 		return claimed;
 	}
 
 	if (record.status !== "pending" && record.status !== "running") {
-		return { event: null, record: null };
+		return { event: null, record: recordChanged ? record : null };
 	}
 
 	if (record.host !== ctx.hostname) {
-		return { event: null, record: null };
+		return { event: null, record: recordChanged ? record : null };
 	}
 
 	// H.3 — hard deadline wall
@@ -491,12 +543,12 @@ async function reconcileOne(
 				: null;
 
 	if (beatAge !== null && beatAge < ctx.staleLimit) {
-		return { event: null, record: null };
+		return { event: null, record: recordChanged ? record : null };
 	}
 
 	if (beatAge !== null && beatAge >= ctx.staleLimit) {
 		if (runnerPid !== null && ctx.pidAlive(runnerPid)) {
-			return { event: null, record: null };
+			return { event: null, record: recordChanged ? record : null };
 		}
 		return claim(
 			migrateBgStatus(record, "failed", { endedAt: isoNow(ctx.now), failureReason: "orphaned" }, isoNow(ctx.now)),
@@ -518,7 +570,7 @@ async function reconcileOne(
 		);
 	}
 
-	return { event: null, record: null };
+	return { event: null, record: recordChanged ? record : null };
 }
 
 function wakeFrom(record: BgTaskRecord, takenOver = false): WakeEvent {

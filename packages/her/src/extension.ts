@@ -29,6 +29,7 @@ import {
 	classifyMemoryCorpus,
 	collectPathIntakeFiles,
 	completeLongTask,
+	continueBgTask,
 	createEmbeddingSearch,
 	createHerTask,
 	enqueueTaskTelegramNotices,
@@ -119,6 +120,7 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	her_task_update: { destructive: false },
 	her_task_list: { destructive: false },
 	her_task_spawn: { destructive: true },
+	her_task_continue: { destructive: true },
 	her_task_stop: { destructive: true },
 	her_task_output: { destructive: false },
 	her_bg_task_list: { destructive: false },
@@ -1923,6 +1925,26 @@ export default function her(pi: ExtensionAPI): void {
 		},
 	});
 
+	pi.registerTool({
+		name: "her_task_continue",
+		label: "Her Background Task Continue",
+		description:
+			"Continue a completed Codex background task by its captured session id. " +
+			"Non-Codex, non-terminal, or legacy tasks fail explicitly; never starts a silent replacement task.",
+		parameters: Type.Object({
+			taskId: Type.String(),
+			message: Type.String(),
+		}),
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			const result = await continueBgTask(
+				memoryDir,
+				params.taskId,
+				params.message,
+				ctx.sessionManager.getSessionId(),
+			);
+			return textResult(JSON.stringify(result), { phase: "C2", ...result, memoryDir });
+		},
+	});
 	pi.registerTool({
 		name: "her_publish",
 		label: "Her Publish",

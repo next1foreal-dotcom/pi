@@ -1,3 +1,5 @@
+import { join } from "node:path";
+
 /**
  * G-129 — worker profiles (config `workers:` section): argv + env allowlist per named CLI.
  * `workers:` missing entirely is not an error (see bg-task-config.ts WARN+default semantics);
@@ -107,6 +109,22 @@ export function resolveWorkerInvocation(workers: Record<string, WorkerProfile>, 
 		throw new Error(`unknown worker profile "${name}" — available: ${available}`);
 	}
 	return profile;
+}
+
+/** Add Codex's machine-readable event stream and final-result file without mutating user config. */
+export function prepareWorkerCommand(
+	workerName: string,
+	profile: WorkerProfile,
+	taskDir: string,
+	taskId: string,
+): string[] {
+	const command = [...profile.argv];
+	if (workerName.toLowerCase() !== "codex") return command;
+	if (!command.includes("--json")) command.push("--json");
+	if (!command.includes("-o") && !command.includes("--output-last-message")) {
+		command.push("-o", join(taskDir, `${taskId}.result.md`));
+	}
+	return command;
 }
 
 /** D9 — minimal env for a worker process: base allowlist + profile.envAllow, never the full parent env. */

@@ -46,14 +46,17 @@ export async function herTaskOutput(
 		throw new Error(`日志在 ${loaded.record.host} 上，本机不可见`);
 	}
 
-	const logPath = join(tasksDir(memoryRoot), `${id}.log`);
-	if (!existsSync(logPath)) {
+	const taskDir = tasksDir(memoryRoot);
+	const resultPath = join(taskDir, `${id}.result.md`);
+	const logPath = join(taskDir, `${id}.log`);
+	const sourcePath = existsSync(resultPath) ? resultPath : logPath;
+	if (!existsSync(sourcePath)) {
 		return { chunk: "", offset: 0, nextOffset: 0, eof: true, totalBytes: 0 };
 	}
 
 	const offset = Math.max(0, options?.offset ?? 0);
 	const limit = Math.min(Math.max(1, options?.limit ?? 8192), 65536);
-	const fd = openSync(logPath, "r");
+	const fd = openSync(sourcePath, "r");
 	try {
 		const totalBytes = fstatSync(fd).size;
 		const buf = Buffer.alloc(limit);

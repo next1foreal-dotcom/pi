@@ -17,6 +17,7 @@ export { enqueueTaskTelegramNotices, formatBgTaskStatusBoard } from "./bg-task-n
 export { herTaskOutput, readLogChunk, type TaskOutputChunk } from "./bg-task-output.ts";
 export {
 	formatWakeMessage,
+	parseCodexSessionId,
 	type ReconcileOptions,
 	reconcileBgTasks,
 	type WakeEvent,
@@ -39,6 +40,7 @@ export {
 export { purgeExpiredTaskArtifacts, type RetentionPurge } from "./bg-task-retention.ts";
 export {
 	type BgTaskListItem,
+	continueBgTask,
 	listBgTasks,
 	type SpawnBgTaskInput,
 	type SpawnBgTaskResult,

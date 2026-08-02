@@ -34,6 +34,8 @@ export type BgTaskRecord = {
 	costSettledAt?: string;
 	/** G-185/S1 — session that spawned this task; absent = ownerless (legacy records, foreground spawns). */
 	ownerSessionId?: string;
+	/** C2 — Codex CLI session/conversation id captured from its JSON event stream. */
+	codexSessionId?: string;
 	[key: string]: unknown;
 };
 

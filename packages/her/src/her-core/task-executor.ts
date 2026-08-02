@@ -5,7 +5,7 @@
 
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { accessSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
@@ -48,6 +48,28 @@ function buildCmdExeLine(cmd: string, rest: readonly string[]): string {
 }
 
 /**
+ * Scan PATH directly when a locked-down Windows host denies where.exe.
+ */
+function findPathCandidates(cmd: string): string[] {
+	const names = [cmd, ...(process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").map((ext) => cmd + ext)];
+	const out: string[] = [];
+	const seen = new Set<string>();
+	for (const dir of (process.env.PATH ?? "").split(delimiter).filter(Boolean)) {
+		for (const name of names) {
+			const candidate = join(dir, name);
+			if (seen.has(candidate)) continue;
+			seen.add(candidate);
+			try {
+				accessSync(candidate);
+				out.push(candidate);
+			} catch {
+				/* missing PATH entry */
+			}
+		}
+	}
+	return out;
+}
+/**
  * Resolve Windows .cmd/.bat shims so spawn(shell:false) does not throw EINVAL.
  *
  * F1 (G-129.1) — `allowComspec` (default true) gates whether resolution may hand off to
@@ -69,29 +91,29 @@ export function resolveWorkerCommand(command: readonly string[], opts?: { allowC
 	}
 
 	if (process.platform === "win32" && !/[\\/]/.test(cmd) && !/\.[a-z0-9]+$/i.test(cmd)) {
+		let candidates: string[] = [];
 		try {
 			const stdout = execFileSync("where.exe", [cmd], {
 				encoding: "utf8",
 				windowsHide: true,
 			});
-			const candidates = stdout
+			candidates = stdout
 				.split(/\r?\n/)
-				.map((l) => l.trim())
+				.map((line) => line.trim())
 				.filter(Boolean);
-			// D7 — npm shims list an extensionless sh script ahead of the .cmd; that script is not a
-			// PE binary and spawn(shell:false) will fail on it. Only a real .exe/.com is safe to spawn
-			// directly; otherwise fall back to the .cmd via cmd.exe. Priority: .exe/.com > .cmd > ignore.
-			const exeOrCom = candidates.find((c) => /\.(exe|com)$/i.test(c));
-			if (exeOrCom) return { file: exeOrCom, args: rest };
-			const cmdShim = candidates.find((c) => /\.(cmd|bat)$/i.test(c));
-			if (cmdShim) {
-				if (!allowComspec) throw new Error("bare command resolves to a cmd.exe shim — use a worker profile");
-				const comspec = process.env.ComSpec || "cmd.exe";
-				return { file: comspec, args: ["/d", "/s", "/c", buildCmdExeLine(cmdShim, rest)], verbatimArgs: true };
-			}
-		} catch (error) {
-			if (error instanceof Error && error.message.includes("use a worker profile")) throw error;
-			/* fall through — spawn may still work for builtins */
+		} catch {
+			// Some locked-down Windows hosts deny where.exe to child processes; inspect PATH directly.
+			candidates = findPathCandidates(cmd);
+		}
+		// D7 — npm shims list an extensionless script ahead of the .cmd; only a real .exe/.com is
+		// safe to spawn directly. Priority: .exe/.com > .cmd > ignore.
+		const exeOrCom = candidates.find((candidate) => /\.(exe|com)$/i.test(candidate));
+		if (exeOrCom) return { file: exeOrCom, args: rest };
+		const cmdShim = candidates.find((candidate) => /\.(cmd|bat)$/i.test(candidate));
+		if (cmdShim) {
+			if (!allowComspec) throw new Error("bare command resolves to a cmd.exe shim — use a worker profile");
+			const comspec = process.env.ComSpec || "cmd.exe";
+			return { file: comspec, args: ["/d", "/s", "/c", buildCmdExeLine(cmdShim, rest)], verbatimArgs: true };
 		}
 	}
 

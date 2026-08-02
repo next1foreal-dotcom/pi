@@ -11,6 +11,7 @@ import {
 	createPendingRecord,
 	formatDisplayStatus,
 	isoNow,
+	isTerminal,
 	loadBgTask,
 	migrateBgStatus,
 	saveBgTask,
@@ -21,7 +22,7 @@ import { ensureTaskWorktree } from "./long-task-worktree.ts";
 import { redactSecrets, writeText } from "./store.ts";
 import { launchTask, stopTask } from "./task-executor.ts";
 import { claimWarmWorktree, clampWarmWorktreePoolSize, ensureWarmWorktreePool } from "./warm-worktree-pool.ts";
-import { buildWorkerEnv, resolveWorkerInvocation, type WorkerProfile } from "./worker-profile.ts";
+import { buildWorkerEnv, prepareWorkerCommand, resolveWorkerInvocation, type WorkerProfile } from "./worker-profile.ts";
 
 const DEFAULT_ALLOW = new Set(["node", "nodejs"]);
 
@@ -44,6 +45,8 @@ export type SpawnBgTaskInput = {
 	ownerSessionId?: string;
 	/** Test hook: skip budget/concurrency gates */
 	skipGates?: boolean;
+	/** Internal trusted command path: allow the configured CLI shim chain in command mode. */
+	allowComspec?: boolean;
 };
 
 type SpawnMode = "worker" | "command";
@@ -155,6 +158,10 @@ export async function spawnBgTask(memoryRoot: string, input: SpawnBgTaskInput): 
 		retries: input.retries,
 		...(input.ownerSessionId ? { ownerSessionId: input.ownerSessionId } : {}),
 	});
+	if (mode === "worker" && workerProfile && workerName) {
+		command = prepareWorkerCommand(workerName, workerProfile, tasksDir(memoryRoot), record.id);
+		record.command = [...command];
+	}
 
 	if (!input.skipGates) {
 		const runningCount = (await listBgTasks(memoryRoot, { status: "running" })).length;
@@ -282,7 +289,7 @@ export async function spawnBgTask(memoryRoot: string, input: SpawnBgTaskInput): 
 			...(briefPath ? { stdinPath: briefPath } : {}),
 			// F1 (G-129.1) — the ComSpec chain is trusted only for worker/profile mode's static
 			// config argv; bare command mode must never hand model-controlled argv to cmd.exe.
-			allowComspec: mode === "worker",
+			allowComspec: mode === "worker" || input.allowComspec === true,
 		});
 		const running = migrateBgStatus(record, "running", {
 			startedAt: isoNow(),
@@ -312,6 +319,31 @@ export async function spawnBgTask(memoryRoot: string, input: SpawnBgTaskInput): 
 	}
 }
 
+export async function continueBgTask(
+	memoryRoot: string,
+	taskId: string,
+	message: string,
+	ownerSessionId: string,
+): Promise<SpawnBgTaskResult> {
+	const loaded = await loadBgTask(memoryRoot, taskId);
+	if (!loaded) throw new Error("该任务暂不支持续跑: 原任务不存在");
+	const { record } = loaded;
+	if (!isTerminal(record.status)) {
+		throw new Error(`该任务暂不支持续跑: 原任务未处于终态（当前状态 ${record.status}）`);
+	}
+	if (!record.codexSessionId) throw new Error("该任务暂不支持续跑: 原任务没有 codexSessionId");
+	if (record.worker.toLowerCase() !== "codex") throw new Error("该任务暂不支持续跑: 任务类型不是 codex");
+
+	const safeMessage = redactSecrets(message);
+	return spawnBgTask(memoryRoot, {
+		objective: `Continue ${record.id}`,
+		command: ["codex", "exec", "resume", record.codexSessionId, safeMessage],
+		worker: record.worker,
+		parentTask: record.id,
+		ownerSessionId,
+		allowComspec: true,
+	});
+}
 export async function stopBgTask(
 	memoryRoot: string,
 	id: string,
