@@ -6,6 +6,9 @@
  *   HER_MEMORY_DIR  — memory root (required for run envelope)
  *   HER_DEER_ROOT   — deer-workflow clone (default D:/@Her/deer-workflow)
  *   HER_DEER_BUN    — bun executable (default "bun")
+ *   HER_TASK_ID / HER_TASK_OWNER_SESSION_ID — G-185/S5 ownership, injected by
+ *     buildWorkerEnv. Read from env rather than the brief: the brief is model-authored
+ *     text, env is harness-authored fact. Both absent = ownerless run, envelope unchanged.
  */
 
 import { execFileSync, spawn } from "node:child_process";
@@ -110,6 +113,8 @@ async function main(): Promise<number> {
 		runId: brief.runId,
 		title: brief.title,
 		parentRunId: brief.parentRunId,
+		ownerWorkspaceId: process.env.HER_TASK_OWNER_SESSION_ID,
+		bgTaskId: process.env.HER_TASK_ID,
 	});
 	let sawTerminal = false;
 
@@ -177,6 +182,10 @@ async function main(): Promise<number> {
 			title: state.title,
 			at: new Date().toISOString(),
 			...(state.parentRunId ? { parentRunId: state.parentRunId } : {}),
+			// G-185/S5 — the crash path is exactly when the owner most needs the report,
+			// so ownership rides this fallback event too, not just the bridge's own patches.
+			...(state.ownerWorkspaceId ? { ownerWorkspaceId: state.ownerWorkspaceId } : {}),
+			...(state.bgTaskId ? { bgTaskId: state.bgTaskId } : {}),
 		});
 	}
 

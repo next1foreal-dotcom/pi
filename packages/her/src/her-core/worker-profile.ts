@@ -110,12 +110,15 @@ export function resolveWorkerInvocation(workers: Record<string, WorkerProfile>, 
 }
 
 /** D9 — minimal env for a worker process: base allowlist + profile.envAllow, never the full parent env. */
-export function buildWorkerEnv(profile: WorkerProfile, taskId: string): NodeJS.ProcessEnv {
+export function buildWorkerEnv(profile: WorkerProfile, taskId: string, ownerSessionId?: string): NodeJS.ProcessEnv {
 	const env: NodeJS.ProcessEnv = {};
 	for (const name of [...BASE_ENV_ALLOW, ...(profile.envAllow ?? [])]) {
 		const value = process.env[name];
 		if (value !== undefined) env[name] = value;
 	}
 	env.HER_TASK_ID = taskId;
+	// G-185/S5 — ownership travels to the worker over env, not the brief: the brief is
+	// model-authored text, env is harness-authored fact. Absent = ownerless, field omitted.
+	if (ownerSessionId) env.HER_TASK_OWNER_SESSION_ID = ownerSessionId;
 	return env;
 }

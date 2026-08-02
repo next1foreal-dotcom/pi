@@ -273,7 +273,12 @@ export async function spawnBgTask(memoryRoot: string, input: SpawnBgTaskInput): 
 		const runnerPid = launchTask(tasksDir(memoryRoot), record.id, command, {
 			heartbeatMs: input.heartbeatMs ?? cfg.tasks.heartbeatSeconds * 1000,
 			...(workerCwd ? { cwd: workerCwd } : {}),
-			...(mode === "worker" && workerProfile ? { env: buildWorkerEnv(workerProfile, record.id) } : {}),
+			...(mode === "worker" && workerProfile
+				? { env: buildWorkerEnv(workerProfile, record.id, record.ownerSessionId) }
+				: {}),
+			// G-185/S5 — launchTask strips inherited HER_TASK_*, so ownership is handed to it
+			// explicitly (buildWorkerEnv's copy would not survive the strip).
+			...(record.ownerSessionId ? { ownerSessionId: record.ownerSessionId } : {}),
 			...(briefPath ? { stdinPath: briefPath } : {}),
 			// F1 (G-129.1) — the ComSpec chain is trusted only for worker/profile mode's static
 			// config argv; bare command mode must never hand model-controlled argv to cmd.exe.

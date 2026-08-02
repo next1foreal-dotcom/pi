@@ -17,6 +17,7 @@
  */
 
 import type { BgTaskRecord } from "./bg-task-record.ts";
+import { type HerRunSnapshot, type HerWakeLedgerRow, listHerRunSnapshots, readRunsWakeLedger } from "./runs.ts";
 
 /** 垫的 (spec §垫的): owner 会话 10 分钟内没接手 → 任何会话可代送。 */
 export const OWNER_WAKE_GRACE_MS = 10 * 60 * 1000;
@@ -25,8 +26,9 @@ export const OWNER_WAKE_GRACE_MS = 10 * 60 * 1000;
  * - `own` — mine, or ownerless (legacy records / foreground spawns): claim immediately.
  * - `defer` — another session's, still inside the grace window: advance state, claim nothing.
  * - `takeover` — another session's, past the grace window: claim it, and say so in the wake.
+ * - `external` — G-185/S5: Studio's watcher already reported it. Settle the record, stay quiet.
  */
-export type OwnerWakeVerdict = "own" | "defer" | "takeover";
+export type OwnerWakeVerdict = "own" | "defer" | "takeover" | "external";
 
 function ownerOf(record: BgTaskRecord): string {
 	return typeof record.ownerSessionId === "string" ? record.ownerSessionId.trim() : "";
@@ -78,4 +80,45 @@ export function isOwnerTakeover(record: BgTaskRecord, mySessionId: string | unde
 export function formatOwnerTakeoverNote(taskIds: string[]): string {
 	if (taskIds.length === 0) return "";
 	return `\n(owner session 已不在,代送: ${taskIds.join(", ")})`;
+}
+
+/**
+ * G-185/S5 — bg-task ids Studio has already reported on.
+ *
+ * The Studio watcher wakes the owner workspace ~2 min after a task lands, long before pi's
+ * 10-min takeover; without this join pi would tell Fei the same thing a second time. The
+ * two worlds meet at `bgTaskId`: pi stamps it into the run envelope (S5), Studio's ledger
+ * rows carry `runId`/`wakeId`, and this walks task → run → ledger.
+ *
+ * `failed: true` rows do **not** count as delivered. On the Studio side that flag settles the
+ * key (stop retrying); from here it means the opposite — the watcher gave up, so nobody was
+ * told, and pi's takeover is the last line of defense. Deliberate divergence from
+ * samantha-ui's `settledWakeKeys`.
+ */
+export function matchExternalDeliveries(
+	snapshots: readonly HerRunSnapshot[],
+	rows: readonly HerWakeLedgerRow[],
+): Set<string> {
+	const delivered = new Set<string>();
+	const byRunId = new Set<string>();
+	const byWakeId = new Set<string>();
+	for (const row of rows) {
+		if (row.failed) continue;
+		if (row.runId) byRunId.add(row.runId);
+		// Browser rows carry no runId, so their wakeId is the only key available.
+		else byWakeId.add(row.wakeId);
+	}
+	for (const run of snapshots) {
+		if (!run.bgTaskId) continue;
+		// G-183 display id — the identity Studio's browser path can compute.
+		const wakeId = run.piSessionId ?? run.goalId ?? run.runId;
+		if (byRunId.has(run.runId) || byWakeId.has(wakeId)) delivered.add(run.bgTaskId);
+	}
+	return delivered;
+}
+
+/** IO wrapper over `matchExternalDeliveries`. Missing books → empty set (nothing delivered). */
+export async function loadExternalDeliveries(memoryRoot: string): Promise<Set<string>> {
+	const [snapshots, rows] = await Promise.all([listHerRunSnapshots(memoryRoot), readRunsWakeLedger(memoryRoot)]);
+	return matchExternalDeliveries(snapshots, rows);
 }

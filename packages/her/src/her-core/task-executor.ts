@@ -108,6 +108,8 @@ export function launchTask(
 		cwd?: string;
 		stdinPath?: string;
 		allowComspec?: boolean;
+		/** G-185/S5 — session that spawned this task; reaches the worker as HER_TASK_OWNER_SESSION_ID. */
+		ownerSessionId?: string;
 	},
 ): number {
 	const resolved = resolveWorkerCommand(command, { allowComspec: options?.allowComspec });
@@ -120,6 +122,12 @@ export function launchTask(
 		if (value !== undefined) env[key] = value;
 	}
 	env.HER_TASK_ID = id;
+	// G-185/S5 — must be set *here*, not only in buildWorkerEnv: the loop above strips every
+	// inherited HER_TASK_* key, so anything task-scoped has to be (re)placed after the strip.
+	// Same shape as HER_TASK_ID, which buildWorkerEnv also sets and this line likewise re-owns.
+	if (options?.ownerSessionId) {
+		env.HER_TASK_OWNER_SESSION_ID = options.ownerSessionId;
+	}
 	if (options?.heartbeatMs) {
 		env.HER_TASK_HEARTBEAT_MS = String(options.heartbeatMs);
 	}

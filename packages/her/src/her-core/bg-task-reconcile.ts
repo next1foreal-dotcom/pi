@@ -8,7 +8,7 @@ import { hostname as osHostname } from "node:os";
 import { join } from "node:path";
 import { loadRuntimeConfig } from "./bg-task-config.ts";
 import { truncateTaskLogIfNeeded } from "./bg-task-log.ts";
-import { classifyOwnerWake, type OwnerWakeVerdict } from "./bg-task-owner.ts";
+import { classifyOwnerWake, loadExternalDeliveries, type OwnerWakeVerdict } from "./bg-task-owner.ts";
 import {
 	type BgTaskRecord,
 	isoNow,
@@ -169,6 +169,18 @@ export async function reconcileBgTasks(memoryRoot: string, options: ReconcileOpt
 	// G-185/S1b — ownership verdict for the claim point. Single authority: bg-task-owner.ts.
 	const verdictOf = (record: BgTaskRecord): OwnerWakeVerdict =>
 		classifyOwnerWake(record, options.sessionId, now.getTime());
+	// G-185/S5 — Studio's delivery book, read at most once per pass and only when a takeover
+	// is actually on the table (the common pass never touches runs/).
+	let externalIndex: Promise<Set<string>> | undefined;
+	const externallyDelivered = async (record: BgTaskRecord): Promise<boolean> => {
+		if (!record.ownerSessionId) return false;
+		externalIndex ??= loadExternalDeliveries(memoryRoot).catch((error) => {
+			// Unreadable book must not silence a wake — fall back to "nothing delivered".
+			console.warn(`[her] external-delivery index unavailable: ${error instanceof Error ? error.message : error}`);
+			return new Set<string>();
+		});
+		return (await externalIndex).has(record.id);
+	};
 	const events: WakeEvent[] = [];
 
 	for (const name of names.sort()) {
@@ -232,6 +244,7 @@ export async function reconcileBgTasks(memoryRoot: string, options: ReconcileOpt
 			pidAlive,
 			stopTaskFn,
 			verdictOf,
+			externallyDelivered,
 		});
 
 		let finalRecord = result.record ? clearLease(result.record) : clearLease(recheck.record);
@@ -309,7 +322,12 @@ export async function reconcileBgTasks(memoryRoot: string, options: ReconcileOpt
 				logHeadBytes: cfg.logHeadBytes,
 				logTailBytes: cfg.logTailBytes,
 			});
-			events.push(event);
+			// G-185/S5 — settled but not announced: Studio already told Fei about this one.
+			if (result.external) {
+				console.warn(`[her] wake withheld for ${event.taskId}: already delivered by the Studio watcher`);
+			} else {
+				events.push(event);
+			}
 		}
 	}
 
@@ -381,7 +399,10 @@ type ReconcileOneCtx = {
 	pidAlive: (pid: number) => boolean;
 	stopTaskFn: (taskDir: string, id: string) => Promise<"stopped" | "already_gone">;
 	verdictOf: (record: BgTaskRecord) => OwnerWakeVerdict;
+	externallyDelivered: (record: BgTaskRecord) => Promise<boolean>;
 };
+
+type ClaimResult = { event: WakeEvent | null; record: BgTaskRecord; external?: boolean };
 
 /**
  * G-185/S1b — the claim point. Reaching a terminal state and claiming its wake used to be
@@ -391,25 +412,36 @@ type ReconcileOneCtx = {
  * the owner's next reconcile still finds it unstamped. Concurrency is the existing lease's
  * job: two eligible sessions serialize on it, the first stamps, the second short-circuits
  * on `notifiedAt`.
+ *
+ * G-185/S5 — a takeover is downgraded to `external` when Studio's watcher already reported
+ * this task. The record still settles (stamp + all the terminal bookkeeping downstream);
+ * only the wake is withheld, so exactly-once holds across the two worlds.
  */
-function claim(record: BgTaskRecord, ctx: ReconcileOneCtx): { event: WakeEvent | null; record: BgTaskRecord } {
-	const verdict = ctx.verdictOf(record);
+async function claim(record: BgTaskRecord, ctx: ReconcileOneCtx): Promise<ClaimResult> {
+	let verdict = ctx.verdictOf(record);
+	if (verdict === "takeover" && (await ctx.externallyDelivered(record))) verdict = "external";
 	if (verdict === "defer") return { event: null, record };
 	const notified = { ...record, notifiedAt: isoNow(ctx.now) };
-	return { event: wakeFrom(notified, verdict === "takeover"), record: notified };
+	// The event is still built for `external`: the caller runs every terminal-gated chore off
+	// it (cost settlement, worktree cleanup, retry) and drops only the wake itself.
+	return {
+		event: wakeFrom(notified, verdict === "takeover"),
+		record: notified,
+		...(verdict === "external" ? { external: true } : {}),
+	};
 }
 
 async function reconcileOne(
 	record: BgTaskRecord,
 	dir: string,
 	ctx: ReconcileOneCtx,
-): Promise<{ event: WakeEvent | null; record: BgTaskRecord | null }> {
+): Promise<{ event: WakeEvent | null; record: BgTaskRecord | null; external?: boolean }> {
 	if (isTerminal(record.status)) {
 		if (record.notifiedAt) return { event: null, record: null };
-		const claimed = claim({ ...record, updated: isoNow(ctx.now) }, ctx);
+		const claimed = await claim({ ...record, updated: isoNow(ctx.now) }, ctx);
 		// Deferred: nothing to write — the record keeps its state and its empty notifiedAt.
 		if (!claimed.event) return { event: null, record: null };
-		return { event: claimed.event, record: claimed.record };
+		return claimed;
 	}
 
 	if (record.status !== "pending" && record.status !== "running") {

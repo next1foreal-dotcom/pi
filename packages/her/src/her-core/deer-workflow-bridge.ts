@@ -33,6 +33,10 @@ export type DeerBridgeState = {
 	title: string;
 	workflowName?: string;
 	parentRunId?: string;
+	/** G-185/S5 — session that spawned the bg task behind this run (pi's `ownerSessionId`). */
+	ownerWorkspaceId?: string;
+	/** G-185/S5 — `.her/tasks` id, so Studio can join this run back to the task. */
+	bgTaskId?: string;
 	source: string;
 };
 
@@ -56,12 +60,16 @@ export function createDeerBridgeState(opts: {
 	runId?: string;
 	title?: string;
 	parentRunId?: string;
+	ownerWorkspaceId?: string;
+	bgTaskId?: string;
 	source?: string;
 }): DeerBridgeState {
 	return {
 		runId: opts.runId?.trim() || "",
 		title: opts.title?.trim() || "deer-workflow",
 		...(opts.parentRunId?.trim() ? { parentRunId: opts.parentRunId.trim() } : {}),
+		...(opts.ownerWorkspaceId?.trim() ? { ownerWorkspaceId: opts.ownerWorkspaceId.trim() } : {}),
+		...(opts.bgTaskId?.trim() ? { bgTaskId: opts.bgTaskId.trim() } : {}),
 		source: opts.source?.trim() || DEER_RUN_SOURCE,
 	};
 }
@@ -96,6 +104,8 @@ export function applyDeerWorkflowEvent(
 			title: next.title,
 			at,
 			...(next.parentRunId ? { parentRunId: next.parentRunId } : {}),
+			...(next.ownerWorkspaceId ? { ownerWorkspaceId: next.ownerWorkspaceId } : {}),
+			...(next.bgTaskId ? { bgTaskId: next.bgTaskId } : {}),
 		};
 	};
 
