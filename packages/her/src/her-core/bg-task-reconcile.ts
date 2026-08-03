@@ -623,13 +623,20 @@ async function cleanupEmptyWorktree(record: BgTaskRecord): Promise<{
 			};
 		}
 		if (result.branch) {
+			// A (G-198) — carry *why* it was kept (dirty vs. real commits), not just the branch:
+			// "kept" alone reads the same for "someone's uncommitted work is sitting here" and
+			// "this shipped a real commit", and those call for different follow-up.
+			const reason = result.keptBecause ?? "commits";
 			return {
-				event: { worktreeKept: result.branch },
+				event: { worktreeKept: `${result.branch} (${reason})` },
 				recordPatch: {},
 			};
 		}
-	} catch {
-		/* keep worktree on cleanup errors — fail soft, surface via next list */
+	} catch (error) {
+		// E (G-198) — cleanup failures stay fail-soft (a stuck worktree must never take reconcile
+		// down for every other task), but silent-forever hid that the tree was never coming back
+		// on its own. Surface it so it shows up in logs instead of vanishing without a trace.
+		console.warn(`[her] worktree cleanup failed for ${record.id}: ${error instanceof Error ? error.message : error}`);
 	}
 	return null;
 }

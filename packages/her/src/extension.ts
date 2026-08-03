@@ -1841,6 +1841,12 @@ export default function her(pi: ExtensionAPI): void {
 			timeoutMinutes: Type.Optional(Type.Integer({ minimum: 1 })),
 			parentTask: Type.Optional(Type.String()),
 			worktree: Type.Optional(Type.Boolean()),
+			isolation: Type.Optional(
+				Type.String({
+					description:
+						'Isolation mode: "worktree" runs the task in its own git worktree; "none" (default) runs in place.',
+				}),
+			),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			// G-132 — hard-block spawning during a wake turn (soft prompt boundary + this
@@ -1862,6 +1868,10 @@ export default function her(pi: ExtensionAPI): void {
 				...(params.timeoutMinutes ? { timeoutMinutes: params.timeoutMinutes } : {}),
 				...(params.parentTask ? { parentTask: params.parentTask } : {}),
 				...(params.worktree ? { worktree: true } : {}),
+				// G-198 — schema keeps this a plain string (no Type.Union precedent in this file);
+				// spawnBgTask/resolveIsolation is the fail-loud boundary that rejects anything other
+				// than "none"/"worktree" with the offending value in the error.
+				...(params.isolation !== undefined ? { isolation: params.isolation as "none" | "worktree" } : {}),
 			});
 			return textResult(JSON.stringify(result), { phase: "G-120", ...result, memoryDir });
 		},

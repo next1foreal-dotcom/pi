@@ -28,6 +28,8 @@ description: 写码任务的派工纪律：怎么把实现/计划/复审正确�
 2. **无持久会话时必带 `context:"fresh"`。** 全班子 `defaultContext: fork`，而 RPC / `--no-session` 驱动下 fork 直接报错（`Forked subagent context requires a persisted parent session`）。fresh = 子代理不继承你的上下文，所以——
 3. **任务书必须自包含。** 绝对路径、做什么、验收标准写全，结尾加"不要做其他任何事"。给 planner 类岗位额外声明**"直接返回文本，不要写任何文件"**（防 plan.md 之类残留污染仓库）。
 
+**并行改同一个仓的任务，`her_task_spawn` 带 `isolation:"worktree"`**——每个任务在自己的 git worktree（分支 `her-task/<taskId>`）里跑，互不踩工作树；跑完没产出就自动回收，有 commit 或有未提交改动就保留，路径和分支写进汇报等你验收合流（不自动合并）。
+
 ## 验收纪律（收货不收话）
 
 - 派工会自动附验收合同（acceptance contract）：收货只认结构化 acceptance-report + 证据，**不收口头"做完了"**。
