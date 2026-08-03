@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { type ConnectorProblem, loadConnectors, registerMcpTools } from "../src/mcp/tools.ts";
+import { type ConnectorProblem, loadConnectors, registerMcpTools, renderToolContent } from "../src/mcp/tools.ts";
 
 const SERVER_FILESYSTEM_BIN = join(
 	process.cwd(),
@@ -40,7 +40,10 @@ function mcpHarness(): Map<string, ToolDefinition> {
 	return tools;
 }
 
+type ToolContent = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
+
 interface ToolCallResult {
+	content: ToolContent[];
 	details: Record<string, unknown>;
 	text: string;
 }
@@ -53,16 +56,83 @@ async function runFull(
 	assert.ok(tool, "tool not registered");
 	const ctx = { cwd } as unknown as ExtensionContext;
 	const result = (await tool.execute("call-1", params, undefined, undefined, ctx)) as {
-		content: Array<{ type: string; text: string }>;
+		content: ToolContent[];
 		details?: Record<string, unknown>;
 	};
-	return { text: result.content[0]?.text ?? "", details: result.details ?? {} };
+	const text = result.content
+		.filter((item): item is Extract<ToolContent, { type: "text" }> => item.type === "text")
+		.map((item) => item.text)
+		.join("\n");
+	return { content: result.content, text, details: result.details ?? {} };
 }
 
 async function run(tool: ToolDefinition | undefined, params: Record<string, unknown>, cwd: string): Promise<string> {
 	return (await runFull(tool, params, cwd)).text;
 }
 
+test("renderToolContent preserves text behavior and the empty fallback", () => {
+	assert.deepEqual(
+		renderToolContent([
+			{ type: "text", text: "first" },
+			{ type: "text", text: "second" },
+		]),
+		[{ type: "text", text: "first\nsecond" }],
+	);
+	assert.deepEqual(renderToolContent([]), [{ type: "text", text: "（外接服务未返回文本）" }]);
+});
+
+test("renderToolContent passes through valid images and defaults invalid mime types", () => {
+	assert.deepEqual(
+		renderToolContent([
+			{ type: "image", data: "AAAA" },
+			{ type: "image", data: "AAAA", mimeType: "text/plain" },
+		]),
+		[
+			{ type: "image", data: "AAAA", mimeType: "image/png" },
+			{ type: "image", data: "AAAA", mimeType: "image/png" },
+		],
+	);
+});
+
+test("renderToolContent puts text before images regardless of input order", () => {
+	assert.deepEqual(
+		renderToolContent([
+			{ type: "image", data: "AAAA", mimeType: "image/jpeg" },
+			{ type: "text", text: "caption" },
+		]),
+		[
+			{ type: "text", text: "caption" },
+			{ type: "image", data: "AAAA", mimeType: "image/jpeg" },
+		],
+	);
+});
+
+test("renderToolContent degrades invalid image base64 without throwing", () => {
+	assert.deepEqual(renderToolContent([{ type: "image", data: "not base64!" }]), [
+		{ type: "text", text: "[image:invalid]" },
+	]);
+});
+
+test("renderToolContent skips an oversized image with a text explanation", () => {
+	const data = "A".repeat(Math.ceil((8 * 1024 * 1024 * 4) / 3) + 1);
+	const rendered = renderToolContent([{ type: "image", data }]);
+	assert.equal(rendered.length, 1);
+	assert.equal(rendered[0]?.type, "text");
+	if (rendered[0]?.type !== "text") return;
+	assert.match(rendered[0].text, /^图片过大，.+ MB，已略过$/);
+});
+
+test("renderToolContent passes at most four images and reports the remainder", () => {
+	const rendered = renderToolContent(new Array(6).fill({ type: "image", data: "AAAA" }));
+	assert.equal(rendered.filter((item) => item.type === "image").length, 4);
+	assert.equal(rendered[0]?.type, "text");
+	if (rendered[0]?.type !== "text") return;
+	assert.equal(rendered[0].text, "已略过 2 张图片");
+});
+
+test("renderToolContent degrades non-image non-text blocks to their type placeholder", () => {
+	assert.deepEqual(renderToolContent([{ type: "audio", data: "AAAA" }]), [{ type: "text", text: "[audio]" }]);
+});
 /** Poll process.kill(pid, 0) so a slow Windows teardown doesn't produce a false failure (mirrors the G-51 spike). */
 async function assertProcessExited(pid: number | undefined): Promise<void> {
 	assert.ok(pid, "expected a pid to be captured for this call");
