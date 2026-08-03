@@ -348,6 +348,29 @@ test("browser_act passes a 400 invalid-ref through and points at where refs come
 	assert.match(text, /browser_read_page/);
 });
 
+test("browser_act surfaces Playwright's own diagnosis on a 500 instead of swallowing it", async () => {
+	// The host puts the real reason in `message` and only the literal "error" in `error`
+	// (docs/browser-agent-endpoints.md), so a generic fallback would drop the diagnosis.
+	const fetchImpl = fakeFetch(
+		() =>
+			new Response(
+				JSON.stringify({
+					ok: false,
+					error: "error",
+					message: 'element is not enabled\ncall log: waiting for locator("aria-ref=e5")',
+				}),
+				{ status: 500 },
+			),
+	);
+	const tools = previewHarness({ fetchImpl });
+
+	const text = await run(tools.get("browser_act"), { ref: "s7e5", action: "click" });
+
+	assert.match(text, /element is not enabled/);
+	assert.match(text, /call log/);
+	assert.match(text, /browser_read_page/);
+});
+
 test("browser_read_page and browser_act report a connection-refused error naming the UI base, no throw", async () => {
 	const fetchImpl = fakeFetch(() => {
 		throw new TypeError("fetch failed", {
@@ -387,6 +410,30 @@ test("browser driving tools name the discipline skill for credential/payment/agr
 	assert.match(readDescription, /browser_act/);
 	// The wheel handover is Fei's move by design — she gets no takeover/handback tool.
 	assert.match(actDescription, /takeover|hand.*back|handback/i);
+});
+
+test("the descriptions carry the two contract facts a tool layer can't infer from a happy path", () => {
+	const tools = previewHarness({ fetchImpl: fakeFetch(() => new Response("{}", { status: 200 })) });
+
+	const readDescription = tools.get("browser_read_page")?.description ?? "";
+	const actDescription = tools.get("browser_act")?.description ?? "";
+
+	// A ref the cap cut away is refused (404 unknown-ref) — truncation is not cosmetic.
+	assert.match(readDescription, /truncat/i);
+	assert.match(readDescription, /cut|dropped|removed/i);
+	// The 409 gate also fires when the browser is paused, not only on a human takeover.
+	assert.match(actDescription, /paused/i);
+});
+
+test("the browser driving tools wait longer than the host's own element timeout", async () => {
+	const { BROWSER_REQUEST_TIMEOUT_MS, REQUEST_TIMEOUT_MS } = await import("../src/preview/tools.ts");
+
+	// browser-host's REF_ACT_TIMEOUT_MS is 5s — it waits that long for an element to
+	// become actionable. A client that also gives up at 5s abandons work the host is
+	// still legitimately doing. Reading a large page (ariaSnapshot over the whole tree)
+	// likewise runs well past 5s; measured 7.2s on example.com under load.
+	assert.ok(BROWSER_REQUEST_TIMEOUT_MS > 5_000, "must outlast the host's 5s element wait");
+	assert.ok(BROWSER_REQUEST_TIMEOUT_MS > REQUEST_TIMEOUT_MS);
 });
 
 test("browser driving tools are registered as non-destructive governed tools", () => {

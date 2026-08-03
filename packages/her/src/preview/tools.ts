@@ -2,7 +2,15 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 const DEFAULT_UI_BASE_URL = "http://127.0.0.1:3000";
-const REQUEST_TIMEOUT_MS = 5000;
+export const REQUEST_TIMEOUT_MS = 5000;
+/**
+ * Driving the live browser is slower than the panel endpoints: the host waits up to
+ * REF_ACT_TIMEOUT_MS (5s) for an element to become actionable, and a full ariaSnapshot
+ * of a large page runs past 5s on its own (7.2s measured on example.com under load).
+ * Sharing the 5s panel timeout would abandon requests the host is still working on and
+ * report a timeout for a browser that is behaving perfectly.
+ */
+export const BROWSER_REQUEST_TIMEOUT_MS = 30_000;
 
 export interface PreviewToolDeps {
 	/** Override for tests; defaults to globalThis.fetch. */
@@ -33,6 +41,8 @@ interface PreviewApiBody {
 export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {}): void {
 	const fetchImpl = deps.fetchImpl ?? globalThis.fetch;
 	const timeoutMs = deps.timeoutMs ?? REQUEST_TIMEOUT_MS;
+	// An explicit deps.timeoutMs still wins, so tests keep one knob for both.
+	const browserTimeoutMs = deps.timeoutMs ?? BROWSER_REQUEST_TIMEOUT_MS;
 
 	pi.registerTool({
 		name: "preview_open_review",
@@ -77,14 +87,15 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 			"browser_act at an element. A ref belongs to the read that issued it — your next read, any navigation, or " +
 			"the element leaving the page retires it, so read again rather than reusing an old ref. Reading is NOT " +
 			"blocked while Fei holds control (the gate stops you acting, not seeing), so this is also how you catch up " +
-			"after a handback. Optional maxChars caps the tree (default 20000); a cut is announced inline. When the " +
-			"tree shows a password, verification-code, payment or agreement field, do not plan to fill it — read the " +
-			"browser-discipline skill and ask Fei to take over.",
+			"after a handback. Optional maxChars caps the tree (default 20000, clamped to 500..100000); a truncated " +
+			"tree says so on its last line, and any ref the cut removed is NOT actionable — raise maxChars rather " +
+			"than guess at what was dropped. When the tree shows a password, verification-code, payment or agreement " +
+			"field, do not plan to fill it — read the browser-discipline skill and ask Fei to take over.",
 		parameters: Type.Object({ maxChars: Type.Optional(Type.Number()) }),
 		async execute(_toolCallId, params, signal) {
 			const base = uiBase();
 			const body = params.maxChars === undefined ? {} : { maxChars: params.maxChars };
-			return await postJson(fetchImpl, base, "/api/browser/agent-read", body, signal, timeoutMs, {
+			return await postJson(fetchImpl, base, "/api/browser/agent-read", body, signal, browserTimeoutMs, {
 				successText: (parsed) => renderPageRead(parsed),
 			});
 		},
@@ -95,9 +106,10 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 		label: "Browser Act",
 		description:
 			"Act on ONE element from your latest browser_read_page, by its ref: click, type (text required — an empty " +
-			"string clears the field), press (put the key name in text, e.g. Enter), or scroll_to. Then read the page " +
-			"again — 'I clicked' is not evidence, 'the page now shows X' is. The act goes through the UI host's " +
-			"control-owner gate: while Fei holds the wheel you get control-owner-denied, which is a guardrail working, " +
+			"string clears the field), press (put the key name in text, e.g. Enter or Control+a), or scroll_to. Then " +
+			"read the page again — 'I clicked' is not evidence, 'the page now shows X' is. The act goes through the " +
+			"UI host's control-owner gate: while Fei holds the wheel OR the browser is paused you get " +
+			"control-owner-denied, which is a guardrail working, " +
 			"not a fault — stop and wait for his handback instead of retrying. You have no takeover or handback tool " +
 			"BY DESIGN: handing the wheel over is always Fei's move, never yours. Never use this on a password, " +
 			"verification-code, payment-confirm or terms-agreement control — those three classes are his to press; " +
@@ -120,14 +132,19 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 				action: params.action,
 				...(params.text === undefined ? {} : { text: params.text }),
 			};
-			return await postJson(fetchImpl, base, "/api/browser/agent-act", body, signal, timeoutMs, {
+			return await postJson(fetchImpl, base, "/api/browser/agent-act", body, signal, browserTimeoutMs, {
 				successText: (parsed) =>
 					`${parsed?.action ?? params.action} applied on ${parsed?.ref ?? params.ref}. ` +
 					"Call browser_read_page again to see what it actually did.",
 				errorTexts: {
 					"control-owner-denied": (parsed) =>
-						`${errorLine(parsed)} Control is with Fei right now — the gate is doing its job, this is not a ` +
-						"failure to retry. Stop here and wait for him to hand control back.",
+						`${errorLine(parsed)} Control is with Fei right now (or the browser is paused) — the gate is ` +
+						"doing its job, this is not a failure to retry. Stop here and wait for him to hand control back.",
+					// The host puts Playwright's real diagnosis in `message` and only "error" in `error`,
+					// so the generic fallback would report nothing usable.
+					error: (parsed) =>
+						`${errorLine(parsed)} The element would not take that act. Call browser_read_page again to ` +
+						"see its current state before trying anything else.",
 					"stale-ref": (parsed) =>
 						`${errorLine(parsed)} That ref came from an earlier read. Call browser_read_page again and act ` +
 						"on a ref from that fresh read.",
