@@ -6,6 +6,10 @@
  *   HER_MEMORY_DIR  — memory root (required for run envelope)
  *   HER_DEER_ROOT   — deer-workflow clone (default D:/@Her/deer-workflow)
  *   HER_DEER_BUN    — bun executable (default "bun")
+ *   HER_DEER_JOURNAL — set to 0/false/off/no to stop passing `--journal`.
+ *     `--journal` exists only on the deer checkout Her runs (branch
+ *     her/workflow-journal); a checkout without it fails every task with
+ *     `Unknown run option: --journal`, and this is the way back.
  *   HER_TASK_ID / HER_TASK_OWNER_SESSION_ID — G-185/S5 ownership, injected by
  *     buildWorkerEnv. Read from env rather than the brief: the brief is model-authored
  *     text, env is harness-authored fact. Both absent = ownerless run, envelope unchanged.
@@ -20,6 +24,7 @@ import { createInterface } from "node:readline";
 import {
 	applyDeerWorkflowEvent,
 	createDeerBridgeState,
+	deerJournalDisabled,
 	deerJournalPath,
 	parseDeerWorkflowLine,
 } from "./deer-workflow-bridge.ts";
@@ -135,7 +140,9 @@ async function main(): Promise<number> {
 
 	const bun = resolveBunBin();
 	const cli = deerCliPath();
-	const journalPath = deerJournalPath(memoryRoot, process.env.HER_TASK_ID, brief.resumeFrom);
+	const journalPath = deerJournalDisabled(process.env.HER_DEER_JOURNAL)
+		? undefined
+		: deerJournalPath(memoryRoot, process.env.HER_TASK_ID, brief.resumeFrom);
 	const rawArgs = [
 		bun,
 		"run",

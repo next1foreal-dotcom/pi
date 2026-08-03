@@ -24,6 +24,20 @@ const JOURNAL_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
  * own gets no journal at all; borrowing a key would let one run replay
  * another's answers.
  */
+/**
+ * G-193 — whether `HER_DEER_JOURNAL` turns journaling off.
+ *
+ * The `--journal` option exists only on the deer checkout Her actually runs.
+ * If that checkout is ever moved to a revision without it, every deer task
+ * fails with `Unknown run option: --journal` — loudly, not silently. This
+ * switch is the one-line way back, and it is explicit on purpose: retrying
+ * without the flag behind Fei's back would be exactly the silent fallback we
+ * refuse to build.
+ */
+export function deerJournalDisabled(value: string | undefined): boolean {
+	return /^(0|false|off|no)$/i.test(value?.trim() ?? "");
+}
+
 export function deerJournalPath(
 	memoryRoot: string,
 	taskId: string | undefined,

@@ -9,7 +9,7 @@
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { test } from "node:test";
-import { deerJournalPath } from "../src/her-core/deer-workflow-bridge.ts";
+import { deerJournalDisabled, deerJournalPath } from "../src/her-core/deer-workflow-bridge.ts";
 
 const ROOT = "D:/memory";
 const JOURNALS = join(ROOT, ".her", "workflow-journals");
@@ -59,4 +59,15 @@ test("G-193-5 journals never land beside task records", () => {
 		/[\\/]\.her[\\/]tasks[\\/]/,
 		"a sidecar in .her/tasks broke all three record scanners once already (G-188)",
 	);
+});
+
+test("G-193-6 HER_DEER_JOURNAL is the explicit way back, and only when asked", () => {
+	for (const off of ["0", "false", "off", "no", "OFF", " 0 "]) {
+		assert.equal(deerJournalDisabled(off), true, `expected off: ${JSON.stringify(off)}`);
+	}
+	// Unset, empty, and anything else keep journaling on — a typo in this
+	// variable must not quietly turn the feature off.
+	for (const on of [undefined, "", "1", "true", "yes", "please"]) {
+		assert.equal(deerJournalDisabled(on), false, `expected on: ${JSON.stringify(on)}`);
+	}
 });
