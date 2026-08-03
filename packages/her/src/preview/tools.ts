@@ -4,11 +4,17 @@ import { Type } from "typebox";
 const DEFAULT_UI_BASE_URL = "http://127.0.0.1:3000";
 export const REQUEST_TIMEOUT_MS = 5000;
 /**
- * Driving the live browser is slower than the panel endpoints: the host waits up to
- * REF_ACT_TIMEOUT_MS (5s) for an element to become actionable, and a full ariaSnapshot
- * of a large page runs past 5s on its own (7.2s measured on example.com under load).
- * Sharing the 5s panel timeout would abandon requests the host is still working on and
- * report a timeout for a browser that is behaving perfectly.
+ * Driving the live browser is slower than the panel endpoints, so every tool that
+ * reaches /api/browser/* waits on this tier rather than the panel's 5s:
+ *   - navigate runs `page.goto`, which has no explicit host timeout and therefore
+ *     inherits Playwright's own 30s navigation budget — a 5s client gave up on
+ *     perfectly healthy loads (observed live: cold navigations died on the panel
+ *     timeout while read/act on this tier were fine);
+ *   - act waits up to the host's REF_ACT_TIMEOUT_MS (5s) for an element to become
+ *     actionable, so a 5s client races the server it is waiting on;
+ *   - read runs a full ariaSnapshot, past 5s on its own (7.2s measured on
+ *     example.com under load).
+ * 30s matches Playwright's navigation budget, the longest of the three.
  */
 export const BROWSER_REQUEST_TIMEOUT_MS = 30_000;
 
@@ -17,6 +23,8 @@ export interface PreviewToolDeps {
 	fetchImpl?: typeof fetch;
 	/** Override for tests so timeout cases don't need to wait the real 5s. Defaults to 5000. */
 	timeoutMs?: number;
+	/** Overrides only the browser-driving tier; falls back to timeoutMs, then the 30s default. */
+	browserTimeoutMs?: number;
 }
 
 interface PreviewApiBody {
@@ -41,8 +49,9 @@ interface PreviewApiBody {
 export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {}): void {
 	const fetchImpl = deps.fetchImpl ?? globalThis.fetch;
 	const timeoutMs = deps.timeoutMs ?? REQUEST_TIMEOUT_MS;
-	// An explicit deps.timeoutMs still wins, so tests keep one knob for both.
-	const browserTimeoutMs = deps.timeoutMs ?? BROWSER_REQUEST_TIMEOUT_MS;
+	// deps.timeoutMs still moves both tiers together, so existing callers keep one knob;
+	// deps.browserTimeoutMs isolates the driving tier when a test needs them to differ.
+	const browserTimeoutMs = deps.browserTimeoutMs ?? deps.timeoutMs ?? BROWSER_REQUEST_TIMEOUT_MS;
 
 	pi.registerTool({
 		name: "preview_open_review",
@@ -70,11 +79,19 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 		parameters: Type.Object({ url: Type.String() }),
 		async execute(_toolCallId, params, signal) {
 			const base = uiBase();
-			return await postJson(fetchImpl, base, "/api/browser/agent-navigate", { url: params.url }, signal, timeoutMs, {
-				successText: () => `Navigated to ${params.url}`,
-				controlOwnerDeniedText: () =>
-					"Navigation denied: control is with Fei right now. Ask him to hand control back (handback), then try again.",
-			});
+			return await postJson(
+				fetchImpl,
+				base,
+				"/api/browser/agent-navigate",
+				{ url: params.url },
+				signal,
+				browserTimeoutMs,
+				{
+					successText: () => `Navigated to ${params.url}`,
+					controlOwnerDeniedText: () =>
+						"Navigation denied: control is with Fei right now. Ask him to hand control back (handback), then try again.",
+				},
+			);
 		},
 	});
 

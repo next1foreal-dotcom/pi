@@ -425,6 +425,32 @@ test("the descriptions carry the two contract facts a tool layer can't infer fro
 	assert.match(actDescription, /paused/i);
 });
 
+test("browser_navigate is on the driving timeout tier, not the 5s panel tier", async () => {
+	const fetchImpl = neverRespondingFetch();
+	// Panel tier deliberately long, driving tier tiny: a navigate still wired to the
+	// panel tier would hang for 5s here instead of giving up in 30ms.
+	const tools = previewHarness({ fetchImpl, timeoutMs: 5_000, browserTimeoutMs: 30 });
+
+	const started = Date.now();
+	const text = await run(tools.get("browser_navigate"), { url: "https://example.com" });
+	const elapsed = Date.now() - started;
+
+	assert.match(text, /timeout|did not respond/i);
+	assert.ok(elapsed < 1_000, `navigate should fail on the driving timeout; took ${elapsed}ms`);
+});
+
+test("the panel tools stay on the short panel timeout", async () => {
+	const fetchImpl = neverRespondingFetch();
+	const tools = previewHarness({ fetchImpl, timeoutMs: 30, browserTimeoutMs: 5_000 });
+
+	const started = Date.now();
+	const text = await run(tools.get("preview_open_review"), { url: "http://localhost:7300" });
+	const elapsed = Date.now() - started;
+
+	assert.match(text, /timeout|did not respond/i);
+	assert.ok(elapsed < 1_000, `panel tools should stay on the panel timeout; took ${elapsed}ms`);
+});
+
 test("the browser driving tools wait longer than the host's own element timeout", async () => {
 	const { BROWSER_REQUEST_TIMEOUT_MS, REQUEST_TIMEOUT_MS } = await import("../src/preview/tools.ts");
 
