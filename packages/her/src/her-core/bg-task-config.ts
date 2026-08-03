@@ -15,8 +15,20 @@ export type TasksConfig = {
 	heartbeatSeconds: number;
 	staleMultiplier: number;
 	launchGraceSeconds: number;
+	/**
+	 * G-197 — fallback per-task price for a worker that declares no `price_usd`.
+	 * Zero by default: every worker Her actually runs is subscription-backed or
+	 * local, so a per-task dollar charge meters a currency that never flows and
+	 * locks her out against money nobody spent.
+	 */
 	budgetCap: number;
 	budgetDailyCap: number;
+	/**
+	 * G-197 — the runaway guard, in honest units. Dollars protect nothing here;
+	 * what is genuinely scarce is the subscription's rate-limit window, which
+	 * Her shares with Fei — a spawn loop locks him out of his own tool.
+	 */
+	dailyTaskMax: number;
 	logCapBytes: number;
 	logHeadBytes: number;
 	logTailBytes: number;
@@ -48,8 +60,9 @@ export const DEFAULT_TASKS_CONFIG: TasksConfig = {
 	heartbeatSeconds: 15,
 	staleMultiplier: 3,
 	launchGraceSeconds: 60,
-	budgetCap: 5,
-	budgetDailyCap: 20,
+	budgetCap: 0, // budget_cap — G-197: nothing here bills per token; priced workers say so themselves
+	budgetDailyCap: 20, // budget_daily_cap — still real, but only priced workers can ever reach it
+	dailyTaskMax: 50, // daily_task_max — 我垫的:远高于人力节奏,只拦跑飞;跑稳后按真实用量调
 	logCapBytes: 2_097_152,
 	logHeadBytes: 262_144,
 	logTailBytes: 786_432,

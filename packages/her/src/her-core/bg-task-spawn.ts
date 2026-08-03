@@ -15,6 +15,7 @@ import {
 	isTerminal,
 	loadBgTask,
 	migrateBgStatus,
+	newTaskId,
 	saveBgTask,
 	tasksDir,
 } from "./bg-task-record.ts";
@@ -138,6 +139,17 @@ function resolveCodeRoot(explicit?: string): string {
 	return resolve(root);
 }
 
+/**
+ * G-197 — how many tasks were started today (UTC). `newTaskId` stamps the date
+ * into every id, so the count is a `readdir` away and needs no second ledger;
+ * the prefix is derived from `newTaskId` itself so the two can never drift.
+ */
+async function countTasksStartedToday(memoryRoot: string, now = new Date()): Promise<number> {
+	const prefix = newTaskId(now).replace(/[^-]*$/, "");
+	const names = await readdir(tasksDir(memoryRoot)).catch(() => [] as string[]);
+	return names.filter((name) => isTaskRecordFile(name) && name.startsWith(prefix)).length;
+}
+
 export async function spawnBgTask(memoryRoot: string, input: SpawnBgTaskInput): Promise<SpawnBgTaskResult> {
 	const cfg = loadRuntimeConfig(memoryRoot);
 	const mode = resolveSpawnMode(input);
@@ -200,6 +212,31 @@ export async function spawnBgTask(memoryRoot: string, input: SpawnBgTaskInput): 
 				gates,
 			};
 			await saveBgTask(memoryRoot, failed, `# ${record.objective}\n\nDenied: concurrency.\n`);
+			return {
+				id: failed.id,
+				status: "failed",
+				failureReason: "budget_denied",
+				error: gates[0].reason,
+				gates,
+			};
+		}
+		const startedToday = await countTasksStartedToday(memoryRoot);
+		if (startedToday >= cfg.tasks.dailyTaskMax) {
+			const gates = [
+				{
+					name: "daily_tasks",
+					verdict: "DENY",
+					reason: `${startedToday} tasks today >= daily_task_max ${cfg.tasks.dailyTaskMax}`,
+				},
+			];
+			const failed = {
+				...migrateBgStatus(record, "failed", {
+					failureReason: "budget_denied",
+					endedAt: isoNow(),
+				}),
+				gates,
+			};
+			await saveBgTask(memoryRoot, failed, `# ${record.objective}\n\nDenied: daily task cap.\n`);
 			return {
 				id: failed.id,
 				status: "failed",
@@ -313,7 +350,8 @@ export async function spawnBgTask(memoryRoot: string, input: SpawnBgTaskInput): 
 		const running = migrateBgStatus(record, "running", {
 			startedAt: isoNow(),
 			runnerPid,
-			budgetReserved: cfg.tasks.budgetCap,
+			// G-197 — the worker's own price, not a flat per-task charge. Absent = free.
+			budgetReserved: workerProfile?.priceUsd ?? cfg.tasks.budgetCap,
 		});
 		await saveBgTask(memoryRoot, running, `# ${record.objective}\n`);
 		return {

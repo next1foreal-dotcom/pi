@@ -24,9 +24,16 @@ const BASE_ENV_ALLOW = [
 export type WorkerProfile = {
 	argv: string[];
 	envAllow?: string[];
+	/**
+	 * G-197 — what one run of this worker actually costs, in USD. Absent means
+	 * free: `codex exec` and `claude -p` bill against a subscription and `deer`
+	 * runs on this machine, so a task through them moves no money. Only a worker
+	 * that really meters per token declares a price.
+	 */
+	priceUsd?: number;
 };
 
-type RawProfile = { argv?: unknown; envAllow?: unknown };
+type RawProfile = { argv?: unknown; envAllow?: unknown; priceUsd?: unknown };
 
 /** Parse the top-level `workers:` block out of a full config.yaml text. Malformed entries throw. */
 export function parseWorkers(text: string): Record<string, WorkerProfile> {
@@ -62,9 +69,10 @@ export function parseWorkers(text: string): Record<string, WorkerProfile> {
 		}
 		const fieldMatch = /^ {4,}([A-Za-z0-9_-]+):\s*(.*)$/.exec(line);
 		if (!fieldMatch || !current) continue;
-		const value = parseArrayValue(fieldMatch[2].trim());
-		if (fieldMatch[1] === "argv") current.argv = value;
-		else if (fieldMatch[1] === "env_allow") current.envAllow = value;
+		const raw = fieldMatch[2].trim();
+		if (fieldMatch[1] === "argv") current.argv = parseArrayValue(raw);
+		else if (fieldMatch[1] === "env_allow") current.envAllow = parseArrayValue(raw);
+		else if (fieldMatch[1] === "price_usd") current.priceUsd = raw;
 	}
 	flush();
 	return workers;
@@ -97,7 +105,20 @@ function validateProfile(name: string, raw: RawProfile): WorkerProfile {
 	return {
 		argv: [...raw.argv],
 		...(raw.envAllow ? { envAllow: [...raw.envAllow] } : {}),
+		...(raw.priceUsd !== undefined ? { priceUsd: parsePrice(name, raw.priceUsd) } : {}),
 	};
+}
+
+/** A declared price must be a real non-negative number — a typo must not read as free. */
+function parsePrice(name: string, raw: unknown): number {
+	const text = String(raw)
+		.trim()
+		.replace(/^["']|["']$/g, "");
+	const value = text === "" ? Number.NaN : Number(text);
+	if (!Number.isFinite(value) || value < 0) {
+		throw new Error(`workers.${name}.price_usd must be a non-negative number (got "${text}")`);
+	}
+	return value;
 }
 
 /** Unknown name → throw, listing the configured profile keys. */
