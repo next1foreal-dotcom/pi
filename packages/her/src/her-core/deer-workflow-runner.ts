@@ -17,7 +17,12 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { applyDeerWorkflowEvent, createDeerBridgeState, parseDeerWorkflowLine } from "./deer-workflow-bridge.ts";
+import {
+	applyDeerWorkflowEvent,
+	createDeerBridgeState,
+	deerJournalPath,
+	parseDeerWorkflowLine,
+} from "./deer-workflow-bridge.ts";
 import { appendHerRunEvent } from "./runs.ts";
 import { resolveWorkerCommand } from "./task-executor.ts";
 
@@ -27,6 +32,15 @@ type DeerBrief = {
 	title?: string;
 	parentRunId?: string;
 	runId?: string;
+	/**
+	 * G-193 — id of an earlier deer task whose journal this run should replay.
+	 *
+	 * Absent by default, and deliberately so: a new task writes a fresh journal
+	 * and replays nothing. Only an explicit re-run may reuse recorded answers,
+	 * because replaying them into work that was meant to be done again would be
+	 * a run that reports old news as new.
+	 */
+	resumeFrom?: string;
 };
 
 async function readStdin(): Promise<string> {
@@ -58,6 +72,7 @@ function parseBrief(raw: string): DeerBrief {
 		...(typeof obj.title === "string" ? { title: obj.title } : {}),
 		...(typeof obj.parentRunId === "string" ? { parentRunId: obj.parentRunId } : {}),
 		...(typeof obj.runId === "string" ? { runId: obj.runId } : {}),
+		...(typeof obj.resumeFrom === "string" ? { resumeFrom: obj.resumeFrom } : {}),
 	};
 }
 
@@ -120,7 +135,18 @@ async function main(): Promise<number> {
 
 	const bun = resolveBunBin();
 	const cli = deerCliPath();
-	const rawArgs = [bun, "run", cli, "run", workflowPath, "--print", "--input-file", inputPath];
+	const journalPath = deerJournalPath(memoryRoot, process.env.HER_TASK_ID, brief.resumeFrom);
+	const rawArgs = [
+		bun,
+		"run",
+		cli,
+		"run",
+		workflowPath,
+		"--print",
+		"--input-file",
+		inputPath,
+		...(journalPath ? ["--journal", journalPath] : []),
+	];
 	// Worker profile path: allow ComSpec for bun.cmd npm shim on Windows.
 	const resolved = resolveWorkerCommand(rawArgs, { allowComspec: true });
 

@@ -3,7 +3,38 @@
  * Pure: no I/O. Unknown event types are ignored (caller may log).
  */
 
+import { join } from "node:path";
+
 import type { HerRunEvent, HerRunKind, HerRunStatus } from "./runs.ts";
+
+/** Task ids are our own (`t-YYYYMMDD-xxxxxx`); anything else must not name a path. */
+const JOURNAL_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+
+/**
+ * G-193 — where a deer run records the Agent answers it produces, or
+ * `undefined` for a run that keeps no journal.
+ *
+ * Keyed by `resumeFrom` when the brief explicitly asks to continue an earlier
+ * task, and by the run's own task id otherwise. A new task's id is new, so its
+ * journal is empty and it replays nothing: reusing recorded answers inside work
+ * that was meant to be done again would report old news as new.
+ *
+ * Kept out of `.her/tasks` on purpose — sidecar files next to task records have
+ * broken all three record scanners before (G-188). A run with no task id of its
+ * own gets no journal at all; borrowing a key would let one run replay
+ * another's answers.
+ */
+export function deerJournalPath(
+	memoryRoot: string,
+	taskId: string | undefined,
+	resumeFrom: string | undefined,
+): string | undefined {
+	const key = resumeFrom?.trim() || taskId?.trim();
+	if (!key || !JOURNAL_KEY_RE.test(key)) {
+		return undefined;
+	}
+	return join(memoryRoot, ".her", "workflow-journals", `${key}.jsonl`);
+}
 
 export const DEER_RUN_KIND: HerRunKind = "workflow";
 export const DEER_RUN_SOURCE = "deer-workflow";
