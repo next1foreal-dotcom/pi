@@ -7,7 +7,7 @@ import test from "node:test";
 import { promisify } from "node:util";
 import type { Provider } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, ProviderConfig, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import her, { governedTools } from "../src/extension.ts";
+import her, { governedTools, withUi } from "../src/extension.ts";
 import { initStore, Memory, readJson, readText, startLongTask, writeText } from "../src/her-core/index.ts";
 
 type Handler = (event: unknown, ctx: ExtensionContext) => Promise<unknown> | unknown;
@@ -1593,4 +1593,89 @@ test("extension evolution tools synthesize choice model and self narrative", asy
 	assert.ok(prompts.some((prompt) => /JUDGMENT TRAILS/.test(prompt)));
 	assert.ok(prompts.some((prompt) => /SAMANTHA SELF-EVIDENCE/.test(prompt)));
 	assert.match((await git(store, "log", "--oneline", "-2")).stdout, /memory\(self\): Synthesize self narrative/);
+});
+
+test("withUi ignores an undefined context", () => {
+	let called = false;
+	assert.doesNotThrow(() =>
+		withUi(undefined, () => {
+			called = true;
+		}),
+	);
+	assert.equal(called, false);
+});
+
+test("withUi ignores a stale ui getter", () => {
+	const ctx = {
+		get ui(): never {
+			throw new Error("stale");
+		},
+	} as unknown as ExtensionContext;
+	assert.doesNotThrow(() =>
+		withUi(ctx, () => {
+			throw new Error("must not run");
+		}),
+	);
+});
+
+test("withUi ignores exceptions raised by the UI callback", () => {
+	const ctx = { ui: {} } as unknown as ExtensionContext;
+	assert.doesNotThrow(() =>
+		withUi(ctx, () => {
+			throw new Error("ui callback failed");
+		}),
+	);
+});
+
+test("withUi keeps hasUI false from notifying", () => {
+	let notifications = 0;
+	const ctx = {
+		hasUI: false,
+		ui: {
+			notify() {
+				notifications += 1;
+			},
+		},
+	} as unknown as ExtensionContext;
+	withUi(ctx, (ui) => {
+		if (ctx.hasUI) ui.notify("should stay hidden", "info");
+	});
+	assert.equal(notifications, 0);
+});
+
+test("stale UI cannot interrupt sync bookkeeping", async () => {
+	const store = await tempStore();
+	const remote = await mkdtemp(join(tmpdir(), "her-extension-remote-"));
+	await git(remote, "init", "--bare");
+	await git(store, "init");
+	await git(store, "config", "user.name", "Her Test");
+	await git(store, "config", "user.email", "her-test@example.com");
+	await git(store, "add", "-A");
+	await git(store, "commit", "-m", "memory: init");
+	await git(store, "branch", "-M", "master");
+	await git(store, "remote", "add", "origin", remote);
+	await git(store, "push", "-u", "origin", "master");
+	await new Memory(store).remember("Bookkeeping survives stale UI.", "note");
+
+	const staleCtx = {
+		get ui(): never {
+			throw new Error("stale");
+		},
+	} as unknown as ExtensionContext;
+	await withMemoryDir(store, async () => {
+		const fake = createFakePi();
+		her(fake.pi);
+		const sync = fake.tools.get("her_sync");
+		assert.ok(sync);
+		await assert.doesNotReject(() => executeTool(sync, {}, staleCtx));
+		const entry = fake.entries.find((candidate) => candidate.customType === "her-state");
+		assert.ok(entry);
+		assert.deepEqual(entry.data, {
+			phase: "2",
+			status: "sync-pushed",
+			commit: (entry.data as { commit: string }).commit,
+			memoryDir: store,
+		});
+		assert.equal(typeof (entry.data as { commit: unknown }).commit, "string");
+	});
 });

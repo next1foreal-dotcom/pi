@@ -634,6 +634,19 @@ function authorizationGateForUsedTools(toolNames: string[] | undefined): GateDec
 	return undefined;
 }
 
+/**
+ * UI 更新是装饰，不是事务。会话被替换后 ctx 会变陈旧，访问 ctx.ui 直接抛——
+ * 而这个抛出没有任何值得中断记忆同步的理由。吞掉它。
+ */
+export function withUi(ctx: ExtensionContext | undefined, fn: (ui: ExtensionContext["ui"]) => void): void {
+	if (!ctx) return;
+	try {
+		fn(ctx.ui);
+	} catch {
+		// UI lifecycle failures are intentionally ignored.
+	}
+}
+
 export default function her(pi: ExtensionAPI): void {
 	const memoryDir = getMemoryDir();
 	const summaryModel = createSummaryModel();
@@ -645,32 +658,36 @@ export default function her(pi: ExtensionAPI): void {
 		try {
 			const result = await mem.sync(`memory(sync): ${reason}`);
 			const status = result.status === "pushed" ? "sync-pushed" : "sync-clean";
-			ctx?.ui.setStatus("her-sync", "synced");
+			withUi(ctx, (ui) => ui.setStatus("her-sync", "synced"));
 			pi.appendEntry("her-state", {
 				phase: "2",
 				status,
 				commit: result.commit,
 				memoryDir,
 			});
-			if (result.status === "pushed" && ctx?.hasUI) ctx.ui.notify(renderSync(result), "info");
+			withUi(ctx, (ui) => {
+				if (result.status === "pushed" && ctx?.hasUI) ui.notify(renderSync(result), "info");
+			});
 			return result;
 		} catch (error) {
 			const message = errorMessage(error);
-			ctx?.ui.setStatus("her-sync", "sync failed");
+			withUi(ctx, (ui) => ui.setStatus("her-sync", "sync failed"));
 			pi.appendEntry("her-state", {
 				phase: "2",
 				status: "sync-failed",
 				error: message,
 				memoryDir,
 			});
-			if (ctx?.hasUI) ctx.ui.notify(`Her memory sync failed: ${message}`, "error");
+			withUi(ctx, (ui) => {
+				if (ctx?.hasUI) ui.notify(`Her memory sync failed: ${message}`, "error");
+			});
 			return undefined;
 		}
 	};
 
 	const publishSyncStatus = async (ctx: ExtensionContext): Promise<MemorySyncStatus> => {
 		const status = await mem.syncStatus();
-		ctx.ui.setStatus("her-sync", renderSyncFooterStatus(status));
+		withUi(ctx, (ui) => ui.setStatus("her-sync", renderSyncFooterStatus(status)));
 		return status;
 	};
 
@@ -780,14 +797,15 @@ export default function her(pi: ExtensionAPI): void {
 
 	pi.on("session_start", async (_event, ctx) => {
 		lastEventWakeCtx = ctx;
-		ctx.ui.setStatus("her", "Her loaded");
+		withUi(ctx, (ui) => ui.setStatus("her", "Her loaded"));
 		try {
-			ctx.ui.setStatus("her-bg", await formatBgTaskStatusBoard(memoryDir));
+			const bgStatus = await formatBgTaskStatusBoard(memoryDir);
+			withUi(ctx, (ui) => ui.setStatus("her-bg", bgStatus));
 		} catch {
-			ctx.ui.setStatus("her-bg", "bg · —");
+			withUi(ctx, (ui) => ui.setStatus("her-bg", "bg · —"));
 		}
 		await publishSyncStatus(ctx);
-		ctx.ui.notify("Her loaded", "info");
+		withUi(ctx, (ui) => ui.notify("Her loaded", "info"));
 		pi.appendEntry("her-state", {
 			phase: "2",
 			status: "loaded",
@@ -830,7 +848,8 @@ export default function her(pi: ExtensionAPI): void {
 			if (runtime.tasks.telegramNotify && wakeEvents.length > 0) {
 				await enqueueTaskTelegramNotices(memoryDir, wakeEvents);
 			}
-			ctx.ui.setStatus("her-bg", await formatBgTaskStatusBoard(memoryDir));
+			const bgStatus = await formatBgTaskStatusBoard(memoryDir);
+			withUi(ctx, (ui) => ui.setStatus("her-bg", bgStatus));
 		} catch (error) {
 			const detail = error instanceof Error ? error.message : String(error);
 			console.warn(`[her] bg-task reconcile skipped: ${detail}`);
