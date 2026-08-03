@@ -15,7 +15,7 @@ import {
 } from "../src/hands/policy.ts";
 import { registerHandsTools } from "../src/hands/tools.ts";
 import { recordTrail, renderTrailCard } from "../src/hands/trail.ts";
-import { DEFAULT_CONFIG, type HerConfig } from "../src/her-core/config.ts";
+import { DEFAULT_CONFIG, type HerConfig, loadConfig } from "../src/her-core/config.ts";
 import { initStore, Memory, readText } from "../src/her-core/index.ts";
 import { validateMemoryProvenance } from "../src/her-core/privacy.ts";
 
@@ -386,6 +386,109 @@ test("T18 batch act stops on driver background_unavailable and returns raw error
 	);
 	assert.match(trail[1].detail, /background_unavailable/);
 });
+// G-19.2 → L2 (2026-08-03): the production whitelist grew notepad.exe and the tier went to 2.
+// This block is copied verbatim from her-memory/.her/config.yaml so a syntax slip there
+// (comma list, tier scalar, an inline comment eating a value) fails here instead of on Fei's desktop.
+const L2_PRODUCTION_HANDS_YAML = [
+	"hands:",
+	"  # G-19.2 (2026-07-16): calculator-only whitelist, tier 1, background delivery.",
+	"  # L2 license (2026-08-03, Fei「1-7 都要弥补上」): notepad.exe joins the whitelist and",
+	"  # tier goes to 2, which unlocks WRITE_ACTIONS (type_text / press_key / hotkey / drag).",
+	"  enabled: true",
+	"  desktop_enabled: true",
+	"  desktop_allowed_apps: applicationframehost.exe,notepad.exe",
+	"  desktop_tier: 2",
+	"  desktop_max_actions_per_task: 30",
+	"  desktop_action_timeout_s: 30",
+	"  desktop_driver_binary: C:/Users/Admin/AppData/Local/Programs/Cua/cua-driver/bin/cua-driver.exe",
+	"",
+].join("\n");
+
+test("T19 L2 production config: notepad and calculator may type, everything else is refused", async () => {
+	const root = await mkdtemp(join(tmpdir(), "her-hands-l2-"));
+	const configPath = join(root, "config.yaml");
+	await writeFile(configPath, L2_PRODUCTION_HANDS_YAML, "utf8");
+	const config = resolveHandsConfig(loadConfig(configPath).hands);
+
+	assert.deepEqual(config.desktopAllowedApps, ["applicationframehost.exe", "notepad.exe"]);
+	assert.equal(config.desktopTier, 2);
+	assert.equal(config.desktopMaxActionsPerTask, 30);
+
+	assert.deepEqual(decision("type_text", "notepad.exe", config), { allow: true });
+	assert.deepEqual(decision("type_text", "ApplicationFrameHost.exe", config), { allow: true });
+	assert.deepEqual(decision("click", "explorer.exe", config), {
+		allow: false,
+		reason: "not in whitelist: explorer.exe",
+	});
+	// Tier 2 unlocks writing, it does not unlock the hard-denied floor.
+	for (const denied of ["chrome.exe", "powershell.exe", "1password.exe", "wechat.exe"]) {
+		const result = decision("type_text", denied, config);
+		assert.equal(result.allow, false, `${denied} must stay denied at tier 2`);
+		if (!result.allow) assert.match(result.reason, /hard-denied process/);
+	}
+});
+
+test("T20 tier 2 refuses a non-whitelisted process before asking Fei to confirm", async () => {
+	const { tools, driver } = await handsHarness([], { desktopTier: 2, desktopAllowedApps: "notepad.exe" });
+	const act = tools.get("her_hands_act");
+	assert.ok(act);
+	const context = ctx(true, true);
+
+	const result = await executeHands(
+		act,
+		{
+			process: "explorer.exe",
+			taskLabel: "off whitelist",
+			actions: [{ action: "type_text", elementIndex: 0, text: "hello" }],
+		},
+		context.context,
+	);
+
+	assert.match(firstText(result), /not in whitelist: explorer\.exe/);
+	assert.equal(context.confirmCalls, 0);
+	assert.deepEqual(driver.calls, []);
+});
+
+test("T21 the per-task action ceiling holds inside one batch and across batches", async () => {
+	const { tools, driver } = await handsHarness([], { desktopTier: 2, desktopAllowedApps: "notepad.exe" });
+	const act = tools.get("her_hands_act");
+	assert.ok(act);
+	const oversized = await executeHands(
+		act,
+		{
+			process: "notepad.exe",
+			taskLabel: "one shot",
+			actions: Array.from({ length: 31 }, () => ({ action: "click", elementIndex: 0 })),
+		},
+		ctx().context,
+	);
+
+	assert.match(firstText(oversized), /desktopMaxActionsPerTask exceeded: 31\/30/);
+	assert.deepEqual(driver.calls, []);
+
+	// Off-whitelist actions still spend the task budget, so a task cannot retry its way past 30.
+	const spend = { process: "explorer.exe", taskLabel: "many rounds" };
+	await executeHands(
+		act,
+		{ ...spend, actions: Array.from({ length: 20 }, () => ({ action: "click", elementIndex: 0 })) },
+		ctx().context,
+	);
+	const overflow = await executeHands(
+		act,
+		{ ...spend, actions: Array.from({ length: 15 }, () => ({ action: "click", elementIndex: 0 })) },
+		ctx().context,
+	);
+
+	assert.match(firstText(overflow), /desktopMaxActionsPerTask exceeded: 35\/30/);
+	const freshLabel = await executeHands(
+		act,
+		{ process: "explorer.exe", taskLabel: "fresh task", actions: [{ action: "click", elementIndex: 0 }] },
+		ctx().context,
+	);
+	assert.match(firstText(freshLabel), /not in whitelist/);
+	assert.deepEqual(driver.calls, []);
+});
+
 async function tempMemory(): Promise<{ root: string; mem: Memory }> {
 	const root = await mkdtemp(join(tmpdir(), "her-hands-"));
 	await initStore(root);
