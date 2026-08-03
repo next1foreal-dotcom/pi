@@ -204,13 +204,16 @@ export async function maybeRemoveEmptyTaskWorktree(
 }
 
 /**
- * G-206 — what a kept task worktree actually contains, as `git diff --stat` against its fork
- * point. Diffing the working tree (rather than `base..HEAD`) is deliberate: an agent that wrote
- * files but never committed has still done work someone must decide about, and a handoff that
- * hid it would be the same data-loss shape A (G-198) fixed for deletion.
+ * G-206 — what a kept task worktree actually contains, for the handoff line.
  *
- * Returns null when the stat cannot be produced — this is reporting, and a missing line must
- * never take down the wake that carries the verdict.
+ * Two sources, because neither one alone tells the truth. `git diff --stat` against the fork
+ * point covers committed work and edits to tracked files, but it is blind to files git has never
+ * seen — and a brand-new file nobody committed is exactly what a half-finished agent run leaves
+ * behind. So untracked paths are counted separately and named. Reporting only the diff would
+ * quietly under-report someone's work at the moment a human is deciding whether to keep it.
+ *
+ * Returns null when nothing can be produced — this is reporting, and a missing line must never
+ * take down the wake that carries the verdict.
  */
 export async function taskWorktreeDiffStat(
 	worktreePath: string,
@@ -218,13 +221,29 @@ export async function taskWorktreeDiffStat(
 	opts: { env?: NodeJS.ProcessEnv; gitRun?: GitRun } = {},
 ): Promise<string | null> {
 	const gitRun = opts.gitRun ?? defaultGitRun(opts.env);
+	const parts: string[] = [];
 	try {
 		const { stdout } = await gitRun(worktreePath, "--no-pager", "diff", "--stat", baseSha);
-		const text = stdout.trim();
-		return text.length > 0 ? text : null;
+		if (stdout.trim()) parts.push(stdout.trim());
 	} catch {
-		return null;
+		/* fall through to the untracked pass — a partial stat still beats none */
 	}
+	try {
+		const { stdout } = await gitRun(worktreePath, "status", "--porcelain", "--untracked-files=all");
+		const untracked = stdout
+			.split(/\r?\n/)
+			.filter((line) => line.startsWith("?? "))
+			.map((line) => line.slice(3).trim())
+			.filter(Boolean);
+		if (untracked.length > 0) {
+			const shown = untracked.slice(0, 5).join(", ");
+			const more = untracked.length > 5 ? `, +${untracked.length - 5} more` : "";
+			parts.push(`${untracked.length} untracked: ${shown}${more}`);
+		}
+	} catch {
+		/* untracked pass is best-effort too */
+	}
+	return parts.length > 0 ? parts.join("\n") : null;
 }
 
 export async function listTaskWorktrees(

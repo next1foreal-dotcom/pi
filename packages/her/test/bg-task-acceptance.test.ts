@@ -412,8 +412,11 @@ test("C7 the wake carries the verdict plus the un-merged worktree handoff", asyn
 			workerScript: [
 				"const fs=require('fs');",
 				"fs.writeFileSync('shipped.txt','real work\\n');",
+				// Never committed and never added: invisible to `git diff`, but still someone's work.
+				"fs.writeFileSync('scratch.md','half-finished thought\\n');",
 				"const {execFileSync}=require('child_process');",
-				"execFileSync('git',['add','-A']);",
+				// Only the finished file is staged, exactly as a half-finished run leaves things.
+				"execFileSync('git',['add','shipped.txt']);",
 				"execFileSync('git',['-c','user.email=w@x','-c','user.name=w','commit','-q','-m','work']);",
 			].join(""),
 			gates: [{ name: "ok", command: [process.execPath, "-e", "console.log('ok')"] }],
@@ -426,6 +429,10 @@ test("C7 the wake carries the verdict plus the un-merged worktree handoff", asyn
 	assert.match(String(event?.handoff?.branch), /her-task\//);
 	assert.ok(String(event?.handoff?.worktree).length > 0);
 	assert.match(String(event?.handoff?.diffStat), /shipped\.txt/);
+	// A file the worker never committed is still work someone must decide about, and `git diff`
+	// alone cannot see it — under-reporting it at the merge decision is how work gets dropped.
+	assert.match(String(event?.handoff?.diffStat), /untracked/);
+	assert.match(String(event?.handoff?.diffStat), /scratch\.md/);
 
 	const message = formatWakeMessage(events);
 	assert.match(message, /green/);
