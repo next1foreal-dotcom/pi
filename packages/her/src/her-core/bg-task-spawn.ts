@@ -20,7 +20,7 @@ import {
 	tasksDir,
 } from "./bg-task-record.ts";
 import { enforceDailyCostCap } from "./cost-ledger.ts";
-import { ensureTaskWorktree } from "./long-task-worktree.ts";
+import { discardPartialTaskWorktree, ensureTaskWorktree } from "./long-task-worktree.ts";
 import { redactSecrets, writeText } from "./store.ts";
 import { launchTask, stopTask } from "./task-executor.ts";
 import { claimWarmWorktree, clampWarmWorktreePoolSize, ensureWarmWorktreePool } from "./warm-worktree-pool.ts";
@@ -33,6 +33,9 @@ import {
 } from "./worker-profile.ts";
 
 const DEFAULT_ALLOW = new Set(["node", "nodejs"]);
+
+/** G-198 — external name for the same on/off switch as the legacy `worktree` boolean. */
+export type TaskIsolation = "none" | "worktree";
 
 export type SpawnBgTaskInput = {
 	objective: string;
@@ -47,6 +50,12 @@ export type SpawnBgTaskInput = {
 	retries?: number;
 	/** H.2 — isolate worker cwd in a git worktree on the code repo (never memory). */
 	worktree?: boolean;
+	/**
+	 * G-198 — public alias for `worktree`: "worktree" ≡ worktree:true, "none" ≡
+	 * worktree:false/absent. Giving both is accepted only when they agree — see
+	 * `resolveIsolation` for the conflict rule.
+	 */
+	isolation?: TaskIsolation;
 	/** Code repo root for worktree; defaults to HER_CODE_ROOT / HER_PI_DIR / cwd. */
 	codeRoot?: string;
 	/** G-185/S1 — pi session that spawned this task; drives owner-first wake sorting. */
@@ -126,6 +135,25 @@ function resolveSpawnMode(input: SpawnBgTaskInput): SpawnMode {
 	return hasBrief ? "worker" : "command";
 }
 
+/**
+ * F (G-198) — `isolation` is the public name for the same on/off switch as the legacy
+ * `worktree` boolean. Both may be given only when they agree; a genuine conflict (one says
+ * isolate, the other says don't) is a caller bug and must fail loud rather than guess which one
+ * the caller meant.
+ */
+function resolveIsolation(input: SpawnBgTaskInput): boolean {
+	const isolation = input.isolation;
+	if (isolation !== undefined && isolation !== "none" && isolation !== "worktree") {
+		throw new Error(`spawnBgTask: isolation must be "none" or "worktree" (got ${JSON.stringify(isolation)})`);
+	}
+	if (isolation === undefined) return Boolean(input.worktree);
+	const wantsWorktree = isolation === "worktree";
+	if (input.worktree !== undefined && Boolean(input.worktree) !== wantsWorktree) {
+		throw new Error(`spawnBgTask: isolation:"${isolation}" conflicts with worktree:${input.worktree}`);
+	}
+	return wantsWorktree;
+}
+
 /** D1 — brief byte cap enforced before anything is written to disk. */
 function assertBriefWithinCap(brief: string, capBytes: number): void {
 	if (Buffer.byteLength(brief, "utf8") > capBytes) {
@@ -153,6 +181,7 @@ async function countTasksStartedToday(memoryRoot: string, now = new Date()): Pro
 export async function spawnBgTask(memoryRoot: string, input: SpawnBgTaskInput): Promise<SpawnBgTaskResult> {
 	const cfg = loadRuntimeConfig(memoryRoot);
 	const mode = resolveSpawnMode(input);
+	const useWorktree = resolveIsolation(input);
 
 	let command: string[];
 	let workerProfile: WorkerProfile | undefined;
@@ -270,7 +299,7 @@ export async function spawnBgTask(memoryRoot: string, input: SpawnBgTaskInput): 
 
 	let workerCwd: string | undefined;
 	let worktreePath: string | undefined;
-	if (input.worktree) {
+	if (useWorktree) {
 		const codeRoot = resolveCodeRoot(input.codeRoot);
 		if (resolve(codeRoot) === resolve(memoryRoot)) {
 			const failed = migrateBgStatus(record, "failed", {
@@ -310,6 +339,11 @@ export async function spawnBgTask(memoryRoot: string, input: SpawnBgTaskInput): 
 			}
 		} catch (error) {
 			const detail = error instanceof Error ? error.message : String(error);
+			// B (G-198) — a worktree-add failure can still leave a half-registered worktree, an
+			// already-created branch, or a `locked initializing` directory behind (this record never
+			// got its `worktree` field set, so no later reconcile/orphan-purge pass would ever find
+			// it). Best-effort clean it now; cleanup itself never throws, so it can't shadow `detail`.
+			await discardPartialTaskWorktree(codeRoot, record.id);
 			const failed = migrateBgStatus(record, "failed", {
 				failureReason: "never_started",
 				endedAt: isoNow(),
