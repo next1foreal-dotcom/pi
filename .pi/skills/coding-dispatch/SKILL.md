@@ -32,7 +32,10 @@ description: 写码任务的派工纪律：怎么把实现/计划/复审正确�
 
 ## 验收纪律（收货不收话）
 
-**这一段以前是纸面的：2026-08-03 之前没有任何代码在附验收合同、也没人检查证据——全靠执行方自觉。现在它是机器闸（G-206）。**
+**先分清两条派工路，它们的验收机制不是同一个：**
+
+- **`subagent` 工具派 `.pi/agents/` 班子** → 验收合同由 `pi-subagents` 包实现（Fei 的 preset 装的）。它会往子代理的 prompt 里自动追加 `## Acceptance Contract`，要求结尾给一个 fenced `acceptance-report` JSON 块；分 `attested/checked/verified/reviewed` 几档，`verified` 档运行时自己跑校验命令，`reviewed` 档必须有独立复审结果。**这条路的合同一直是真的，不是我做的。**
+- **`her_task_spawn` 派后台任务** → 2026-08-03 之前**没有任何验收**：worker 退出 0 就是 `completed`，没人跑门禁、没人查证据。**这条路现在补上了机器闸（G-206），下面说的是它。**
 
 - **门禁自动跑。** `her_task_spawn` 带 `isolation:"worktree"` 的任务，worker 退出 0 之后，**Her 自己**在那个 worktree 里跑一组门禁命令（本仓默认见 `.pi/her-gates.json`），记下每条的 exit code + 输出摘要 + 全文日志路径。
   - 全绿 → 任务才是 `completed`，记录里带 `acceptance.verdict: green`。
