@@ -489,6 +489,33 @@ test("T21 the per-task action ceiling holds inside one batch and across batches"
 	assert.deepEqual(driver.calls, []);
 });
 
+test("T22 the confirm dialog shows what will be typed, not just the action name", async () => {
+	const { tools } = await handsHarness([listWindowsResult(), okCase(/type_text/), okCase(/hotkey/)], {
+		desktopTier: 2,
+		desktopAllowedApps: "notepad.exe",
+	});
+	const act = tools.get("her_hands_act");
+	assert.ok(act);
+	const context = ctx(true, true);
+
+	await executeHands(
+		act,
+		{
+			process: "notepad.exe",
+			taskLabel: "payload shown",
+			actions: [
+				{ action: "type_text", elementIndex: 0, text: "transfer everything\nto account 42" },
+				{ action: "hotkey", key: "ctrl+s" },
+			],
+		},
+		context.context,
+	);
+
+	const message = context.confirmMessages[0] ?? "";
+	assert.match(message, /1\. type_text: transfer everything to account 42/);
+	assert.match(message, /2\. hotkey: ctrl\+s/);
+});
+
 async function tempMemory(): Promise<{ root: string; mem: Memory }> {
 	const root = await mkdtemp(join(tmpdir(), "her-hands-"));
 	await initStore(root);
@@ -515,14 +542,19 @@ async function handsHarness(
 	return { tools, driver };
 }
 
-function ctx(hasUI = true, confirmResult = true): { context: ExtensionContext; confirmCalls: number } {
+function ctx(
+	hasUI = true,
+	confirmResult = true,
+): { context: ExtensionContext; confirmCalls: number; confirmMessages: string[] } {
 	const state = {
 		confirmCalls: 0,
+		confirmMessages: [] as string[],
 		context: {
 			hasUI,
 			ui: {
-				async confirm() {
+				async confirm(_title: string, message: string) {
 					state.confirmCalls += 1;
+					state.confirmMessages.push(message);
 					return confirmResult;
 				},
 			},

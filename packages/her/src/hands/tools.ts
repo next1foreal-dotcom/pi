@@ -358,7 +358,20 @@ function renderActSummary(trail: HandsTrailEntry[]): string {
 }
 
 function summarizeActions(actions: ActionInput[]): string {
-	return actions.map((item, index) => `${index + 1}. ${item.action}`).join("\n");
+	return actions.map((item, index) => `${index + 1}. ${item.action}${describePayload(item)}`).join("\n");
+}
+
+// A tier-2 approval is only worth asking for if it shows what is about to be typed or pressed.
+function describePayload(action: ActionInput): string {
+	if (action.text !== undefined) return `: ${oneLine(action.text)}`;
+	if (action.key !== undefined) return `: ${oneLine(action.key)}`;
+	if (action.direction !== undefined) return `: ${action.direction}`;
+	return "";
+}
+
+function oneLine(value: string): string {
+	const collapsed = value.replace(/\s+/g, " ").trim();
+	return collapsed.length > 120 ? `${collapsed.slice(0, 120)}…` : collapsed;
 }
 
 function textResult(text: string, details: Record<string, unknown> = {}) {
