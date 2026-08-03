@@ -29,7 +29,6 @@
 				"packages/her/test/bg-task-g188.test.ts",
 				"packages/her/test/bg-task-g197.test.ts",
 				"packages/her/test/bg-task-isolation.test.ts",
-				"packages/her/test/bg-task-owner-s5.test.ts",
 				"packages/her/test/bg-task-owner.test.ts",
 				"packages/her/test/bg-task-worker.test.ts",
 				"packages/her/test/deer-journal.test.ts",
