@@ -203,6 +203,30 @@ export async function maybeRemoveEmptyTaskWorktree(
 	return { removed: true, commits: 0 };
 }
 
+/**
+ * G-206 — what a kept task worktree actually contains, as `git diff --stat` against its fork
+ * point. Diffing the working tree (rather than `base..HEAD`) is deliberate: an agent that wrote
+ * files but never committed has still done work someone must decide about, and a handoff that
+ * hid it would be the same data-loss shape A (G-198) fixed for deletion.
+ *
+ * Returns null when the stat cannot be produced — this is reporting, and a missing line must
+ * never take down the wake that carries the verdict.
+ */
+export async function taskWorktreeDiffStat(
+	worktreePath: string,
+	baseSha: string,
+	opts: { env?: NodeJS.ProcessEnv; gitRun?: GitRun } = {},
+): Promise<string | null> {
+	const gitRun = opts.gitRun ?? defaultGitRun(opts.env);
+	try {
+		const { stdout } = await gitRun(worktreePath, "--no-pager", "diff", "--stat", baseSha);
+		const text = stdout.trim();
+		return text.length > 0 ? text : null;
+	} catch {
+		return null;
+	}
+}
+
 export async function listTaskWorktrees(
 	repoRoot: string,
 	opts: { env?: NodeJS.ProcessEnv; gitRun?: GitRun } = {},

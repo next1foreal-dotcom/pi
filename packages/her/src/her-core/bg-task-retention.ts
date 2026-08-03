@@ -10,7 +10,20 @@ import { isTaskRecordFile, isTerminal, loadBgTask, tasksDir } from "./bg-task-re
 
 // G-129/D6 — .brief is a task attachment like .pid/.log: kept past terminal state (retries need
 // it) and purged in the same retention batch once retention_days has elapsed.
-const SENTINELS = ["log", "pid", "heartbeat", "done", "done.tmp", "brief", "result.md"] as const;
+// G-206 — the acceptance plan and its results are task attachments like the rest, and the
+// per-gate logs they point at are purged with them (matched by prefix, since their names carry
+// the gate's own name).
+const SENTINELS = [
+	"log",
+	"pid",
+	"heartbeat",
+	"done",
+	"done.tmp",
+	"brief",
+	"result.md",
+	"gates.json",
+	"acceptance.json",
+] as const;
 
 export type RetentionPurge = {
 	taskId: string;
@@ -55,11 +68,14 @@ export async function purgeExpiredTaskArtifacts(
 		if (now.getTime() - ended.getTime() < cutoffMs) continue;
 
 		const removed: string[] = [];
-		for (const ext of SENTINELS) {
-			const path = join(dir, `${id}.${ext}`);
+		const targets = [
+			...SENTINELS.map((ext) => `${id}.${ext}`),
+			...names.filter((entry) => entry.startsWith(`${id}.gate-`)),
+		];
+		for (const target of targets) {
 			try {
-				await unlink(path);
-				removed.push(`${id}.${ext}`);
+				await unlink(join(dir, target));
+				removed.push(target);
 			} catch {
 				/* missing ok */
 			}

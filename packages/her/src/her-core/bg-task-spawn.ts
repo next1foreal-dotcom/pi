@@ -5,6 +5,13 @@
 import { readdir } from "node:fs/promises";
 import { hostname as osHostname } from "node:os";
 import { basename, join, resolve } from "node:path";
+import {
+	type AcceptanceGate,
+	type GatePlan,
+	gatePlanFilename,
+	loadRepoGatePlan,
+	parseGatePlan,
+} from "./bg-task-acceptance.ts";
 import { loadRuntimeConfig } from "./bg-task-config.ts";
 import {
 	type BgTaskRecord,
@@ -21,7 +28,7 @@ import {
 } from "./bg-task-record.ts";
 import { enforceDailyCostCap } from "./cost-ledger.ts";
 import { discardPartialTaskWorktree, ensureTaskWorktree } from "./long-task-worktree.ts";
-import { redactSecrets, writeText } from "./store.ts";
+import { redactSecrets, writeJson, writeText } from "./store.ts";
 import { launchTask, stopTask } from "./task-executor.ts";
 import { claimWarmWorktree, clampWarmWorktreePoolSize, ensureWarmWorktreePool } from "./warm-worktree-pool.ts";
 import {
@@ -60,7 +67,13 @@ export type SpawnBgTaskInput = {
 	codeRoot?: string;
 	/** G-185/S1 — pi session that spawned this task; drives owner-first wake sorting. */
 	ownerSessionId?: string;
-	/** Test hook: skip budget/concurrency gates */
+	/**
+	 * G-206 — mechanical acceptance gates run in the task's own worktree once the worker exits 0.
+	 * Given here, they replace whatever the code repo's manifest declares (an explicit caller
+	 * outranks the repo default); omitted, a worktree-isolated task inherits the repo manifest.
+	 */
+	gates?: AcceptanceGate[];
+	/** Test hook: skip budget/concurrency gates (spend/concurrency, not acceptance gates) */
 	skipGates?: boolean;
 	/** Internal trusted command path: allow the configured CLI shim chain in command mode. */
 	allowComspec?: boolean;
@@ -154,6 +167,30 @@ function resolveIsolation(input: SpawnBgTaskInput): boolean {
 	return wantsWorktree;
 }
 
+/**
+ * G-206 — gate commands are held to exactly the same allowlist as bare-mode task commands: argv
+ * only, a bare allowlisted binary, never the cmd.exe shim chain. A gate is a process Her runs on
+ * her own machine on the strength of a config file or a task packet, so "it is only a gate" buys
+ * it no extra trust. A repo manifest that names something outside the allowlist fails the spawn
+ * rather than being quietly skipped — a gate nobody notices was skipped is worse than no gate.
+ */
+function resolveGatePlan(
+	gates: AcceptanceGate[] | undefined,
+	source: "task" | "repo",
+	workers: Record<string, WorkerProfile>,
+): GatePlan | null {
+	if (!gates) return null;
+	const plan = parseGatePlan({ gates }, source);
+	for (const gate of plan.gates) {
+		try {
+			assertCommandAllowed(gate.command, workers);
+		} catch (error) {
+			throw new Error(`gate "${gate.name}" is not runnable: ${error instanceof Error ? error.message : error}`);
+		}
+	}
+	return plan;
+}
+
 /** D1 — brief byte cap enforced before anything is written to disk. */
 function assertBriefWithinCap(brief: string, capBytes: number): void {
 	if (Buffer.byteLength(brief, "utf8") > capBytes) {
@@ -182,6 +219,8 @@ export async function spawnBgTask(memoryRoot: string, input: SpawnBgTaskInput): 
 	const cfg = loadRuntimeConfig(memoryRoot);
 	const mode = resolveSpawnMode(input);
 	const useWorktree = resolveIsolation(input);
+	// Validated before any side effect: an unrunnable gate must not leave a worktree behind.
+	const taskGatePlan = resolveGatePlan(input.gates, "task", cfg.workers);
 
 	let command: string[];
 	let workerProfile: WorkerProfile | undefined;
@@ -299,6 +338,7 @@ export async function spawnBgTask(memoryRoot: string, input: SpawnBgTaskInput): 
 
 	let workerCwd: string | undefined;
 	let worktreePath: string | undefined;
+	let gatePlan: GatePlan | null = taskGatePlan;
 	if (useWorktree) {
 		const codeRoot = resolveCodeRoot(input.codeRoot);
 		if (resolve(codeRoot) === resolve(memoryRoot)) {
@@ -334,6 +374,15 @@ export async function spawnBgTask(memoryRoot: string, input: SpawnBgTaskInput): 
 			record.codeRoot = codeRoot;
 			record.worktreeBranch = wt.branch;
 			record.worktreeBaseSha = wt.baseSha;
+			// G-206 — the repo's own gates, resolved here and written down before the worker draws
+			// its first breath. The timing is the guarantee: the plan is frozen while the worktree
+			// is still untouched, so a worker that later edits the manifest inside its own worktree
+			// is editing a copy nobody will read again. Reading from `codeRoot` rather than from
+			// `wt.worktreePath` says that intent out loud and additionally keeps a warm-pool
+			// worktree (built from an older HEAD) from supplying stale gates. A corrupt manifest
+			// throws into the catch below and fails the spawn — dispatching work that cannot be
+			// judged is no improvement over not dispatching it.
+			if (!gatePlan) gatePlan = resolveGatePlan((await loadRepoGatePlan(codeRoot))?.gates, "repo", cfg.workers);
 			if (warm) {
 				record.warmWorktreeClaim = true;
 			}
@@ -359,6 +408,11 @@ export async function spawnBgTask(memoryRoot: string, input: SpawnBgTaskInput): 
 	}
 
 	await saveBgTask(memoryRoot, record, `# ${record.objective}\n`);
+
+	// Written before launch so the plan is fixed before the worker draws its first breath.
+	if (gatePlan) {
+		await writeJson(join(tasksDir(memoryRoot), gatePlanFilename(record.id)), gatePlan);
+	}
 
 	let briefPath: string | undefined;
 	if (mode === "worker") {

@@ -32,8 +32,16 @@ description: 写码任务的派工纪律：怎么把实现/计划/复审正确�
 
 ## 验收纪律（收货不收话）
 
-- 派工会自动附验收合同（acceptance contract）：收货只认结构化 acceptance-report + 证据，**不收口头"做完了"**。
-- 合同之上你还要**亲自复跑**验证命令（npm test、node 运行产物等），亲眼看到绿再 commit。子代理的自述不是证据，你跑出来的输出才是。
+**这一段以前是纸面的：2026-08-03 之前没有任何代码在附验收合同、也没人检查证据——全靠执行方自觉。现在它是机器闸（G-206）。**
+
+- **门禁自动跑。** `her_task_spawn` 带 `isolation:"worktree"` 的任务，worker 退出 0 之后，**Her 自己**在那个 worktree 里跑一组门禁命令（本仓默认见 `.pi/her-gates.json`），记下每条的 exit code + 输出摘要 + 全文日志路径。
+  - 全绿 → 任务才是 `completed`，记录里带 `acceptance.verdict: green`。
+  - 任何一条红/崩了/没跑成 → 任务是 **`failed` + `failureReason: acceptance_rejected`**，`acceptance.verdict: rejected-needs-evidence`。**这不是我判的，是退出码判的。**
+  - 没门禁可跑 → `unverified`。**`unverified` 不等于绿**，它的意思是"没人查过"。
+- **派工时可以点名门禁。** 任务动的东西默认门禁盖不住，就在 `her_task_spawn` 传 `gates: [{name, command}]`（argv 数组，argv[0] 必须是 node 或已配置 worker）。传了就整套替换默认。
+- **执行方的自述报告只在有证据时才算数。** worker 可以在自己 worktree 根目录写 `.her-acceptance-report.json`：`{"claims":[{"claim":"...","command":[...],"exitCode":0,"outputDigest":"sha256:..."}]}`。每条 claim 必须三样齐全，且 command/exitCode/digest 要跟 Her 自己那次测量对得上——**光有话没有证据 = 拒收；数字对不上 = 拒收**（digest 是 Her 跑的时候自己算的，伪造不了）。没写报告不扣分：门禁绿本身就是证据。
+- **绿了也不自动合并。** 通知里带 worktree 路径 + 分支 + `diff --stat`，合不合是人（或上层会话）的动作，管线不碰。
+- 门禁绿 ≠ 全仓绿：唤醒消息里会列出**具体跑了哪几个门禁**，看那一行，别把 `green` 读成"全都过了"。
 - commit 信息写清：派给了谁、验收证据是什么。
 
 ## 诚实纪律（失败怎么报）
