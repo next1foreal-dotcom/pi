@@ -336,6 +336,20 @@ export async function continueBgTask(
 	if (record.worker.toLowerCase() !== "codex") throw new Error("该任务暂不支持续跑: 任务类型不是 codex");
 
 	const safeMessage = redactSecrets(message);
+	// G-187 — 真身实测(2026-08-02, codex-cli 0.145.0, 真会话续跑成功)记下续跑的实际姿势,
+	// 因为它和父任务并不一样,三点都会咬人:
+	//  1. `resume` 不继承父任务 profile 的旗子。父任务跑的是 `-m gpt-5.6-terra
+	//     -c model_reasoning_effort=medium --sandbox workspace-write`;续跑实测落在
+	//     model=gpt-5.6-luna / reasoning effort=max / sandbox=read-only。**更贵的档**,
+	//     且只读——续跑写不了文件。要改得把旗子放在 `resume` 之前(`codex exec [OPTIONS]
+	//     resume <id> <prompt>`);放在 prompt 之后 codex 直接报 usage 错。
+	//  2. worker 的 cwd 是 `<memoryRoot>/.her/tasks`(bare command 模式实测),不是调用方
+	//     的 cwd。codex 要求 cwd 落在 git 仓库内,这条现在靠 her-memory 自己是 git 仓库
+	//     才成立——memory root 若不是 git 仓库,续跑会以
+	//     "Not inside a trusted directory" 退出 1。
+	//  3. 这条命令没带 `--json`/`-o`,所以子任务既不产 result.md 也捕不到自己的
+	//     codexSessionId(parseCodexSessionId 只认 JSON 行,日志里的明文 "session id:" 不算)。
+	//     即: 续跑链只有一层,续跑之后不能再续。
 	return spawnBgTask(memoryRoot, {
 		objective: `Continue ${record.id}`,
 		command: ["codex", "exec", "resume", record.codexSessionId, safeMessage],
