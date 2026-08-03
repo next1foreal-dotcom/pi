@@ -50,19 +50,30 @@ function record(overrides: Partial<BgTaskRecord> = {}): BgTaskRecord {
 	};
 }
 
+// G-187 — 注入位置从「追加到末尾」改成「插在 exec 之后」。原因是实弹量出来的:
+// `codex exec resume <id> <prompt>` 不接受位置参数之后的旗子(codex 直接吐 usage 并非零退出),
+// 而 `codex exec [OPTIONS] [PROMPT]` 两种位置都收。一条对两种形状都合法的规则胜过两条。
+// 同时补 --skip-git-repo-check: worker 的 cwd 是 <memoryRoot>/.her/tasks,不是 workspace。
 test("C2 worker command adds --json and -o once, without changing non-Codex profiles", () => {
 	const profile: WorkerProfile = { argv: ["codex", "exec", "-"] };
 	assert.deepEqual(prepareWorkerCommand("codex", profile, "C:\\tasks", "t-1"), [
 		"codex",
 		"exec",
-		"-",
 		"--json",
 		"-o",
 		join("C:\\tasks", "t-1.result.md"),
+		"--skip-git-repo-check",
+		"-",
 	]);
 	assert.deepEqual(
-		prepareWorkerCommand("codex", { argv: ["codex", "exec", "--json", "-o", "custom.md", "-"] }, "C:\\tasks", "t-2"),
-		["codex", "exec", "--json", "-o", "custom.md", "-"],
+		prepareWorkerCommand(
+			"codex",
+			{ argv: ["codex", "exec", "--json", "-o", "custom.md", "--skip-git-repo-check", "-"] },
+			"C:\\tasks",
+			"t-2",
+		),
+		["codex", "exec", "--json", "-o", "custom.md", "--skip-git-repo-check", "-"],
+		"已配置的旗子不许重复注入",
 	);
 	assert.deepEqual(prepareWorkerCommand("deer", { argv: ["node", "deer.mjs"] }, "C:\\tasks", "t-3"), [
 		"node",
@@ -164,7 +175,19 @@ test("C2 continue spawns a normal child with parentTask, ownerSessionId, and red
 		const child = await loadBgTask(root, result.id);
 		assert.equal(child?.record.parentTask, oldId);
 		assert.equal(child?.record.ownerSessionId, "owner-2");
-		assert.deepEqual(child?.record.command, ["codex", "exec", "resume", sessionId, "remember «REDACTED:secret»"]);
+		// G-187 — 续跑现在继承 profile 旗子并注入自己的 --json/-o(旗子一律排在 resume 之前),
+		// 所以子任务能捕到自己的 session id、写自己的 result.md,也就还能再被续。
+		assert.deepEqual(child?.record.command, [
+			"codex",
+			"exec",
+			"--json",
+			"-o",
+			join(tasksDir(root), `${result.id}.result.md`),
+			"--skip-git-repo-check",
+			"resume",
+			sessionId,
+			"remember «REDACTED:secret»",
+		]);
 	} finally {
 		if (oldPath === undefined) delete process.env.PATH;
 		else process.env.PATH = oldPath;

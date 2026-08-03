@@ -111,7 +111,21 @@ export function resolveWorkerInvocation(workers: Record<string, WorkerProfile>, 
 	return profile;
 }
 
-/** Add Codex's machine-readable event stream and final-result file without mutating user config. */
+/**
+ * Add Codex's machine-readable event stream and final-result file without mutating user config.
+ *
+ * G-187 — the flags are **inserted after `exec`, not appended**. `codex exec [OPTIONS] [PROMPT]`
+ * tolerates trailing options, but `codex exec resume <SESSION_ID> <PROMPT>` does not: a flag after
+ * its positionals makes codex print usage and exit non-zero (verified, codex-cli 0.145.0). One
+ * placement rule that is legal for both shapes beats two rules.
+ *
+ * `--skip-git-repo-check` goes in for the same reason it was invisible before: a worker's cwd is
+ * `<memoryRoot>/.her/tasks` (the task-artifact directory, not a workspace), so codex's "trusted
+ * directory" gate passed only by accident — because her-memory happens to be a git repo. Saying it
+ * out loud keeps a non-git memory root from failing continues with an unrelated-looking error.
+ *
+ * Idempotent: a flag the caller already configured is never added twice.
+ */
 export function prepareWorkerCommand(
 	workerName: string,
 	profile: WorkerProfile,
@@ -120,11 +134,37 @@ export function prepareWorkerCommand(
 ): string[] {
 	const command = [...profile.argv];
 	if (workerName.toLowerCase() !== "codex") return command;
-	if (!command.includes("--json")) command.push("--json");
+	const flags: string[] = [];
+	if (!command.includes("--json")) flags.push("--json");
 	if (!command.includes("-o") && !command.includes("--output-last-message")) {
-		command.push("-o", join(taskDir, `${taskId}.result.md`));
+		flags.push("-o", join(taskDir, `${taskId}.result.md`));
 	}
-	return command;
+	if (!command.includes("--skip-git-repo-check")) flags.push("--skip-git-repo-check");
+	if (flags.length === 0) return command;
+	// Options belong before any subcommand/positional; fall back to appending for an argv shape
+	// we do not recognise.
+	const at = command[1] === "exec" ? 2 : command.length;
+	return [...command.slice(0, at), ...flags, ...command.slice(at)];
+}
+
+/**
+ * G-187 — build `codex exec [OPTIONS] resume <SESSION_ID> <PROMPT>` from a worker profile.
+ *
+ * A continuation must run with the parent's posture, not codex's defaults. Measured on a real
+ * resume before this existed: the parent ran `gpt-5.6-terra / effort=medium / sandbox=workspace-write`
+ * while its continuation silently landed on `gpt-5.6-luna / effort=max / sandbox=read-only` — a
+ * pricier model that also could not write. "Looks like it is continuing, actually swapped the
+ * brain" is the failure this prevents.
+ *
+ * The profile's trailing `-` (read the prompt from stdin) is dropped: a resume carries its prompt
+ * as an argument, and stdin is not wired for it.
+ */
+export function buildCodexResumeCommand(profileArgv: readonly string[], sessionId: string, message: string): string[] {
+	const flags = [...profileArgv];
+	while (flags.length > 0 && flags[flags.length - 1] === "-") flags.pop();
+	// `resume` is a subcommand of `exec`; a profile that omits it would build an invalid command.
+	if (!flags.includes("exec")) flags.splice(1, 0, "exec");
+	return [...flags, "resume", sessionId, message];
 }
 
 /** D9 — minimal env for a worker process: base allowlist + profile.envAllow, never the full parent env. */

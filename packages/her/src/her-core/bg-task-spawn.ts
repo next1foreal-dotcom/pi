@@ -23,7 +23,13 @@ import { ensureTaskWorktree } from "./long-task-worktree.ts";
 import { redactSecrets, writeText } from "./store.ts";
 import { launchTask, stopTask } from "./task-executor.ts";
 import { claimWarmWorktree, clampWarmWorktreePoolSize, ensureWarmWorktreePool } from "./warm-worktree-pool.ts";
-import { buildWorkerEnv, prepareWorkerCommand, resolveWorkerInvocation, type WorkerProfile } from "./worker-profile.ts";
+import {
+	buildCodexResumeCommand,
+	buildWorkerEnv,
+	prepareWorkerCommand,
+	resolveWorkerInvocation,
+	type WorkerProfile,
+} from "./worker-profile.ts";
 
 const DEFAULT_ALLOW = new Set(["node", "nodejs"]);
 
@@ -161,6 +167,18 @@ export async function spawnBgTask(memoryRoot: string, input: SpawnBgTaskInput): 
 	});
 	if (mode === "worker" && workerProfile && workerName) {
 		command = prepareWorkerCommand(workerName, workerProfile, tasksDir(memoryRoot), record.id);
+		record.command = [...command];
+	} else if (
+		basename(command[0] ?? "")
+			.toLowerCase()
+			.replace(/\.exe$/i, "") === "codex"
+	) {
+		// G-187 — a bare-command codex invocation (a continuation) gets the same treatment as a
+		// profile one, keyed off argv[0] rather than the worker name: `worker` falls back to the
+		// configured default, which would otherwise inject codex flags into a plain `node` task.
+		// Without this the child captures no session id and writes no result.md — i.e. a
+		// continuation could not itself be continued.
+		command = prepareWorkerCommand("codex", { argv: command }, tasksDir(memoryRoot), record.id);
 		record.command = [...command];
 	}
 
@@ -336,23 +354,21 @@ export async function continueBgTask(
 	if (record.worker.toLowerCase() !== "codex") throw new Error("该任务暂不支持续跑: 任务类型不是 codex");
 
 	const safeMessage = redactSecrets(message);
-	// G-187 — 真身实测(2026-08-02, codex-cli 0.145.0, 真会话续跑成功)记下续跑的实际姿势,
-	// 因为它和父任务并不一样,三点都会咬人:
-	//  1. `resume` 不继承父任务 profile 的旗子。父任务跑的是 `-m gpt-5.6-terra
-	//     -c model_reasoning_effort=medium --sandbox workspace-write`;续跑实测落在
-	//     model=gpt-5.6-luna / reasoning effort=max / sandbox=read-only。**更贵的档**,
-	//     且只读——续跑写不了文件。要改得把旗子放在 `resume` 之前(`codex exec [OPTIONS]
-	//     resume <id> <prompt>`);放在 prompt 之后 codex 直接报 usage 错。
-	//  2. worker 的 cwd 是 `<memoryRoot>/.her/tasks`(bare command 模式实测),不是调用方
-	//     的 cwd。codex 要求 cwd 落在 git 仓库内,这条现在靠 her-memory 自己是 git 仓库
-	//     才成立——memory root 若不是 git 仓库,续跑会以
-	//     "Not inside a trusted directory" 退出 1。
-	//  3. 这条命令没带 `--json`/`-o`,所以子任务既不产 result.md 也捕不到自己的
-	//     codexSessionId(parseCodexSessionId 只认 JSON 行,日志里的明文 "session id:" 不算)。
-	//     即: 续跑链只有一层,续跑之后不能再续。
+	// G-187 — 续跑必须带着父任务的档和权限走,否则就是「看着在续、其实换了脑子」:
+	// 实测过一次不继承的后果 —— 父任务 gpt-5.6-terra/effort=medium/sandbox=workspace-write,
+	// 续跑却落在 gpt-5.6-luna/effort=max/sandbox=read-only(更贵,而且写不了文件)。
+	//
+	// 继承的是**该 worker 当前的 profile**,不是父任务当时的实际 argv。取舍写明:
+	// 父任务记录里的 command 已经掺了它自己的 `-o <parentId>.result.md`(spawn 时注入的),
+	// 照抄会让子任务把结果写进父任务的文件;而 profile 是干净的旗子集合,重新注入即可。
+	// 代价是 profile 改过之后续跑会漂移(用新档续旧会话)——派工方已接受这个漂移。
+	//
+	// worker 的 cwd 是 `<memoryRoot>/.her/tasks`(bare command 模式实测,不是调用方的 cwd),
+	// 所以 codex 的 git 仓库门由 prepareWorkerCommand 注入的 --skip-git-repo-check 显式放行。
+	const profile = resolveWorkerInvocation(loadRuntimeConfig(memoryRoot).workers, record.worker);
 	return spawnBgTask(memoryRoot, {
 		objective: `Continue ${record.id}`,
-		command: ["codex", "exec", "resume", record.codexSessionId, safeMessage],
+		command: buildCodexResumeCommand(profile.argv, record.codexSessionId, safeMessage),
 		worker: record.worker,
 		parentTask: record.id,
 		ownerSessionId,

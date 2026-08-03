@@ -7,6 +7,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { setTimeout as sleep } from "node:timers/promises";
 import { canDeliverWake } from "../src/her-core/bg-task-owner.ts";
 import { reconcileBgTasks } from "../src/her-core/bg-task-reconcile.ts";
 import {
@@ -172,4 +173,117 @@ test("G-187-4 continueBgTask 的拒绝语义", async () => {
 		"# x\n",
 	);
 	await assert.rejects(() => continueBgTask(root, "t-notcodex", "hi", "s1"), /任务类型不是 codex/);
+});
+
+// G-187 ①②③ — 续跑必须带着父任务的档和权限走,而且续了还能再续。
+test("G-187-5 buildCodexResumeCommand 继承 profile 旗子,且旗子在 resume 之前", async () => {
+	const { buildCodexResumeCommand, prepareWorkerCommand } = await import("../src/her-core/worker-profile.ts");
+	const profileArgv = [
+		"codex",
+		"exec",
+		"--sandbox",
+		"workspace-write",
+		"-m",
+		"gpt-5.6-terra",
+		"-c",
+		"model_reasoning_effort=medium",
+		"-",
+	];
+
+	const resume = buildCodexResumeCommand(profileArgv, "sid-1", "暗号是什么?");
+	assert.deepEqual(resume, [
+		"codex",
+		"exec",
+		"--sandbox",
+		"workspace-write",
+		"-m",
+		"gpt-5.6-terra",
+		"-c",
+		"model_reasoning_effort=medium",
+		"resume",
+		"sid-1",
+		"暗号是什么?",
+	]);
+	// 父任务的档与权限逐个带过来了
+	assert.ok(resume.includes("workspace-write"), "续跑不许丢写权限");
+	assert.ok(resume.includes("gpt-5.6-terra"), "续跑不许换模型");
+	assert.ok(resume.includes("model_reasoning_effort=medium"), "续跑不许换 effort 档");
+	// stdin 占位符必须去掉: resume 的 prompt 走参数不走 stdin
+	assert.equal(resume.includes("-"), false);
+
+	// 顺序合法性: 旗子必须都在 resume 之前(codex 拒绝位置参数之后的旗子)
+	const prepared = prepareWorkerCommand("codex", { argv: resume }, "C:\tasks", "t-child");
+	const resumeAt = prepared.indexOf("resume");
+	for (const flag of ["--sandbox", "-m", "-c", "--json", "-o", "--skip-git-repo-check"]) {
+		const at = prepared.indexOf(flag);
+		assert.ok(at >= 0, `${flag} 应在续跑命令里`);
+		assert.ok(at < resumeAt, `${flag} 必须排在 resume 之前(实测 codex 不收后置旗子)`);
+	}
+	// 子任务拿到的是自己的 result.md,不是父任务的
+	assert.ok(prepared.includes(join("C:\tasks", "t-child.result.md")));
+
+	// 幂等: 再跑一次不重复注入
+	assert.deepEqual(prepareWorkerCommand("codex", { argv: prepared }, "C:\tasks", "t-child"), prepared);
+});
+
+test("G-187-6 bare-command 的 codex 续跑也拿到 --json/-o(否则续完不能再续)", async () => {
+	const root = await memoryRoot();
+	await writeFile(
+		join(root, ".her", "config.yaml"),
+		[
+			"tasks:",
+			"  budget_daily_cap: 999",
+			"  default_worker: codex",
+			"workers:",
+			"  codex:",
+			'    argv: ["codex", "exec", "--sandbox", "workspace-write", "-"]',
+			"",
+		].join("\n"),
+		"utf8",
+	);
+	const { continueBgTask } = await import("../src/her-core/bg-task-spawn.ts");
+	await saveBgTask(
+		root,
+		baseRecord({ id: "t-parent", status: "completed", worker: "codex", codexSessionId: "sid-parent" }),
+		"# x\n",
+	);
+
+	// 真起进程会调 codex; 这里只验证落盘的 argv 形状 —— 命令本身会失败, 记录照样写下来。
+	const spawned = await continueBgTask(root, "t-parent", "暗号是什么?", "session-X").catch(() => undefined);
+	const childId = spawned && spawned.status === "running" ? spawned.id : undefined;
+	const child = childId ? (await loadBgTask(root, childId))?.record : undefined;
+	if (!child) return; // 环境里没有 codex 可执行文件时跳过(argv 形状由 G-187-5 覆盖)
+	assert.equal(child.parentTask, "t-parent");
+	assert.equal(child.ownerSessionId, "session-X");
+	assert.ok(child.command.includes("--json"), "续跑子任务必须带 --json 才能捕到自己的 session id");
+	assert.ok(
+		child.command.some((a) => a.endsWith(`${childId}.result.md`)),
+		"续跑子任务必须写自己的 result.md",
+	);
+	assert.ok(child.command.indexOf("--json") < child.command.indexOf("resume"), "旗子必须在 resume 之前");
+});
+
+// 反向红线: 普通 bare 命令(worker 落到默认值 codex)绝不能被塞 codex 旗子。
+test("G-187-7 非 codex 的 bare 命令不被注入 codex 旗子", async () => {
+	const root = await memoryRoot();
+	await writeFile(
+		join(root, ".her", "config.yaml"),
+		["tasks:", "  budget_daily_cap: 999", "  default_worker: codex", ""].join("\n"),
+		"utf8",
+	);
+	const { spawnBgTask, stopBgTask } = await import("../src/her-core/bg-task-spawn.ts");
+	const r = await spawnBgTask(root, {
+		objective: "plain node",
+		command: [process.execPath, "-e", "setTimeout(()=>{},20000)"],
+		skipGates: true,
+		heartbeatMs: 2000,
+	});
+	assert.equal(r.status, "running");
+	if (r.status !== "running") return;
+	const rec = (await loadBgTask(root, r.id))?.record;
+	assert.equal(rec?.worker, "codex", "worker 确实落到了默认值 —— 正是这条路径的陷阱");
+	assert.equal(rec?.command.includes("--json"), false, "但 argv[0] 不是 codex, 就绝不许注入");
+	assert.equal(rec?.command.includes("--skip-git-repo-check"), false);
+	await stopBgTask(root, r.id);
+	await sleep(50);
 });
