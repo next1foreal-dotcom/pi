@@ -178,6 +178,282 @@ test("both preview tools are registered as non-destructive governed tools", () =
 	assert.equal(governedTools.browser_navigate?.destructive, false);
 });
 
+function readResponse(overrides: Record<string, unknown> = {}) {
+	return new Response(
+		JSON.stringify({
+			ok: true,
+			url: "https://example.com/",
+			title: "Example Domain",
+			generation: 7,
+			refCount: 1,
+			truncated: false,
+			tree: '- link "More information..." [ref=s7e5]',
+			...overrides,
+		}),
+		{ status: 200 },
+	);
+}
+
+test("browser_read_page posts maxChars to agent-read and hands back the tree with its refs", async () => {
+	const fetchImpl = fakeFetch(() => readResponse());
+	const tools = previewHarness({ fetchImpl });
+
+	const text = await run(tools.get("browser_read_page"), { maxChars: 5000 });
+
+	assert.equal(fetchImpl.calls.length, 1);
+	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:3000/api/browser/agent-read");
+	assert.equal(fetchImpl.calls[0].init.method, "POST");
+	assert.deepEqual(JSON.parse(String(fetchImpl.calls[0].init.body)), { maxChars: 5000 });
+	assert.match(text, /https:\/\/example\.com\//);
+	assert.match(text, /Example Domain/);
+	assert.match(text, /\[ref=s7e5\]/);
+	// The refs are only usable through browser_act, so the read says so.
+	assert.match(text, /browser_act/);
+});
+
+test("browser_read_page with no maxChars sends an empty body so the host's default cap applies", async () => {
+	const fetchImpl = fakeFetch(() => readResponse());
+	const tools = previewHarness({ fetchImpl });
+
+	await run(tools.get("browser_read_page"), {});
+
+	assert.deepEqual(JSON.parse(String(fetchImpl.calls[0].init.body)), {});
+});
+
+test("browser_read_page announces truncation so a partial tree is never read as the whole page", async () => {
+	const fetchImpl = fakeFetch(() =>
+		readResponse({ truncated: true, tree: '- link "a" [ref=s7e5]\n[truncated: 22 of 900 chars shown]' }),
+	);
+	const tools = previewHarness({ fetchImpl });
+
+	const text = await run(tools.get("browser_read_page"), {});
+
+	assert.match(text, /truncat/i);
+	assert.match(text, /maxChars/);
+});
+
+test("browser_read_page reports a read failure instead of throwing", async () => {
+	const fetchImpl = fakeFetch(
+		() => new Response(JSON.stringify({ ok: false, error: "browser not started" }), { status: 500 }),
+	);
+	const tools = previewHarness({ fetchImpl });
+
+	const text = await run(tools.get("browser_read_page"), {});
+
+	assert.match(text, /browser not started/);
+});
+
+test("browser_act posts {ref, action} to agent-act and confirms what was applied", async () => {
+	const fetchImpl = fakeFetch(
+		() => new Response(JSON.stringify({ ok: true, ref: "s7e5", action: "click" }), { status: 200 }),
+	);
+	const tools = previewHarness({ fetchImpl });
+
+	const text = await run(tools.get("browser_act"), { ref: "s7e5", action: "click" });
+
+	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:3000/api/browser/agent-act");
+	assert.equal(fetchImpl.calls[0].init.method, "POST");
+	assert.deepEqual(JSON.parse(String(fetchImpl.calls[0].init.body)), { ref: "s7e5", action: "click" });
+	assert.match(text, /s7e5/);
+	assert.match(text, /click/);
+	// read → act → read again: the act tells her to re-read for evidence.
+	assert.match(text, /browser_read_page/);
+});
+
+test("browser_act sends text for a type action", async () => {
+	const fetchImpl = fakeFetch(
+		() => new Response(JSON.stringify({ ok: true, ref: "s7e5", action: "type" }), { status: 200 }),
+	);
+	const tools = previewHarness({ fetchImpl });
+
+	await run(tools.get("browser_act"), { ref: "s7e5", action: "type", text: "hello" });
+
+	assert.deepEqual(JSON.parse(String(fetchImpl.calls[0].init.body)), { ref: "s7e5", action: "type", text: "hello" });
+});
+
+test("browser_act keeps an empty text (clear the field) instead of dropping it from the body", async () => {
+	const fetchImpl = fakeFetch(
+		() => new Response(JSON.stringify({ ok: true, ref: "s7e5", action: "type" }), { status: 200 }),
+	);
+	const tools = previewHarness({ fetchImpl });
+
+	await run(tools.get("browser_act"), { ref: "s7e5", action: "type", text: "" });
+
+	assert.deepEqual(JSON.parse(String(fetchImpl.calls[0].init.body)), { ref: "s7e5", action: "type", text: "" });
+});
+
+test("browser_act passes a 409 control-owner-denied through verbatim and tells her to wait, not retry", async () => {
+	const fetchImpl = fakeFetch(
+		() =>
+			new Response(JSON.stringify({ ok: false, error: "control-owner-denied", message: "control is with human" }), {
+				status: 409,
+			}),
+	);
+	const tools = previewHarness({ fetchImpl });
+
+	const text = await run(tools.get("browser_act"), { ref: "s7e5", action: "click" });
+
+	assert.match(text, /control-owner-denied/);
+	assert.match(text, /Fei/);
+	assert.match(text, /hand.*back|handback/i);
+	// The gate is a guardrail, not a failure to hammer at.
+	assert.match(text, /not a (bug|failure)|do not retry|don't retry|wait/i);
+});
+
+test("browser_act passes a 410 stale-ref through verbatim and tells her to read the page again", async () => {
+	const fetchImpl = fakeFetch(
+		() =>
+			new Response(
+				JSON.stringify({ ok: false, error: "stale-ref", message: 'ref "s6e5" is from an earlier read' }),
+				{ status: 410 },
+			),
+	);
+	const tools = previewHarness({ fetchImpl });
+
+	const text = await run(tools.get("browser_act"), { ref: "s6e5", action: "click" });
+
+	assert.match(text, /stale-ref/);
+	assert.match(text, /s6e5/);
+	assert.match(text, /browser_read_page/);
+});
+
+test("browser_act passes a 404 unknown-ref through with the host's own message", async () => {
+	const fetchImpl = fakeFetch(
+		() =>
+			new Response(JSON.stringify({ ok: false, error: "unknown-ref", message: "no element for that ref" }), {
+				status: 404,
+			}),
+	);
+	const tools = previewHarness({ fetchImpl });
+
+	const text = await run(tools.get("browser_act"), { ref: "s7e99", action: "click" });
+
+	assert.match(text, /unknown-ref/);
+	assert.match(text, /no element for that ref/);
+	assert.match(text, /browser_read_page/);
+});
+
+test("browser_act passes a 400 invalid-ref through and points at where refs come from", async () => {
+	const fetchImpl = fakeFetch(
+		() =>
+			new Response(JSON.stringify({ ok: false, error: "invalid-ref", message: '"nope" is not a ref' }), {
+				status: 400,
+			}),
+	);
+	const tools = previewHarness({ fetchImpl });
+
+	const text = await run(tools.get("browser_act"), { ref: "nope", action: "click" });
+
+	assert.match(text, /invalid-ref/);
+	assert.match(text, /browser_read_page/);
+});
+
+test("browser_act surfaces Playwright's own diagnosis on a 500 instead of swallowing it", async () => {
+	// The host puts the real reason in `message` and only the literal "error" in `error`
+	// (docs/browser-agent-endpoints.md), so a generic fallback would drop the diagnosis.
+	const fetchImpl = fakeFetch(
+		() =>
+			new Response(
+				JSON.stringify({
+					ok: false,
+					error: "error",
+					message: 'element is not enabled\ncall log: waiting for locator("aria-ref=e5")',
+				}),
+				{ status: 500 },
+			),
+	);
+	const tools = previewHarness({ fetchImpl });
+
+	const text = await run(tools.get("browser_act"), { ref: "s7e5", action: "click" });
+
+	assert.match(text, /element is not enabled/);
+	assert.match(text, /call log/);
+	assert.match(text, /browser_read_page/);
+});
+
+test("browser_read_page and browser_act report a connection-refused error naming the UI base, no throw", async () => {
+	const fetchImpl = fakeFetch(() => {
+		throw new TypeError("fetch failed", {
+			cause: Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:3000"), { code: "ECONNREFUSED" }),
+		});
+	});
+	const tools = previewHarness({ fetchImpl });
+
+	const readText = await run(tools.get("browser_read_page"), {});
+	const actText = await run(tools.get("browser_act"), { ref: "s7e5", action: "click" });
+
+	assert.match(readText, /127\.0\.0\.1:3000/);
+	assert.match(readText, /connection refused/i);
+	assert.match(actText, /connection refused/i);
+});
+
+test("browser_read_page and browser_act time out instead of hanging forever", async () => {
+	const fetchImpl = neverRespondingFetch();
+	const tools = previewHarness({ fetchImpl, timeoutMs: 30 });
+
+	const readText = await run(tools.get("browser_read_page"), {});
+	const actText = await run(tools.get("browser_act"), { ref: "s7e5", action: "click" });
+
+	assert.match(readText, /timeout|did not respond/i);
+	assert.match(actText, /timeout|did not respond/i);
+});
+
+test("browser driving tools name the discipline skill for credential/payment/agreement fields", () => {
+	const tools = previewHarness({ fetchImpl: fakeFetch(() => new Response("{}", { status: 200 })) });
+
+	const readDescription = tools.get("browser_read_page")?.description ?? "";
+	const actDescription = tools.get("browser_act")?.description ?? "";
+
+	assert.match(actDescription, /browser-discipline/);
+	assert.match(actDescription, /credential|password/i);
+	assert.match(actDescription, /Fei/);
+	assert.match(readDescription, /browser_act/);
+	// The wheel handover is Fei's move by design — she gets no takeover/handback tool.
+	assert.match(actDescription, /takeover|hand.*back|handback/i);
+});
+
+test("the descriptions carry the two contract facts a tool layer can't infer from a happy path", () => {
+	const tools = previewHarness({ fetchImpl: fakeFetch(() => new Response("{}", { status: 200 })) });
+
+	const readDescription = tools.get("browser_read_page")?.description ?? "";
+	const actDescription = tools.get("browser_act")?.description ?? "";
+
+	// A ref the cap cut away is refused (404 unknown-ref) — truncation is not cosmetic.
+	assert.match(readDescription, /truncat/i);
+	assert.match(readDescription, /cut|dropped|removed/i);
+	// The 409 gate also fires when the browser is paused, not only on a human takeover.
+	assert.match(actDescription, /paused/i);
+});
+
+test("the browser driving tools wait longer than the host's own element timeout", async () => {
+	const { BROWSER_REQUEST_TIMEOUT_MS, REQUEST_TIMEOUT_MS } = await import("../src/preview/tools.ts");
+
+	// browser-host's REF_ACT_TIMEOUT_MS is 5s — it waits that long for an element to
+	// become actionable. A client that also gives up at 5s abandons work the host is
+	// still legitimately doing. Reading a large page (ariaSnapshot over the whole tree)
+	// likewise runs well past 5s; measured 7.2s on example.com under load.
+	assert.ok(BROWSER_REQUEST_TIMEOUT_MS > 5_000, "must outlast the host's 5s element wait");
+	assert.ok(BROWSER_REQUEST_TIMEOUT_MS > REQUEST_TIMEOUT_MS);
+});
+
+test("browser driving tools are registered as non-destructive governed tools", () => {
+	const tools = previewHarness({ fetchImpl: fakeFetch(() => new Response("{}", { status: 200 })) });
+
+	assert.ok(tools.has("browser_read_page"));
+	assert.ok(tools.has("browser_act"));
+	assert.equal(governedTools.browser_read_page?.destructive, false);
+	assert.equal(governedTools.browser_act?.destructive, false);
+});
+
+test("she is given no takeover or handback tool — the wheel handover stays Fei's move", () => {
+	const tools = previewHarness({ fetchImpl: fakeFetch(() => new Response("{}", { status: 200 })) });
+
+	assert.equal(tools.has("browser_takeover"), false);
+	assert.equal(tools.has("browser_handback"), false);
+	assert.equal(governedTools.browser_takeover, undefined);
+	assert.equal(governedTools.browser_handback, undefined);
+});
+
 test("artifact_publish posts the source path and reports the slug on 200 {ok:true, slug, seq}", async () => {
 	const fetchImpl = fakeFetch(
 		() => new Response(JSON.stringify({ ok: true, slug: "demo-a1b2c3d4", seq: 1 }), { status: 200 }),
