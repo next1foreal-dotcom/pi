@@ -150,6 +150,36 @@ export function parseCodexSessionId(stream: string): string | undefined {
 	}
 	return undefined;
 }
+export type DependencyTask = Pick<BgTaskRecord, "id" | "status"> & {
+	blockedBy?: string[];
+	unlockedAt?: number;
+	blockedFailedBy?: string;
+};
+
+export function resolveDependencyActions(tasks: readonly DependencyTask[]): {
+	toSpawn: string[];
+	toBlockFail: Array<{ id: string; upstream: string }>;
+} {
+	const byId = new Map(tasks.map((task) => [task.id, task]));
+	const toSpawn: string[] = [];
+	const toBlockFail: Array<{ id: string; upstream: string }> = [];
+	for (const task of tasks) {
+		if (task.status !== "pending" || task.unlockedAt !== undefined || !task.blockedBy?.length) continue;
+		if (task.blockedBy.includes(task.id)) continue;
+		const failed = task.blockedBy.find((id) => {
+			const upstream = byId.get(id);
+			return (
+				upstream?.status === "failed" || upstream?.status === "cancelled" || upstream?.status === "blocked-failed"
+			);
+		});
+		if (failed) {
+			toBlockFail.push({ id: task.id, upstream: failed });
+			continue;
+		}
+		if (task.blockedBy.every((id) => byId.get(id)?.status === "completed")) toSpawn.push(task.id);
+	}
+	return { toSpawn, toBlockFail };
+}
 function leaseHeldByOther(record: BgTaskRecord, lockId: string, now: Date): boolean {
 	const by = typeof record.lockedBy === "string" ? record.lockedBy : null;
 	if (!by || by === lockId) return false;
@@ -214,6 +244,25 @@ export async function reconcileBgTasks(memoryRoot: string, options: ReconcileOpt
 		return [];
 	}
 
+	const dependencyRecords: DependencyTask[] = [];
+	for (const name of names) {
+		if (!isTaskRecordFile(name)) continue;
+		try {
+			const loaded = await loadBgTask(memoryRoot, name.slice(0, -3));
+			if (loaded) dependencyRecords.push(loaded.record);
+		} catch (error) {
+			console.warn(`[her] skipping dependency record ${name}: ${error instanceof Error ? error.message : error}`);
+		}
+	}
+	const dependencyRecordMap = new Map(dependencyRecords.map((task) => [task.id, task]));
+	let dependencySpawn = new Set<string>();
+	let dependencyBlock = new Map<string, string>();
+	const refreshDependencyActions = (): void => {
+		const actions = resolveDependencyActions([...dependencyRecordMap.values()]);
+		dependencySpawn = new Set(actions.toSpawn);
+		dependencyBlock = new Map(actions.toBlockFail.map((item) => [item.id, item.upstream]));
+	};
+	refreshDependencyActions();
 	const cfg = loadRuntimeConfig(memoryRoot).tasks;
 	const hostname = options.hostname ?? osHostname();
 	const now = options.now ?? new Date();
@@ -284,11 +333,20 @@ export async function reconcileBgTasks(memoryRoot: string, options: ReconcileOpt
 			continue;
 		}
 
+		const dependencyAction =
+			record.status === "pending"
+				? dependencySpawn.has(id)
+					? { type: "spawn" as const }
+					: dependencyBlock.has(id)
+						? { type: "block-failed" as const, upstream: dependencyBlock.get(id) as string }
+						: undefined
+				: undefined;
 		const needsWork = await mayNeedReconcile(record, dir, {
 			now,
 			staleLimit,
 			launchGraceSeconds,
 			pidAlive,
+			dependencyAction,
 		});
 		if (!needsWork) {
 			continue;
@@ -309,6 +367,7 @@ export async function reconcileBgTasks(memoryRoot: string, options: ReconcileOpt
 		}
 
 		const result = await reconcileOne(recheck.record, dir, {
+			memoryRoot,
 			hostname,
 			now,
 			staleLimit,
@@ -317,6 +376,7 @@ export async function reconcileBgTasks(memoryRoot: string, options: ReconcileOpt
 			stopTaskFn,
 			verdictOf,
 			externallyDelivered,
+			dependencyAction,
 		});
 
 		let finalRecord = result.record ? clearLease(result.record) : clearLease(recheck.record);
@@ -339,6 +399,7 @@ export async function reconcileBgTasks(memoryRoot: string, options: ReconcileOpt
 			const reason = result.record.failureReason;
 			if (
 				!options.skipRetry &&
+				result.record.status !== "blocked-failed" &&
 				typeof reason === "string" &&
 				retryOn.has(reason) &&
 				Number(result.record.retries ?? 0) < maxRetries
@@ -387,6 +448,10 @@ export async function reconcileBgTasks(memoryRoot: string, options: ReconcileOpt
 		if (result.record || recheck.record.lockedBy) {
 			await saveBgTask(memoryRoot, finalRecord, recheck.body);
 		}
+		if (result.record) {
+			dependencyRecordMap.set(id, finalRecord);
+			refreshDependencyActions();
+		}
 
 		if (event) {
 			truncateTaskLogIfNeeded(memoryRoot, event.taskId, {
@@ -421,8 +486,10 @@ async function mayNeedReconcile(
 		staleLimit: number;
 		launchGraceSeconds: number;
 		pidAlive: (pid: number) => boolean;
+		dependencyAction?: { type: "spawn" } | { type: "block-failed"; upstream: string };
 	},
 ): Promise<boolean> {
+	if (ctx.dependencyAction && record.status === "pending") return true;
 	if (isTerminal(record.status)) return !record.notifiedAt;
 	if (record.status !== "pending" && record.status !== "running") return false;
 
@@ -458,12 +525,13 @@ async function mayNeedReconcile(
 		return true;
 	}
 
-	const created = parseIso(record.created);
+	const created = parseIso(record.status === "running" ? (record.startedAt ?? record.created) : record.created);
 	const age = created ? (ctx.now.getTime() - created.getTime()) / 1000 : ctx.launchGraceSeconds + 1;
 	return age > ctx.launchGraceSeconds;
 }
 
 type ReconcileOneCtx = {
+	memoryRoot: string;
 	hostname: string;
 	now: Date;
 	staleLimit: number;
@@ -472,6 +540,7 @@ type ReconcileOneCtx = {
 	stopTaskFn: (taskDir: string, id: string) => Promise<"stopped" | "already_gone">;
 	verdictOf: (record: BgTaskRecord) => OwnerWakeVerdict;
 	externallyDelivered: (record: BgTaskRecord) => Promise<boolean>;
+	dependencyAction?: { type: "spawn" } | { type: "block-failed"; upstream: string };
 };
 
 type ClaimResult = { event: WakeEvent | null; record: BgTaskRecord; external?: boolean };
@@ -518,6 +587,29 @@ async function reconcileOne(
 	const enriched = await attachCodexSessionId(record, dir);
 	const recordChanged = enriched !== record;
 	record = enriched;
+
+	if (record.status === "pending" && ctx.dependencyAction?.type === "block-failed") {
+		return claim(
+			migrateBgStatus(
+				record,
+				"blocked-failed",
+				{
+					endedAt: isoNow(ctx.now),
+					failureReason: "blocked-failed",
+					blockedFailedBy: ctx.dependencyAction.upstream,
+				},
+				isoNow(ctx.now),
+			),
+			ctx,
+		);
+	}
+	if (record.status === "pending" && ctx.dependencyAction?.type === "spawn") {
+		const launched = await spawnBgTask(ctx.memoryRoot, { pendingTaskId: record.id });
+		const latest = await loadBgTask(ctx.memoryRoot, record.id);
+		if (!latest) return { event: null, record: null };
+		if (launched.status === "failed") return claim(latest.record, ctx);
+		return { event: null, record: latest.record };
+	}
 
 	if (isTerminal(record.status)) {
 		if (record.notifiedAt) return { event: null, record: recordChanged ? record : null };
@@ -608,7 +700,7 @@ async function reconcileOne(
 		);
 	}
 
-	const created = parseIso(record.created);
+	const created = parseIso(record.status === "running" ? (record.startedAt ?? record.created) : record.created);
 	const age = created ? (ctx.now.getTime() - created.getTime()) / 1000 : ctx.launchGraceSeconds + 1;
 	if (age > ctx.launchGraceSeconds) {
 		return claim(
