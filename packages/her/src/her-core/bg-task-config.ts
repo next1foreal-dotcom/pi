@@ -6,7 +6,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { type HerConfig, loadConfig } from "./config.ts";
-import { parseWorkers, type WorkerProfile } from "./worker-profile.ts";
+import { getBuiltinWorkerProfiles, parseWorkers, type WorkerProfile } from "./worker-profile.ts";
 
 export type TasksConfig = {
 	defaultWorker: string;
@@ -112,7 +112,7 @@ export function loadRuntimeConfig(memoryRoot: string, opts?: { failLoud?: boolea
 	if (failLoud && warnings.some((w) => w.includes("missing"))) {
 		throw new Error(`Her config fail-loud: ${warnings.join("; ")}`);
 	}
-	return { ...base, tasks, publish, workers: raw.workers, warnings };
+	return { ...base, tasks, publish, workers: { ...raw.workers, ...getBuiltinWorkerProfiles() }, warnings };
 }
 
 function readOptionalSections(path: string): {

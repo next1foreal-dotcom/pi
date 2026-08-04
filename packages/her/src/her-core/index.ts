@@ -2,12 +2,14 @@ export type {
 	AcceptanceClaim,
 	AcceptanceGate,
 	AcceptanceGateSummary,
+	AcceptanceGateType,
 	AcceptanceOutcome,
 	AcceptanceReason,
 	AcceptanceReasonCode,
 	AcceptanceReport,
 	AcceptanceRun,
 	AcceptanceVerdict,
+	EvidenceGateResult,
 	GatePlan,
 	GatePlanSource,
 	GateRun,
@@ -15,7 +17,9 @@ export type {
 export {
 	ACCEPTANCE_REPORT_FILENAME,
 	acceptanceRunFilename,
+	EVIDENCE_GATE_NAME,
 	evaluateTaskAcceptance,
+	extractEvidenceItems,
 	formatAcceptanceLine,
 	gatePlanFilename,
 	judgeAcceptance,
@@ -23,7 +27,9 @@ export {
 	parseAcceptanceReport,
 	parseGatePlan,
 	REPO_GATE_MANIFEST_RELATIVE_PATH,
+	verifyEvidenceGate,
 } from "./bg-task-acceptance.ts";
+
 export {
 	DEFAULT_PUBLISH_CONFIG,
 	DEFAULT_TASKS_CONFIG,
@@ -245,6 +251,10 @@ export type { TasteBoardApplyOutcome, TasteBoardApplyResult } from "./memory-wor
 export { applyTasteBoard, findWorldNote } from "./memory-world.ts";
 export type { ModelLike } from "./model.ts";
 export { FakeModel, OpenAICompatibleModel } from "./model.ts";
+export {
+	buildPanelChairBrief,
+	type PanelChairBriefParams,
+} from "./panel-chair-brief.ts";
 export { StorePaths } from "./paths.ts";
 export type {
 	AssemblePriorOptions,
@@ -450,6 +460,15 @@ export {
 	WARM_WORKTREE_POOL_MAX,
 	type WarmWorktree,
 } from "./warm-worktree-pool.ts";
+export {
+	BUILTIN_WORKER_PROFILES,
+	createPanelChairWorkerProfile,
+	getBuiltinWorkerProfiles,
+	PANEL_CHAIR_WORKER_NAME,
+	resolvePanelChairCliPath,
+	STALE_ENV_KEYS,
+	type WorkerProfile,
+} from "./worker-profile.ts";
 export type {
 	XArticleFullTextFailure,
 	XArticleFullTextOptions,

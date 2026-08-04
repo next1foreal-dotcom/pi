@@ -5,20 +5,20 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import {
+	type AcceptanceRun,
+	EVIDENCE_GATE_NAME,
+	type GateRun,
+	judgeAcceptance,
+	parseGatePlan,
+	verifyEvidenceGate,
+} from "../src/her-core/bg-task-acceptance.ts";
+import { buildPanelChairBrief } from "../src/her-core/panel-chair-brief.ts";
+import {
 	BUILTIN_WORKER_PROFILES,
 	buildWorkerEnv,
 	createPanelChairWorkerProfile,
 	resolvePanelChairCliPath,
 } from "../src/her-core/worker-profile.ts";
-import { buildPanelChairBrief } from "../src/her-core/panel-chair-brief.ts";
-import {
-	EVIDENCE_GATE_NAME,
-	judgeAcceptance,
-	parseGatePlan,
-	type AcceptanceRun,
-	type GateRun,
-	verifyEvidenceGate,
-} from "../src/her-core/bg-task-acceptance.ts";
 
 const EXECUTOR_RULE = "ROLE: EXECUTOR \u2014 do the work yourself; do not spawn subagents.";
 
@@ -121,7 +121,13 @@ test("evidence-verified gate fails loud for false and empty evidence", () => {
 
 test("the change set does not touch G-221 protected files", () => {
 	const changed = execFileSync("git", ["diff", "--name-only"], { encoding: "utf8" });
-	for (const file of ["bg-task-spawn.ts", "bg-task-reconcile.ts", "extension.ts", "task-executor.ts", "task-runner.mjs"]) {
+	for (const file of [
+		"bg-task-spawn.ts",
+		"bg-task-reconcile.ts",
+		"extension.ts",
+		"task-executor.ts",
+		"task-runner.mjs",
+	]) {
 		assert.equal(changed.includes(file), false, `${file} is protected`);
 	}
 });

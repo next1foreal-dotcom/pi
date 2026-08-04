@@ -25,6 +25,7 @@
 
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { type ReviewEvidenceItem, verifyEvidence } from "./review-evidence.ts";
 
 /** Where a code repo declares the gates its dispatched tasks must pass. */
 export const REPO_GATE_MANIFEST_RELATIVE_PATH = ".pi/her-gates.json";
@@ -39,10 +40,14 @@ export const acceptanceRunFilename = (taskId: string): string => `${taskId}.acce
 /** How much gate output is inlined into the task record; the rest stays in the gate log. */
 const OUTPUT_EXCERPT_CAP = 600;
 
+export const EVIDENCE_GATE_NAME = "evidence-verified";
+export type AcceptanceGateType = "command" | "evidence-verified";
+
 /** One mechanical check. argv only — never a shell string, so nothing re-parses it. */
 export type AcceptanceGate = {
 	name: string;
 	command: string[];
+	type?: AcceptanceGateType;
 	timeoutMs?: number;
 };
 
@@ -98,7 +103,8 @@ export type AcceptanceReasonCode =
 	| "gate_missing"
 	| "runner_error"
 	| "missing_evidence"
-	| "claim_unverifiable";
+	| "claim_unverifiable"
+	| "evidence_unverified";
 
 export type AcceptanceReason = { code: AcceptanceReasonCode; detail: string };
 
@@ -143,14 +149,28 @@ export function parseGatePlan(raw: unknown, source: GatePlanSource): GatePlan {
 	if (!Array.isArray(gatesRaw)) throw new Error("gate plan `gates` must be an array");
 	const gates: AcceptanceGate[] = gatesRaw.map((entry, index) => {
 		if (!entry || typeof entry !== "object") throw new Error(`gates[${index}] must be an object`);
-		const { name, command, timeoutMs } = entry as { name?: unknown; command?: unknown; timeoutMs?: unknown };
+		const { name, command, timeoutMs, type } = entry as {
+			name?: unknown;
+			command?: unknown;
+			timeoutMs?: unknown;
+			type?: unknown;
+		};
 		if (typeof name !== "string" || !name.trim()) throw new Error(`gates[${index}].name must be a non-empty string`);
-		const argv = asCommand(command);
+		const gateType = type ?? (name.trim() === EVIDENCE_GATE_NAME ? "evidence-verified" : "command");
+		if (gateType !== "command" && gateType !== "evidence-verified") {
+			throw new Error(`gates[${index}].type must be command or evidence-verified`);
+		}
+		const argv = asCommand(command) ?? (gateType === "evidence-verified" ? [process.execPath, "-e", "0"] : null);
 		if (!argv) throw new Error(`gates[${index}].command must be a non-empty array of non-empty strings`);
 		if (timeoutMs !== undefined && (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs <= 0)) {
 			throw new Error(`gates[${index}].timeoutMs must be a positive number`);
 		}
-		return { name: name.trim(), command: argv, ...(timeoutMs !== undefined ? { timeoutMs } : {}) };
+		return {
+			name: name.trim(),
+			command: argv,
+			...(gateType === "evidence-verified" ? { type: gateType } : {}),
+			...(timeoutMs !== undefined ? { timeoutMs } : {}),
+		};
 	});
 	const seen = new Set<string>();
 	for (const gate of gates) {
@@ -206,6 +226,75 @@ export function parseAcceptanceReport(raw: unknown): AcceptanceReport | null {
 	return { claims };
 }
 
+export type EvidenceGateResult = {
+	evidence: ReviewEvidenceItem[];
+	verified: boolean;
+	reasons: AcceptanceReason[];
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return Boolean(value) && typeof value === "object";
+}
+
+function parseEvidenceBlock(output: string): { items: ReviewEvidenceItem[]; error?: string } {
+	const match = /```json\s+evidence\s*\r?\n([\s\S]*?)```/i.exec(output);
+	if (!match) return { items: [], error: "no evidence block found" };
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(match[1] ?? "");
+	} catch (error) {
+		return {
+			items: [],
+			error: `evidence block is not valid JSON: ${error instanceof Error ? error.message : error}`,
+		};
+	}
+	const rawItems = Array.isArray(parsed)
+		? parsed
+		: isRecord(parsed) && Array.isArray(parsed.evidence)
+			? parsed.evidence
+			: [];
+	return {
+		items: rawItems.map((item) => {
+			const value = isRecord(item) ? item : {};
+			return {
+				file: typeof value.file === "string" ? value.file : "",
+				...(typeof value.lines === "string" || typeof value.lines === "number"
+					? { lines: String(value.lines) }
+					: {}),
+				claim: typeof value.claim === "string" ? value.claim : "",
+			};
+		}),
+	};
+}
+
+export function extractEvidenceItems(output: string): ReviewEvidenceItem[] {
+	return parseEvidenceBlock(output).items;
+}
+
+export function verifyEvidenceGate(output: string, cwd: string): EvidenceGateResult {
+	const parsed = parseEvidenceBlock(output);
+	if (parsed.items.length === 0) {
+		return {
+			evidence: [],
+			verified: false,
+			reasons: [{ code: "missing_evidence", detail: `evidence-verified: ${parsed.error ?? "no evidence items"}` }],
+		};
+	}
+	const evidence = verifyEvidence(parsed.items, cwd);
+	const failures = evidence.filter((item) => item.verified !== true || !item.file.trim() || !item.claim.trim());
+	return {
+		evidence,
+		verified: failures.length === 0,
+		reasons: failures.map((item) => ({
+			code: "evidence_unverified",
+			detail: `evidence ${item.file}:${item.lines ?? "?"} is unverified${item.verify_note ? `: ${item.verify_note}` : ""}`,
+		})),
+	};
+}
+
+function isEvidenceGate(gate: AcceptanceGate): boolean {
+	return gate.type === "evidence-verified" || gate.name === EVIDENCE_GATE_NAME;
+}
 /**
  * The verdict. Pure on purpose: everything it needs has already been measured, so the decision
  * itself is inspectable and testable without spawning anything.
@@ -214,6 +303,8 @@ export function judgeAcceptance(input: {
 	plan: GatePlan | null;
 	run: AcceptanceRun | null;
 	report: AcceptanceReport | null;
+	evidenceOutput?: string;
+	evidenceCwd?: string;
 }): AcceptanceOutcome {
 	const { plan, run, report } = input;
 	const runs = run?.gates ?? [];
@@ -302,6 +393,12 @@ export function judgeAcceptance(input: {
 		}
 	}
 
+	const evidenceGates = plan?.gates.filter(isEvidenceGate) ?? [];
+	if (evidenceGates.length > 0) {
+		const evidenceOutcome = verifyEvidenceGate(input.evidenceOutput ?? "", input.evidenceCwd ?? process.cwd());
+		reasons.push(...evidenceOutcome.reasons);
+	}
+
 	return {
 		verdict: reasons.length > 0 ? "rejected-needs-evidence" : "green",
 		reasons,
@@ -372,7 +469,16 @@ export async function evaluateTaskAcceptance(opts: {
 
 	const report = parseAcceptanceReport(await readJsonIfPresent(join(workerCwd, ACCEPTANCE_REPORT_FILENAME)));
 
-	return judgeAcceptance({ plan, run, report });
+	const evidenceOutput = plan?.gates.some(isEvidenceGate)
+		? await readFile(join(taskDir, `${taskId}.log`), "utf8").catch(() => "")
+		: undefined;
+
+	return judgeAcceptance({
+		plan,
+		run,
+		report,
+		...(evidenceOutput !== undefined ? { evidenceOutput, evidenceCwd: workerCwd } : {}),
+	});
 }
 
 /** One-line rendering for wake messages and outbox notices. */

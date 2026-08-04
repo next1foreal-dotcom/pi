@@ -1,4 +1,5 @@
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 /**
  * G-129 — worker profiles (config `workers:` section): argv + env allowlist per named CLI.
@@ -23,6 +24,9 @@ const BASE_ENV_ALLOW = [
 
 export type WorkerProfile = {
 	argv: string[];
+	/** Built-in profile identity and execution root; config profiles omit both fields. */
+	name?: string;
+	cwd?: string;
 	envAllow?: string[];
 	/**
 	 * G-197 — what one run of this worker actually costs, in USD. Absent means
@@ -34,6 +38,37 @@ export type WorkerProfile = {
 };
 
 type RawProfile = { argv?: unknown; envAllow?: unknown; priceUsd?: unknown };
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const SAMANTHA_REPO_ROOT = resolve(HERE, "../../../..");
+export const PANEL_CHAIR_WORKER_NAME = "panel-chair";
+// 2026-08-04 probe: the machine-level stale key forced member requests to 401.
+export const STALE_ENV_KEYS = ["DEEPSEEK_API_KEY"] as const;
+
+/** Resolve the headless Samantha CLI using the deer/dispatch environment precedence. */
+export function resolvePanelChairCliPath(env: NodeJS.ProcessEnv = process.env): string {
+	const fromEnv = env.HER_DEER_PI_CLI?.trim() || env.HER_DISPATCH_PI_CLI?.trim();
+	return fromEnv ? resolve(fromEnv) : join(SAMANTHA_REPO_ROOT, "packages", "coding-agent", "dist", "cli.js");
+}
+
+/** Built-in PANEL-CHAIR profile; callers receive a fresh argv so env overrides are read at dispatch time. */
+export function createPanelChairWorkerProfile(env: NodeJS.ProcessEnv = process.env): WorkerProfile {
+	return {
+		name: PANEL_CHAIR_WORKER_NAME,
+		argv: [process.execPath, resolvePanelChairCliPath(env), "-p", "--mode", "json", "--no-session"],
+		cwd: SAMANTHA_REPO_ROOT,
+		// This is deliberately listed then removed by buildWorkerEnv: the stale machine key must never cross this boundary.
+		envAllow: ["DEEPSEEK_API_KEY"],
+	};
+}
+
+export const BUILTIN_WORKER_PROFILES: Record<string, WorkerProfile> = {
+	[PANEL_CHAIR_WORKER_NAME]: createPanelChairWorkerProfile(),
+};
+
+export function getBuiltinWorkerProfiles(env: NodeJS.ProcessEnv = process.env): Record<string, WorkerProfile> {
+	return { [PANEL_CHAIR_WORKER_NAME]: createPanelChairWorkerProfile(env) };
+}
 
 /** Parse the top-level `workers:` block out of a full config.yaml text. Malformed entries throw. */
 export function parseWorkers(text: string): Record<string, WorkerProfile> {
@@ -198,6 +233,9 @@ export function buildWorkerEnv(profile: WorkerProfile, taskId: string, ownerSess
 	env.HER_TASK_ID = taskId;
 	// G-185/S5 — ownership travels to the worker over env, not the brief: the brief is
 	// model-authored text, env is harness-authored fact. Absent = ownerless, field omitted.
+	if (profile.name === PANEL_CHAIR_WORKER_NAME) {
+		for (const key of STALE_ENV_KEYS) delete env[key];
+	}
 	if (ownerSessionId) env.HER_TASK_OWNER_SESSION_ID = ownerSessionId;
 	return env;
 }
