@@ -1,13 +1,27 @@
-// L2 road test for the desktop hands: open Notepad, type one line, read it back, verify by probe.
+// L2 road test for the desktop hands: open a fresh Notepad, type one line, read it back.
 //
 //   node --import tsx packages/her/tools/hands-l2-drill.ts            # dry run, touches nothing
 //   node --import tsx packages/her/tools/hands-l2-drill.ts --live     # real desktop, Fei must be present
 //   HER_HANDS_DRILL_CONFIRM=1 node --import tsx ... --live            # also answers the write-confirm dialog
 //
 // The dry run reads config and checks preconditions only: no window opens, no key is pressed,
-// no agent is spawned. --live drives a real rpc session, so the mouse and keyboard are hers for
-// the duration. Without HER_HANDS_DRILL_CONFIRM=1 the drill answers "no" to her confirm dialog,
-// which exercises the gate but leaves nothing typed.
+// no agent is spawned. Without HER_HANDS_DRILL_CONFIRM=1 the drill answers "no" to her confirm
+// dialog, which exercises the gate but leaves nothing typed.
+//
+// Design facts about --live (2026-08-03 live fire):
+//   - An rpc-spawned her has no hands: hasUI is false in rpc mode, so her_hands_* dies at the
+//     "hands require a live UI session" gate. That gate is intentional and stays.
+//   - --live is therefore a gate-connectivity self-check, not a full road test: it proves the
+//     wiring (config, driver, whitelist, confirm plumbing) end to end and expects the gate to hold.
+//   - The full road test runs the proper way: Fei gives her the task in a panel session and
+//     answers the confirm dialog himself.
+//   - The drill only ever targets the Notepad it spawned itself, by pid (hands-l2-drill-target.ts).
+//     If that pid has no window the drill fails loud; it never falls back to a same-named window,
+//     because on 2026-08-03 a name match landed on a pre-existing Notepad holding Fei's real file.
+//   - On a Notepad build that opens new files as tabs of an existing instance (or hands off to a
+//     packaged host under another pid), the spawned pid may own no window at all: the drill then
+//     fails loud before the gate check ever runs. Intended trade — wrong-window risk outranks
+//     drill completion.
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readdir, readFile, writeFile } from "node:fs/promises";
@@ -17,6 +31,7 @@ import { fileURLToPath } from "node:url";
 import { CuaCliDriver } from "../src/hands/driver.ts";
 import { loadConfig } from "../src/her-core/config.ts";
 import { type HandsResolvedConfig, resolveHandsConfig } from "../src/hands/policy.ts";
+import { type DrillWindow, pickDrillTarget, shouldAutoConfirm } from "./hands-l2-drill-target.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const samanthaRoot = resolve(here, "..", "..", "..");
@@ -30,13 +45,6 @@ const taskLabel = "hands L2 road test";
 const drillText = "Her hands L2 drill 2026-08-03";
 const promptTimeoutMs = 300_000;
 const finalTextRequestId = "drill-final-text";
-
-interface DriverWindow {
-	pid: number;
-	window_id: number;
-	app_name?: string;
-	title?: string;
-}
 
 async function main(): Promise<void> {
 	const config = resolveHandsConfig(loadConfig(configPath).hands);
@@ -60,11 +68,20 @@ async function main(): Promise<void> {
 		binary: config.desktopDriverBinary,
 		defaultTimeoutMs: config.desktopActionTimeoutS * 1000,
 	});
-	spawn("notepad.exe", { detached: true, stdio: "ignore" }).unref();
+	const notepad = spawn("notepad.exe", { detached: true, stdio: "ignore" });
+	notepad.unref();
+	const ownedPid = notepad.pid;
+	if (ownedPid === undefined)
+		throw new Error("spawn returned no pid for notepad.exe — cannot pid-lock the drill target");
 	await delay(2500);
 
-	const target = await findNotepadWindow(driver);
-	if (!target) throw new Error("no Notepad window found — is it open? (see the window list above)");
+	const target = await findNotepadWindow(driver, ownedPid);
+	if (!target)
+		throw new Error(
+			`no window belongs to drill-spawned pid ${ownedPid} — refusing to fall back to any same-named Notepad ` +
+				"(2026-08-03: a name match once picked a window with Fei's real file open; notepad.exe relaunching " +
+				"itself under a new pid also counts as not-ours)",
+		);
 	const appName = (target.app_name ?? "").toLowerCase();
 	if (!config.desktopAllowedApps.includes(appName)) {
 		throw new Error(`Notepad reports app_name=${appName}, which is not in desktop_allowed_apps — fix config first`);
@@ -72,7 +89,7 @@ async function main(): Promise<void> {
 	report("target", target);
 
 	const before = await readWindowText(driver, target);
-	const session = await runAgentSession(buildPrompt(target.app_name ?? "notepad.exe", target.title ?? ""));
+	const session = await runAgentSession(buildPrompt(target.app_name ?? "notepad.exe", target.title ?? ""), target.title);
 	const after = await readWindowText(driver, target);
 
 	report("verdict", {
@@ -112,7 +129,10 @@ function buildPrompt(appName: string, windowTitle: string): string {
 	].join("\n");
 }
 
-async function runAgentSession(prompt: string): Promise<{ finalText: string; handsToolLines: string[]; logPath: string }> {
+async function runAgentSession(
+	prompt: string,
+	ownedTitle: string | undefined,
+): Promise<{ finalText: string; handsToolLines: string[]; logPath: string }> {
 	// Out of the repo on purpose: a drill artifact is not repo content.
 	const logPath = join(tmpdir(), `hands-l2-drill-${Date.now()}.log`);
 	const lines: string[] = [];
@@ -149,7 +169,7 @@ async function runAgentSession(prompt: string): Promise<{ finalText: string; han
 				if (!line.trim()) continue;
 				lines.push(line);
 				if (line.includes("her_hands")) handsToolLines.push(line);
-				answerConfirm(child, line, lines);
+				answerConfirm(child, line, lines, ownedTitle);
 				const text = extractAssistantText(line);
 				if (text !== undefined) finalText = text;
 				if (!promptSent) {
@@ -173,14 +193,24 @@ async function runAgentSession(prompt: string): Promise<{ finalText: string; han
 	return { finalText, handsToolLines, logPath };
 }
 
-function answerConfirm(child: ReturnType<typeof spawn>, line: string, lines: string[]): void {
+function answerConfirm(
+	child: ReturnType<typeof spawn>,
+	line: string,
+	lines: string[],
+	ownedTitle: string | undefined,
+): void {
 	if (!line.includes('"extension_ui_request"') || !line.includes('"confirm"')) return;
-	const parsed = parseRpcLine<{ id?: string }>(line);
+	const parsed = parseRpcLine<{ id?: string; message?: string }>(line);
 	if (!parsed?.id) return;
 	// Verbatim in the log: this is the record of what she asked for and what the drill answered.
 	lines.push(`[confirm request] ${line}`);
-	lines.push(`[confirm answer] confirmed=${autoConfirm} (HER_HANDS_DRILL_CONFIRM=${process.env.HER_HANDS_DRILL_CONFIRM ?? ""})`);
-	child.stdin?.write(`${JSON.stringify({ type: "extension_ui_response", id: parsed.id, confirmed: autoConfirm })}\n`);
+	// Even with HER_HANDS_DRILL_CONFIRM=1 the drill only nods when the dialog's target line
+	// names the drill-owned window (see shouldAutoConfirm); a foreign target gets a "no".
+	const confirmed = shouldAutoConfirm(autoConfirm, parsed.message ?? "", ownedTitle);
+	lines.push(
+		`[confirm answer] confirmed=${confirmed} (HER_HANDS_DRILL_CONFIRM=${process.env.HER_HANDS_DRILL_CONFIRM ?? ""}, ownedTitle=${ownedTitle ?? ""})`,
+	);
+	child.stdin?.write(`${JSON.stringify({ type: "extension_ui_response", id: parsed.id, confirmed })}\n`);
 }
 
 // The rpc stream is one JSON object per line, but stderr noise and banners share the pipe;
@@ -200,14 +230,14 @@ function extractAssistantText(line: string): string | undefined {
 	return parsed.data?.text ?? "";
 }
 
-async function findNotepadWindow(driver: CuaCliDriver): Promise<DriverWindow | undefined> {
+async function findNotepadWindow(driver: CuaCliDriver, ownedPid: number): Promise<DrillWindow | undefined> {
 	const result = await driver.run(["call", "list_windows", "{}"]);
-	const windows = (JSON.parse(result.stdout || "{}").windows ?? []) as DriverWindow[];
-	report("windows", windows.map((item) => ({ app: item.app_name, title: item.title })));
-	return windows.find((item) => /notepad/i.test(item.app_name ?? "") || /notepad|记事本/i.test(item.title ?? ""));
+	const windows = (JSON.parse(result.stdout || "{}").windows ?? []) as DrillWindow[];
+	report("windows", windows.map((item) => ({ pid: item.pid, app: item.app_name, title: item.title })));
+	return pickDrillTarget(windows, ownedPid);
 }
 
-async function readWindowText(driver: CuaCliDriver, window: DriverWindow): Promise<string> {
+async function readWindowText(driver: CuaCliDriver, window: DrillWindow): Promise<string> {
 	const payload = JSON.stringify({
 		pid: window.pid,
 		window_id: window.window_id,
