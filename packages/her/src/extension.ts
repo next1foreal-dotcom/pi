@@ -72,6 +72,7 @@ import {
 	type WorldNoteData,
 	writeCostReport,
 } from "./her-core/index.ts";
+import { type ReviewEvidenceItem, verifyEvidence } from "./her-core/review-evidence.ts";
 import { appendAuditLog } from "./lib/audit.ts";
 import { evaluate, policyEnvelope } from "./lib/cedar.ts";
 import { registerMcpTools } from "./mcp/tools.ts";
@@ -143,6 +144,7 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	her_synthesize_choice_model: { destructive: false },
 	her_synthesize_self_narrative: { destructive: false },
 	her_review_context: { destructive: false },
+	her_review_verify: { destructive: false },
 	her_keep: { destructive: false },
 	her_revert: { destructive: false },
 	her_remember: { destructive: false },
@@ -1456,6 +1458,41 @@ export default function her(pi: ExtensionAPI): void {
 		async execute() {
 			const updates = await mem.reviewContextUpdates();
 			return textResult(renderContextReview(updates), { phase: "2", count: updates.length, updates, memoryDir });
+		},
+	});
+
+	pi.registerTool({
+		name: "her_review_verify",
+		label: "Her Review Verify",
+		description:
+			"机器核验评审/子代理结论中的 file:line 引证，逐条打 verified 标——防伪造引证（闸二）。不删除条目，只如实标记 verified/verify_note。",
+		parameters: Type.Object({
+			evidence: Type.Array(
+				Type.Object({
+					file: Type.String({ description: "Path relative to cwd" }),
+					lines: Type.Optional(Type.String({ description: "如 12-40" })),
+					claim: Type.Optional(Type.String({ description: "该证据支撑的结论" })),
+				}),
+			),
+			cwd: Type.Optional(Type.String({ description: "核验根目录，相对或绝对；默认当前会话 cwd" })),
+		}),
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			const cwd = params.cwd ? resolve(ctx.cwd, params.cwd) : ctx.cwd;
+			const items: ReviewEvidenceItem[] = params.evidence.map((e) => ({
+				file: e.file,
+				...(e.lines ? { lines: e.lines } : {}),
+				claim: e.claim ?? "",
+			}));
+			const verified = verifyEvidence(items, cwd);
+			const passed = verified.filter((e) => e.verified).length;
+			const failed = verified.length - passed;
+			const lines = verified.map((e) => {
+				const mark = e.verified ? "✓" : "✗";
+				const note = e.verify_note ? ` — ${e.verify_note}` : "";
+				return `${mark} ${e.file}${e.lines ? `:${e.lines}` : ""} ${e.claim}${note}`;
+			});
+			lines.push(`${passed} verified / ${failed} failed`);
+			return textResult(lines.join("\n"), { phase: "2", evidence: verified, passed, failed });
 		},
 	});
 
