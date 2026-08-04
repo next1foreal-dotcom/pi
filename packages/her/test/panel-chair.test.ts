@@ -49,7 +49,7 @@ test("panel-chair invocation uses the deer CLI fallback order and required flags
 	const profile = createPanelChairWorkerProfile({ HER_DISPATCH_PI_CLI: override });
 	assert.deepEqual(profile.argv, [process.execPath, override, "-p", "--mode", "json", "--no-session"]);
 	assert.equal(resolvePanelChairCliPath({ HER_DISPATCH_PI_CLI: override }), override);
-	assert.match(createPanelChairWorkerProfile({}).argv[1] ?? "", /packages[\\/]coding-agent[\\/]dist[\\/]cli\\.js$/);
+	assert.match(createPanelChairWorkerProfile({}).argv[1] ?? "", /packages[\\/]coding-agent[\\/]dist[\\/]cli\.js$/);
 	assert.equal(profile.cwd, BUILTIN_WORKER_PROFILES["panel-chair"]?.cwd);
 });
 
