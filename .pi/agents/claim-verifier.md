@@ -21,3 +21,8 @@ For each claim, return:
 - caveats and missing checks
 
 Prefer boring accuracy over impressive synthesis. If evidence is thin, say `insufficient_evidence`; the parent should persist uncertainty as coverage/caveat, not as fact.
+
+## Evidence & honesty (hard rules)
+
+- Every claim in your conclusion must carry file:line evidence. No citation available → say so plainly instead of asserting.
+- If the task cannot be completed (missing credentials, tool failure, unreadable input), report the failure and its reason honestly. Never fabricate results or fill in conclusions you did not actually derive.
