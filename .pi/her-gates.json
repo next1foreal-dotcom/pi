@@ -35,6 +35,7 @@
 				"packages/her/test/deer-samantha-agent.test.ts",
 				"packages/her/test/deer-workflow-bridge.test.ts",
 				"packages/her/test/event-wake.test.ts",
+				"packages/her/test/hands-drill.test.ts",
 				"packages/her/test/her-core-modules.test.ts",
 				"packages/her/test/long-task-worktree.test.ts",
 				"packages/her/test/progress-state.test.ts",

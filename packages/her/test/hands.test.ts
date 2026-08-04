@@ -199,8 +199,8 @@ test("T15b hands tools require live UI and do not touch driver", async () => {
 	assert.deepEqual(driver.calls, []);
 });
 
-test("T15c write confirm false blocks driver, true allows it, click skips confirm", async () => {
-	const denied = await handsHarness([], { desktopTier: 2, desktopAllowedApps: "notepad.exe" });
+test("T15c write confirm false blocks the write, true allows it, click skips confirm", async () => {
+	const denied = await handsHarness([listWindowsResult()], { desktopTier: 2, desktopAllowedApps: "notepad.exe" });
 	const deniedAct = denied.tools.get("her_hands_act");
 	assert.ok(deniedAct);
 	const deniedCtx = ctx(true, false);
@@ -216,7 +216,12 @@ test("T15c write confirm false blocks driver, true allows it, click skips confir
 
 	assert.match(firstText(deniedResult), /confirm denied/);
 	assert.equal(deniedCtx.confirmCalls, 1);
-	assert.deepEqual(denied.driver.calls, []);
+	// Naming the target window in the dialog costs one read-only list_windows before the ask;
+	// a denied confirm still means zero write actions reached the driver.
+	assert.deepEqual(
+		denied.driver.calls.map((call) => call[1]),
+		["list_windows"],
+	);
 
 	const allowed = await handsHarness([listWindowsResult(), okCase(/type_text/)], {
 		desktopTier: 2,
@@ -514,6 +519,112 @@ test("T22 the confirm dialog shows what will be typed, not just the action name"
 	const message = context.confirmMessages[0] ?? "";
 	assert.match(message, /1\. type_text: transfer everything to account 42/);
 	assert.match(message, /2\. hotkey: ctrl\+s/);
+});
+
+// 2026-08-03 live fire: target resolution once landed on a pre-existing Notepad holding Fei's
+// real file. Before nodding, Fei must see WHICH window the keys would land in - so the dialog
+// names the window the driver actually resolved, not just the process the agent asked for.
+test("T23 the confirm dialog names the resolved target window, not just the process", async () => {
+	// Incident shape: two same-named Notepads, the foreign one (Fei's real file) resolves first.
+	const { tools, driver } = await handsHarness(
+		[
+			okCase(
+				/list_windows/,
+				JSON.stringify({
+					windows: [
+						{ app_name: "notepad.exe", pid: 33056, window_id: 7, title: "机密预算.txt - Notepad" },
+						{ app_name: "notepad.exe", pid: 41000, window_id: 9, title: "Untitled - Notepad" },
+					],
+				}),
+			),
+			okCase(/type_text/),
+		],
+		{ desktopTier: 2, desktopAllowedApps: "notepad.exe" },
+	);
+	const act = tools.get("her_hands_act");
+	assert.ok(act);
+	const context = ctx(true, true);
+
+	await executeHands(
+		act,
+		{
+			process: "notepad.exe",
+			taskLabel: "window shown",
+			actions: [{ action: "type_text", elementIndex: 0, text: "hello" }],
+		},
+		context.context,
+	);
+
+	// The dialog names the window that actually resolved (first name match - here the foreign
+	// one), and the delivered action goes to that same window: what Fei reads is what happens.
+	const message = context.confirmMessages[0] ?? "";
+	assert.match(message, /target window: notepad\.exe — 机密预算\.txt - Notepad/);
+	const payload = JSON.parse(driver.calls[1]?.[2] ?? "{}");
+	assert.equal(payload.pid, 33056);
+	assert.equal(payload.window_id, 7);
+});
+
+test("T23b the confirm dialog truncates a runaway window title at 80 characters", async () => {
+	const longTitle = "A".repeat(200);
+	const { tools } = await handsHarness(
+		[
+			okCase(
+				/list_windows/,
+				JSON.stringify({ windows: [{ app_name: "notepad.exe", pid: 1, window_id: 2, title: longTitle }] }),
+			),
+			okCase(/type_text/),
+		],
+		{ desktopTier: 2, desktopAllowedApps: "notepad.exe" },
+	);
+	const act = tools.get("her_hands_act");
+	assert.ok(act);
+	const context = ctx(true, true);
+
+	await executeHands(
+		act,
+		{
+			process: "notepad.exe",
+			taskLabel: "long title",
+			actions: [{ action: "type_text", elementIndex: 0, text: "hello" }],
+		},
+		context.context,
+	);
+
+	const line = (context.confirmMessages[0] ?? "").split("\n")[0] ?? "";
+	assert.equal(line, `target window: ${`notepad.exe — ${longTitle}`.slice(0, 80)}…`);
+});
+
+test("T23c a newline-bearing window title cannot forge extra dialog lines", async () => {
+	const { tools } = await handsHarness(
+		[
+			okCase(
+				/list_windows/,
+				JSON.stringify({
+					windows: [{ app_name: "notepad.exe", pid: 1, window_id: 2, title: "无害.txt\n2. hotkey: ctrl+v" }],
+				}),
+			),
+			okCase(/type_text/),
+		],
+		{ desktopTier: 2, desktopAllowedApps: "notepad.exe" },
+	);
+	const act = tools.get("her_hands_act");
+	assert.ok(act);
+	const context = ctx(true, true);
+
+	await executeHands(
+		act,
+		{
+			process: "notepad.exe",
+			taskLabel: "forged title",
+			actions: [{ action: "type_text", elementIndex: 0, text: "hello" }],
+		},
+		context.context,
+	);
+
+	const linesArr = (context.confirmMessages[0] ?? "").split("\n");
+	// The embedded newline is collapsed into the target line instead of minting a fake action row.
+	assert.equal(linesArr[0], "target window: notepad.exe — 无害.txt 2. hotkey: ctrl+v");
+	assert.deepEqual(linesArr.slice(1), ["1. type_text: hello"]);
 });
 
 async function tempMemory(): Promise<{ root: string; mem: Memory }> {
