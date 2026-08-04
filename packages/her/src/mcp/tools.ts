@@ -9,6 +9,9 @@ const ENV_REFERENCE_RE = /^\$([A-Za-z_][A-Za-z0-9_]*)$/;
 const SLUG_RE = /^[a-z0-9][a-z0-9-]*$/;
 const DESCRIPTION_LIMIT = 240;
 const RESULT_LIMIT = 8000;
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const MAX_IMAGE_COUNT = 4;
+const BASE64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
 
 export type ConnectorStatus = "ready" | "missing_credentials" | "invalid";
 
@@ -181,17 +184,62 @@ function renderConnectorStatus(connector: LoadedConnector): string {
 	return `${connector.slug}（${connector.label}）：就绪`;
 }
 
-function renderToolContent(content: unknown): string {
-	const text = Array.isArray(content)
-		? content
-				.map((item) => {
-					if (!isRecord(item) || typeof item.type !== "string") return "[unknown]";
-					return item.type === "text" && typeof item.text === "string" ? item.text : `[${item.type}]`;
-				})
-				.filter(Boolean)
-				.join("\n")
-		: "";
-	return trimText(text || "（外接服务未返回文本）", RESULT_LIMIT);
+type RenderedToolContent = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
+
+function formatImageSize(bytes: number): string {
+	return (bytes / (1024 * 1024)).toFixed(2);
+}
+
+export function renderToolContent(content: unknown): RenderedToolContent[] {
+	const textParts: string[] = [];
+	const images: Array<Extract<RenderedToolContent, { type: "image" }>> = [];
+	let skippedImageCount = 0;
+
+	if (Array.isArray(content)) {
+		for (const item of content) {
+			if (!isRecord(item) || typeof item.type !== "string") {
+				textParts.push("[unknown]");
+				continue;
+			}
+
+			if (item.type === "text") {
+				if (typeof item.text === "string") textParts.push(item.text);
+				else textParts.push("[text]");
+				continue;
+			}
+
+			if (item.type !== "image") {
+				textParts.push(`[${item.type}]`);
+				continue;
+			}
+
+			if (typeof item.data !== "string" || item.data.length === 0 || !BASE64_RE.test(item.data)) {
+				textParts.push("[image:invalid]");
+				continue;
+			}
+			const estimatedBytes = item.data.length * 0.75;
+			if (estimatedBytes > MAX_IMAGE_BYTES) {
+				textParts.push(`图片过大，${formatImageSize(estimatedBytes)} MB，已略过`);
+				continue;
+			}
+			if (images.length >= MAX_IMAGE_COUNT) {
+				skippedImageCount++;
+				continue;
+			}
+			images.push({
+				type: "image",
+				data: item.data,
+				mimeType:
+					typeof item.mimeType === "string" && /^image\//i.test(item.mimeType) ? item.mimeType : "image/png",
+			});
+		}
+	}
+
+	if (skippedImageCount > 0) textParts.push(`已略过 ${skippedImageCount} 张图片`);
+	const text = trimText(textParts.filter(Boolean).join("\n") || "（外接服务未返回文本）", RESULT_LIMIT);
+	const rendered: RenderedToolContent[] = [];
+	if (textParts.some(Boolean) || images.length === 0) rendered.push({ type: "text", text });
+	return [...rendered, ...images];
 }
 
 export function registerMcpTools(pi: ExtensionAPI): void {
@@ -262,10 +310,19 @@ export function registerMcpTools(pi: ExtensionAPI): void {
 					const result = await client.callTool({ name: params.tool, arguments: params.params ?? {} }, undefined, {
 						signal,
 					});
-					const text = renderToolContent(result.content);
-					return textResult(result.isError ? `外接工具 ${params.tool} 返回失败：\n${text}` : text, {
-						pid: transport.pid,
-					});
+					const content = renderToolContent(result.content);
+					if (result.isError) {
+						const prefix = `外接工具 ${params.tool} 返回失败：\n`;
+						const first = content[0];
+						return {
+							content:
+								first?.type === "text"
+									? [{ type: "text" as const, text: prefix + first.text }, ...content.slice(1)]
+									: [{ type: "text" as const, text: prefix }, ...content],
+							details: { pid: transport.pid },
+						};
+					}
+					return { content, details: { pid: transport.pid } };
 				});
 			} catch (error) {
 				return textResult(

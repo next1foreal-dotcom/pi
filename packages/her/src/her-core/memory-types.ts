@@ -11,6 +11,12 @@ export interface CaptureMeta {
 	type?: string;
 	/** Episodic modality tag (e.g. voice, glass) — written to raw frontmatter when set. */
 	source?: string;
+	/** G-156: who wrote this memory (fei | samantha | …). */
+	authored_by?: string;
+	/** G-156: which harness produced it (pi | claude-code | codex | voice | mcp | …). */
+	harness?: string;
+	/** G-156: optional run/tool/session reference. */
+	source_ref?: string;
 	capture_scope?: string;
 	transcription_quality?: string;
 	ref?: string;
@@ -118,6 +124,21 @@ export interface SurfaceOptions {
 	cooldownMinutes?: number;
 }
 
+export interface ReflectOptions {
+	/** When true, skip the reflect pass entirely unless the reflect cadence (cadence.reflect_every_days) is due. */
+	ifDue?: boolean;
+}
+
+export interface ReflectResult {
+	/** Whether a reflect pass actually ran (false only when ifDue gated it out as not-due). */
+	ran: boolean;
+	/** Present only when ifDue was requested: whether the cadence considered this run due. */
+	due?: boolean;
+	/** Present when the model surfaced a non-obvious recognition (absent on a NONE reply). */
+	id?: string;
+	text?: string;
+}
+
 export interface JudgmentFields {
 	attraction?: string;
 	inferredIntent?: string;
@@ -146,6 +167,7 @@ export interface FeedbackResult {
 	rule: string;
 	weight: number;
 	status: "active" | "stale";
+	commit: string;
 }
 
 export interface ChoiceRuleEvidence {
@@ -250,6 +272,14 @@ export interface RestoreArchivedSemanticResult {
 export interface ChoiceModelUpdateResult {
 	id: string;
 	commit: string;
+}
+
+export interface ChoiceModelSynthesizeDueResult {
+	due: boolean;
+	thresholdDays: number;
+	hasJudgmentTrails: boolean;
+	lastChoiceModel?: string;
+	daysSinceLastChoiceModel?: number;
 }
 
 export interface SelfNarrativeUpdateResult {

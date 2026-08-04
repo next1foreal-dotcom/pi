@@ -1,0 +1,50 @@
+{
+	"$comment": [
+		"G-206 — the gates every worktree-isolated background task in this repo must pass before Her",
+		"will report it green. Read from this file at spawn time, before the worker starts; the copy",
+		"inside a task's own worktree is never consulted, so a worker cannot edit its way to a pass.",
+		"",
+		"Constraint that shapes this list: a task worktree is a fresh `git worktree add`, so it has no",
+		"node_modules. Only tests that import node builtins and local .ts files can run there (Node 24",
+		"strips the types natively). That is why this is the 'no-install' subset rather than the whole",
+		"suite, and why the gate name says so — a green here means the dependency-free suite passed,",
+		"not that everything passed.",
+		"",
+		"A task that touches anything outside this subset should carry its own targeted `gates` on the",
+		"spawn call; those replace this default entirely."
+	],
+	"gates": [
+		{
+			"name": "her-no-install-suite",
+			"timeoutMs": 900000,
+			"command": [
+				"node",
+				"--test",
+				"packages/her/test/bg-task-acceptance.test.ts",
+				"packages/her/test/bg-task-c2.test.ts",
+				"packages/her/test/bg-task-executor.test.ts",
+				"packages/her/test/bg-task-g121-g124.test.ts",
+				"packages/her/test/bg-task-g125.test.ts",
+				"packages/her/test/bg-task-g128.test.ts",
+				"packages/her/test/bg-task-g188.test.ts",
+				"packages/her/test/bg-task-g197.test.ts",
+				"packages/her/test/bg-task-isolation.test.ts",
+				"packages/her/test/bg-task-owner.test.ts",
+				"packages/her/test/bg-task-worker.test.ts",
+				"packages/her/test/deer-journal.test.ts",
+				"packages/her/test/deer-samantha-agent.test.ts",
+				"packages/her/test/deer-workflow-bridge.test.ts",
+				"packages/her/test/event-wake.test.ts",
+				"packages/her/test/hands-drill.test.ts",
+				"packages/her/test/her-core-modules.test.ts",
+				"packages/her/test/long-task-worktree.test.ts",
+				"packages/her/test/progress-state.test.ts",
+				"packages/her/test/recall-receipts.test.ts",
+				"packages/her/test/store-lock-cross-engine.test.ts",
+				"packages/her/test/store-lock.test.ts",
+				"packages/her/test/taste-schema.test.ts",
+				"packages/her/test/warm-worktree-pool.test.ts"
+			]
+		}
+	]
+}

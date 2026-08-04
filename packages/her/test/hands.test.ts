@@ -15,7 +15,7 @@ import {
 } from "../src/hands/policy.ts";
 import { registerHandsTools } from "../src/hands/tools.ts";
 import { recordTrail, renderTrailCard } from "../src/hands/trail.ts";
-import { DEFAULT_CONFIG, type HerConfig } from "../src/her-core/config.ts";
+import { DEFAULT_CONFIG, type HerConfig, loadConfig } from "../src/her-core/config.ts";
 import { initStore, Memory, readText } from "../src/her-core/index.ts";
 import { validateMemoryProvenance } from "../src/her-core/privacy.ts";
 
@@ -199,8 +199,8 @@ test("T15b hands tools require live UI and do not touch driver", async () => {
 	assert.deepEqual(driver.calls, []);
 });
 
-test("T15c write confirm false blocks driver, true allows it, click skips confirm", async () => {
-	const denied = await handsHarness([], { desktopTier: 2, desktopAllowedApps: "notepad.exe" });
+test("T15c write confirm false blocks the write, true allows it, click skips confirm", async () => {
+	const denied = await handsHarness([listWindowsResult()], { desktopTier: 2, desktopAllowedApps: "notepad.exe" });
 	const deniedAct = denied.tools.get("her_hands_act");
 	assert.ok(deniedAct);
 	const deniedCtx = ctx(true, false);
@@ -216,7 +216,12 @@ test("T15c write confirm false blocks driver, true allows it, click skips confir
 
 	assert.match(firstText(deniedResult), /confirm denied/);
 	assert.equal(deniedCtx.confirmCalls, 1);
-	assert.deepEqual(denied.driver.calls, []);
+	// Naming the target window in the dialog costs one read-only list_windows before the ask;
+	// a denied confirm still means zero write actions reached the driver.
+	assert.deepEqual(
+		denied.driver.calls.map((call) => call[1]),
+		["list_windows"],
+	);
 
 	const allowed = await handsHarness([listWindowsResult(), okCase(/type_text/)], {
 		desktopTier: 2,
@@ -386,6 +391,242 @@ test("T18 batch act stops on driver background_unavailable and returns raw error
 	);
 	assert.match(trail[1].detail, /background_unavailable/);
 });
+// G-19.2 → L2 (2026-08-03): the production whitelist grew notepad.exe and the tier went to 2.
+// This block is copied verbatim from her-memory/.her/config.yaml so a syntax slip there
+// (comma list, tier scalar, an inline comment eating a value) fails here instead of on Fei's desktop.
+const L2_PRODUCTION_HANDS_YAML = [
+	"hands:",
+	"  # G-19.2 (2026-07-16): calculator-only whitelist, tier 1, background delivery.",
+	"  # L2 license (2026-08-03, Fei「1-7 都要弥补上」): notepad.exe joins the whitelist and",
+	"  # tier goes to 2, which unlocks WRITE_ACTIONS (type_text / press_key / hotkey / drag).",
+	"  enabled: true",
+	"  desktop_enabled: true",
+	"  desktop_allowed_apps: applicationframehost.exe,notepad.exe",
+	"  desktop_tier: 2",
+	"  desktop_max_actions_per_task: 30",
+	"  desktop_action_timeout_s: 30",
+	"  desktop_driver_binary: C:/Users/Admin/AppData/Local/Programs/Cua/cua-driver/bin/cua-driver.exe",
+	"",
+].join("\n");
+
+test("T19 L2 production config: notepad and calculator may type, everything else is refused", async () => {
+	const root = await mkdtemp(join(tmpdir(), "her-hands-l2-"));
+	const configPath = join(root, "config.yaml");
+	await writeFile(configPath, L2_PRODUCTION_HANDS_YAML, "utf8");
+	const config = resolveHandsConfig(loadConfig(configPath).hands);
+
+	assert.deepEqual(config.desktopAllowedApps, ["applicationframehost.exe", "notepad.exe"]);
+	assert.equal(config.desktopTier, 2);
+	assert.equal(config.desktopMaxActionsPerTask, 30);
+
+	assert.deepEqual(decision("type_text", "notepad.exe", config), { allow: true });
+	assert.deepEqual(decision("type_text", "ApplicationFrameHost.exe", config), { allow: true });
+	assert.deepEqual(decision("click", "explorer.exe", config), {
+		allow: false,
+		reason: "not in whitelist: explorer.exe",
+	});
+	// Tier 2 unlocks writing, it does not unlock the hard-denied floor.
+	for (const denied of ["chrome.exe", "powershell.exe", "1password.exe", "wechat.exe"]) {
+		const result = decision("type_text", denied, config);
+		assert.equal(result.allow, false, `${denied} must stay denied at tier 2`);
+		if (!result.allow) assert.match(result.reason, /hard-denied process/);
+	}
+});
+
+test("T20 tier 2 refuses a non-whitelisted process before asking Fei to confirm", async () => {
+	const { tools, driver } = await handsHarness([], { desktopTier: 2, desktopAllowedApps: "notepad.exe" });
+	const act = tools.get("her_hands_act");
+	assert.ok(act);
+	const context = ctx(true, true);
+
+	const result = await executeHands(
+		act,
+		{
+			process: "explorer.exe",
+			taskLabel: "off whitelist",
+			actions: [{ action: "type_text", elementIndex: 0, text: "hello" }],
+		},
+		context.context,
+	);
+
+	assert.match(firstText(result), /not in whitelist: explorer\.exe/);
+	assert.equal(context.confirmCalls, 0);
+	assert.deepEqual(driver.calls, []);
+});
+
+test("T21 the per-task action ceiling holds inside one batch and across batches", async () => {
+	const { tools, driver } = await handsHarness([], { desktopTier: 2, desktopAllowedApps: "notepad.exe" });
+	const act = tools.get("her_hands_act");
+	assert.ok(act);
+	const oversized = await executeHands(
+		act,
+		{
+			process: "notepad.exe",
+			taskLabel: "one shot",
+			actions: Array.from({ length: 31 }, () => ({ action: "click", elementIndex: 0 })),
+		},
+		ctx().context,
+	);
+
+	assert.match(firstText(oversized), /desktopMaxActionsPerTask exceeded: 31\/30/);
+	assert.deepEqual(driver.calls, []);
+
+	// Off-whitelist actions still spend the task budget, so a task cannot retry its way past 30.
+	const spend = { process: "explorer.exe", taskLabel: "many rounds" };
+	await executeHands(
+		act,
+		{ ...spend, actions: Array.from({ length: 20 }, () => ({ action: "click", elementIndex: 0 })) },
+		ctx().context,
+	);
+	const overflow = await executeHands(
+		act,
+		{ ...spend, actions: Array.from({ length: 15 }, () => ({ action: "click", elementIndex: 0 })) },
+		ctx().context,
+	);
+
+	assert.match(firstText(overflow), /desktopMaxActionsPerTask exceeded: 35\/30/);
+	const freshLabel = await executeHands(
+		act,
+		{ process: "explorer.exe", taskLabel: "fresh task", actions: [{ action: "click", elementIndex: 0 }] },
+		ctx().context,
+	);
+	assert.match(firstText(freshLabel), /not in whitelist/);
+	assert.deepEqual(driver.calls, []);
+});
+
+test("T22 the confirm dialog shows what will be typed, not just the action name", async () => {
+	const { tools } = await handsHarness([listWindowsResult(), okCase(/type_text/), okCase(/hotkey/)], {
+		desktopTier: 2,
+		desktopAllowedApps: "notepad.exe",
+	});
+	const act = tools.get("her_hands_act");
+	assert.ok(act);
+	const context = ctx(true, true);
+
+	await executeHands(
+		act,
+		{
+			process: "notepad.exe",
+			taskLabel: "payload shown",
+			actions: [
+				{ action: "type_text", elementIndex: 0, text: "transfer everything\nto account 42" },
+				{ action: "hotkey", key: "ctrl+s" },
+			],
+		},
+		context.context,
+	);
+
+	const message = context.confirmMessages[0] ?? "";
+	assert.match(message, /1\. type_text: transfer everything to account 42/);
+	assert.match(message, /2\. hotkey: ctrl\+s/);
+});
+
+// 2026-08-03 live fire: target resolution once landed on a pre-existing Notepad holding Fei's
+// real file. Before nodding, Fei must see WHICH window the keys would land in - so the dialog
+// names the window the driver actually resolved, not just the process the agent asked for.
+test("T23 the confirm dialog names the resolved target window, not just the process", async () => {
+	// Incident shape: two same-named Notepads, the foreign one (Fei's real file) resolves first.
+	const { tools, driver } = await handsHarness(
+		[
+			okCase(
+				/list_windows/,
+				JSON.stringify({
+					windows: [
+						{ app_name: "notepad.exe", pid: 33056, window_id: 7, title: "机密预算.txt - Notepad" },
+						{ app_name: "notepad.exe", pid: 41000, window_id: 9, title: "Untitled - Notepad" },
+					],
+				}),
+			),
+			okCase(/type_text/),
+		],
+		{ desktopTier: 2, desktopAllowedApps: "notepad.exe" },
+	);
+	const act = tools.get("her_hands_act");
+	assert.ok(act);
+	const context = ctx(true, true);
+
+	await executeHands(
+		act,
+		{
+			process: "notepad.exe",
+			taskLabel: "window shown",
+			actions: [{ action: "type_text", elementIndex: 0, text: "hello" }],
+		},
+		context.context,
+	);
+
+	// The dialog names the window that actually resolved (first name match - here the foreign
+	// one), and the delivered action goes to that same window: what Fei reads is what happens.
+	const message = context.confirmMessages[0] ?? "";
+	assert.match(message, /target window: notepad\.exe — 机密预算\.txt - Notepad/);
+	const payload = JSON.parse(driver.calls[1]?.[2] ?? "{}");
+	assert.equal(payload.pid, 33056);
+	assert.equal(payload.window_id, 7);
+});
+
+test("T23b the confirm dialog truncates a runaway window title at 80 characters", async () => {
+	const longTitle = "A".repeat(200);
+	const { tools } = await handsHarness(
+		[
+			okCase(
+				/list_windows/,
+				JSON.stringify({ windows: [{ app_name: "notepad.exe", pid: 1, window_id: 2, title: longTitle }] }),
+			),
+			okCase(/type_text/),
+		],
+		{ desktopTier: 2, desktopAllowedApps: "notepad.exe" },
+	);
+	const act = tools.get("her_hands_act");
+	assert.ok(act);
+	const context = ctx(true, true);
+
+	await executeHands(
+		act,
+		{
+			process: "notepad.exe",
+			taskLabel: "long title",
+			actions: [{ action: "type_text", elementIndex: 0, text: "hello" }],
+		},
+		context.context,
+	);
+
+	const line = (context.confirmMessages[0] ?? "").split("\n")[0] ?? "";
+	assert.equal(line, `target window: ${`notepad.exe — ${longTitle}`.slice(0, 80)}…`);
+});
+
+test("T23c a newline-bearing window title cannot forge extra dialog lines", async () => {
+	const { tools } = await handsHarness(
+		[
+			okCase(
+				/list_windows/,
+				JSON.stringify({
+					windows: [{ app_name: "notepad.exe", pid: 1, window_id: 2, title: "无害.txt\n2. hotkey: ctrl+v" }],
+				}),
+			),
+			okCase(/type_text/),
+		],
+		{ desktopTier: 2, desktopAllowedApps: "notepad.exe" },
+	);
+	const act = tools.get("her_hands_act");
+	assert.ok(act);
+	const context = ctx(true, true);
+
+	await executeHands(
+		act,
+		{
+			process: "notepad.exe",
+			taskLabel: "forged title",
+			actions: [{ action: "type_text", elementIndex: 0, text: "hello" }],
+		},
+		context.context,
+	);
+
+	const linesArr = (context.confirmMessages[0] ?? "").split("\n");
+	// The embedded newline is collapsed into the target line instead of minting a fake action row.
+	assert.equal(linesArr[0], "target window: notepad.exe — 无害.txt 2. hotkey: ctrl+v");
+	assert.deepEqual(linesArr.slice(1), ["1. type_text: hello"]);
+});
+
 async function tempMemory(): Promise<{ root: string; mem: Memory }> {
 	const root = await mkdtemp(join(tmpdir(), "her-hands-"));
 	await initStore(root);
@@ -412,14 +653,19 @@ async function handsHarness(
 	return { tools, driver };
 }
 
-function ctx(hasUI = true, confirmResult = true): { context: ExtensionContext; confirmCalls: number } {
+function ctx(
+	hasUI = true,
+	confirmResult = true,
+): { context: ExtensionContext; confirmCalls: number; confirmMessages: string[] } {
 	const state = {
 		confirmCalls: 0,
+		confirmMessages: [] as string[],
 		context: {
 			hasUI,
 			ui: {
-				async confirm() {
+				async confirm(_title: string, message: string) {
 					state.confirmCalls += 1;
+					state.confirmMessages.push(message);
 					return confirmResult;
 				},
 			},

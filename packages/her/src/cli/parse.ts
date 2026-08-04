@@ -53,6 +53,7 @@ export function parseArgs(argv: string[]): CliCommand {
 	if (command === "privacy-check") return parsePrivacyCheck(rest);
 	if (command === "prior") return parsePrior(rest);
 	if (command === "recall") return parseRecall(rest);
+	if (command === "reflect") return parseReflect(rest);
 	if (command === "review-narrative") return parseReviewNarrative(rest);
 	if (command === "restore") return parseRestore(rest);
 	if (command === "self-narrative") return parseJsonOnly("self-narrative", rest);
@@ -277,6 +278,23 @@ function parseSynthesize(argv: string[]): CliCommand {
 		throw new UsageError(`unknown synthesize option: ${arg}`);
 	}
 	return { kind: "synthesize", json, ifDue };
+}
+
+function parseReflect(argv: string[]): CliCommand {
+	let json = false;
+	let ifDue = false;
+	for (const arg of argv) {
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--if-due") {
+			ifDue = true;
+			continue;
+		}
+		throw new UsageError(`unknown reflect option: ${arg}`);
+	}
+	return { kind: "reflect", json, ifDue };
 }
 
 function parseReviewNarrative(argv: string[]): CliCommand {

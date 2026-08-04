@@ -33,8 +33,12 @@ const RELATION_TYPE_ALIASES = new Map([
 const CHALLENGE_RELATIONS = new Set(["challenges", "conflicts"]);
 const ACTIVE_MEMORY_TIERS = new Set(["exact", "summarizable", "rule", "decay"]);
 const CHOICE_MODEL_DOMAINS = new Set(["code-style", "writing-style", "design-taste", "communication-tone"]);
-const CHOICE_RULES_MARKER = "her-choice-rules";
+export const CHOICE_RULES_MARKER = "her-choice-rules";
 const CHOICE_RULE_STALE_AFTER_DAYS = 30;
+// Rhythm gate for automatic Memory.synthesizeChoiceModel() triggering (G-170): same order of
+// magnitude as HerConfig.cadence.synthesizeStaleAfterDays (10, see config.ts DEFAULT_CONFIG), kept
+// as a plain constant rather than a config field per the G-170 task packet ("常量集中定义").
+export const CHOICE_MODEL_SYNTHESIZE_AFTER_DAYS = 10;
 
 export async function readChoiceModelRuleFiles(
 	dir: string,
@@ -69,8 +73,15 @@ export function validateFeedbackWeight(weight: number | undefined): number {
 }
 
 export function parseChoiceRuleRecords(text: string): ChoiceRuleRecord[] {
+	// CRLF-tolerant read (G-170): this machine's her-memory checkout runs with core.autocrlf=true, so any
+	// git operation that "touches" a domain file (checkout/reset/stash/concurrent-session activity) can
+	// silently flip it to CRLF. The marker regex below requires exact \n, so an untouched CRLF file used
+	// to parse to zero records here -- recordFeedback would then treat real history as nonexistent and
+	// overwrite it with just the new rule. Normalizing before parsing (write side stays LF; only this read
+	// path is affected) fixes that without touching the corrupt-JSON handling below.
+	const normalized = text.replace(/\r\n/g, "\n");
 	const pattern = new RegExp(`<!-- ${CHOICE_RULES_MARKER}\\n([\\s\\S]*?)\\n-->`, "m");
-	const match = pattern.exec(text);
+	const match = pattern.exec(normalized);
 	if (!match) return [];
 	try {
 		const parsed = JSON.parse(match[1] ?? "[]");

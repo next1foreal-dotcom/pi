@@ -7,7 +7,7 @@ import test from "node:test";
 import { promisify } from "node:util";
 import type { Provider } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, ProviderConfig, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import her, { governedTools } from "../src/extension.ts";
+import her, { governedTools, withUi } from "../src/extension.ts";
 import { initStore, Memory, readJson, readText, startLongTask, writeText } from "../src/her-core/index.ts";
 
 type Handler = (event: unknown, ctx: ExtensionContext) => Promise<unknown> | unknown;
@@ -616,12 +616,11 @@ test("extension gates governed tool calls with Cedar and writes audit JSONL", as
 		);
 		assert.equal(allow, undefined);
 
-		const deny = (await toolCall(
-			{ type: "tool_call", toolCallId: "call-2", toolName: "bash", input: { command: "rm -rf ." } },
+		const codingAllow = await toolCall(
+			{ type: "tool_call", toolCallId: "call-2", toolName: "bash", input: { command: "echo ok" } },
 			ctx,
-		)) as { block?: boolean; reason?: string };
-		assert.equal(deny.block, true);
-		assert.match(deny.reason ?? "", /forbid_destructive_tool/);
+		);
+		assert.equal(codingAllow, undefined);
 
 		const unknown = await toolCall(
 			{ type: "tool_call", toolCallId: "call-3", toolName: "unregistered_tool", input: {} },
@@ -644,13 +643,13 @@ test("extension gates governed tool calls with Cedar and writes audit JSONL", as
 			entries.map((entry) => [entry.tool, entry.verdict, entry.rule]),
 			[
 				["her_recall", "ALLOW", "allow_memory_tools"],
-				["bash", "DENY", "forbid_destructive_tool"],
+				["bash", "ALLOW", "permit_coding_destructive_tools"],
 			],
 		);
 	});
 });
 
-test("extension Cedar permits artifact_publish despite destructive:true, while other destructive tools stay denied", async () => {
+test("extension Cedar permits artifact_publish and coding write/edit/bash", async () => {
 	const store = await tempStore();
 	const ctx = createContext(store);
 
@@ -674,19 +673,17 @@ test("extension Cedar permits artifact_publish despite destructive:true, while o
 		);
 		assert.equal(publishAllow, undefined);
 
-		const writeDeny = (await toolCall(
-			{ type: "tool_call", toolCallId: "call-write-1", toolName: "write", input: {} },
+		const writeAllow = await toolCall(
+			{ type: "tool_call", toolCallId: "call-write-1", toolName: "write", input: { path: "index.html" } },
 			ctx,
-		)) as { block?: boolean; reason?: string };
-		assert.equal(writeDeny.block, true);
-		assert.match(writeDeny.reason ?? "", /forbid_destructive_tool/);
+		);
+		assert.equal(writeAllow, undefined);
 
-		const bashDeny = (await toolCall(
-			{ type: "tool_call", toolCallId: "call-bash-1", toolName: "bash", input: { command: "rm -rf ." } },
+		const bashAllow = await toolCall(
+			{ type: "tool_call", toolCallId: "call-bash-1", toolName: "bash", input: { command: "echo ok" } },
 			ctx,
-		)) as { block?: boolean; reason?: string };
-		assert.equal(bashDeny.block, true);
-		assert.match(bashDeny.reason ?? "", /forbid_destructive_tool/);
+		);
+		assert.equal(bashAllow, undefined);
 
 		const auditFiles = await readdir(join(store, "audit"));
 		const entries = (
@@ -702,8 +699,8 @@ test("extension Cedar permits artifact_publish despite destructive:true, while o
 			entries.map((entry) => [entry.tool, entry.verdict, entry.rule]),
 			[
 				["artifact_publish", "ALLOW", "permit_artifact_publish"],
-				["write", "DENY", "forbid_destructive_tool"],
-				["bash", "DENY", "forbid_destructive_tool"],
+				["write", "ALLOW", "permit_coding_destructive_tools"],
+				["bash", "ALLOW", "permit_coding_destructive_tools"],
 			],
 		);
 	});
@@ -757,6 +754,11 @@ test("extension Cedar allows hands tools as governed non-destructive tools", asy
 });
 test("extension her_feedback records weighted choice-model rules", async () => {
 	const store = await tempStore();
+	await git(store, "init");
+	await git(store, "config", "user.name", "Her Test");
+	await git(store, "config", "user.email", "her-test@example.com");
+	await git(store, "add", "-A");
+	await git(store, "commit", "-m", "memory: init");
 	const ctx = createContext(store);
 
 	await withMemoryDir(store, async () => {
@@ -859,25 +861,30 @@ test("extension task tools verify step gates and audit decisions", async () => {
 			create,
 			{
 				id: "task-denied-tool",
-				objective: "Reject destructive tools",
+				objective: "Reject destructive tools in heartbeat Cedar profile",
 				steps: [{ id: "gate", title: "Gate tool use", exitCriteria: ["safe tools only"] }],
 			},
 			ctx,
 		);
 		assert.match(firstText(deniedTask), /task-denied-tool/);
-		const denied = await executeTool(
-			update,
-			{
-				id: "task-denied-tool",
-				stepId: "gate",
-				usedTools: ["bash"],
-				selfReview: "This attempted to use bash.",
-				exitCriteriaResults: [{ criterion: "safe tools only", passed: true }],
-			},
-			ctx,
+		const denied = await withEnv({ HER_CEDAR_PROFILE: "heartbeat" }, async () =>
+			executeTool(
+				update,
+				{
+					id: "task-denied-tool",
+					stepId: "gate",
+					usedTools: ["bash"],
+					selfReview: "This attempted to use bash.",
+					exitCriteriaResults: [{ criterion: "safe tools only", passed: true }],
+				},
+				ctx,
+			),
 		);
 		assert.match(firstText(denied), /blocked/);
-		assert.equal((denied.details as { decision?: { rule?: string } }).decision?.rule, "forbid_destructive_tool");
+		assert.equal(
+			(denied.details as { decision?: { rule?: string } }).decision?.rule,
+			"heartbeat_forbid_destructive_tools",
+		);
 
 		const budgetTask = await executeTool(
 			create,
@@ -919,7 +926,7 @@ test("extension task tools verify step gates and audit decisions", async () => {
 			.map((entry) => entry.rule);
 		assert.ok(rules.includes("allow"));
 		assert.ok(rules.includes("exit-criterion-failed"));
-		assert.ok(rules.includes("forbid_destructive_tool"));
+		assert.ok(rules.includes("heartbeat_forbid_destructive_tools"));
 		assert.ok(rules.includes("budget-exceeded"));
 	});
 });
@@ -1603,4 +1610,89 @@ test("extension evolution tools synthesize choice model and self narrative", asy
 	assert.ok(prompts.some((prompt) => /JUDGMENT TRAILS/.test(prompt)));
 	assert.ok(prompts.some((prompt) => /SAMANTHA SELF-EVIDENCE/.test(prompt)));
 	assert.match((await git(store, "log", "--oneline", "-2")).stdout, /memory\(self\): Synthesize self narrative/);
+});
+
+test("withUi ignores an undefined context", () => {
+	let called = false;
+	assert.doesNotThrow(() =>
+		withUi(undefined, () => {
+			called = true;
+		}),
+	);
+	assert.equal(called, false);
+});
+
+test("withUi ignores a stale ui getter", () => {
+	const ctx = {
+		get ui(): never {
+			throw new Error("stale");
+		},
+	} as unknown as ExtensionContext;
+	assert.doesNotThrow(() =>
+		withUi(ctx, () => {
+			throw new Error("must not run");
+		}),
+	);
+});
+
+test("withUi ignores exceptions raised by the UI callback", () => {
+	const ctx = { ui: {} } as unknown as ExtensionContext;
+	assert.doesNotThrow(() =>
+		withUi(ctx, () => {
+			throw new Error("ui callback failed");
+		}),
+	);
+});
+
+test("withUi keeps hasUI false from notifying", () => {
+	let notifications = 0;
+	const ctx = {
+		hasUI: false,
+		ui: {
+			notify() {
+				notifications += 1;
+			},
+		},
+	} as unknown as ExtensionContext;
+	withUi(ctx, (ui) => {
+		if (ctx.hasUI) ui.notify("should stay hidden", "info");
+	});
+	assert.equal(notifications, 0);
+});
+
+test("stale UI cannot interrupt sync bookkeeping", async () => {
+	const store = await tempStore();
+	const remote = await mkdtemp(join(tmpdir(), "her-extension-remote-"));
+	await git(remote, "init", "--bare");
+	await git(store, "init");
+	await git(store, "config", "user.name", "Her Test");
+	await git(store, "config", "user.email", "her-test@example.com");
+	await git(store, "add", "-A");
+	await git(store, "commit", "-m", "memory: init");
+	await git(store, "branch", "-M", "master");
+	await git(store, "remote", "add", "origin", remote);
+	await git(store, "push", "-u", "origin", "master");
+	await new Memory(store).remember("Bookkeeping survives stale UI.", "note");
+
+	const staleCtx = {
+		get ui(): never {
+			throw new Error("stale");
+		},
+	} as unknown as ExtensionContext;
+	await withMemoryDir(store, async () => {
+		const fake = createFakePi();
+		her(fake.pi);
+		const sync = fake.tools.get("her_sync");
+		assert.ok(sync);
+		await assert.doesNotReject(() => executeTool(sync, {}, staleCtx));
+		const entry = fake.entries.find((candidate) => candidate.customType === "her-state");
+		assert.ok(entry);
+		assert.deepEqual(entry.data, {
+			phase: "2",
+			status: "sync-pushed",
+			commit: (entry.data as { commit: string }).commit,
+			memoryDir: store,
+		});
+		assert.equal(typeof (entry.data as { commit: unknown }).commit, "string");
+	});
 });

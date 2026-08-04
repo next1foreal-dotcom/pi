@@ -29,6 +29,7 @@ export interface HandsToolDeps {
 interface WindowRef {
 	pid: number;
 	window_id: number;
+	app_name?: string;
 	title?: string;
 }
 interface UiFrame {
@@ -141,18 +142,27 @@ export function registerHandsTools(pi: ExtensionAPI, deps: HandsToolDeps): void 
 			if (limit) return await denyBatch(deps, params.taskLabel, params.process, limit);
 			const policyStop = firstPolicyStop(params.process, actions, config);
 			const executable = policyStop ? actions.slice(0, policyStop.index) : actions;
-			if (executable.some((item) => WRITE_ACTIONS.includes(item.action))) {
-				const confirmed = await ctx.ui.confirm(
-					`Samantha requests desktop control: ${params.process}`,
-					summarizeActions(executable),
-				);
-				if (!confirmed)
-					return await denyBatch(deps, params.taskLabel, params.process, "confirm denied", executable[0]?.action);
-			}
 			const trail: HandsTrailEntry[] = [];
 			try {
 				if (executable.length > 0) {
+					// Resolved before the confirm on purpose (2026-08-03): a name match once landed on a
+					// pre-existing Notepad holding Fei's real file, so the dialog must name the exact
+					// window the actions would land in. Costs one read-only list_windows before the ask.
 					const windowRef = await findWindow(deps.driver, params.process, params.windowTitleHint, config);
+					if (executable.some((item) => WRITE_ACTIONS.includes(item.action))) {
+						const confirmed = await ctx.ui.confirm(
+							`Samantha requests desktop control: ${params.process}`,
+							`${describeTargetWindow(windowRef)}\n${summarizeActions(executable)}`,
+						);
+						if (!confirmed)
+							return await denyBatch(
+								deps,
+								params.taskLabel,
+								params.process,
+								"confirm denied",
+								executable[0]?.action,
+							);
+					}
 					const cachedSnapshot = snapshots.get(windowKey(windowRef));
 					for (const item of executable) {
 						const result = await callDriver(
@@ -265,7 +275,7 @@ async function findWindow(
 		!titleHint || (item.title ?? "").toLowerCase().includes(titleHint.toLowerCase());
 	const window = windows.find((item) => (item.app_name ?? "").trim().toLowerCase() === target && titleMatches(item));
 	if (!window) throw new Error(`no window found for ${process}${titleHint ? ` (${titleHint})` : ""}`);
-	return { pid: window.pid, window_id: window.window_id, title: window.title };
+	return { pid: window.pid, window_id: window.window_id, app_name: window.app_name, title: window.title };
 }
 
 async function callDriver(
@@ -358,7 +368,25 @@ function renderActSummary(trail: HandsTrailEntry[]): string {
 }
 
 function summarizeActions(actions: ActionInput[]): string {
-	return actions.map((item, index) => `${index + 1}. ${item.action}`).join("\n");
+	return actions.map((item, index) => `${index + 1}. ${item.action}${describePayload(item)}`).join("\n");
+}
+
+// A tier-2 approval is only worth asking for if it shows what is about to be typed or pressed.
+function describePayload(action: ActionInput): string {
+	if (action.text !== undefined) return `: ${oneLine(action.text)}`;
+	if (action.key !== undefined) return `: ${oneLine(action.key)}`;
+	if (action.direction !== undefined) return `: ${action.direction}`;
+	return "";
+}
+
+// Fei must see which window the keys would land in before nodding (2026-08-03 lesson).
+function describeTargetWindow(window: WindowRef): string {
+	return `target window: ${oneLine(`${window.app_name ?? "?"} — ${window.title ?? ""}`, 80)}`;
+}
+
+function oneLine(value: string, max = 120): string {
+	const collapsed = value.replace(/\s+/g, " ").trim();
+	return collapsed.length > max ? `${collapsed.slice(0, max)}…` : collapsed;
 }
 
 function textResult(text: string, details: Record<string, unknown> = {}) {

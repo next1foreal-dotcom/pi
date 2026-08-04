@@ -10,6 +10,7 @@ import {
 	ensureTaskWorktree,
 	isWorktreeDirty,
 	listTaskWorktrees,
+	maybeRemoveEmptyTaskWorktree,
 	removeTaskWorktree,
 	WorktreeDirtyError,
 } from "../src/her-core/long-task-worktree.ts";
@@ -117,6 +118,29 @@ test("T6 removeTaskWorktree removes a clean worktree and its task branch", async
 	assert.equal((await git(repo, "branch", "--list", "her-task/t6")).stdout.trim(), "");
 	assert.equal(await statusPorcelain(repo), "");
 });
+
+test("G-126 maybeRemoveEmptyTaskWorktree removes 0-commit trees and keeps committed ones", async () => {
+	const repo = await tempGitRepo();
+	const worktreeRoot = await tempWorktreeRoot();
+	const env = { ...process.env, HER_LONGTASK_WORKTREE_ROOT: worktreeRoot };
+
+	const empty = await ensureTaskWorktree(repo, "t-empty", { env });
+	const gone = await maybeRemoveEmptyTaskWorktree(repo, "t-empty", empty.baseSha, { env });
+	assert.equal(gone.removed, true);
+	assert.equal(existsSync(empty.worktreePath), false);
+
+	const kept = await ensureTaskWorktree(repo, "t-kept", { env });
+	await writeFile(join(kept.worktreePath, "work.txt"), "x\n", "utf8");
+	await git(kept.worktreePath, "add", "work.txt");
+	await git(kept.worktreePath, "commit", "-q", "-m", "keep me");
+	const stay = await maybeRemoveEmptyTaskWorktree(repo, "t-kept", kept.baseSha, { env });
+	assert.equal(stay.removed, false);
+	assert.ok(stay.commits >= 1);
+	assert.equal(stay.branch, "her-task/t-kept");
+	assert.ok(existsSync(kept.worktreePath));
+	await removeTaskWorktree(repo, "t-kept", { env, force: true });
+});
+
 test("T4 task worktree commits stay off the main branch", async () => {
 	const repo = await tempGitRepo();
 	const worktreeRoot = await tempWorktreeRoot();

@@ -3,13 +3,22 @@ import { join } from "node:path";
 import { StorePaths } from "./paths.ts";
 
 /** Derived index only — rebuildable from goals/build logs; not a source of truth. */
-export const herRunKinds = ["orchestrator", "build", "voice", "longtask", "subagent"] as const;
+export const herRunKinds = ["orchestrator", "build", "voice", "longtask", "subagent", "workflow"] as const;
 export type HerRunKind = (typeof herRunKinds)[number];
 
 export const herRunStatuses = ["queued", "running", "done", "failed", "canceled", "aborted"] as const;
 export type HerRunStatus = (typeof herRunStatuses)[number];
 
-/** One append-only line in `runs/events.jsonl`. Latest line per runId wins. */
+/**
+ * One append-only line in `runs/events.jsonl`. Latest line per runId wins.
+ *
+ * G-185/S5 — `ownerWorkspaceId` is the same field name samantha-ui uses in
+ * `her-runs-shared.ts`, and its value is the pi-side `ownerSessionId` (BgTaskRecord):
+ * Studio workspace ids and pi session ids are one value space, only the field name
+ * follows each repo's convention. Do **not** fold it into `piSessionId` — that field is
+ * part of the wake display id (`piSessionId ?? goalId ?? runId`), so setting it to the
+ * owner would collapse every task of one session onto a single wake identity.
+ */
 export interface HerRunEvent {
 	type: "run";
 	runId: string;
@@ -22,6 +31,10 @@ export interface HerRunEvent {
 	parentRunId?: string;
 	goalId?: string;
 	projectId?: string;
+	/** Session/workspace that spawned the work — mirrors pi's `ownerSessionId`. */
+	ownerWorkspaceId?: string;
+	/** `.her/tasks` id of the bg task behind this run; the task ↔ run join key. */
+	bgTaskId?: string;
 }
 
 export interface HerRunSnapshot {
@@ -36,10 +49,72 @@ export interface HerRunSnapshot {
 	parentRunId?: string;
 	goalId?: string;
 	projectId?: string;
+	/** G-185/S5 — see HerRunEvent: owner identity, and the task ↔ run join key. */
+	ownerWorkspaceId?: string;
+	bgTaskId?: string;
 }
 
 export function runsEventsPath(root: string): string {
 	return join(new StorePaths(root).root, "runs", "events.jsonl");
+}
+
+/**
+ * G-185/S5 — the Studio-side wake ledger, written by samantha-ui's S3 watcher and its
+ * browser fast path. Read-only from pi: a task Studio already reported must not be
+ * reported a second time when pi's owner-grace takeover fires.
+ *
+ * NOT the same book as pi's own `.her/tasks/wake-ledger.jsonl` (G-132's daily wake
+ * counter) — same filename, unrelated contents, different directory.
+ */
+export function runsWakeLedgerPath(root: string): string {
+	return join(new StorePaths(root).root, "runs", "wake-ledger.jsonl");
+}
+
+/** One row of the Studio wake ledger. Mirrors samantha-ui `wake-ledger.ts` WakeLedgerRow. */
+export interface HerWakeLedgerRow {
+	/** G-183 display id (`piSessionId ?? goalId ?? runId`) — half of Studio's dedupe key. */
+	wakeId: string;
+	terminalStatus: string;
+	deliveredAt: string;
+	deliveredBy: string;
+	/** Envelope runId — always present on watcher rows, never on browser rows. */
+	runId?: string;
+	/** Watcher gave up after repeated dispatch failures (i.e. nobody was told). */
+	failed?: boolean;
+}
+
+/** Tolerant reader: a corrupt row must never hide the good rows around it. Missing file → []. */
+export async function readRunsWakeLedger(root: string): Promise<HerWakeLedgerRow[]> {
+	let raw: string;
+	try {
+		raw = await readFile(runsWakeLedgerPath(root), "utf8");
+	} catch (error) {
+		if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return [];
+		throw error;
+	}
+	const rows: HerWakeLedgerRow[] = [];
+	for (const line of raw.split("\n")) {
+		const trimmed = line.trim();
+		if (!trimmed) continue;
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(trimmed) as unknown;
+		} catch {
+			continue;
+		}
+		if (!parsed || typeof parsed !== "object") continue;
+		const rec = parsed as Partial<HerWakeLedgerRow>;
+		if (typeof rec.wakeId !== "string" || !rec.wakeId) continue;
+		rows.push({
+			wakeId: rec.wakeId,
+			terminalStatus: typeof rec.terminalStatus === "string" ? rec.terminalStatus : "",
+			deliveredAt: typeof rec.deliveredAt === "string" ? rec.deliveredAt : "",
+			deliveredBy: typeof rec.deliveredBy === "string" ? rec.deliveredBy : "",
+			...(typeof rec.runId === "string" ? { runId: rec.runId } : {}),
+			...(rec.failed === true ? { failed: true } : {}),
+		});
+	}
+	return rows;
 }
 
 export async function appendHerRunEvent(root: string, event: Omit<HerRunEvent, "type">): Promise<void> {
@@ -90,6 +165,8 @@ export async function listHerRunSnapshots(root: string, limit = 200): Promise<He
 			...(typeof rec.parentRunId === "string" ? { parentRunId: rec.parentRunId } : {}),
 			...(typeof rec.goalId === "string" ? { goalId: rec.goalId } : {}),
 			...(typeof rec.projectId === "string" ? { projectId: rec.projectId } : {}),
+			...(typeof rec.ownerWorkspaceId === "string" ? { ownerWorkspaceId: rec.ownerWorkspaceId } : {}),
+			...(typeof rec.bgTaskId === "string" ? { bgTaskId: rec.bgTaskId } : {}),
 		});
 	}
 	return [...byId.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, limit);

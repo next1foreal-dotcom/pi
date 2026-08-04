@@ -10,6 +10,7 @@ import {
 	checkpointLongTask,
 	claimNextLongTask,
 	completeLongTask,
+	frontmatter,
 	initStore,
 	listLongTasks,
 	Memory,
@@ -39,6 +40,17 @@ async function tempStore(): Promise<string> {
 async function git(cwd: string, ...args: string[]): Promise<{ stdout: string; stderr: string }> {
 	const { stdout, stderr } = await execFileAsync("git", args, { cwd });
 	return { stdout, stderr };
+}
+
+// recordFeedback commits (G-170), so its fixtures need a real (local-only) git repo.
+async function gitInitStore(): Promise<string> {
+	const store = await tempStore();
+	await git(store, "init");
+	await git(store, "config", "user.name", "Her Test");
+	await git(store, "config", "user.email", "her-test@example.com");
+	await git(store, "add", "-A");
+	await git(store, "commit", "-m", "memory: fixtures");
+	return store;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -392,7 +404,7 @@ test("writeSamanthaTasteJudgment preserves her own protected taste disagreement"
 });
 
 test("recordFeedback writes weighted choice rules and getContext sorts stale rules below active rules", async () => {
-	const store = await tempStore();
+	const store = await gitInitStore();
 	const memory = new Memory(store);
 
 	await memory.recordFeedback({
@@ -432,7 +444,7 @@ test("recordFeedback writes weighted choice rules and getContext sorts stale rul
 });
 
 test("recordFeedback honors explicit feedback weight deltas", async () => {
-	const store = await tempStore();
+	const store = await gitInitStore();
 	const memory = new Memory(store);
 
 	await memory.recordFeedback({
@@ -1826,4 +1838,21 @@ test("synthesizeSelfNarrative distills becoming evidence into a traceable Samant
 	assert.match(prompt, /SAMANTHA SELF-EVIDENCE/);
 	assert.match(prompt, /machine truth first/);
 	assert.match(prompt, /Verified Care/);
+});
+
+test("frontmatter round-trips strings that look like other scalar types", () => {
+	const command = ["node", "-e", "1"];
+	const { data } = parseFrontmatter(
+		frontmatter({ command, port: "8080", flag: "true", missing: "null", json: "[1]" }),
+	);
+	assert.deepEqual(data.command, command);
+	assert.equal(data.port, "8080");
+	assert.equal(data.flag, "true");
+	assert.equal(data.missing, "null");
+	assert.equal(data.json, "[1]");
+
+	const typed = parseFrontmatter(frontmatter({ count: 3, done: true, none: null })).data;
+	assert.equal(typed.count, 3);
+	assert.equal(typed.done, true);
+	assert.equal(typed.none, null);
 });

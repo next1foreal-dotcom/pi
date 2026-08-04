@@ -1,3 +1,78 @@
+export type {
+	AcceptanceClaim,
+	AcceptanceGate,
+	AcceptanceGateSummary,
+	AcceptanceOutcome,
+	AcceptanceReason,
+	AcceptanceReasonCode,
+	AcceptanceReport,
+	AcceptanceRun,
+	AcceptanceVerdict,
+	GatePlan,
+	GatePlanSource,
+	GateRun,
+} from "./bg-task-acceptance.ts";
+export {
+	ACCEPTANCE_REPORT_FILENAME,
+	acceptanceRunFilename,
+	evaluateTaskAcceptance,
+	formatAcceptanceLine,
+	gatePlanFilename,
+	judgeAcceptance,
+	loadRepoGatePlan,
+	parseAcceptanceReport,
+	parseGatePlan,
+	REPO_GATE_MANIFEST_RELATIVE_PATH,
+} from "./bg-task-acceptance.ts";
+export {
+	DEFAULT_PUBLISH_CONFIG,
+	DEFAULT_TASKS_CONFIG,
+	type HerRuntimeConfig,
+	loadRuntimeConfig,
+	type PublishConfig,
+	parseTasksPublish,
+	type TasksConfig,
+} from "./bg-task-config.ts";
+export {
+	DEFAULT_LOG_TRUNCATE,
+	type LogTruncateConfig,
+	truncateLogBuffer,
+	truncateTaskLogIfNeeded,
+} from "./bg-task-log.ts";
+export { enqueueTaskTelegramNotices, formatBgTaskStatusBoard } from "./bg-task-notify.ts";
+export { herTaskOutput, readLogChunk, type TaskOutputChunk } from "./bg-task-output.ts";
+export {
+	formatWakeMessage,
+	parseCodexSessionId,
+	type ReconcileOptions,
+	reconcileBgTasks,
+	type WakeEvent,
+} from "./bg-task-reconcile.ts";
+export {
+	type BgTaskRecord,
+	type BgTaskStatus,
+	createPendingRecord,
+	formatDisplayStatus,
+	isTerminal,
+	loadBgTask,
+	migrateBgStatus,
+	newTaskId,
+	parseBgTaskMarkdown,
+	saveBgTask,
+	serializeBgTask,
+	taskMdPath,
+	tasksDir,
+} from "./bg-task-record.ts";
+export { purgeExpiredTaskArtifacts, type RetentionPurge } from "./bg-task-retention.ts";
+export {
+	type BgTaskListItem,
+	continueBgTask,
+	listBgTasks,
+	type SpawnBgTaskInput,
+	type SpawnBgTaskResult,
+	spawnBgTask,
+	stopBgTask,
+} from "./bg-task-spawn.ts";
 export type { HerConfig } from "./config.ts";
 export { DEFAULT_CONFIG, loadConfig, renderConfig } from "./config.ts";
 export type {
@@ -14,6 +89,26 @@ export type {
 	CostSummaryOptions,
 } from "./cost-ledger.ts";
 export { enforceDailyCostCap, summarizeAuditCosts, summarizeCostBreakdown, writeCostReport } from "./cost-ledger.ts";
+export type { Agent, AgentFunction, AgentOptions, AgentSandbox, JsonSchema } from "./deer-agent-types.ts";
+export { bindAgent } from "./deer-agent-types.ts";
+export {
+	createDeerAgentFromEnv,
+	FakeDeerAgent,
+	SamanthaAgent,
+	type SamanthaAgentConfig,
+	type SamanthaAgentSpawnFn,
+} from "./deer-samantha-agent.ts";
+export {
+	applyDeerWorkflowEvent,
+	createDeerBridgeState,
+	DEER_RUN_KIND,
+	DEER_RUN_SOURCE,
+	type DeerBridgePatch,
+	type DeerBridgeState,
+	type DeerWorkflowEvent,
+	defaultDeerRunId,
+	parseDeerWorkflowLine,
+} from "./deer-workflow-bridge.ts";
 export type {
 	DelegatedOperation,
 	DelegationDecision,
@@ -62,6 +157,15 @@ export type {
 	RunGoldenEvalOptions,
 } from "./evals.ts";
 export { goldenEvalCategories, runGoldenEvals } from "./evals.ts";
+export {
+	ensurePublishServer,
+	herPublish,
+	type PublishResult,
+	publishedDir,
+	slugifyTitle,
+	stopPublishServer,
+	wrapPublishedHtml,
+} from "./her-publish.ts";
 export type {
 	PathIntakeCollectOptions,
 	PathIntakeOptions,
@@ -171,6 +275,26 @@ export {
 	validateMemoryProvenance,
 } from "./privacy.ts";
 export {
+	allVerified,
+	anyInvalidated,
+	applyVerifierDecision,
+	classifyStall,
+	type DoneEvidence,
+	emptyProgressState,
+	type FailureClass,
+	formatProgressCheckpoint,
+	type HerTaskDisplayStatus,
+	type ProgressState,
+	type Requirement,
+	type RequirementStatus,
+	requirementStatus,
+	statusFromDoneEvidence,
+	type UsefulValue,
+	type VerifiedEvidence,
+	type VerifyDecision,
+	withRequirements,
+} from "./progress-state.ts";
+export {
 	choiceModelPrompt,
 	consolidatePrompt,
 	ideaEnginePrompt,
@@ -199,6 +323,9 @@ export {
 	recordHerProposalFeedback,
 	summarizeHerProposalStats,
 } from "./proposal.ts";
+export { type ExternalizeResult, externalizeLargeDataUris } from "./publish-assets.ts";
+export type { RecallReceipt } from "./recall-receipts.ts";
+export { buildRecallReceipt, buildRecallReceipts, UNKNOWN_PROVENANCE } from "./recall-receipts.ts";
 export type {
 	ApplyMemoryRetractionOptions,
 	MemoryRetractionCandidate,
@@ -227,6 +354,14 @@ export type {
 	VerifyStepInput,
 } from "./task.ts";
 export { createHerTask, herTaskStatuses, listHerTasks, updateHerTask, verifyStep } from "./task.ts";
+export {
+	launchTask,
+	type PidInfo,
+	type ResolvedCommand,
+	readPidFile,
+	resolveWorkerCommand,
+	stopTask,
+} from "./task-executor.ts";
 export type {
 	LocalPdfTextResult,
 	TasteSnapshotInput,
@@ -306,6 +441,15 @@ export {
 	trimTelegramText,
 } from "./telegram.ts";
 export * from "./trigger-log.ts";
+export {
+	claimWarmWorktree,
+	clampWarmWorktreePoolSize,
+	drainWarmWorktreePool,
+	ensureWarmWorktreePool,
+	listReadyWarmSlots,
+	WARM_WORKTREE_POOL_MAX,
+	type WarmWorktree,
+} from "./warm-worktree-pool.ts";
 export type {
 	XArticleFullTextFailure,
 	XArticleFullTextOptions,
