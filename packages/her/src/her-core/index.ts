@@ -42,10 +42,12 @@ export {
 export { enqueueTaskTelegramNotices, formatBgTaskStatusBoard } from "./bg-task-notify.ts";
 export { herTaskOutput, readLogChunk, type TaskOutputChunk } from "./bg-task-output.ts";
 export {
+	type DependencyTask,
 	formatWakeMessage,
 	parseCodexSessionId,
 	type ReconcileOptions,
 	reconcileBgTasks,
+	resolveDependencyActions,
 	type WakeEvent,
 } from "./bg-task-reconcile.ts";
 export {

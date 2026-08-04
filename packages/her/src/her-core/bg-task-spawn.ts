@@ -67,6 +67,8 @@ export type SpawnBgTaskInput = {
 	codeRoot?: string;
 	/** G-185/S1 — pi session that spawned this task; drives owner-first wake sorting. */
 	ownerSessionId?: string;
+	/** G-221 — task ids that must complete successfully before this task starts. */
+	blockedBy?: string[];
 	/**
 	 * G-206 — mechanical acceptance gates run in the task's own worktree once the worker exits 0.
 	 * Given here, they replace whatever the code repo's manifest declares (an explicit caller
@@ -82,6 +84,7 @@ export type SpawnBgTaskInput = {
 type SpawnMode = "worker" | "command";
 
 export type SpawnBgTaskResult =
+	| { id: string; status: "pending" }
 	| { id: string; status: "running"; logPath: string; worktree?: string }
 	| {
 			id: string;
@@ -90,7 +93,6 @@ export type SpawnBgTaskResult =
 			error: string;
 			gates?: { name: string; verdict: string; reason: string }[];
 	  };
-
 export type BgTaskListItem = BgTaskRecord & { displayStatus: string };
 
 /**
@@ -215,10 +217,34 @@ async function countTasksStartedToday(memoryRoot: string, now = new Date()): Pro
 	return names.filter((name) => isTaskRecordFile(name) && name.startsWith(prefix)).length;
 }
 
-export async function spawnBgTask(memoryRoot: string, input: SpawnBgTaskInput): Promise<SpawnBgTaskResult> {
+async function validateBlockedBy(memoryRoot: string, blockedBy: string[] | undefined): Promise<BgTaskRecord[]> {
+	if (blockedBy === undefined) return [];
+	if (!Array.isArray(blockedBy)) throw new Error("blockedBy must be an array of task ids");
+	if (blockedBy.length > 8) throw new Error("blockedBy may contain at most 8 task ids");
+	if (!blockedBy.every((id) => typeof id === "string" && id.length > 0)) {
+		throw new Error("blockedBy entries must be non-empty task ids");
+	}
+	const records = await Promise.all(blockedBy.map((id) => loadBgTask(memoryRoot, id)));
+	const missing = blockedBy.filter((_id, index) => !records[index]);
+	if (missing.length > 0) throw new Error(`blockedBy references missing task(s): ${missing.join(", ")}`);
+	return records.map((loaded) => loaded?.record as BgTaskRecord);
+}
+type PendingSpawnInput = { pendingTaskId: string };
+
+export function spawnBgTask(memoryRoot: string, input: SpawnBgTaskInput): Promise<SpawnBgTaskResult>;
+export function spawnBgTask(memoryRoot: string, input: PendingSpawnInput): Promise<SpawnBgTaskResult>;
+export async function spawnBgTask(
+	memoryRoot: string,
+	input: SpawnBgTaskInput | PendingSpawnInput,
+): Promise<SpawnBgTaskResult> {
+	if ("pendingTaskId" in input) return launchPendingBgTask(memoryRoot, input.pendingTaskId);
 	const cfg = loadRuntimeConfig(memoryRoot);
 	const mode = resolveSpawnMode(input);
 	const useWorktree = resolveIsolation(input);
+	const dependencyRecords = await validateBlockedBy(memoryRoot, input.blockedBy);
+	const dependencyPending = Boolean(
+		input.blockedBy?.length && dependencyRecords.some((task) => task.status !== "completed"),
+	);
 	// Validated before any side effect: an unrunnable gate must not leave a worktree behind.
 	const taskGatePlan = resolveGatePlan(input.gates, "task", cfg.workers);
 
@@ -244,7 +270,12 @@ export async function spawnBgTask(memoryRoot: string, input: SpawnBgTaskInput): 
 		timeoutMinutes: input.timeoutMinutes ?? cfg.tasks.defaultTimeoutMinutes,
 		retries: input.retries,
 		...(input.ownerSessionId ? { ownerSessionId: input.ownerSessionId } : {}),
+		...(input.blockedBy?.length ? { blockedBy: input.blockedBy } : {}),
 	});
+	if (record.blockedBy?.includes(record.id)) {
+		throw new Error(`blockedBy cannot reference the task itself: ${record.id}`);
+	}
+	if (!dependencyPending && record.blockedBy?.length) record.unlockedAt = Date.now();
 	if (mode === "worker" && workerProfile && workerName) {
 		command = prepareWorkerCommand(workerName, workerProfile, tasksDir(memoryRoot), record.id);
 		record.command = [...command];
@@ -262,7 +293,7 @@ export async function spawnBgTask(memoryRoot: string, input: SpawnBgTaskInput): 
 		record.command = [...command];
 	}
 
-	if (!input.skipGates) {
+	if (!input.skipGates && !dependencyPending) {
 		const runningCount = (await listBgTasks(memoryRoot, { status: "running" })).length;
 		if (runningCount >= cfg.tasks.maxConcurrent) {
 			const gates = [
@@ -419,6 +450,7 @@ export async function spawnBgTask(memoryRoot: string, input: SpawnBgTaskInput): 
 		briefPath = join(tasksDir(memoryRoot), `${record.id}.brief`);
 		await writeText(briefPath, redactSecrets(input.brief ?? ""));
 	}
+	if (dependencyPending) return { id: record.id, status: "pending" };
 
 	try {
 		const runnerPid = launchTask(tasksDir(memoryRoot), record.id, command, {
@@ -464,6 +496,48 @@ export async function spawnBgTask(memoryRoot: string, input: SpawnBgTaskInput): 
 	}
 }
 
+/** G-221 — start an already-recorded pending task after dependency resolution. */
+async function launchPendingBgTask(memoryRoot: string, taskId: string, now = new Date()): Promise<SpawnBgTaskResult> {
+	const loaded = await loadBgTask(memoryRoot, taskId);
+	if (!loaded) throw new Error(`pending task not found: ${taskId}`);
+	const { record, body } = loaded;
+	if (record.status !== "pending") throw new Error(`task ${taskId} is ${record.status}, not pending`);
+	const cfg = loadRuntimeConfig(memoryRoot);
+	const mode = record.mode ?? "command";
+	try {
+		const workerProfile = mode === "worker" ? resolveWorkerInvocation(cfg.workers, record.worker) : undefined;
+		const briefPath = mode === "worker" ? join(tasksDir(memoryRoot), `${record.id}.brief`) : undefined;
+		const runnerPid = launchTask(tasksDir(memoryRoot), record.id, record.command, {
+			heartbeatMs: cfg.tasks.heartbeatSeconds * 1000,
+			...(typeof record.worktree === "string" && record.worktree ? { cwd: record.worktree } : {}),
+			...(workerProfile ? { env: buildWorkerEnv(workerProfile, record.id, record.ownerSessionId) } : {}),
+			...(record.ownerSessionId ? { ownerSessionId: record.ownerSessionId } : {}),
+			...(briefPath ? { stdinPath: briefPath } : {}),
+			allowComspec: mode === "worker",
+		});
+		const running = migrateBgStatus(record, "running", {
+			startedAt: isoNow(now),
+			runnerPid,
+			budgetReserved: workerProfile?.priceUsd ?? cfg.tasks.budgetCap,
+			unlockedAt: record.unlockedAt ?? now.getTime(),
+		});
+		await saveBgTask(memoryRoot, running, body);
+		return {
+			id: running.id,
+			status: "running",
+			logPath: `.her/tasks/${running.id}.log`,
+			...(typeof running.worktree === "string" && running.worktree ? { worktree: running.worktree } : {}),
+		};
+	} catch (error) {
+		const detail = error instanceof Error ? error.message : String(error);
+		const failed = migrateBgStatus(record, "failed", {
+			failureReason: "never_started",
+			endedAt: isoNow(now),
+		});
+		await saveBgTask(memoryRoot, failed, body);
+		return { id: failed.id, status: "failed", failureReason: "never_started", error: detail };
+	}
+}
 export async function continueBgTask(
 	memoryRoot: string,
 	taskId: string,

@@ -6,7 +6,7 @@ import { hostname as osHostname } from "node:os";
 import { join } from "node:path";
 import { frontmatter, parseFrontmatter, readText, writeText } from "./store.ts";
 
-export const BG_TASK_STATUSES = ["pending", "running", "completed", "failed", "cancelled"] as const;
+export const BG_TASK_STATUSES = ["pending", "running", "completed", "failed", "cancelled", "blocked-failed"] as const;
 
 export type BgTaskStatus = (typeof BG_TASK_STATUSES)[number];
 
@@ -22,6 +22,9 @@ export type BgTaskRecord = {
 	updated: string;
 	retries: number;
 	host: string;
+	blockedBy?: string[];
+	unlockedAt?: number;
+	blockedFailedBy?: string;
 	startedAt?: string;
 	endedAt?: string;
 	exitCode?: number;
@@ -39,14 +42,16 @@ export type BgTaskRecord = {
 	[key: string]: unknown;
 };
 
-const TERMINAL = new Set<BgTaskStatus>(["completed", "failed", "cancelled"]);
+const TERMINAL = new Set<BgTaskStatus>(["completed", "failed", "cancelled", "blocked-failed"]);
 
 const LEGAL = new Set([
 	"pending>running",
 	"pending>failed",
+	"pending>cancelled",
 	"running>completed",
 	"running>failed",
 	"running>cancelled",
+	"pending>blocked-failed",
 ]);
 
 export function tasksDir(memoryRoot: string): string {
@@ -163,6 +168,7 @@ export function createPendingRecord(input: {
 	worktree?: string | null;
 	codeRoot?: string | null;
 	ownerSessionId?: string;
+	blockedBy?: string[];
 	now?: Date;
 }): BgTaskRecord {
 	const now = input.now ?? new Date();
@@ -185,6 +191,7 @@ export function createPendingRecord(input: {
 	if (input.codeRoot) record.codeRoot = input.codeRoot;
 	// G-185/S1 — set only when known, so ownerless tasks keep their exact legacy frontmatter.
 	if (input.ownerSessionId) record.ownerSessionId = input.ownerSessionId;
+	if (input.blockedBy?.length) record.blockedBy = [...input.blockedBy];
 	if (input.timeoutMinutes && input.timeoutMinutes > 0) {
 		const deadline = new Date(now.getTime() + input.timeoutMinutes * 60_000);
 		record.deadlineAt = isoNow(deadline);

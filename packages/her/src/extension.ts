@@ -1800,7 +1800,7 @@ export default function her(pi: ExtensionAPI): void {
 			"to an external CLI over stdin — the worker has no Her memory tools, so the brief must be " +
 			"fully self-contained; or give `command` (argv array) for the legacy bare-process mode. " +
 			"Returns immediately with task id; do not poll — harness wakes you on completion. Use " +
-			"her_task_output to read logs by handle. A worktree-isolated task is also put through " +
+			"her_task_output to read logs by handle. Use blockedBy with up to 8 existing task ids to wait for successful completion; failed or cancelled upstream tasks block the downstream task without retry. A worktree-isolated task is also put through " +
 			"mechanical acceptance gates (see `gates`): `completed` then means the gates ran green, " +
 			"and a task whose gates fail comes back failed/acceptance_rejected with its worktree kept " +
 			"for you to inspect. Nothing is ever merged for you.",
@@ -1811,6 +1811,7 @@ export default function her(pi: ExtensionAPI): void {
 			worker: Type.Optional(Type.String()),
 			timeoutMinutes: Type.Optional(Type.Integer({ minimum: 1 })),
 			parentTask: Type.Optional(Type.String()),
+			blockedBy: Type.Optional(Type.Array(Type.String(), { maxItems: 8 })),
 			worktree: Type.Optional(Type.Boolean()),
 			isolation: Type.Optional(
 				Type.String({
@@ -1855,6 +1856,7 @@ export default function her(pi: ExtensionAPI): void {
 				...(params.worker ? { worker: params.worker } : {}),
 				...(params.timeoutMinutes ? { timeoutMinutes: params.timeoutMinutes } : {}),
 				...(params.parentTask ? { parentTask: params.parentTask } : {}),
+				...(params.blockedBy ? { blockedBy: params.blockedBy } : {}),
 				...(params.worktree ? { worktree: true } : {}),
 				// G-198 — schema keeps this a plain string (no Type.Union precedent in this file);
 				// spawnBgTask/resolveIsolation is the fail-loud boundary that rejects anything other
