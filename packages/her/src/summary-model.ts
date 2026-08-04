@@ -42,7 +42,7 @@ function readSummaryConfig(env: NodeJS.ProcessEnv): SummaryConfig | undefined {
 		};
 	}
 
-	const deepseekKey = value(env.HER_DEEPSEEK_KEY);
+	const deepseekKey = value(env.HER_DEEPSEEK_KEY) ?? value(env.DEEPSEEK_API_KEY) ?? value(env.HER_LLM_API_KEY);
 	if (deepseekKey) {
 		return {
 			baseUrl: value(env.HER_DEEPSEEK_BASE_URL) ?? "https://api.deepseek.com",
