@@ -1853,7 +1853,10 @@ export default function her(pi: ExtensionAPI): void {
 			"to an external CLI over stdin — the worker has no Her memory tools, so the brief must be " +
 			"fully self-contained; or give `command` (argv array) for the legacy bare-process mode. " +
 			"Returns immediately with task id; do not poll — harness wakes you on completion. Use " +
-			"her_task_output to read logs by handle.",
+			"her_task_output to read logs by handle. A worktree-isolated task is also put through " +
+			"mechanical acceptance gates (see `gates`): `completed` then means the gates ran green, " +
+			"and a task whose gates fail comes back failed/acceptance_rejected with its worktree kept " +
+			"for you to inspect. Nothing is ever merged for you.",
 		parameters: Type.Object({
 			objective: Type.String({ maxLength: 200 }),
 			command: Type.Optional(Type.Array(Type.String(), { minItems: 1 })),
@@ -1867,6 +1870,23 @@ export default function her(pi: ExtensionAPI): void {
 					description:
 						'Isolation mode: "worktree" runs the task in its own git worktree; "none" (default) runs in place.',
 				}),
+			),
+			gates: Type.Optional(
+				Type.Array(
+					Type.Object({
+						name: Type.String(),
+						command: Type.Array(Type.String(), { minItems: 1 }),
+						timeoutMs: Type.Optional(Type.Integer({ minimum: 1 })),
+					}),
+					{
+						description:
+							"G-206 acceptance gates: commands YOU run (not the worker) in the task's worktree once it " +
+							"exits 0. The task is only reported completed if every gate exits 0; otherwise it is refused " +
+							"with failureReason acceptance_rejected. argv arrays only, and argv[0] must be an allowlisted " +
+							"binary (node, or a configured worker). Omit to inherit the code repo's .pi/her-gates.json; " +
+							"pass targeted gates when the task touches something that default does not cover.",
+					},
+				),
 			),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -1893,6 +1913,7 @@ export default function her(pi: ExtensionAPI): void {
 				// spawnBgTask/resolveIsolation is the fail-loud boundary that rejects anything other
 				// than "none"/"worktree" with the offending value in the error.
 				...(params.isolation !== undefined ? { isolation: params.isolation as "none" | "worktree" } : {}),
+				...(params.gates ? { gates: params.gates } : {}),
 			});
 			return textResult(JSON.stringify(result), { phase: "G-120", ...result, memoryDir });
 		},

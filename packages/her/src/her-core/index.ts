@@ -1,3 +1,29 @@
+export type {
+	AcceptanceClaim,
+	AcceptanceGate,
+	AcceptanceGateSummary,
+	AcceptanceOutcome,
+	AcceptanceReason,
+	AcceptanceReasonCode,
+	AcceptanceReport,
+	AcceptanceRun,
+	AcceptanceVerdict,
+	GatePlan,
+	GatePlanSource,
+	GateRun,
+} from "./bg-task-acceptance.ts";
+export {
+	ACCEPTANCE_REPORT_FILENAME,
+	acceptanceRunFilename,
+	evaluateTaskAcceptance,
+	formatAcceptanceLine,
+	gatePlanFilename,
+	judgeAcceptance,
+	loadRepoGatePlan,
+	parseAcceptanceReport,
+	parseGatePlan,
+	REPO_GATE_MANIFEST_RELATIVE_PATH,
+} from "./bg-task-acceptance.ts";
 export {
 	DEFAULT_PUBLISH_CONFIG,
 	DEFAULT_TASKS_CONFIG,

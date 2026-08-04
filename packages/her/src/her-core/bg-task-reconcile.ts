@@ -6,6 +6,7 @@
 import { appendFile, mkdir, readdir, readFile } from "node:fs/promises";
 import { hostname as osHostname } from "node:os";
 import { join } from "node:path";
+import { type AcceptanceOutcome, evaluateTaskAcceptance, formatAcceptanceLine } from "./bg-task-acceptance.ts";
 import { loadRuntimeConfig } from "./bg-task-config.ts";
 import { truncateTaskLogIfNeeded } from "./bg-task-log.ts";
 import { classifyOwnerWake, loadExternalDeliveries, type OwnerWakeVerdict } from "./bg-task-owner.ts";
@@ -22,7 +23,8 @@ import {
 import { purgeExpiredTaskArtifacts } from "./bg-task-retention.ts";
 import { spawnBgTask } from "./bg-task-spawn.ts";
 import type { CostLedgerAuditEntry } from "./cost-ledger.ts";
-import { maybeRemoveEmptyTaskWorktree } from "./long-task-worktree.ts";
+import { maybeRemoveEmptyTaskWorktree, taskWorktreeDiffStat } from "./long-task-worktree.ts";
+import { redactSecrets } from "./store.ts";
 import { stopTask } from "./task-executor.ts";
 
 export type WakeEvent = {
@@ -38,6 +40,14 @@ export type WakeEvent = {
 	worktreeKept?: string;
 	/** G-185/S1b — claimed by a non-owner session after the owner's grace window lapsed. */
 	takenOver?: boolean;
+	/** G-206 — what the mechanical gates found. Absent on tasks that never reached a verdict. */
+	acceptance?: AcceptanceOutcome;
+	/**
+	 * G-206 — where the un-merged work is sitting. Nothing in this pipeline merges it; producing a
+	 * trustworthy verdict and handing over the branch is the whole job, and the merge stays a
+	 * human (or upstream-session) act.
+	 */
+	handoff?: { worktree: string; branch: string; diffStat?: string };
 };
 
 export type ReconcileOptions = {
@@ -539,10 +549,31 @@ async function reconcileOne(
 	if (done) {
 		const exitCode = Number(done.exitCode ?? -1);
 		const endedAt = typeof done.endedAt === "string" ? done.endedAt : isoNow(ctx.now);
+		if (exitCode !== 0) {
+			return claim(
+				migrateBgStatus(record, "failed", { endedAt, exitCode, failureReason: "nonzero_exit" }, isoNow(ctx.now)),
+				ctx,
+			);
+		}
+		// G-206 — the worker finished, which is not the same as the work holding up. A task whose
+		// gates ran and failed is refused right here, so `completed` keeps meaning something. With
+		// no gates to run the verdict is `unverified` and the status is untouched — an honest label
+		// on an unchecked task rather than a silent pass.
+		const acceptance = await evaluateTaskAcceptance({
+			taskDir: dir,
+			taskId: record.id,
+			workerCwd: typeof record.worktree === "string" && record.worktree ? record.worktree : dir,
+			redact: redactSecrets,
+		});
 		const updated =
-			exitCode === 0
-				? migrateBgStatus(record, "completed", { endedAt, exitCode }, isoNow(ctx.now))
-				: migrateBgStatus(record, "failed", { endedAt, exitCode, failureReason: "nonzero_exit" }, isoNow(ctx.now));
+			acceptance.verdict === "rejected-needs-evidence"
+				? migrateBgStatus(
+						record,
+						"failed",
+						{ endedAt, exitCode, failureReason: "acceptance_rejected", acceptance },
+						isoNow(ctx.now),
+					)
+				: migrateBgStatus(record, "completed", { endedAt, exitCode, acceptance }, isoNow(ctx.now));
 		return claim(updated, ctx);
 	}
 
@@ -603,11 +634,12 @@ function wakeFrom(record: BgTaskRecord, takenOver = false): WakeEvent {
 		...(typeof record.exitCode === "number" ? { exitCode: record.exitCode } : {}),
 		...(typeof record.retryTaskId === "string" ? { retryTaskId: String(record.retryTaskId) } : {}),
 		...(takenOver ? { takenOver: true } : {}),
+		...(record.acceptance ? { acceptance: record.acceptance as AcceptanceOutcome } : {}),
 	};
 }
 
 async function cleanupEmptyWorktree(record: BgTaskRecord): Promise<{
-	event: Pick<WakeEvent, "worktreeRemoved" | "worktreeKept">;
+	event: Pick<WakeEvent, "worktreeRemoved" | "worktreeKept" | "handoff">;
 	recordPatch: Partial<BgTaskRecord>;
 } | null> {
 	const worktree = typeof record.worktree === "string" ? record.worktree : null;
@@ -627,8 +659,19 @@ async function cleanupEmptyWorktree(record: BgTaskRecord): Promise<{
 			// "kept" alone reads the same for "someone's uncommitted work is sitting here" and
 			// "this shipped a real commit", and those call for different follow-up.
 			const reason = result.keptBecause ?? "commits";
+			// G-206 — a kept worktree is work waiting for a merge decision, so say where it is and
+			// what is in it. `diff --stat` against the fork point covers committed and uncommitted
+			// work alike, which is what someone deciding whether to merge actually needs to see.
+			const diffStat = await taskWorktreeDiffStat(worktree, baseSha);
 			return {
-				event: { worktreeKept: `${result.branch} (${reason})` },
+				event: {
+					worktreeKept: `${result.branch} (${reason})`,
+					handoff: {
+						worktree,
+						branch: result.branch,
+						...(diffStat ? { diffStat } : {}),
+					},
+				},
 				recordPatch: {},
 			};
 		}
@@ -654,7 +697,16 @@ export function formatWakeMessage(events: WakeEvent[]): string {
 		]
 			.filter(Boolean)
 			.join(" · ");
-		return `- [${tag}] ${e.taskId} · ${e.objective}\n  ${extra}`;
+		// An `unverified` plain task would only add noise; an unverified *dispatched* task is a
+		// gap worth seeing, so the line appears whenever there is a worktree at stake.
+		const showAcceptance = e.acceptance && (e.acceptance.verdict !== "unverified" || Boolean(e.handoff));
+		const acceptanceLine = showAcceptance && e.acceptance ? `\n  ${formatAcceptanceLine(e.acceptance)}` : "";
+		const handoffLine = e.handoff
+			? `\n  未合并: ${e.handoff.branch} @ ${e.handoff.worktree}${
+					e.handoff.diffStat ? `\n  ${e.handoff.diffStat.split("\n").join("\n  ")}` : ""
+				}`
+			: "";
+		return `- [${tag}] ${e.taskId} · ${e.objective}\n  ${extra}${acceptanceLine}${handoffLine}`;
 	});
 	return [
 		"<her-task-events>",
