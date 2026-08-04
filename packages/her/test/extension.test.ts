@@ -178,11 +178,15 @@ async function withMemoryDir<T>(root: string, fn: () => Promise<T>): Promise<T> 
 	}
 }
 
-async function withEnv<T>(values: Record<string, string>, fn: () => Promise<T>): Promise<T> {
+async function withEnv<T>(values: Record<string, string | undefined>, fn: () => Promise<T>): Promise<T> {
 	const previous = new Map<string, string | undefined>();
 	for (const [key, value] of Object.entries(values)) {
 		previous.set(key, process.env[key]);
-		process.env[key] = value;
+		if (value === undefined) {
+			delete process.env[key];
+		} else {
+			process.env[key] = value;
+		}
 	}
 	try {
 		return await fn();
@@ -541,44 +545,57 @@ test("extension returns a full compaction that preserves Her pinned context with
 	await writeText(join(store, "narrative", "SOUL.md"), "# SOUL\n\nSamantha stays warm and exact.\n");
 	await writeText(join(store, "narrative", "CHOICE-MODEL.md"), "# CHOICE MODEL\n\nPrefer reversible moves.\n");
 
+	// Keep the summarization lanes cold so this test never reaches a live provider.
+	const offline = {
+		HER_SUMMARY_BASE_URL: undefined,
+		HER_RELAY_URL: undefined,
+		HER_DEEPSEEK_KEY: undefined,
+		DEEPSEEK_API_KEY: undefined,
+		HER_LLM_API_KEY: undefined,
+		HER_LOCAL_OPENAI_URL: undefined,
+	};
 	await withMemoryDir(store, async () => {
-		const fake = createFakePi();
-		her(fake.pi);
+		await withEnv(offline, async () => {
+			const fake = createFakePi();
+			her(fake.pi);
 
-		const beforeCompact = fake.handlers.get("session_before_compact")?.[0];
-		assert.ok(beforeCompact);
-		const result = (await beforeCompact(
-			{
-				type: "session_before_compact",
-				preparation: {
-					firstKeptEntryId: "keep-1",
-					messagesToSummarize: [{ role: "user", content: [{ type: "text", text: "Remember this Her task." }] }],
-					turnPrefixMessages: [],
-					isSplitTurn: false,
-					tokensBefore: 1234,
-					fileOps: { readFiles: [], modifiedFiles: [] },
-					settings: { enabled: true, reserveTokens: 100, keepRecentTokens: 100 },
+			const beforeCompact = fake.handlers.get("session_before_compact")?.[0];
+			assert.ok(beforeCompact);
+			const result = (await beforeCompact(
+				{
+					type: "session_before_compact",
+					preparation: {
+						firstKeptEntryId: "keep-1",
+						messagesToSummarize: [{ role: "user", content: [{ type: "text", text: "Remember this Her task." }] }],
+						turnPrefixMessages: [],
+						isSplitTurn: false,
+						tokensBefore: 1234,
+						fileOps: { readFiles: [], modifiedFiles: [] },
+						settings: { enabled: true, reserveTokens: 100, keepRecentTokens: 100 },
+					},
+					branchEntries: [],
+					signal: new AbortController().signal,
 				},
-				branchEntries: [],
-				signal: new AbortController().signal,
-			},
-			ctx,
-		)) as {
-			customInstructions?: string;
-			compaction?: { summary: string; firstKeptEntryId: string; tokensBefore: number };
-		};
+				ctx,
+			)) as {
+				customInstructions?: string;
+				compaction?: { summary: string; firstKeptEntryId: string; tokensBefore: number };
+			};
 
-		assert.equal(result.customInstructions, undefined);
-		assert.equal(result.compaction?.firstKeptEntryId, "keep-1");
-		assert.equal(result.compaction?.tokensBefore, 1234);
-		assert.match(result.compaction?.summary ?? "", /FACTS\.md/);
-		assert.match(result.compaction?.summary ?? "", /Fei is the human owner/);
-		assert.match(result.compaction?.summary ?? "", /SOUL\.md/);
-		assert.match(result.compaction?.summary ?? "", /Prefer reversible moves/);
-		assert.equal(
-			fake.entries.some((entry) => entry.customType === "her-state" && entryStatus(entry) === "compact-guard"),
-			true,
-		);
+			assert.equal(result.customInstructions, undefined);
+			assert.equal(result.compaction?.firstKeptEntryId, "keep-1");
+			assert.equal(result.compaction?.tokensBefore, 1234);
+			assert.match(result.compaction?.summary ?? "", /FACTS\.md/);
+			assert.match(result.compaction?.summary ?? "", /Fei is the human owner/);
+			assert.match(result.compaction?.summary ?? "", /SOUL\.md/);
+			assert.match(result.compaction?.summary ?? "", /Prefer reversible moves/);
+			assert.match(result.compaction?.summary ?? "", /#1 user \| Remember this Her task\./);
+			assert.doesNotMatch(result.compaction?.summary ?? "", /"role":/);
+			assert.equal(
+				fake.entries.some((entry) => entry.customType === "her-state" && entryStatus(entry) === "compact-guard"),
+				true,
+			);
+		});
 	});
 });
 
