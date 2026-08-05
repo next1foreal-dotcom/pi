@@ -3,7 +3,7 @@
  * Claim = branch rename + worktree move. Request path never waits for replenish.
  */
 
-import { accessSync, mkdirSync, readdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { accessSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { type GitRun, longTaskWorktreeRoot, type TaskWorktree } from "./long-task-worktree.ts";
 import { git as defaultGit } from "./memory-utils.ts";
@@ -69,12 +69,115 @@ export function listReadyWarmSlots(env: NodeJS.ProcessEnv = process.env): string
 		.sort();
 }
 
-async function pathExists(path: string, gitRun: GitRun): Promise<boolean> {
+function pathIsDirectory(path: string): boolean {
 	try {
-		await gitRun(path, "rev-parse", "--is-inside-work-tree");
+		return statSync(path).isDirectory();
+	} catch {
+		return false;
+	}
+}
+
+async function branchExists(repoRoot: string, branch: string, gitRun: GitRun): Promise<boolean> {
+	try {
+		await gitRun(repoRoot, "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`);
 		return true;
 	} catch {
 		return false;
+	}
+}
+
+function samePath(a: string, b: string): boolean {
+	const left = resolve(a);
+	const right = resolve(b);
+	return process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right;
+}
+
+async function isRegisteredWarmWorktree(
+	repoRoot: string,
+	worktreePath: string,
+	branch: string,
+	gitRun: GitRun,
+): Promise<boolean> {
+	let text: string;
+	try {
+		text = (await gitRun(repoRoot, "worktree", "list", "--porcelain")).stdout;
+	} catch {
+		return false;
+	}
+	let currentPath: string | undefined;
+	for (const line of text.split(/\r?\n/)) {
+		if (line.startsWith("worktree ")) {
+			currentPath = line.slice("worktree ".length);
+			continue;
+		}
+		if (currentPath && line.startsWith("branch refs/heads/")) {
+			const currentBranch = line.slice("branch refs/heads/".length);
+			if (currentBranch === branch && samePath(currentPath, worktreePath)) return true;
+		}
+	}
+	return false;
+}
+
+function errorText(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+function isMissingPathError(error: unknown): boolean {
+	return Boolean(
+		error &&
+			typeof error === "object" &&
+			"code" in error &&
+			(error as { code?: unknown }).code === "ENOENT",
+	);
+}
+
+function removeMarker(path: string, label: string): void {
+	try {
+		unlinkSync(path);
+	} catch (error) {
+		if (!isMissingPathError(error)) console.error(`[her] warm slot cleanup ${label} failed: ${errorText(error)}`);
+	}
+}
+
+async function cleanupWarmSlot(
+	repoRoot: string,
+	env: NodeJS.ProcessEnv,
+	slotId: string,
+	gitRun: GitRun,
+	reason: string,
+	extraPaths: string[] = [],
+	extraBranches: string[] = [],
+): Promise<void> {
+	console.error(`[her] warm slot ${slotId} degraded: ${reason}`);
+	removeMarker(readyMarker(env, slotId), `${slotId}.ready removal`);
+	removeMarker(claimingMarker(env, slotId), `${slotId}.claiming removal`);
+
+	const paths = [...new Set([slotPath(env, slotId), ...extraPaths])];
+	for (const path of paths) {
+		try {
+			await gitRun(repoRoot, "worktree", "remove", path, "--force");
+		} catch (error) {
+			console.error(`[her] warm slot ${slotId} worktree cleanup failed for ${path}: ${errorText(error)}`);
+		}
+	}
+	try {
+		await gitRun(repoRoot, "worktree", "prune");
+	} catch (error) {
+		console.error(`[her] warm slot ${slotId} prune failed: ${errorText(error)}`);
+	}
+
+	const branches = [...new Set([slotBranch(slotId), ...extraBranches])];
+	for (const branch of branches) {
+		try {
+			await gitRun(repoRoot, "branch", "-D", branch);
+		} catch (error) {
+			console.error(`[her] warm slot ${slotId} branch cleanup failed for ${branch}: ${errorText(error)}`);
+		}
+	}
+	try {
+		await gitRun(repoRoot, "worktree", "prune");
+	} catch (error) {
+		console.error(`[her] warm slot ${slotId} final prune failed: ${errorText(error)}`);
 	}
 }
 
@@ -104,6 +207,7 @@ async function createWarmSlot(
 	await gitRun(repoRoot, "worktree", "prune");
 
 	await gitRun(repoRoot, "worktree", "add", path, "-b", branch, opts.baseRef ?? "HEAD");
+	// ready is deliberately the last write: a slot is claimable only after add succeeds.
 	writeFileSync(
 		readyMarker(env, slotId),
 		JSON.stringify({ slotId, branch, path, readyAt: new Date().toISOString() }, null, 2),
@@ -162,19 +266,25 @@ export async function claimWarmWorktree(
 
 		const fromPath = slotPath(env, slotId);
 		const fromBranch = slotBranch(slotId);
+		const slotError = !pathIsDirectory(fromPath)
+			? "slot path is missing"
+			: !(await branchExists(repoRoot, fromBranch, gitRun))
+				? `slot branch is missing: ${fromBranch}`
+				: !(await isRegisteredWarmWorktree(repoRoot, fromPath, fromBranch, gitRun))
+					? "slot is not a registered worktree"
+					: null;
+		if (slotError) {
+			await cleanupWarmSlot(repoRoot, env, slotId, gitRun, slotError);
+			continue;
+		}
+
+		let branchRenamed = false;
 		try {
-			if (!(await pathExists(fromPath, gitRun))) {
-				unlinkSync(claimingPath);
-				continue;
-			}
 			await gitRun(repoRoot, "branch", "-m", fromBranch, location.branch);
+			branchRenamed = true;
 			mkdirSync(resolve(longTaskWorktreeRoot(env)), { recursive: true });
 			await gitRun(repoRoot, "worktree", "move", fromPath, location.worktreePath);
-			try {
-				unlinkSync(claimingPath);
-			} catch {
-				/* ignore */
-			}
+			removeMarker(claimingPath, `${slotId}.claiming removal`);
 			const baseSha = (await gitRun(location.worktreePath, "rev-parse", "HEAD")).stdout.trim();
 			return {
 				taskId,
@@ -185,13 +295,27 @@ export async function claimWarmWorktree(
 				warmClaimed: true,
 			};
 		} catch (error) {
-			// Best-effort cleanup of claiming marker; leave git state for prune/next ensure.
-			try {
-				unlinkSync(claimingPath);
-			} catch {
-				/* ignore */
+			let branchToDelete = fromBranch;
+			if (branchRenamed) {
+				try {
+					await gitRun(repoRoot, "branch", "-m", location.branch, fromBranch);
+				} catch (rollbackError) {
+					branchToDelete = location.branch;
+					console.error(
+						`[her] warm slot ${slotId} branch rollback failed: ${errorText(rollbackError)}`,
+					);
+				}
 			}
-			throw error;
+			await cleanupWarmSlot(
+				repoRoot,
+				env,
+				slotId,
+				gitRun,
+				`claim failed: ${errorText(error)}`,
+				[location.worktreePath],
+				[branchToDelete],
+			);
+			continue;
 		}
 	}
 	return null;
