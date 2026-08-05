@@ -480,7 +480,7 @@ async function readTextIfPresent(path: string): Promise<string | null> {
 	} catch (error) {
 		if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return null;
 		const detail = error instanceof Error ? error.message : String(error);
-		throw new Error("failed to read " + path + ": " + detail);
+		throw new Error(`failed to read ${path}: ${detail}`);
 	}
 }
 
@@ -540,8 +540,8 @@ export async function evaluateTaskAcceptance(opts: {
 	let evidenceFailureDetail: string | undefined;
 	if (plan?.gates.some(isEvidenceGate)) {
 		try {
-			const resultText = await readTextIfPresent(join(taskDir, taskId + ".result.md"));
-			const rawLog = (await readTextIfPresent(join(taskDir, taskId + ".log"))) ?? "";
+			const resultText = await readTextIfPresent(join(taskDir, `${taskId}.result.md`));
+			const rawLog = (await readTextIfPresent(join(taskDir, `${taskId}.log`))) ?? "";
 			const selected = selectEvidenceOutput(resultText, rawLog);
 			evidenceOutput = selected?.output ?? "";
 			if (!selected) {
@@ -551,14 +551,15 @@ export async function evaluateTaskAcceptance(opts: {
 				const parsed = parseEvidenceBlock(selected.output);
 				const reason =
 					selected.output.trim().length === 0 ? "is empty" : (parsed.error ?? "contains no evidence items");
-				evidenceFailureDetail = "result file exists but " + reason + "; raw log and jsonl log were not consulted";
+				evidenceFailureDetail = `result file exists but ${reason}; raw log and jsonl log were not consulted`;
 			}
 		} catch (error) {
 			evidenceOutput = "";
 			const detail = error instanceof Error ? error.message : String(error);
-			evidenceFailureDetail = "evidence artifact read failed: " + detail;
+			evidenceFailureDetail = `evidence artifact read failed: ${detail}`;
 		}
 	}
+
 	return judgeAcceptance({
 		plan,
 		run,
