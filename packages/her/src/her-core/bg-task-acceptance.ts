@@ -296,12 +296,15 @@ export function extractJsonlText(log: string): string {
 export type EvidenceOutputSource = "result file" | "raw log" | "jsonl log";
 export type EvidenceOutputSelection = { output: string; source: EvidenceOutputSource } | null;
 
-/** Select the first source whose parsed evidence block contains at least one item. */
+/**
+ * The result file is the designated report whenever it exists. Only a missing result file may
+ * fall back to the raw log and then the extracted JSONL text; a present but empty or unsupported
+ * result must remain a refusal instead of being silently replaced by another channel.
+ */
 export function selectEvidenceOutput(resultText: string | null | undefined, rawLog: string): EvidenceOutputSelection {
+	if (resultText !== null && resultText !== undefined) return { source: "result file", output: resultText };
+
 	const candidates: { source: EvidenceOutputSource; output: string }[] = [
-		...(resultText !== null && resultText !== undefined
-			? [{ source: "result file" as const, output: resultText }]
-			: []),
 		{ source: "raw log", output: rawLog },
 		{ source: "jsonl log", output: extractJsonlText(rawLog) },
 	];
@@ -538,7 +541,15 @@ export async function evaluateTaskAcceptance(opts: {
 		const rawLog = (await readTextIfPresent(join(taskDir, `${taskId}.log`))) ?? "";
 		const selected = selectEvidenceOutput(resultText, rawLog);
 		evidenceOutput = selected?.output ?? "";
-		if (!selected) evidenceFailureDetail = "no evidence block found (checked result file, raw log, jsonl log)";
+		if (!selected) {
+			evidenceFailureDetail =
+				"result file is absent; checked raw log and jsonl log, but neither contained an evidence block with items";
+		} else if (selected.source === "result file" && parseEvidenceBlock(selected.output).items.length === 0) {
+			const parsed = parseEvidenceBlock(selected.output);
+			const reason =
+				selected.output.trim().length === 0 ? "is empty" : (parsed.error ?? "contains no evidence items");
+			evidenceFailureDetail = `result file exists but ${reason}; raw log and jsonl log were not consulted`;
+		}
 	}
 
 	return judgeAcceptance({

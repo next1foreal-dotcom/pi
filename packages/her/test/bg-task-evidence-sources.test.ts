@@ -120,6 +120,43 @@ test("result.md is preferred when it contains evidence", async () => {
 	assert.equal(outcome.verdict, "green");
 });
 
+test("result.md is authoritative and refuses missing evidence instead of falling back to raw log", async () => {
+	const outcome = await evaluateFixture({
+		result: "worker summary without an evidence block",
+		log: evidenceBlock(validItems),
+		sourceFiles: { "source.ts": "const answer = 42;\nsecond line\n" },
+	});
+	assert.equal(outcome.verdict, "rejected-needs-evidence");
+	const detail = outcome.reasons.find((reason) => reason.code === "missing_evidence")?.detail ?? "";
+	assert.match(detail, /result file exists/);
+	assert.match(detail, /no evidence block found/);
+	assert.match(detail, /raw log and jsonl log were not consulted/);
+});
+
+test("a result.md evidence block with no items is rejected instead of falling back to raw log", async () => {
+	const outcome = await evaluateFixture({
+		result: evidenceBlock([]),
+		log: evidenceBlock(validItems),
+		sourceFiles: { "source.ts": "const answer = 42;\nsecond line\n" },
+	});
+	assert.equal(outcome.verdict, "rejected-needs-evidence");
+	const detail = outcome.reasons.find((reason) => reason.code === "missing_evidence")?.detail ?? "";
+	assert.match(detail, /result file exists but contains no evidence items/);
+	assert.match(detail, /raw log and jsonl log were not consulted/);
+});
+
+test("an empty result.md is rejected instead of falling back to raw log", async () => {
+	const outcome = await evaluateFixture({
+		result: "",
+		log: evidenceBlock(validItems),
+		sourceFiles: { "source.ts": "const answer = 42;\nsecond line\n" },
+	});
+	assert.equal(outcome.verdict, "rejected-needs-evidence");
+	const detail = outcome.reasons.find((reason) => reason.code === "missing_evidence")?.detail ?? "";
+	assert.match(detail, /result file exists but is empty/);
+	assert.match(detail, /raw log and jsonl log were not consulted/);
+});
+
 test("plain raw log evidence still passes without result.md", async () => {
 	const outcome = await evaluateFixture({
 		log: evidenceBlock([{ file: "source.ts", lines: "1", claim: "answer exists" }]),
@@ -128,9 +165,8 @@ test("plain raw log evidence still passes without result.md", async () => {
 	assert.equal(outcome.verdict, "green");
 });
 
-test("missing evidence names result file, raw log, and jsonl log", async () => {
+test("missing evidence names result file, raw log, and jsonl log when result.md is absent", async () => {
 	const outcome = await evaluateFixture({
-		result: "no evidence here",
 		log: JSON.stringify({ type: "item.completed", item: { text: "still no evidence" } }),
 	});
 	assert.equal(outcome.verdict, "rejected-needs-evidence");
