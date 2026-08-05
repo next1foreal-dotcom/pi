@@ -20,6 +20,20 @@ const BASE_ENV_ALLOW = [
 	"HOME",
 	"TEMP",
 	"TMP",
+	// G-223R — reach the public internet. Without these a worker on a machine that
+	// needs a proxy dials out direct and gets region-blocked: the claude-tier worker
+	// died with `403 Request not allowed` while the same command succeeded in a shell
+	// that had them (controlled probe, 2026-08-05). Both spellings: CLIs disagree on case.
+	"HTTPS_PROXY",
+	"HTTP_PROXY",
+	"ALL_PROXY",
+	"NO_PROXY",
+	"https_proxy",
+	"http_proxy",
+	"all_proxy",
+	"no_proxy",
+	// Node's fetch ignores the proxy vars above unless this is set (blood lesson).
+	"NODE_USE_ENV_PROXY",
 ] as const;
 
 export type WorkerProfile = {

@@ -302,3 +302,21 @@ test("S5-8 an ownerless deer run writes the legacy envelope shape", async () => 
 	// not an ownership claim, and S3's watcher only ever acts on ownerWorkspaceId.
 	assert.match(raw, /"bgTaskId":"t-deer-2"/);
 });
+
+// G-223R — a worker that cannot reach the public internet is a dead tier. The claude-tier
+// worker died with `403 Request not allowed` because the env allowlist dropped the proxy
+// vars; the identical command succeeded once they were restored (controlled probe).
+test("G-223R buildWorkerEnv passes proxy settings through to the worker", () => {
+	const saved = { ...process.env };
+	try {
+		process.env.HTTPS_PROXY = "http://127.0.0.1:7890";
+		process.env.NO_PROXY = "localhost,127.0.0.1";
+		process.env.NODE_USE_ENV_PROXY = "1";
+		const env = buildWorkerEnv({ argv: ["node"] }, "t-proxy");
+		assert.equal(env.HTTPS_PROXY, "http://127.0.0.1:7890");
+		assert.equal(env.NO_PROXY, "localhost,127.0.0.1");
+		assert.equal(env.NODE_USE_ENV_PROXY, "1");
+	} finally {
+		process.env = saved;
+	}
+});
