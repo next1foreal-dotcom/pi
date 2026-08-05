@@ -135,6 +135,9 @@ export function matchExternalDeliveries(
 
 /** IO wrapper over `matchExternalDeliveries`. Missing books → empty set (nothing delivered). */
 export async function loadExternalDeliveries(memoryRoot: string): Promise<Set<string>> {
-	const [snapshots, rows] = await Promise.all([listHerRunSnapshots(memoryRoot), readRunsWakeLedger(memoryRoot)]);
+	const [snapshots, rows] = await Promise.all([
+		listHerRunSnapshots(memoryRoot, Number.MAX_SAFE_INTEGER),
+		readRunsWakeLedger(memoryRoot),
+	]);
 	return matchExternalDeliveries(snapshots, rows);
 }

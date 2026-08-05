@@ -4,6 +4,7 @@
 
 import { hostname as osHostname } from "node:os";
 import { join } from "node:path";
+import { appendHerRunEvent } from "./runs.ts";
 import { frontmatter, parseFrontmatter, readText, writeText } from "./store.ts";
 
 export const BG_TASK_STATUSES = ["pending", "running", "completed", "failed", "cancelled", "blocked-failed"] as const;
@@ -137,6 +138,46 @@ export async function loadBgTask(
 
 export async function saveBgTask(memoryRoot: string, record: BgTaskRecord, body = ""): Promise<void> {
 	await writeText(taskMdPath(memoryRoot, record.id), serializeBgTask(record, body));
+}
+
+/** Append one wakeable envelope row for a real bg-task status migration; failures stay fail-soft. */
+export async function appendBgTaskRunEvent(memoryRoot: string, record: BgTaskRecord): Promise<void> {
+	const status =
+		record.status === "running"
+			? "running"
+			: record.status === "completed"
+				? "done"
+				: record.status === "failed" || record.status === "blocked-failed"
+					? "failed"
+					: undefined;
+	if (!status) return;
+	try {
+		await appendHerRunEvent(memoryRoot, {
+			runId: record.id,
+			status,
+			kind: "subagent",
+			source: record.worker.trim() || "her_task",
+			title: record.objective,
+			at: record.updated,
+			...(record.ownerSessionId ? { ownerWorkspaceId: record.ownerSessionId } : {}),
+			bgTaskId: record.id,
+		});
+	} catch (error) {
+		console.error(
+			`[her] failed to append bg-task run envelope for ${record.id}: ${error instanceof Error ? error.message : error}`,
+		);
+	}
+}
+
+/** Persist a status migration and append its envelope row only once per actual transition. */
+export async function saveBgTaskTransition(
+	memoryRoot: string,
+	previous: BgTaskRecord,
+	next: BgTaskRecord,
+	body = "",
+): Promise<void> {
+	await saveBgTask(memoryRoot, next, body);
+	if (previous.status !== next.status) await appendBgTaskRunEvent(memoryRoot, next);
 }
 
 export function migrateBgStatus(

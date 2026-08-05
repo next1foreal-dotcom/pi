@@ -8,6 +8,7 @@ import { basename, join, resolve } from "node:path";
 import {
 	type AcceptanceGate,
 	type GatePlan,
+	EVIDENCE_GATE_NAME,
 	gatePlanFilename,
 	loadRepoGatePlan,
 	parseGatePlan,
@@ -24,6 +25,7 @@ import {
 	migrateBgStatus,
 	newTaskId,
 	saveBgTask,
+	saveBgTaskTransition,
 	tasksDir,
 } from "./bg-task-record.ts";
 import { enforceDailyCostCap } from "./cost-ledger.ts";
@@ -200,6 +202,33 @@ function assertBriefWithinCap(brief: string, capBytes: number): void {
 	}
 }
 
+const EVIDENCE_VERIFIED_BRIEF_CONTRACT = [
+	"MACHINE CONTRACT: evidence-verified",
+	"Your stdout (or the designated report file) must contain one fenced JSON evidence block in this shape:",
+	"```json evidence",
+	"[",
+	'  {"file":"relative/path","lines":"12-14","claim":"what the cited lines prove"}',
+	"]",
+	"```",
+	"Each evidence item must include `file` and `claim`; `lines` is optional and accepts one line or a range.",
+	"Evidence must be machine-checkable item by item; if there is no evidence, say so truthfully.",
+].join("\n");
+
+/** Add the runner's evidence schema to worker briefs when an evidence gate is active. */
+export function appendEvidenceVerifiedBrief(brief: string, plan: GatePlan | null): string {
+	if (!plan?.gates.some((gate) => gate.type === "evidence-verified" || gate.name === EVIDENCE_GATE_NAME)) {
+		return brief;
+	}
+	if (
+		/ROLE:\s*PANEL CHAIR/i.test(brief) ||
+		/MACHINE CONTRACT:\s*evidence-verified/i.test(brief) ||
+		/```json\s+evidence\s*\r?\n/i.test(brief)
+	) {
+		return brief;
+	}
+	return `${brief.trimEnd()}\n\n${EVIDENCE_VERIFIED_BRIEF_CONTRACT}`;
+}
+
 function resolveCodeRoot(explicit?: string): string {
 	const fromEnv = process.env.HER_CODE_ROOT?.trim() || process.env.HER_PI_DIR?.trim();
 	const root = explicit?.trim() || fromEnv || process.cwd();
@@ -310,7 +339,7 @@ export async function spawnBgTask(
 				}),
 				gates,
 			};
-			await saveBgTask(memoryRoot, failed, `# ${record.objective}\n\nDenied: concurrency.\n`);
+			await saveBgTaskTransition(memoryRoot, record, failed, `# ${record.objective}\n\nDenied: concurrency.\n`);
 			return {
 				id: failed.id,
 				status: "failed",
@@ -335,7 +364,7 @@ export async function spawnBgTask(
 				}),
 				gates,
 			};
-			await saveBgTask(memoryRoot, failed, `# ${record.objective}\n\nDenied: daily task cap.\n`);
+			await saveBgTaskTransition(memoryRoot, record, failed, `# ${record.objective}\n\nDenied: daily task cap.\n`);
 			return {
 				id: failed.id,
 				status: "failed",
@@ -356,7 +385,7 @@ export async function spawnBgTask(
 				}),
 				gates,
 			};
-			await saveBgTask(memoryRoot, failed, `# ${record.objective}\n\nDenied: budget.\n`);
+			await saveBgTaskTransition(memoryRoot, record, failed, `# ${record.objective}\n\nDenied: budget.\n`);
 			return {
 				id: failed.id,
 				status: "failed",
@@ -377,8 +406,9 @@ export async function spawnBgTask(
 				failureReason: "never_started",
 				endedAt: isoNow(),
 			});
-			await saveBgTask(
+			await saveBgTaskTransition(
 				memoryRoot,
+				record,
 				failed,
 				`# ${record.objective}\n\nworktree must not target her-memory (code repo only).\n`,
 			);
@@ -428,7 +458,7 @@ export async function spawnBgTask(
 				failureReason: "never_started",
 				endedAt: isoNow(),
 			});
-			await saveBgTask(memoryRoot, failed, `# ${record.objective}\n\nworktree: ${detail}\n`);
+			await saveBgTaskTransition(memoryRoot, record, failed, `# ${record.objective}\n\nworktree: ${detail}\n`);
 			return {
 				id: failed.id,
 				status: "failed",
@@ -448,7 +478,9 @@ export async function spawnBgTask(
 	let briefPath: string | undefined;
 	if (mode === "worker") {
 		briefPath = join(tasksDir(memoryRoot), `${record.id}.brief`);
-		await writeText(briefPath, redactSecrets(input.brief ?? ""));
+		const workerBrief = appendEvidenceVerifiedBrief(input.brief ?? "", gatePlan);
+		assertBriefWithinCap(workerBrief, cfg.tasks.briefCapBytes);
+		await writeText(briefPath, redactSecrets(workerBrief));
 	}
 	if (dependencyPending) return { id: record.id, status: "pending" };
 
@@ -473,7 +505,7 @@ export async function spawnBgTask(
 			// G-197 — the worker's own price, not a flat per-task charge. Absent = free.
 			budgetReserved: workerProfile?.priceUsd ?? cfg.tasks.budgetCap,
 		});
-		await saveBgTask(memoryRoot, running, `# ${record.objective}\n`);
+		await saveBgTaskTransition(memoryRoot, record, running, `# ${record.objective}\n`);
 		return {
 			id: running.id,
 			status: "running",
@@ -486,7 +518,7 @@ export async function spawnBgTask(
 			failureReason: "never_started",
 			endedAt: isoNow(),
 		});
-		await saveBgTask(memoryRoot, failed, `# ${record.objective}\n\n${detail}\n`);
+		await saveBgTaskTransition(memoryRoot, record, failed, `# ${record.objective}\n\n${detail}\n`);
 		return {
 			id: failed.id,
 			status: "failed",
@@ -529,7 +561,7 @@ async function launchPendingBgTask(memoryRoot: string, taskId: string, now = new
 				? { deadlineAt: isoNow(new Date(now.getTime() + grantedMs)) }
 				: {}),
 		});
-		await saveBgTask(memoryRoot, running, body);
+		await saveBgTaskTransition(memoryRoot, record, running, body);
 		return {
 			id: running.id,
 			status: "running",
@@ -542,7 +574,7 @@ async function launchPendingBgTask(memoryRoot: string, taskId: string, now = new
 			failureReason: "never_started",
 			endedAt: isoNow(now),
 		});
-		await saveBgTask(memoryRoot, failed, body);
+		await saveBgTaskTransition(memoryRoot, record, failed, body);
 		return { id: failed.id, status: "failed", failureReason: "never_started", error: detail };
 	}
 }
@@ -601,7 +633,7 @@ export async function stopBgTask(
 			failureReason: "stopped_by_user",
 			endedAt: isoNow(),
 		});
-		await saveBgTask(memoryRoot, cancelled, body);
+		await saveBgTaskTransition(memoryRoot, record, cancelled, body);
 		return { id, result, status: "cancelled" };
 	}
 	return { id, result, status: record.status };

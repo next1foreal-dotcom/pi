@@ -18,6 +18,7 @@ import {
 	loadBgTask,
 	migrateBgStatus,
 	saveBgTask,
+	saveBgTaskTransition,
 	tasksDir,
 } from "./bg-task-record.ts";
 import { purgeExpiredTaskArtifacts } from "./bg-task-retention.ts";
@@ -445,8 +446,13 @@ export async function reconcileBgTasks(memoryRoot: string, options: ReconcileOpt
 			}
 		}
 
+		const statusChanged = Boolean(result.record && result.record.status !== recheck.record.status);
 		if (result.record || recheck.record.lockedBy) {
-			await saveBgTask(memoryRoot, finalRecord, recheck.body);
+			if (statusChanged) {
+				await saveBgTaskTransition(memoryRoot, recheck.record, finalRecord, recheck.body);
+			} else {
+				await saveBgTask(memoryRoot, finalRecord, recheck.body);
+			}
 		}
 		if (result.record) {
 			dependencyRecordMap.set(id, finalRecord);

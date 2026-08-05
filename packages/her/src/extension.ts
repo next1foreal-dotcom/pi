@@ -1824,6 +1824,7 @@ export default function her(pi: ExtensionAPI): void {
 					Type.Object({
 						name: Type.String(),
 						command: Type.Array(Type.String(), { minItems: 1 }),
+						type: Type.Optional(StringEnum(["command", "evidence-verified"] as const)),
 						timeoutMs: Type.Optional(Type.Integer({ minimum: 1 })),
 					}),
 					{

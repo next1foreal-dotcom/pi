@@ -31,5 +31,10 @@ export function buildPanelChairBrief(params: PanelChairBriefParams = {}): string
 		"Every conclusion must include evidence(file+lines) and a member session citation (session id or event-stream location).",
 		"The chair must call her_review_verify itself for every conclusion before reporting it.",
 		"VERIFICATION: evidence verified=<n> failed=<n>",
+		"Machine evidence contract: stdout (or the designated report file) must contain one fenced JSON evidence block:",
+		"```json evidence",
+		"[{\"file\":\"relative/path\",\"lines\":\"12-14\",\"claim\":\"what the cited lines prove\"}]",
+		"```",
+		"Evidence must be machine-checkable item by item; if there is no evidence, say so truthfully.",
 	].join("\n");
 }
