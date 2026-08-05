@@ -38,6 +38,7 @@ import {
 	buildWorkerEnv,
 	prepareWorkerCommand,
 	resolveWorkerInvocation,
+	resolveWorkerModel,
 	type WorkerProfile,
 } from "./worker-profile.ts";
 
@@ -295,6 +296,7 @@ export async function spawnBgTask(
 		worker: mode === "worker" ? (workerName ?? "") : (input.worker ?? cfg.tasks.defaultWorker),
 		command,
 		mode,
+		model: mode === "worker" && workerProfile ? resolveWorkerModel(workerProfile.argv) : null,
 		parentTask: input.parentTask,
 		timeoutMinutes: input.timeoutMinutes ?? cfg.tasks.defaultTimeoutMinutes,
 		retries: input.retries,
@@ -532,12 +534,14 @@ export async function spawnBgTask(
 async function launchPendingBgTask(memoryRoot: string, taskId: string, now = new Date()): Promise<SpawnBgTaskResult> {
 	const loaded = await loadBgTask(memoryRoot, taskId);
 	if (!loaded) throw new Error(`pending task not found: ${taskId}`);
-	const { record, body } = loaded;
+	let { record, body } = loaded;
 	if (record.status !== "pending") throw new Error(`task ${taskId} is ${record.status}, not pending`);
 	const cfg = loadRuntimeConfig(memoryRoot);
 	const mode = record.mode ?? "command";
 	try {
 		const workerProfile = mode === "worker" ? resolveWorkerInvocation(cfg.workers, record.worker) : undefined;
+		const model = mode === "worker" && workerProfile ? resolveWorkerModel(workerProfile.argv) : null;
+		if (record.model === undefined) record = { ...record, model };
 		const briefPath = mode === "worker" ? join(tasksDir(memoryRoot), `${record.id}.brief`) : undefined;
 		const runnerPid = launchTask(tasksDir(memoryRoot), record.id, record.command, {
 			heartbeatMs: cfg.tasks.heartbeatSeconds * 1000,

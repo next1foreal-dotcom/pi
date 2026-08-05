@@ -181,6 +181,22 @@ export function resolveWorkerInvocation(workers: Record<string, WorkerProfile>, 
 	return profile;
 }
 
+/** G-225 — resolve the model declared by a worker profile, never the profile name itself. */
+export function resolveWorkerModel(argv: readonly string[]): string | "unknown" {
+	for (let index = 0; index < argv.length; index += 1) {
+		const arg = argv[index];
+		if (arg === "-m" || arg === "--model") {
+			const value = argv[index + 1];
+			return value && !value.startsWith("-") ? value : "unknown";
+		}
+		if (arg.startsWith("--model=")) {
+			const value = arg.slice("--model=".length);
+			return value || "unknown";
+		}
+	}
+	return "unknown";
+}
+
 /**
  * Add Codex's machine-readable event stream and final-result file without mutating user config.
  *

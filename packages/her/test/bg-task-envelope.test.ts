@@ -64,6 +64,7 @@ test("G-223: bg-task status migrations append wakeable run envelopes once", asyn
 		title: "envelope completed task",
 		at: runningLines[0]?.at,
 		ownerWorkspaceId: "owner-session",
+		model: null,
 		bgTaskId: started.id,
 	});
 	await writeFile(
