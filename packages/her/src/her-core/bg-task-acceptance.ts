@@ -267,17 +267,59 @@ function parseEvidenceBlock(output: string): { items: ReviewEvidenceItem[]; erro
 	};
 }
 
+function collectJsonlText(value: unknown, parts: string[]): void {
+	if (Array.isArray(value)) {
+		for (const item of value) collectJsonlText(item, parts);
+		return;
+	}
+	if (!isRecord(value)) return;
+	for (const [key, child] of Object.entries(value)) {
+		if (key === "text" && typeof child === "string") parts.push(child);
+		else collectJsonlText(child, parts);
+	}
+}
+
+/** Extract text fields from JSONL records after JSON.parse restores escaped newlines. */
+export function extractJsonlText(log: string): string {
+	const parts: string[] = [];
+	for (const line of log.split(/\r?\n/)) {
+		if (!line.trim()) continue;
+		try {
+			collectJsonlText(JSON.parse(line), parts);
+		} catch {
+			// Non-JSON runner lines are expected; only valid JSON records can carry worker text.
+		}
+	}
+	return parts.join("\n");
+}
+
+export type EvidenceOutputSource = "result file" | "raw log" | "jsonl log";
+export type EvidenceOutputSelection = { output: string; source: EvidenceOutputSource } | null;
+
+/** Select the first source whose parsed evidence block contains at least one item. */
+export function selectEvidenceOutput(resultText: string | null | undefined, rawLog: string): EvidenceOutputSelection {
+	const candidates: { source: EvidenceOutputSource; output: string }[] = [
+		...(resultText !== null && resultText !== undefined ? [{ source: "result file" as const, output: resultText }] : []),
+		{ source: "raw log", output: rawLog },
+		{ source: "jsonl log", output: extractJsonlText(rawLog) },
+	];
+	for (const candidate of candidates) {
+		if (parseEvidenceBlock(candidate.output).items.length > 0) return candidate;
+	}
+	return null;
+}
+
 export function extractEvidenceItems(output: string): ReviewEvidenceItem[] {
 	return parseEvidenceBlock(output).items;
 }
 
-export function verifyEvidenceGate(output: string, cwd: string): EvidenceGateResult {
+export function verifyEvidenceGate(output: string, cwd: string, missingEvidenceDetail?: string): EvidenceGateResult {
 	const parsed = parseEvidenceBlock(output);
 	if (parsed.items.length === 0) {
 		return {
 			evidence: [],
 			verified: false,
-			reasons: [{ code: "missing_evidence", detail: `evidence-verified: ${parsed.error ?? "no evidence items"}` }],
+			reasons: [{ code: "missing_evidence", detail: `evidence-verified: ${missingEvidenceDetail ?? parsed.error ?? "no evidence items"}` }],
 		};
 	}
 	const evidence = verifyEvidence(parsed.items, cwd);
@@ -305,6 +347,7 @@ export function judgeAcceptance(input: {
 	report: AcceptanceReport | null;
 	evidenceOutput?: string;
 	evidenceCwd?: string;
+	evidenceFailureDetail?: string;
 }): AcceptanceOutcome {
 	const { plan, run, report } = input;
 	const runs = run?.gates ?? [];
@@ -395,7 +438,11 @@ export function judgeAcceptance(input: {
 
 	const evidenceGates = plan?.gates.filter(isEvidenceGate) ?? [];
 	if (evidenceGates.length > 0) {
-		const evidenceOutcome = verifyEvidenceGate(input.evidenceOutput ?? "", input.evidenceCwd ?? process.cwd());
+		const evidenceOutcome = verifyEvidenceGate(
+			input.evidenceOutput ?? "",
+			input.evidenceCwd ?? process.cwd(),
+			input.evidenceFailureDetail,
+		);
 		reasons.push(...evidenceOutcome.reasons);
 	}
 
@@ -413,6 +460,14 @@ async function readJsonIfPresent(path: string): Promise<unknown | null> {
 	} catch {
 		// Absent or unparseable: both are "no artifact". A missing gate result is caught by the
 		// judge (gate_missing); a missing report simply means the worker filed none.
+		return null;
+	}
+}
+
+async function readTextIfPresent(path: string): Promise<string | null> {
+	try {
+		return await readFile(path, "utf8");
+	} catch {
 		return null;
 	}
 }
@@ -469,15 +524,21 @@ export async function evaluateTaskAcceptance(opts: {
 
 	const report = parseAcceptanceReport(await readJsonIfPresent(join(workerCwd, ACCEPTANCE_REPORT_FILENAME)));
 
-	const evidenceOutput = plan?.gates.some(isEvidenceGate)
-		? await readFile(join(taskDir, `${taskId}.log`), "utf8").catch(() => "")
-		: undefined;
+	let evidenceOutput: string | undefined;
+	let evidenceFailureDetail: string | undefined;
+	if (plan?.gates.some(isEvidenceGate)) {
+		const resultText = await readTextIfPresent(join(taskDir, `${taskId}.result.md`));
+		const rawLog = (await readTextIfPresent(join(taskDir, `${taskId}.log`))) ?? "";
+		const selected = selectEvidenceOutput(resultText, rawLog);
+		evidenceOutput = selected?.output ?? "";
+		if (!selected) evidenceFailureDetail = "no evidence block found (checked result file, raw log, jsonl log)";
+	}
 
 	return judgeAcceptance({
 		plan,
 		run,
 		report,
-		...(evidenceOutput !== undefined ? { evidenceOutput, evidenceCwd: workerCwd } : {}),
+		...(evidenceOutput !== undefined ? { evidenceOutput, evidenceCwd: workerCwd, evidenceFailureDetail } : {}),
 	});
 }
 
