@@ -468,6 +468,7 @@ export {
 	getBuiltinWorkerProfiles,
 	PANEL_CHAIR_WORKER_NAME,
 	resolvePanelChairCliPath,
+	resolveWorkerModel,
 	STALE_ENV_KEYS,
 	type WorkerProfile,
 } from "./worker-profile.ts";

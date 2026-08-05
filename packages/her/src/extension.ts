@@ -1885,6 +1885,7 @@ export default function her(pi: ExtensionAPI): void {
 				displayStatus: t.displayStatus,
 				objective: t.objective,
 				worker: t.worker,
+				model: t.model,
 				host: t.host,
 				updated: t.updated,
 				...(t.exitCode !== undefined ? { exitCode: t.exitCode } : {}),

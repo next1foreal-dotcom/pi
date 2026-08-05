@@ -35,6 +35,8 @@ export interface HerRunEvent {
 	ownerWorkspaceId?: string;
 	/** `.her/tasks` id of the bg task behind this run; the task ↔ run join key. */
 	bgTaskId?: string;
+	/** G-225 — resolved model id for a bg-task event; null means command mode. */
+	model?: string | null;
 }
 
 export interface HerRunSnapshot {
@@ -52,6 +54,8 @@ export interface HerRunSnapshot {
 	/** G-185/S5 — see HerRunEvent: owner identity, and the task ↔ run join key. */
 	ownerWorkspaceId?: string;
 	bgTaskId?: string;
+	/** G-225 — resolved model id for a bg-task event; null means command mode. */
+	model?: string | null;
 }
 
 export function runsEventsPath(root: string): string {
@@ -167,6 +171,7 @@ export async function listHerRunSnapshots(root: string, limit = 200): Promise<He
 			...(typeof rec.projectId === "string" ? { projectId: rec.projectId } : {}),
 			...(typeof rec.ownerWorkspaceId === "string" ? { ownerWorkspaceId: rec.ownerWorkspaceId } : {}),
 			...(typeof rec.bgTaskId === "string" ? { bgTaskId: rec.bgTaskId } : {}),
+			...(typeof rec.model === "string" || rec.model === null ? { model: rec.model } : {}),
 		});
 	}
 	return [...byId.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, limit);

@@ -16,6 +16,8 @@ export type BgTaskRecord = {
 	status: BgTaskStatus;
 	objective: string;
 	worker: string;
+	/** G-225 — resolved model id this task actually ran on. `null` = command mode; `"unknown"` = worker argv declared no model. Never use worker name as model. */
+	model?: string | null;
 	command: string[];
 	/** G-129 — "worker" for config-profile CLIs (brief via stdin); missing/undefined = legacy command mode. */
 	mode?: "worker" | "command";
@@ -112,12 +114,17 @@ export function parseBgTaskMarkdown(text: string): {
 	if (!BG_TASK_STATUSES.includes(status as BgTaskStatus)) {
 		throw new Error(`invalid status: ${status}`);
 	}
+	const model = data.model;
+	if (model !== undefined && model !== null && typeof model !== "string") {
+		throw new Error("model must be a string or null");
+	}
 	const record: BgTaskRecord = {
 		...(data as BgTaskRecord),
 		id: String(data.id),
 		status: status as BgTaskStatus,
 		objective: String(data.objective ?? ""),
 		worker: String(data.worker ?? ""),
+		...(model !== undefined ? { model } : {}),
 		command: command as string[],
 		created: String(data.created ?? ""),
 		updated: String(data.updated ?? ""),
@@ -160,6 +167,7 @@ export async function appendBgTaskRunEvent(memoryRoot: string, record: BgTaskRec
 			title: record.objective,
 			at: record.updated,
 			...(record.ownerSessionId ? { ownerWorkspaceId: record.ownerSessionId } : {}),
+			...(record.model !== undefined ? { model: record.model } : {}),
 			bgTaskId: record.id,
 		});
 	} catch (error) {
@@ -202,6 +210,7 @@ export function createPendingRecord(input: {
 	worker: string;
 	command: string[];
 	mode?: "worker" | "command";
+	model?: string | null;
 	host?: string;
 	parentTask?: string | null;
 	timeoutMinutes?: number;
@@ -222,6 +231,7 @@ export function createPendingRecord(input: {
 		worker: input.worker,
 		command: [...input.command],
 		mode: input.mode ?? "command",
+		model: input.model ?? (input.mode === "worker" ? "unknown" : null),
 		created,
 		updated: created,
 		retries: Math.max(0, input.retries ?? 0),

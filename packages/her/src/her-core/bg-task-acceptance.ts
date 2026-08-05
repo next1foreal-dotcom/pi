@@ -477,8 +477,10 @@ async function readJsonIfPresent(path: string): Promise<unknown | null> {
 async function readTextIfPresent(path: string): Promise<string | null> {
 	try {
 		return await readFile(path, "utf8");
-	} catch {
-		return null;
+	} catch (error) {
+		if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return null;
+		const detail = error instanceof Error ? error.message : String(error);
+		throw new Error(`failed to read ${path}: ${detail}`);
 	}
 }
 
@@ -537,18 +539,24 @@ export async function evaluateTaskAcceptance(opts: {
 	let evidenceOutput: string | undefined;
 	let evidenceFailureDetail: string | undefined;
 	if (plan?.gates.some(isEvidenceGate)) {
-		const resultText = await readTextIfPresent(join(taskDir, `${taskId}.result.md`));
-		const rawLog = (await readTextIfPresent(join(taskDir, `${taskId}.log`))) ?? "";
-		const selected = selectEvidenceOutput(resultText, rawLog);
-		evidenceOutput = selected?.output ?? "";
-		if (!selected) {
-			evidenceFailureDetail =
-				"result file is absent; checked raw log and jsonl log, but neither contained an evidence block with items";
-		} else if (selected.source === "result file" && parseEvidenceBlock(selected.output).items.length === 0) {
-			const parsed = parseEvidenceBlock(selected.output);
-			const reason =
-				selected.output.trim().length === 0 ? "is empty" : (parsed.error ?? "contains no evidence items");
-			evidenceFailureDetail = `result file exists but ${reason}; raw log and jsonl log were not consulted`;
+		try {
+			const resultText = await readTextIfPresent(join(taskDir, `${taskId}.result.md`));
+			const rawLog = (await readTextIfPresent(join(taskDir, `${taskId}.log`))) ?? "";
+			const selected = selectEvidenceOutput(resultText, rawLog);
+			evidenceOutput = selected?.output ?? "";
+			if (!selected) {
+				evidenceFailureDetail =
+					"result file is absent; checked raw log and jsonl log, but neither contained an evidence block with items";
+			} else if (selected.source === "result file" && parseEvidenceBlock(selected.output).items.length === 0) {
+				const parsed = parseEvidenceBlock(selected.output);
+				const reason =
+					selected.output.trim().length === 0 ? "is empty" : (parsed.error ?? "contains no evidence items");
+				evidenceFailureDetail = `result file exists but ${reason}; raw log and jsonl log were not consulted`;
+			}
+		} catch (error) {
+			evidenceOutput = "";
+			const detail = error instanceof Error ? error.message : String(error);
+			evidenceFailureDetail = `evidence artifact read failed: ${detail}`;
 		}
 	}
 
