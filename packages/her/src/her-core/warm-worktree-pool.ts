@@ -124,10 +124,7 @@ function errorText(error: unknown): string {
 
 function isMissingPathError(error: unknown): boolean {
 	return Boolean(
-		error &&
-			typeof error === "object" &&
-			"code" in error &&
-			(error as { code?: unknown }).code === "ENOENT",
+		error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === "ENOENT",
 	);
 }
 
@@ -301,9 +298,7 @@ export async function claimWarmWorktree(
 					await gitRun(repoRoot, "branch", "-m", location.branch, fromBranch);
 				} catch (rollbackError) {
 					branchToDelete = location.branch;
-					console.error(
-						`[her] warm slot ${slotId} branch rollback failed: ${errorText(rollbackError)}`,
-					);
+					console.error(`[her] warm slot ${slotId} branch rollback failed: ${errorText(rollbackError)}`);
 				}
 			}
 			await cleanupWarmSlot(
@@ -315,7 +310,6 @@ export async function claimWarmWorktree(
 				[location.worktreePath],
 				[branchToDelete],
 			);
-			continue;
 		}
 	}
 	return null;

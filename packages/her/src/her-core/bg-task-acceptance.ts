@@ -299,7 +299,9 @@ export type EvidenceOutputSelection = { output: string; source: EvidenceOutputSo
 /** Select the first source whose parsed evidence block contains at least one item. */
 export function selectEvidenceOutput(resultText: string | null | undefined, rawLog: string): EvidenceOutputSelection {
 	const candidates: { source: EvidenceOutputSource; output: string }[] = [
-		...(resultText !== null && resultText !== undefined ? [{ source: "result file" as const, output: resultText }] : []),
+		...(resultText !== null && resultText !== undefined
+			? [{ source: "result file" as const, output: resultText }]
+			: []),
 		{ source: "raw log", output: rawLog },
 		{ source: "jsonl log", output: extractJsonlText(rawLog) },
 	];
@@ -319,7 +321,12 @@ export function verifyEvidenceGate(output: string, cwd: string, missingEvidenceD
 		return {
 			evidence: [],
 			verified: false,
-			reasons: [{ code: "missing_evidence", detail: `evidence-verified: ${missingEvidenceDetail ?? parsed.error ?? "no evidence items"}` }],
+			reasons: [
+				{
+					code: "missing_evidence",
+					detail: `evidence-verified: ${missingEvidenceDetail ?? parsed.error ?? "no evidence items"}`,
+				},
+			],
 		};
 	}
 	const evidence = verifyEvidence(parsed.items, cwd);

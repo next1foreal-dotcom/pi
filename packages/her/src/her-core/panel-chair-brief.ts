@@ -33,7 +33,7 @@ export function buildPanelChairBrief(params: PanelChairBriefParams = {}): string
 		"VERIFICATION: evidence verified=<n> failed=<n>",
 		"Machine evidence contract: stdout (or the designated report file) must contain one fenced JSON evidence block:",
 		"```json evidence",
-		"[{\"file\":\"relative/path\",\"lines\":\"12-14\",\"claim\":\"what the cited lines prove\"}]",
+		'[{"file":"relative/path","lines":"12-14","claim":"what the cited lines prove"}]',
 		"```",
 		"Evidence must be machine-checkable item by item; if there is no evidence, say so truthfully.",
 	].join("\n");

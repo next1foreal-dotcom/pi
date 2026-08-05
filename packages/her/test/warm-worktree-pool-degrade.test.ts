@@ -1,15 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import {
-	claimWarmWorktree,
-	ensureWarmWorktreePool,
-	listReadyWarmSlots,
-} from "../src/her-core/warm-worktree-pool.ts";
 import type { GitRun } from "../src/her-core/long-task-worktree.ts";
+import { claimWarmWorktree, ensureWarmWorktreePool, listReadyWarmSlots } from "../src/her-core/warm-worktree-pool.ts";
 
 async function fixture(): Promise<{ repo: string; root: string; env: NodeJS.ProcessEnv }> {
 	const repo = await mkdtemp(join(tmpdir(), "her-warm-degrade-repo-"));
@@ -20,7 +16,12 @@ async function fixture(): Promise<{ repo: string; root: string; env: NodeJS.Proc
 	return { repo, root, env };
 }
 
-function readyGit(slotPath: string, overrides: Partial<Record<string, (cwd: string, ...args: string[]) => Promise<{ stdout: string; stderr: string }>>> = {}): GitRun {
+function readyGit(
+	slotPath: string,
+	overrides: Partial<
+		Record<string, (cwd: string, ...args: string[]) => Promise<{ stdout: string; stderr: string }>>
+	> = {},
+): GitRun {
 	return async (cwd, ...args) => {
 		const key = args.join(" ");
 		const override = overrides[key];
@@ -29,11 +30,7 @@ function readyGit(slotPath: string, overrides: Partial<Record<string, (cwd: stri
 		if (args[0] === "rev-parse" && args[1] === "--verify") return { stdout: "branch\n", stderr: "" };
 		if (args[0] === "worktree" && args[1] === "list") {
 			return {
-				stdout: [
-					`worktree ${slotPath}`,
-					"branch refs/heads/her-warm/w0",
-					"",
-				].join("\n"),
+				stdout: [`worktree ${slotPath}`, "branch refs/heads/her-warm/w0", ""].join("\n"),
 				stderr: "",
 			};
 		}
@@ -43,7 +40,7 @@ function readyGit(slotPath: string, overrides: Partial<Record<string, (cwd: stri
 
 test("bad ready slot with missing branch is discarded without throwing", async () => {
 	const { repo, root, env } = await fixture();
-	const gitRun: GitRun = async (cwd, ...args) => {
+	const gitRun: GitRun = async (_cwd, ...args) => {
 		if (args[0] === "rev-parse" && args[1] === "--is-inside-work-tree") return { stdout: "true\n", stderr: "" };
 		if (args[0] === "rev-parse" && args[1] === "--verify") throw new Error("missing branch");
 		return { stdout: "", stderr: "" };
@@ -70,7 +67,7 @@ test("worktree move failure rolls the renamed branch back and leaves no task bra
 	const { repo, root, env } = await fixture();
 	const branches = new Set(["her-warm/w0"]);
 	const calls: string[] = [];
-	const gitRun: GitRun = async (cwd, ...args) => {
+	const gitRun: GitRun = async (_cwd, ...args) => {
 		calls.push(args.join(" "));
 		if (args[0] === "rev-parse" && args[1] === "--is-inside-work-tree") return { stdout: "true\n", stderr: "" };
 		if (args[0] === "rev-parse" && args[1] === "--verify") {
@@ -86,7 +83,7 @@ test("worktree move failure rolls the renamed branch back and leaves no task bra
 		if (args[0] === "branch" && args[1] === "-m") {
 			branches.delete(args[2]);
 			branches.add(args[3]);
-			
+
 			return { stdout: "", stderr: "" };
 		}
 		if (args[0] === "worktree" && args[1] === "move") throw new Error("move failed");

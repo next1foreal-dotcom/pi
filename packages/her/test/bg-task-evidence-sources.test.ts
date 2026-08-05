@@ -5,8 +5,8 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import {
 	acceptanceRunFilename,
-	evaluateTaskAcceptance,
 	EVIDENCE_GATE_NAME,
+	evaluateTaskAcceptance,
 	extractEvidenceItems,
 	extractJsonlText,
 	gatePlanFilename,
@@ -129,7 +129,10 @@ test("plain raw log evidence still passes without result.md", async () => {
 });
 
 test("missing evidence names result file, raw log, and jsonl log", async () => {
-	const outcome = await evaluateFixture({ result: "no evidence here", log: JSON.stringify({ type: "item.completed", item: { text: "still no evidence" } }) });
+	const outcome = await evaluateFixture({
+		result: "no evidence here",
+		log: JSON.stringify({ type: "item.completed", item: { text: "still no evidence" } }),
+	});
 	assert.equal(outcome.verdict, "rejected-needs-evidence");
 	const detail = outcome.reasons.find((reason) => reason.code === "missing_evidence")?.detail ?? "";
 	assert.match(detail, /result file/);

@@ -12,9 +12,9 @@ const evidencePlan = parseGatePlan(
 test("G-223 ordinary worker brief gets one machine-checkable evidence contract", () => {
 	const brief = appendEvidenceVerifiedBrief("Do the work.", evidencePlan);
 	assert.match(brief, /```json evidence\n/);
-	assert.match(brief, /\"file\":\s*\"relative\/path\"/);
-	assert.match(brief, /\"lines\":\s*\"12-14\"/);
-	assert.match(brief, /\"claim\":\s*\"what the cited lines prove\"/);
+	assert.match(brief, /"file":\s*"relative\/path"/);
+	assert.match(brief, /"lines":\s*"12-14"/);
+	assert.match(brief, /"claim":\s*"what the cited lines prove"/);
 	assert.match(brief, /machine-checkable item by item/i);
 	assert.match(brief, /no evidence, say so truthfully/i);
 });
@@ -33,7 +33,7 @@ test("G-223 does not duplicate a panel-chair or existing machine contract", () =
 		"Do the work.",
 		"MACHINE CONTRACT: evidence-verified",
 		"```json evidence",
-		"[{\"file\":\"relative/path\",\"claim\":\"what the cited lines prove\"}]",
+		'[{"file":"relative/path","claim":"what the cited lines prove"}]',
 		"```",
 	].join("\n");
 	assert.equal(appendEvidenceVerifiedBrief(existing, evidencePlan), existing);

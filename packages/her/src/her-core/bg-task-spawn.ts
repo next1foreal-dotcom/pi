@@ -7,8 +7,8 @@ import { hostname as osHostname } from "node:os";
 import { basename, join, resolve } from "node:path";
 import {
 	type AcceptanceGate,
-	type GatePlan,
 	EVIDENCE_GATE_NAME,
+	type GatePlan,
 	gatePlanFilename,
 	loadRepoGatePlan,
 	parseGatePlan,
