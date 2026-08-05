@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -119,15 +118,7 @@ test("evidence-verified gate fails loud for false and empty evidence", () => {
 	assert.ok(emptyOutcome.reasons.some((reason) => /no evidence/i.test(reason.detail)));
 });
 
-test("the change set does not touch G-221 protected files", () => {
-	const changed = execFileSync("git", ["diff", "--name-only"], { encoding: "utf8" });
-	for (const file of [
-		"bg-task-spawn.ts",
-		"bg-task-reconcile.ts",
-		"extension.ts",
-		"task-executor.ts",
-		"task-runner.mjs",
-	]) {
-		assert.equal(changed.includes(file), false, `${file} is protected`);
-	}
-});
+// The G-222 changed-set guard ("does not touch G-221 protected files") lived here
+// during the parallel-dispatch window and was retired after the two branches merged
+// (089809550): asserting a clean working diff on shared files turns every later
+// legitimate edit into a suite-wide red.

@@ -515,11 +515,19 @@ async function launchPendingBgTask(memoryRoot: string, taskId: string, now = new
 			...(briefPath ? { stdinPath: briefPath } : {}),
 			allowComspec: mode === "worker",
 		});
+		// G-223 — the deadline clock starts when the task becomes runnable, not when
+		// it was filed: time spent blocked behind an upstream must not eat the
+		// granted budget. Re-base the wall to unlock time + the original grant.
+		const grantedMs =
+			record.deadlineAt && record.created ? Date.parse(record.deadlineAt) - Date.parse(record.created) : Number.NaN;
 		const running = migrateBgStatus(record, "running", {
 			startedAt: isoNow(now),
 			runnerPid,
 			budgetReserved: workerProfile?.priceUsd ?? cfg.tasks.budgetCap,
 			unlockedAt: record.unlockedAt ?? now.getTime(),
+			...(Number.isFinite(grantedMs) && grantedMs > 0
+				? { deadlineAt: isoNow(new Date(now.getTime() + grantedMs)) }
+				: {}),
 		});
 		await saveBgTask(memoryRoot, running, body);
 		return {

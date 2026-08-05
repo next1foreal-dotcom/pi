@@ -492,6 +492,9 @@ async function mayNeedReconcile(
 	if (ctx.dependencyAction && record.status === "pending") return true;
 	if (isTerminal(record.status)) return !record.notifiedAt;
 	if (record.status !== "pending" && record.status !== "running") return false;
+	// G-223 — blocked tasks wait for a dependencyAction; no wall or liveness
+	// rule applies to them, so a pass without one has nothing to do.
+	if (record.status === "pending" && record.blockedBy?.length) return false;
 
 	const deadline = parseIso(record.deadlineAt);
 	if (deadline && ctx.now.getTime() > deadline.getTime()) return true;
@@ -627,17 +630,33 @@ async function reconcileOne(
 		return { event: null, record: recordChanged ? record : null };
 	}
 
-	// H.3 — hard deadline wall
-	const deadline = parseIso(record.deadlineAt);
-	if (deadline && ctx.now.getTime() > deadline.getTime()) {
-		await ctx.stopTaskFn(dir, record.id);
-		return claim(
-			migrateBgStatus(record, "failed", { endedAt: isoNow(ctx.now), failureReason: "timeout" }, isoNow(ctx.now)),
-			ctx,
-		);
+	// G-223 — a blocked task is waiting by design: its clock starts at unlock
+	// (launchPendingBgTask re-bases deadlineAt) and its fate arrives as a
+	// dependencyAction from the upstream's own adjudication. Neither the deadline
+	// wall nor the liveness rules below may judge it while it waits.
+	if (record.status === "pending" && record.blockedBy?.length) {
+		return { event: null, record: recordChanged ? record : null };
 	}
 
 	const done = await readJson(join(dir, `${record.id}.done`));
+
+	// H.3 — hard deadline wall. Breach is judged against the task's own completion
+	// time when completion evidence exists — reconcile lag must not turn a punctual
+	// finish into a timeout (G-223 exam: B1 finished six minutes inside its deadline
+	// and a late reconcile pass still stamped it timeout).
+	const deadline = parseIso(record.deadlineAt);
+	if (deadline) {
+		const doneEnded = done && typeof done.endedAt === "string" ? parseIso(done.endedAt) : null;
+		const effectiveEnd = doneEnded ?? ctx.now;
+		if (effectiveEnd.getTime() > deadline.getTime()) {
+			await ctx.stopTaskFn(dir, record.id);
+			return claim(
+				migrateBgStatus(record, "failed", { endedAt: isoNow(ctx.now), failureReason: "timeout" }, isoNow(ctx.now)),
+				ctx,
+			);
+		}
+	}
+
 	if (done) {
 		const exitCode = Number(done.exitCode ?? -1);
 		const endedAt = typeof done.endedAt === "string" ? done.endedAt : isoNow(ctx.now);

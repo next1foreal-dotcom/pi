@@ -138,3 +138,74 @@ test("A to B to C unlocks in order", async () => {
 	assert.equal((await loadBgTask(root, "C"))?.record.status, "running");
 	await stopBgTask(root, "C");
 });
+
+// G-223 exam findings — deadline semantics for blocked tasks and late reconciles.
+
+test("G-223: blocked task past its filed deadline keeps waiting", async () => {
+	const root = await memoryRoot();
+	await seed(root, { id: "upstream", status: "running", startedAt: "2026-08-04T11:59:00.000Z" });
+	await writeFile(join(tasksDir(root), "upstream.heartbeat"), "2026-08-04T12:29:55.000Z", "utf8");
+	await seed(root, { id: "blocked", blockedBy: ["upstream"], deadlineAt: "2026-08-04T12:00:00.000Z" });
+	await reconcileBgTasks(root, { hostname: hostname(), now: new Date("2026-08-04T12:30:00Z") });
+	const record = (await loadBgTask(root, "blocked"))?.record;
+	assert.equal(record?.status, "pending");
+	assert.equal(record?.failureReason, undefined);
+});
+
+test("G-223: done inside the deadline beats a late reconcile", async () => {
+	const root = await memoryRoot();
+	await seed(root, {
+		id: "ontime",
+		status: "running",
+		startedAt: "2026-08-04T11:59:10.000Z",
+		deadlineAt: "2026-08-04T12:00:00.000Z",
+	});
+	await writeFile(
+		join(tasksDir(root), "ontime.done"),
+		JSON.stringify({ exitCode: 0, endedAt: "2026-08-04T11:59:30.000Z" }),
+		"utf8",
+	);
+	await reconcileBgTasks(root, { hostname: hostname(), now: new Date("2026-08-04T12:30:00Z") });
+	const record = (await loadBgTask(root, "ontime"))?.record;
+	assert.equal(record?.status, "completed");
+	assert.equal(record?.failureReason, undefined);
+});
+
+test("G-223: running past deadline with no completion evidence still times out", async () => {
+	const root = await memoryRoot();
+	await seed(root, {
+		id: "overrun",
+		status: "running",
+		startedAt: "2026-08-04T11:59:00.000Z",
+		deadlineAt: "2026-08-04T12:00:00.000Z",
+	});
+	const record0 = await reconcileBgTasks(root, {
+		hostname: hostname(),
+		now: new Date("2026-08-04T12:00:01Z"),
+		stopTaskFn: async () => "already_gone",
+	});
+	assert.equal(record0[0]?.status, "failed");
+	const record = (await loadBgTask(root, "overrun"))?.record;
+	assert.equal(record?.status, "failed");
+	assert.equal(record?.failureReason, "timeout");
+});
+
+test("G-223: unlock re-bases the deadline to unlock time + original grant", async () => {
+	const root = await memoryRoot();
+	await seed(root, { id: "upstream", status: "completed", notifiedAt: "2026-08-04T12:00:00.000Z" });
+	await seed(root, {
+		id: "downstream",
+		blockedBy: ["upstream"],
+		created: "2026-08-04T11:59:00.000Z",
+		deadlineAt: "2026-08-04T12:01:00.000Z",
+	});
+	await reconcileBgTasks(root, { hostname: hostname(), now: new Date("2026-08-04T12:30:00Z") });
+	const record = (await loadBgTask(root, "downstream"))?.record;
+	assert.equal(record?.status, "running");
+	const rebased = Date.parse(record?.deadlineAt ?? "");
+	assert.ok(
+		Number.isFinite(rebased) && rebased > Date.parse("2026-08-04T12:30:00Z"),
+		`deadline should re-base past the unlock pass, got ${record?.deadlineAt}`,
+	);
+	await stopBgTask(root, "downstream");
+});
