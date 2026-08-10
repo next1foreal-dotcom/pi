@@ -588,18 +588,24 @@ export class Memory {
 			if (available.length === 0) return { episodes: 0, notesTouched: 0, moments: 0 };
 			const existing = await markdownStems(this.paths.semantic);
 
-			// Batch size is the only lever we have against output-token truncation: the model
-			// interface (model.ts ModelLike) exposes no max_tokens knob, and a truncated reply repeats
-			// identically for a fixed prompt (so completeJson's re-asks can't fix it). On
-			// JsonTruncatedError, halve the batch and retry — a smaller batch has less to emit, so the
-			// reply fits — letting the backlog drain instead of wedging forever on batch 1. Halving the
-			// realized episode count (not the requested limit) guarantees strict progress even when the
-			// char budget was the binding constraint. A single episode that still truncates is a genuine
-			// failure: we let it throw with the cursor untouched (nothing consumed, next run retries)
-			// rather than silently skip it — durability first, fail loud.
+			// Batch size is our primary lever against output-token truncation: the model interface
+			// (model.ts ModelLike) exposes no max_tokens knob, and a truncated reply repeats identically
+			// for a fixed prompt (so completeJson's re-asks can't fix it). On JsonTruncatedError, halve the
+			// batch and retry — a smaller batch has less to emit, so the reply fits — letting the backlog
+			// drain instead of wedging forever on batch 1. Halving the realized episode count (not the
+			// requested limit) guarantees strict progress even when the char budget was the binding
+			// constraint. If a SINGLE episode still truncates (its dense turn overflows even alone, and
+			// retrying reproduces it), we skip it: account it to audit/consolidate-skips.jsonl, advance the
+			// cursor past it, and keep draining — a frozen backlog is worse than one un-distilled turn,
+			// whose raw text stays recoverable in raw/ (G-234; consolidatePrompt also caps note count to
+			// keep normal replies inside the output budget). workingCursor threads skip advances so
+			// same-timestamp siblings keep correct done_ids.
+			const consolidateSkipsPath = join(this.paths.root, "audit", "consolidate-skips.jsonl");
 			let batchLimit = limit;
+			let workingCursor = cursor;
+			let remaining = available;
 			for (;;) {
-				const batch = selectConsolidateBatch(available, batchLimit);
+				const batch = selectConsolidateBatch(remaining, batchLimit);
 				const episodes = batch.map(({ episode }) => episode);
 				if (episodes.length === 0) return { episodes: 0, notesTouched: 0, moments: 0 };
 				const joined = batch.map(({ promptText }) => promptText).join("\n\n");
@@ -618,12 +624,38 @@ export class Memory {
 						batchLimit = Math.floor(episodes.length / 2);
 						continue;
 					}
+					if (error instanceof JsonTruncatedError && episodes.length === 1) {
+						// Backstop: this single episode's distilled output overflows the model's default output
+						// ceiling and reproduces the same truncation on every retry. Throwing would freeze the
+						// cursor and wedge the whole backlog behind it. Skip it — account, advance, keep draining;
+						// the raw episode remains in raw/ for manual recovery. Fail loud; never silently drop.
+						const skipped = episodes[0];
+						await appendText(
+							consolidateSkipsPath,
+							`${JSON.stringify({
+								at: new Date().toISOString(),
+								episode: skipped.id,
+								ts: skipped.ts,
+								reason: "truncated",
+								response_head: error.responseHead.slice(0, 200),
+							})}\n`,
+						);
+						console.warn(
+							`[her] consolidate: skipping episode ${skipped.id} — output still truncated at batch size 1; recorded to audit/consolidate-skips.jsonl and advanced the cursor past it`,
+						);
+						const advanced = advanceConsolidateCursor(workingCursor, episodes);
+						await writeJson(this.paths.stateFile, { ...state, cursor: advanced, last_consolidate: advanced.ts });
+						workingCursor = parseConsolidateCursor(advanced);
+						remaining = remaining.slice(batch.length);
+						batchLimit = limit;
+						continue;
+					}
 					throw error;
 				}
 
 				const notes = result.notes ?? [];
 				const moments = result.moments ?? [];
-				const newCursor = advanceConsolidateCursor(cursor, episodes);
+				const newCursor = advanceConsolidateCursor(workingCursor, episodes);
 
 				let mergeFailures = 0;
 				for (const note of notes) {

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test, { mock } from "node:test";
 import { DEFAULT_CONFIG, loadConfig, renderConfig } from "../src/her-core/config.ts";
 import { createEmbeddingSearch } from "../src/her-core/embedding-search.ts";
-import { initStore, Memory, readText, writeText } from "../src/her-core/index.ts";
+import { initStore, Memory, readJson, readText, writeText } from "../src/her-core/index.ts";
 import {
 	completeJson,
 	extractJson,
@@ -539,4 +539,58 @@ test("G-234 fail-safe: a failed merge keeps the old body (never blind-overwrites
 	assert.match(lines[0], /pending/i);
 	assert.match(lines[0], /ep-x/);
 	assert.equal(result.notesTouched, 1, "a single failed note must not abort the whole batch");
+});
+
+// --- G-234 follow-up: unwedge the queue when a single episode's output still truncates -----------
+// A dense turn can make consolidate's reply overflow the model's default output ceiling even at batch
+// size 1. Throwing there froze the cursor and wedged the whole backlog. The fix: cap notes in the
+// prompt (bounded output) and, as a backstop, skip+account+advance instead of throwing.
+
+test("G-234 consolidate skips a single episode whose output still truncates: no throw, cursor advances, audit line recorded", async () => {
+	const store = await g234Store();
+	await writeRawEpisode(store, "2026-08-10T0007", "trunc-ep", "an information-dense turn");
+	// Single-episode batch whose consolidate reply is unterminated JSON — completeJson raises
+	// JsonTruncatedError, which at batch size 1 must NOT wedge the queue.
+	const model = {
+		complete(): string {
+			return '{"notes": [{"key": "k", "content": "half';
+		},
+	};
+	const warn = mock.method(console, "warn");
+	try {
+		const result = await new Memory(store, model).consolidate();
+		assert.deepEqual(
+			result,
+			{ episodes: 0, notesTouched: 0, moments: 0 },
+			"consolidate returns cleanly, does not throw",
+		);
+
+		const skips = (await readText(join(store, "audit", "consolidate-skips.jsonl"))) ?? "";
+		const skipLines = skips.trim().split(/\r?\n/).filter(Boolean);
+		assert.equal(skipLines.length, 1, "exactly one skip accounted");
+		const entry = JSON.parse(skipLines[0]) as { episode: string; reason: string; response_head: string };
+		assert.equal(entry.episode, "trunc-ep");
+		assert.equal(entry.reason, "truncated");
+		assert.ok(typeof entry.response_head === "string" && entry.response_head.length > 0, "responseHead captured");
+
+		const state = await readJson<{ cursor?: { ts?: string; done_ids?: string[] } }>(
+			join(store, ".her", "state.json"),
+			{},
+		);
+		assert.equal(state.cursor?.ts, "2026-08-10T0007", "cursor advanced past the skipped episode");
+		assert.ok(state.cursor?.done_ids?.includes("trunc-ep"), "skipped episode recorded in cursor done_ids");
+
+		assert.ok(
+			warn.mock.calls.some((call) => String(call.arguments[0]).includes("trunc-ep")),
+			"a fail-loud console.warn names the skipped episode",
+		);
+	} finally {
+		warn.mock.restore();
+	}
+});
+
+test("G-234 consolidatePrompt caps note count to bound output and folds (not drops) secondary material", () => {
+	const prompt = consolidatePrompt("[ep] text", []);
+	assert.match(prompt, /at most 10 notes/i, "an explicit notes cap must be present");
+	assert.match(prompt, /fold|merge/i, "secondary points are folded into fewer notes, not dropped");
 });
