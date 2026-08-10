@@ -57,6 +57,7 @@ import {
 	contextLogBlock,
 	daysSince,
 	episodeSection,
+	errorMessage,
 	escapeRegExp,
 	extractSection,
 	genId,
@@ -82,6 +83,8 @@ import {
 	slug,
 	sortChoiceRules,
 	sourceRef,
+	stripSection,
+	timelineEntry,
 	timestampMinute,
 	today,
 	UNIT_TYPES,
@@ -103,6 +106,7 @@ import {
 	choiceModelPrompt,
 	consolidatePrompt,
 	ideaEnginePrompt,
+	mergeNotePrompt,
 	selfNarrativePrompt,
 	summaryPrompt,
 	surfacePrompt,
@@ -621,7 +625,15 @@ export class Memory {
 				const moments = result.moments ?? [];
 				const newCursor = advanceConsolidateCursor(cursor, episodes);
 
-				for (const note of notes) await this.upsertNote(note);
+				let mergeFailures = 0;
+				for (const note of notes) {
+					if ((await this.upsertNote(note)) === "merge-failed") mergeFailures++;
+				}
+				if (mergeFailures > 0) {
+					console.warn(
+						`[her] consolidate: ${mergeFailures}/${notes.length} note(s) failed to merge; old bodies kept, see their Timeline pending entries`,
+					);
+				}
 				if (moments.length > 0) {
 					const date = newCursor.ts.slice(0, 10);
 					await appendText(
@@ -1069,10 +1081,11 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 		}
 		return episodes.sort((a, b) => a.ts.localeCompare(b.ts));
 	}
-	private async upsertNote(note: Record<string, unknown>): Promise<void> {
+	private async upsertNote(note: Record<string, unknown>): Promise<"created" | "merged" | "merge-failed"> {
 		const key = slug(String(note.key ?? note.title ?? "note"));
 		const path = join(this.paths.semantic, `${key}.md`);
-		const existing = parseFrontmatter(await readText(path));
+		const existingText = await readText(path);
+		const existing = parseFrontmatter(existingText);
 		const existingSources = Array.isArray(existing.data.sources) ? existing.data.sources.map(String) : [];
 		const incomingSources = Array.isArray(note.sources) ? note.sources.map(String) : [];
 		const sources = [...new Set([...existingSources, ...incomingSources])].sort();
@@ -1088,15 +1101,70 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 			sources,
 			relations,
 		};
-		const content = typeof note.content === "string" ? note.content : "";
+		const incoming = typeof note.content === "string" ? note.content : "";
+
+		// G-234 law 1 — compiled truth is a REWRITE, never a blind overwrite. On a key that already
+		// exists, letting the new content replace the body wholesale silently drops the old note's other
+		// knowledge, so we integrate (old prose + new) via one LLM call. New keys write directly. The
+		// old `## Relations`/`## Timeline` scaffolding is stripped first so only real prose is reconciled.
+		const isExisting = existingText !== undefined;
+		const oldProse = isExisting ? stripSection(stripSection(existing.body, "Relations"), "Timeline").trim() : "";
+		const priorTimeline = isExisting ? extractSection(existing.body, "Timeline") : "";
+		const srcLabel = incomingSources.length > 0 ? incomingSources.join(", ") : "(unknown)";
+
+		let body: string;
+		let change: string;
+		let outcome: "created" | "merged" | "merge-failed";
+		if (!isExisting) {
+			body = incoming;
+			change = typeof note.change === "string" && note.change.trim() ? note.change : "created";
+			outcome = "created";
+		} else if (this.model) {
+			const model = this.model;
+			try {
+				const merged = await completeJson<{ content?: unknown; change?: unknown }>(() =>
+					model.complete(mergeNotePrompt(oldProse, incoming, relations)),
+				);
+				const mergedContent = typeof merged.content === "string" ? merged.content.trim() : "";
+				if (!mergedContent) throw new Error("merge returned empty content");
+				body = mergedContent;
+				change = typeof merged.change === "string" && merged.change.trim() ? merged.change : "note updated";
+				outcome = "merged";
+			} catch (error) {
+				// 止损底线 — keep the OLD prose verbatim; never fall back to a blind overwrite with the raw
+				// new content. Record the miss on the Timeline and fail loud; one bad note must not abort
+				// the batch (fail loud, degrade gracefully).
+				console.warn(
+					`[her] upsertNote merge failed for note "${key}": ${errorMessage(error)}; keeping old body, new info pending in episode ${srcLabel}`,
+				);
+				body = oldProse;
+				change = `merge failed, new info in episode ${srcLabel} pending`;
+				outcome = "merge-failed";
+			}
+		} else {
+			// Existing note but no model available to merge — keep the old prose, do not blind-overwrite.
+			console.warn(
+				`[her] upsertNote has no model to merge note "${key}"; keeping old body, new info pending in episode ${srcLabel}`,
+			);
+			body = oldProse;
+			change = `merge failed, new info in episode ${srcLabel} pending`;
+			outcome = "merge-failed";
+		}
+
+		// G-234 law 2 — semantic-level changelog. `## Timeline` lives after `## Relations` and is
+		// append-only: prior entries are carried forward unchanged and one line is appended per upsert.
 		const relationBody =
 			relations.length > 0
 				? `\n\n## Relations\n${relations.map((relation) => `- ${relation.rel}: [[${relation.to}]]`).join("\n")}\n`
 				: "\n";
-		await writeText(path, `${frontmatter(fm)}${content.trimEnd()}${relationBody}`);
+		const timelineBody = `\n## Timeline\n${[priorTimeline, timelineEntry(today(), change, incomingSources)]
+			.filter((part) => part.trim())
+			.join("\n")}\n`;
+		await writeText(path, `${frontmatter(fm)}${body.trimEnd()}${relationBody}${timelineBody}`);
 		for (const relation of relations) {
 			if (relation.rel === "replaces") await this.markSemanticNoteSuperseded(relation.to, key);
 		}
+		return outcome;
 	}
 
 	private async markSemanticNoteSuperseded(targetKey: string, replacementKey: string): Promise<void> {

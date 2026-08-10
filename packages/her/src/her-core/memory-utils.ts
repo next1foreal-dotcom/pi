@@ -217,6 +217,15 @@ export function episodeSection(
 	return `\n## ${sid} · ${ts.replace("T", " ")} · project: ${project}\n${summary}\n- raw: [[episodic/raw/${rawStem}]]\n- summary_pending: ${String(pending)}\n`;
 }
 
+// One semantic-level changelog line for a compiled-truth note's `## Timeline` section (G-234, law 2).
+// Append-only and self-contained: `- **YYYY-MM-DD** | <one-line change> | src: <episode ids>`. The
+// change is folded to a single line so a multi-line model summary can never break the row layout.
+export function timelineEntry(date: string, change: string, sourceIds: string[]): string {
+	const summary = change.replace(/\s+/g, " ").trim() || "(no summary)";
+	const src = sourceIds.length > 0 ? sourceIds.join(", ") : "(none)";
+	return `- **${date}** | ${summary} | src: ${src}`;
+}
+
 export function worldBody(data: WorldNoteData, memoryStatusReason: string): string {
 	return `# ${data.title}
 

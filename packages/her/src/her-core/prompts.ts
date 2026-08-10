@@ -17,9 +17,38 @@ export function consolidatePrompt(episodes: string, existingKeys: string[]): str
 		"Each unit's `tier` is one of: exact | summarizable | rule | decay. Use summarizable by default; exact only for stable identity facts; rule for durable preference/procedure; decay for low-confidence, noisy, or time-bound observations.",
 		"Each relation's `rel` should use EVOLVES semantics: replaces | enriches | confirms | challenges. Use `replaces` when a newer memory supersedes an older one; `enriches` when it adds context without deleting the old note; `confirms` when it supports an existing note; `challenges` for a tension/contradiction worth surfacing without resolving.",
 		`Existing note keys (reuse a key to update it; relations may point to them): ${keys}`,
-		'JSON shape: {"notes":[{"key":"slug","type":"opinion","tier":"summarizable","title":"...","content":"prose","relations":[{"to":"other-key","rel":"confirms"}],"sources":["episode-id"]}],"moments":[{"trigger":"what happened","shift":"what changed in the person"}]}',
+		"For KEY assertions in each unit's `content`, attach an inline source wikilink `[[episodic/raw/<episode-id>]]` to the episode that supports it, so every claim stays traceable to raw evidence.",
+		"Give each unit a `change`: ONE plain sentence naming what this unit newly captures or updates in the compiled truth (used for the note's changelog Timeline).",
+		'JSON shape: {"notes":[{"key":"slug","type":"opinion","tier":"summarizable","title":"...","content":"prose with [[episodic/raw/<id>]] links on key claims","change":"one-sentence changelog summary","relations":[{"to":"other-key","rel":"confirms"}],"sources":["episode-id"]}],"moments":[{"trigger":"what happened","shift":"what changed in the person"}]}',
 		"",
 		`EPISODES:\n${episodes}`,
+	].join("\n");
+}
+
+// Law 1 (G-234): compiled truth is a REWRITE, not a blind overwrite. When consolidate reuses an
+// existing note key, upsertNote calls this once to integrate the old body with the new content so
+// prior knowledge is not silently dropped. Output feeds completeJson: {content, change}.
+export function mergeNotePrompt(
+	existingBody: string,
+	incoming: string,
+	relations: Array<{ to: string; rel: string }>,
+): string {
+	const relationLines =
+		relations.length > 0 ? relations.map((relation) => `- ${relation.rel}: [[${relation.to}]]`).join("\n") : "(none)";
+	return [
+		"Return ONLY JSON (no prose, no code fence). You maintain a compiled-truth note in a personal memory system. Integrate the NEW information into the EXISTING note by REWRITING the full note body. This is a rewrite, NOT a blind overwrite.",
+		"RULES:",
+		"- PRESERVE every durable knowledge point already in the existing note UNLESS the new information explicitly supersedes it (replaces semantics). Enrichment ADDS; it must never silently drop old knowledge.",
+		"- When new evidence replaces an old point, update that point and keep the note internally consistent; do not leave contradictions unresolved silently.",
+		"- Attach an inline source wikilink `[[episodic/raw/<id>]]` to key assertions that the new information introduces or changes.",
+		"- `change` is ONE plain sentence naming what this update changed in the compiled truth (for the changelog Timeline); it must stand on its own.",
+		'JSON shape: {"content":"the full rewritten note body as Markdown prose","change":"one-sentence summary of what changed"}',
+		"",
+		`RELATIONS (EVOLVES semantics — replaces supersedes the old; enriches/confirms keep it):\n${relationLines}`,
+		"",
+		`EXISTING NOTE:\n${existingBody}`,
+		"",
+		`NEW INFORMATION:\n${incoming}`,
 	].join("\n");
 }
 

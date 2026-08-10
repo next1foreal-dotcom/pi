@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test, { mock } from "node:test";
 import { DEFAULT_CONFIG, loadConfig, renderConfig } from "../src/her-core/config.ts";
 import { createEmbeddingSearch } from "../src/her-core/embedding-search.ts";
+import { initStore, Memory, readText, writeText } from "../src/her-core/index.ts";
 import {
 	completeJson,
 	extractJson,
@@ -319,4 +320,223 @@ test("embedding search ranks docs through an OpenAI-compatible embeddings endpoi
 		"id: semantic/literal\nkind: semantic\nliteral exact words",
 		"id: world/latent\nkind: world\nlatent concept",
 	]);
+});
+
+// --- G-234 compiled-truth slice: merge-rewrite + Timeline + fail-safe ------------------------
+// These drive the PUBLIC consolidate() over a temp store with a prompt-recording scripted model,
+// so upsertNote's new behavior is observed end-to-end (no private-symbol imports). The merge call
+// is the model call whose prompt carries "EXISTING NOTE:" (mergeNotePrompt); all others are the
+// consolidate call. See docs/specs/2026-08-10-g234-compiled-truth-slice.md.
+
+async function g234Store(): Promise<string> {
+	const root = await mkdtemp(join(tmpdir(), "her-g234-"));
+	await initStore(root);
+	return root;
+}
+
+async function writeRawEpisode(store: string, ts: string, id: string, body: string): Promise<void> {
+	await writeText(
+		join(store, "episodic", "raw", `${ts}--${id}.md`),
+		["---", `id: ${id}`, `timestamp: ${ts}`, "project: her", "---", "", body, ""].join("\n"),
+	);
+}
+
+function scriptedModel(replies: { consolidate: string; merge?: string; mergeThrows?: boolean }): {
+	calls: Array<{ prompt: string }>;
+	complete(prompt: string): string;
+} {
+	const calls: Array<{ prompt: string }> = [];
+	return {
+		calls,
+		complete(prompt: string): string {
+			calls.push({ prompt });
+			if (prompt.includes("EXISTING NOTE:")) {
+				if (replies.mergeThrows) throw new Error("merge model unavailable (test)");
+				return replies.merge ?? "";
+			}
+			return replies.consolidate;
+		},
+	};
+}
+
+function timelineLines(body: string): string[] {
+	return body.split(/\r?\n/).filter((line) => /^- \*\*\d{4}-\d{2}-\d{2}\*\*/.test(line));
+}
+
+async function seedSemanticNote(store: string, key: string, lines: string[]): Promise<void> {
+	await writeText(join(store, "semantic", `${key}.md`), lines.join("\n"));
+}
+
+test("G-234 upsert merges into an existing note: merge prompt sees the old body, merge output is persisted (no blind overwrite)", async () => {
+	const store = await g234Store();
+	await seedSemanticNote(store, "compiled-fact", [
+		"---",
+		"key: compiled-fact",
+		"type: concept",
+		"tier: summarizable",
+		"created: 2026-08-01",
+		"updated: 2026-08-01",
+		"sources:",
+		"  - ep-old",
+		"---",
+		"",
+		"# compiled-fact",
+		"",
+		"OLD KNOWLEDGE: Fei prefers neutral black-white-grey palettes.",
+		"",
+		"## Relations",
+		"- confirms: [[design-taste]]",
+		"",
+	]);
+	await writeRawEpisode(store, "2026-08-10T0001", "ep-new", "Fei also mentioned frosted glass.");
+
+	const model = scriptedModel({
+		consolidate: JSON.stringify({
+			notes: [
+				{
+					key: "compiled-fact",
+					type: "concept",
+					content: "RAW-NEW: Fei likes frosted glass.",
+					sources: ["ep-new"],
+				},
+			],
+		}),
+		merge: JSON.stringify({
+			content: "MERGED: Fei prefers neutral palettes and frosted glass.",
+			change: "added frosted-glass preference",
+		}),
+	});
+
+	await new Memory(store, model).consolidate();
+
+	const mergeCall = model.calls.find((call) => call.prompt.includes("EXISTING NOTE:"));
+	assert.ok(mergeCall, "a merge model call must happen for an existing key");
+	assert.match(mergeCall.prompt, /OLD KNOWLEDGE/, "merge prompt must carry the old note body (no more blind writing)");
+
+	const body = (await readText(join(store, "semantic", "compiled-fact.md"))) ?? "";
+	assert.match(body, /MERGED: Fei prefers neutral palettes and frosted glass\./, "merge output must be persisted");
+	assert.doesNotMatch(body, /RAW-NEW/, "raw new content must NOT blind-overwrite the note body");
+});
+
+test("G-234 merge change-summary lands as a self-contained Timeline entry with source ids", async () => {
+	const store = await g234Store();
+	await seedSemanticNote(store, "topic-note", [
+		"---",
+		"key: topic-note",
+		"type: concept",
+		"tier: summarizable",
+		"created: 2026-08-01",
+		"updated: 2026-08-01",
+		"---",
+		"",
+		"# topic-note",
+		"",
+		"Body v0.",
+		"",
+	]);
+	await writeRawEpisode(store, "2026-08-10T0002", "ep-42", "new evidence");
+
+	const model = scriptedModel({
+		consolidate: JSON.stringify({ notes: [{ key: "topic-note", content: "ignored raw", sources: ["ep-42"] }] }),
+		merge: JSON.stringify({ content: "Body v1.", change: "recorded the frosted-glass turn" }),
+	});
+	await new Memory(store, model).consolidate();
+
+	const body = (await readText(join(store, "semantic", "topic-note.md"))) ?? "";
+	assert.match(body, /\n## Timeline\n/, "a Timeline section must exist");
+	const lines = timelineLines(body);
+	assert.equal(lines.length, 1);
+	assert.match(lines[0], /^- \*\*\d{4}-\d{2}-\d{2}\*\* \| recorded the frosted-glass turn \| src: ep-42$/);
+});
+
+test("G-234 upsert preserves pre-existing Timeline entries verbatim and appends the new one", async () => {
+	const store = await g234Store();
+	const seededEntry = "- **2026-08-01** | seeded compiled-truth change | src: ep-seed";
+	await seedSemanticNote(store, "legacy", [
+		"---",
+		"key: legacy",
+		"type: concept",
+		"tier: summarizable",
+		"created: 2026-08-01",
+		"updated: 2026-08-01",
+		"---",
+		"",
+		"# legacy",
+		"",
+		"Legacy body.",
+		"",
+		"## Timeline",
+		seededEntry,
+		"",
+	]);
+	await writeRawEpisode(store, "2026-08-10T0003", "ep-2", "update");
+
+	const model = scriptedModel({
+		consolidate: JSON.stringify({ notes: [{ key: "legacy", content: "x", sources: ["ep-2"] }] }),
+		merge: JSON.stringify({ content: "Legacy body, updated.", change: "second change" }),
+	});
+	await new Memory(store, model).consolidate();
+
+	const body = (await readText(join(store, "semantic", "legacy.md"))) ?? "";
+	assert.ok(body.includes(seededEntry), "the pre-existing Timeline entry must remain byte-for-byte");
+	assert.equal(timelineLines(body).length, 2, "old entry kept + one appended");
+});
+
+test("G-234 Timeline is append-only across successive consolidations (grows, never drops entries)", async () => {
+	const store = await g234Store();
+	const model = scriptedModel({
+		consolidate: JSON.stringify({
+			notes: [{ key: "arc", content: "First body.", change: "created arc", sources: ["ep-a"] }],
+		}),
+		merge: JSON.stringify({ content: "Merged arc body.", change: "merged update" }),
+	});
+	const memory = new Memory(store, model);
+
+	// round 1: key is new (miss) -> body from content, Timeline entry #1 from note.change
+	await writeRawEpisode(store, "2026-08-10T0004", "ep-a", "first");
+	await memory.consolidate();
+	const firstLines = timelineLines((await readText(join(store, "semantic", "arc.md"))) ?? "");
+	assert.equal(firstLines.length, 1);
+
+	// round 2: key now exists (hit) -> merge rewrite, Timeline entry #2 appended
+	await writeRawEpisode(store, "2026-08-10T0005", "ep-b", "second");
+	await memory.consolidate();
+	const secondLines = timelineLines((await readText(join(store, "semantic", "arc.md"))) ?? "");
+	assert.equal(secondLines.length, 2, "Timeline grew by one; nothing removed");
+	assert.ok(secondLines.includes(firstLines[0]), "round-1 Timeline entry survives the round-2 merge rewrite");
+});
+
+test("G-234 fail-safe: a failed merge keeps the old body (never blind-overwrites) and records a pending Timeline entry", async () => {
+	const store = await g234Store();
+	await seedSemanticNote(store, "durable", [
+		"---",
+		"key: durable",
+		"type: concept",
+		"tier: summarizable",
+		"created: 2026-08-01",
+		"updated: 2026-08-01",
+		"---",
+		"",
+		"# durable",
+		"",
+		"IMPORTANT OLD FACT that must survive.",
+		"",
+	]);
+	await writeRawEpisode(store, "2026-08-10T0006", "ep-x", "conflicting new info");
+
+	const model = scriptedModel({
+		consolidate: JSON.stringify({ notes: [{ key: "durable", content: "BLIND NEW BODY", sources: ["ep-x"] }] }),
+		mergeThrows: true,
+	});
+	const result = await new Memory(store, model).consolidate();
+
+	const body = (await readText(join(store, "semantic", "durable.md"))) ?? "";
+	assert.match(body, /IMPORTANT OLD FACT that must survive\./, "old body must be preserved on merge failure");
+	assert.doesNotMatch(body, /BLIND NEW BODY/, "must never fall back to a blind overwrite with the raw new content");
+	const lines = timelineLines(body);
+	assert.equal(lines.length, 1);
+	assert.match(lines[0], /merge failed/i);
+	assert.match(lines[0], /pending/i);
+	assert.match(lines[0], /ep-x/);
+	assert.equal(result.notesTouched, 1, "a single failed note must not abort the whole batch");
 });
