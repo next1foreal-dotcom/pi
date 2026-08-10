@@ -63,6 +63,7 @@ import {
 	git,
 	hasConflictRelation,
 	isFileExists,
+	JsonTruncatedError,
 	markdownEntries,
 	markdownStems,
 	normalizeActiveTier,
@@ -579,37 +580,65 @@ export class Memory {
 			const model = this.model;
 			const state = await readJson<{ cursor?: unknown; last_consolidate?: string | null }>(this.paths.stateFile, {});
 			const cursor = parseConsolidateCursor(state.cursor ?? null);
-			const batch = selectConsolidateBatch(await this.episodesSince(cursor), limit);
-			const episodes = batch.map(({ episode }) => episode);
-			if (episodes.length === 0) return { episodes: 0, notesTouched: 0, moments: 0 };
-
-			const joined = batch.map(({ promptText }) => promptText).join("\n\n");
+			const available = await this.episodesSince(cursor);
+			if (available.length === 0) return { episodes: 0, notesTouched: 0, moments: 0 };
 			const existing = await markdownStems(this.paths.semantic);
-			const result = await completeJson<{
-				notes?: Array<Record<string, unknown>>;
-				moments?: Array<{ trigger?: string; shift?: string }>;
-			}>(() => model.complete(consolidatePrompt(joined, existing)));
-			const notes = result.notes ?? [];
-			const moments = result.moments ?? [];
-			const newCursor = advanceConsolidateCursor(cursor, episodes);
 
-			for (const note of notes) await this.upsertNote(note);
-			if (moments.length > 0) {
-				const date = newCursor.ts.slice(0, 10);
-				await appendText(
-					this.paths.becoming,
-					moments
-						.map((moment) => `- ${date} · trigger: ${moment.trigger ?? ""} · shift: ${moment.shift ?? ""}\n`)
-						.join(""),
-				);
+			// Batch size is the only lever we have against output-token truncation: the model
+			// interface (model.ts ModelLike) exposes no max_tokens knob, and a truncated reply repeats
+			// identically for a fixed prompt (so completeJson's re-asks can't fix it). On
+			// JsonTruncatedError, halve the batch and retry — a smaller batch has less to emit, so the
+			// reply fits — letting the backlog drain instead of wedging forever on batch 1. Halving the
+			// realized episode count (not the requested limit) guarantees strict progress even when the
+			// char budget was the binding constraint. A single episode that still truncates is a genuine
+			// failure: we let it throw with the cursor untouched (nothing consumed, next run retries)
+			// rather than silently skip it — durability first, fail loud.
+			let batchLimit = limit;
+			for (;;) {
+				const batch = selectConsolidateBatch(available, batchLimit);
+				const episodes = batch.map(({ episode }) => episode);
+				if (episodes.length === 0) return { episodes: 0, notesTouched: 0, moments: 0 };
+				const joined = batch.map(({ promptText }) => promptText).join("\n\n");
+
+				let result: {
+					notes?: Array<Record<string, unknown>>;
+					moments?: Array<{ trigger?: string; shift?: string }>;
+				};
+				try {
+					result = await completeJson<{
+						notes?: Array<Record<string, unknown>>;
+						moments?: Array<{ trigger?: string; shift?: string }>;
+					}>(() => model.complete(consolidatePrompt(joined, existing)));
+				} catch (error) {
+					if (error instanceof JsonTruncatedError && episodes.length > 1) {
+						batchLimit = Math.floor(episodes.length / 2);
+						continue;
+					}
+					throw error;
+				}
+
+				const notes = result.notes ?? [];
+				const moments = result.moments ?? [];
+				const newCursor = advanceConsolidateCursor(cursor, episodes);
+
+				for (const note of notes) await this.upsertNote(note);
+				if (moments.length > 0) {
+					const date = newCursor.ts.slice(0, 10);
+					await appendText(
+						this.paths.becoming,
+						moments
+							.map((moment) => `- ${date} · trigger: ${moment.trigger ?? ""} · shift: ${moment.shift ?? ""}\n`)
+							.join(""),
+					);
+				}
+
+				await writeJson(this.paths.stateFile, {
+					...state,
+					cursor: newCursor,
+					last_consolidate: newCursor.ts,
+				});
+				return { episodes: episodes.length, notesTouched: notes.length, moments: moments.length };
 			}
-
-			await writeJson(this.paths.stateFile, {
-				...state,
-				cursor: newCursor,
-				last_consolidate: newCursor.ts,
-			});
-			return { episodes: episodes.length, notesTouched: notes.length, moments: moments.length };
 		});
 	}
 	async backfill(opts: BackfillOptions = {}): Promise<BackfillRunResult> {

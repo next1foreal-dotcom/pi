@@ -1002,6 +1002,62 @@ test("consolidate retries the model on invalid JSON instead of dying", async () 
 	assert.deepEqual(result, { episodes: 1, notesTouched: 0, moments: 1 });
 });
 
+test("consolidate halves the batch on a truncated reply and still drains the backlog", async () => {
+	const store = await tempStore();
+	for (let i = 1; i <= 4; i++) {
+		await writeRawEpisode(store, `2026-06-21T000${i}`, `shrink-${i}`, `Episode ${i} body.`);
+	}
+	const batchSizes: number[] = [];
+	const memory = new Memory(store, {
+		complete(prompt: string) {
+			const episodeCount = [...prompt.matchAll(/\[shrink-\d\]/g)].length;
+			batchSizes.push(episodeCount);
+			// The model can only emit a complete reply for <= 2 episodes; more overflows its ceiling
+			// and comes back as an unclosed ```json fence (the production failure shape).
+			if (episodeCount > 2) return '```json\n{"notes": [{"key": "k", "title": "t';
+			return JSON.stringify({ notes: [], moments: [] });
+		},
+	});
+
+	const first = await memory.consolidate(4);
+	assert.equal(first.episodes, 2); // 4 → truncated → halved to 2 → fits
+	assert.deepEqual(batchSizes, [4, 2]); // asked with 4 (truncated), then 2 (succeeded)
+
+	const second = await memory.consolidate(4);
+	assert.equal(second.episodes, 2); // the remaining 2 drain on the next run
+
+	const third = await memory.consolidate(4);
+	assert.equal(third.episodes, 0); // backlog empty — pipeline never wedged
+});
+
+test("consolidate fails loud on a single-episode truncation and consumes nothing", async () => {
+	const store = await tempStore();
+	await writeRawEpisode(store, "2026-06-22T0001", "stuck-1", "Unprocessable episode.");
+	const rawPath = join(store, "episodic", "raw", "2026-06-22T0001--stuck-1.md");
+	const rawBefore = await readText(rawPath);
+	let calls = 0;
+	const memory = new Memory(store, {
+		complete() {
+			calls++;
+			return '```json\n{"notes": [{"key": "k"'; // always truncated
+		},
+	});
+
+	// One episode cannot be shrunk further, so it surfaces the failure instead of silently skipping.
+	await assert.rejects(() => memory.consolidate(4), /truncat/i);
+	assert.equal(calls, 1); // no futile re-asks
+
+	// Durability first: raw is untouched and the episode was NOT consumed — a later run (model now
+	// healthy) still processes it, proving the failed batch did not advance the cursor.
+	assert.equal(await readText(rawPath), rawBefore);
+	const healed = new Memory(store, {
+		complete() {
+			return JSON.stringify({ notes: [], moments: [{ trigger: "t", shift: "s" }] });
+		},
+	});
+	assert.equal((await healed.consolidate(4)).episodes, 1);
+});
+
 test("consolidate truncates long raw episodes in the prompt without changing raw", async () => {
 	const store = await tempStore();
 	const body = "A".repeat(20_000);

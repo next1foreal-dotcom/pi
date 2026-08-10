@@ -486,18 +486,93 @@ export function repairJsonEscapes(source: string): string {
 	return out;
 }
 
+// Raised by extractJson when JSON.parse (and the escape-repair pass) fail. The `truncated`
+// flag distinguishes a response cut off at the model's output-token ceiling from a
+// complete-but-malformed one, so callers can react differently (retry vs. shrink the input).
+export class JsonExtractError extends Error {
+	readonly truncated: boolean;
+	constructor(message: string, options: { truncated: boolean }) {
+		super(message);
+		this.name = "JsonExtractError";
+		this.truncated = options.truncated;
+	}
+}
+
+// The model finished mid-output (hit its token ceiling). Distinct from a stochastic
+// malformed-but-complete reply because re-asking the SAME prompt reproduces it every time — so
+// completeJson raises this instead of exhausting its retry budget, and a caller that owns the
+// batch size (e.g. consolidate) catches it to shrink the input rather than retry blindly.
+export class JsonTruncatedError extends Error {
+	readonly responseHead: string;
+	constructor(message: string, responseHead: string) {
+		super(message);
+		this.name = "JsonTruncatedError";
+		this.responseHead = responseHead;
+	}
+}
+
+// Strip a Markdown code fence wrapping a JSON payload. Covers the four shapes models emit: a
+// closed ```json … ``` block (even with prose around it), an UNCLOSED opening ```json fence (the
+// signature of a response cut off at its token ceiling — stripping the dangling opener is what
+// lets the real "truncated JSON" error surface instead of a misleading backtick parse error), no
+// fence at all, and a fence buried in surrounding prose.
+export function stripCodeFence(text: string): string {
+	const trimmed = text.trim();
+	const closed = /```(?:json)?[^\S\r\n]*\r?\n?([\s\S]*)\r?\n?[^\S\r\n]*```/i.exec(trimmed);
+	if (closed) return closed[1].trim();
+	const opening = /```(?:json)?[^\S\r\n]*\r?\n?([\s\S]*)$/i.exec(trimmed);
+	if (opening) return opening[1].trim();
+	return trimmed;
+}
+
+// True when the text's JSON structure never closes — scanning ends still inside a string or with
+// unbalanced { } / [ ]. This is the deterministic fingerprint of output-token truncation, as
+// opposed to a complete-but-invalid reply (e.g. an unescaped inner quote), which stays balanced.
+export function looksTruncated(source: string): boolean {
+	let depth = 0;
+	let inString = false;
+	let escaped = false;
+	for (let i = 0; i < source.length; i++) {
+		const char = source[i];
+		if (escaped) {
+			escaped = false;
+			continue;
+		}
+		if (inString) {
+			if (char === "\\") escaped = true;
+			else if (char === '"') inString = false;
+			continue;
+		}
+		if (char === '"') inString = true;
+		else if (char === "{" || char === "[") depth++;
+		else if (char === "}" || char === "]") depth--;
+	}
+	return inString || depth > 0;
+}
+
 export function extractJson<T>(text: string): T {
-	let source = text.trim();
-	const fence = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(source);
-	if (fence) source = fence[1].trim();
+	const trimmed = text.trim();
+	try {
+		// Fast path: already-valid JSON. Never fence-strip it — a value may legitimately contain
+		// ``` (e.g. a note body quoting a code block), which the fence regex would corrupt.
+		return JSON.parse(trimmed) as T;
+	} catch {
+		// Not valid as-is; fall through to fence-stripping + escape repair.
+	}
+	const source = stripCodeFence(trimmed);
 	try {
 		return JSON.parse(source) as T;
 	} catch (originalError) {
 		try {
 			return JSON.parse(repairJsonEscapes(source)) as T;
 		} catch (repairError) {
-			throw new Error(
-				`extractJson failed. original error: ${errorMessage(originalError)}; after repair attempt error: ${errorMessage(repairError)}`,
+			const truncated = looksTruncated(source);
+			const lead = truncated
+				? "extractJson failed: response appears truncated/unterminated (model output likely hit its token ceiling)."
+				: "extractJson failed.";
+			throw new JsonExtractError(
+				`${lead} original error: ${errorMessage(originalError)}; after repair attempt error: ${errorMessage(repairError)}`,
+				{ truncated },
 			);
 		}
 	}
@@ -506,6 +581,12 @@ export function extractJson<T>(text: string): T {
 // LLM output is stochastic: one malformed response must not kill a whole batch run
 // (2026-07-21: consolidate died mid-drain on an unescaped quote). Bounded re-ask,
 // then fail loud with the parse error and the head of the last response.
+//
+// Truncation is the exception: a reply cut off at the model's token ceiling repeats identically
+// for a fixed prompt, so re-asking only burns tokens (real money) for the same failure. Detect it
+// and raise JsonTruncatedError immediately — without exhausting attempts — so a caller that
+// controls the input size can shrink the batch. The attempts default stays 3 for genuine
+// stochastic malformations.
 export async function completeJson<T>(complete: () => Promise<string> | string, attempts = 3): Promise<T> {
 	let lastError = "";
 	let lastText = "";
@@ -515,6 +596,12 @@ export async function completeJson<T>(complete: () => Promise<string> | string, 
 			return extractJson<T>(lastText);
 		} catch (error) {
 			lastError = errorMessage(error);
+			if (error instanceof JsonExtractError && error.truncated) {
+				throw new JsonTruncatedError(
+					`model response truncated on attempt ${attempt}/${attempts}; re-asking the same prompt cannot help — reduce the batch. last: ${lastError}; response head: ${lastText.slice(0, 200)}`,
+					lastText,
+				);
+			}
 		}
 	}
 	throw new Error(

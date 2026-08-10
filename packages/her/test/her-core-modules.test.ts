@@ -5,7 +5,14 @@ import { join } from "node:path";
 import test, { mock } from "node:test";
 import { DEFAULT_CONFIG, loadConfig, renderConfig } from "../src/her-core/config.ts";
 import { createEmbeddingSearch } from "../src/her-core/embedding-search.ts";
-import { extractJson } from "../src/her-core/memory-utils.ts";
+import {
+	completeJson,
+	extractJson,
+	JsonExtractError,
+	JsonTruncatedError,
+	looksTruncated,
+	stripCodeFence,
+} from "../src/her-core/memory-utils.ts";
 import { FakeModel, OpenAICompatibleModel } from "../src/her-core/model.ts";
 import { validateMemoryProvenance } from "../src/her-core/privacy.ts";
 import {
@@ -87,6 +94,87 @@ test("extractJson fail-loud on truncated JSON reports both original and repair-a
 			return true;
 		},
 	);
+});
+
+test("stripCodeFence handles closed, unclosed, absent, and prose-wrapped fences", () => {
+	// closed fence
+	assert.equal(stripCodeFence('```json\n{"a": 1}\n```'), '{"a": 1}');
+	// unclosed opening fence (a truncated response): strip the dangling opener, keep the tail
+	assert.equal(stripCodeFence('```json\n{"a": 1, "b": ['), '{"a": 1, "b": [');
+	// no fence: returned unchanged
+	assert.equal(stripCodeFence('{"a": 1}'), '{"a": 1}');
+	// fence buried in surrounding prose
+	assert.equal(stripCodeFence('Here you go:\n```json\n{"a": 1}\n```\nHope that helps!'), '{"a": 1}');
+});
+
+test("looksTruncated flags unterminated JSON but not complete-but-malformed JSON", () => {
+	assert.equal(looksTruncated('{"a": 1, "b": [1, 2,'), true); // unbalanced braces/brackets
+	assert.equal(looksTruncated('{"notes": [{"key": "k", "title": "t'), true); // ends inside a string
+	assert.equal(looksTruncated('{"a": 1}'), false); // complete
+	// complete but malformed (an unescaped inner quote): structurally balanced, so NOT truncation
+	assert.equal(looksTruncated('{"t": "he said "hi" mid"}'), false);
+});
+
+test("extractJson strips an unclosed opening fence and reports truncation, not a backtick error", () => {
+	const truncated = '```json\n{"notes": [{"key": "k", "title": "t';
+	assert.throws(
+		() => extractJson(truncated),
+		(error: unknown) => {
+			assert.ok(error instanceof JsonExtractError);
+			assert.equal(error.truncated, true);
+			assert.match(error.message, /truncated|unterminated/i);
+			assert.doesNotMatch(error.message, /`/); // the misleading backtick parse error must be gone
+			return true;
+		},
+	);
+});
+
+test("extractJson parses a closed fenced block", () => {
+	assert.deepEqual(extractJson('```json\n{"a": 1, "b": [2, 3]}\n```'), { a: 1, b: [2, 3] });
+});
+
+test("extractJson keeps valid JSON whose value contains a triple-backtick fence", () => {
+	const payload = JSON.stringify({ body: "```python\nprint(1)\n```" });
+	assert.deepEqual(extractJson(payload), { body: "```python\nprint(1)\n```" });
+});
+
+test("extractJson parses a fenced block whose string value contains a triple-backtick fence", () => {
+	const payload = JSON.stringify({ body: "```python\nprint(1)\n```" });
+	assert.deepEqual(extractJson(`\`\`\`json\n${payload}\n\`\`\``), { body: "```python\nprint(1)\n```" });
+});
+
+test("completeJson raises JsonTruncatedError immediately without burning the retry budget", async () => {
+	let calls = 0;
+	await assert.rejects(
+		() =>
+			completeJson(() => {
+				calls++;
+				return '```json\n{"notes": [{"key": "k"';
+			}),
+		(error: unknown) => {
+			assert.ok(error instanceof JsonTruncatedError);
+			return true;
+		},
+	);
+	assert.equal(calls, 1); // truncation is deterministic — re-asking the same prompt cannot help
+});
+
+test("completeJson retries a stochastic malformation up to the attempt budget then fails loud", async () => {
+	let calls = 0;
+	await assert.rejects(
+		() =>
+			completeJson(() => {
+				calls++;
+				return '{"notes": [{"title": "he said "hi""}]}'; // unescaped quote, structurally balanced
+			}),
+		/model returned invalid JSON in 3 attempts/,
+	);
+	assert.equal(calls, 3);
+});
+
+test("completeJson returns parsed JSON on a valid reply", async () => {
+	const result = await completeJson<{ ok: boolean }>(() => '{"ok": true}');
+	assert.equal(result.ok, true);
 });
 
 test("config loads shallow YAML overrides over defaults", async () => {
