@@ -2,6 +2,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Memory } from "../her-core/memory.ts";
+import { fenceUntrusted } from "../her-core/store.ts";
 import { CUA_DRIVER_M0, type HandsDriver } from "./driver.ts";
 import { evaluateHandsPolicy, type HandsActionKind, type HandsResolvedConfig, WRITE_ACTIONS } from "./policy.ts";
 import { type HandsTrailEntry, recordTrail } from "./trail.ts";
@@ -101,7 +102,10 @@ export function registerHandsTools(pi: ExtensionAPI, deps: HandsToolDeps): void 
 				await recordTrail(deps.mem, `snapshot ${params.process}`, [
 					entry("snapshot", params.process, "background", outcome, detail(result)),
 				]);
-				return textResult(`${screenBegin}\n${result.stdout.trim()}\n${screenEnd}`, { outcome, window: windowRef });
+				return textResult(fenceUntrusted(screenBegin, screenEnd, result.stdout.trim()), {
+					outcome,
+					window: windowRef,
+				});
 			} catch (error) {
 				const message = errorMessage(error);
 				await recordTrail(deps.mem, `snapshot ${params.process}`, [

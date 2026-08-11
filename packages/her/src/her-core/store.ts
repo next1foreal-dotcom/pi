@@ -19,6 +19,24 @@ export function redactSecrets(text: string): string {
 	return redacted;
 }
 
+/** What a forged fence delimiter is replaced with. Cannot itself close a fence. */
+export const FENCE_MARKER_REMOVED = "«fence-marker-removed»";
+
+/**
+ * Wrap untrusted text in a begin/end fence, first defanging any copy of either
+ * delimiter inside the text.
+ *
+ * Without this, content can embed the closing marker: everything after that
+ * point then reads as trusted, un-fenced text to anyone parsing top-down, which
+ * is exactly what the fence exists to prevent. Every fence over model-visible
+ * untrusted data (recalled memory, screen content, session excerpts, inbox
+ * messages) must go through here rather than joining the markers by hand.
+ */
+export function fenceUntrusted(begin: string, end: string, body: string): string {
+	const defanged = body.split(begin).join(FENCE_MARKER_REMOVED).split(end).join(FENCE_MARKER_REMOVED);
+	return [begin, defanged, end].join("\n");
+}
+
 /**
  * Windows transient fs contention predicate.
  * Real-time antivirus scanners (Defender), search indexers, and other system

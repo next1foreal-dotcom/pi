@@ -399,7 +399,16 @@ export {
 	SESSION_SEARCH_MAX_SNIPPETS_PER_FILE,
 	searchSessions,
 } from "./session-roster.ts";
-export { frontmatter, parseFrontmatter, readJson, readText, writeJson, writeText } from "./store.ts";
+export {
+	fenceUntrusted,
+	FENCE_MARKER_REMOVED,
+	frontmatter,
+	parseFrontmatter,
+	readJson,
+	readText,
+	writeJson,
+	writeText,
+} from "./store.ts";
 export type {
 	CreateHerTaskOptions,
 	ExitCriterionResult,

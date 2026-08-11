@@ -8,7 +8,7 @@ import {
 	type SessionSourceName,
 	walkFiles,
 } from "./session-read.ts";
-import { redactSecrets } from "./store.ts";
+import { fenceUntrusted, redactSecrets } from "./store.ts";
 
 export type SessionActivity = "active" | "idle" | "cold";
 
@@ -256,13 +256,12 @@ export function formatSessionSearch(query: string, hits: SessionHit[], truncated
 	for (const hit of hits) {
 		const project = hit.project ? `  project=${redactSecrets(hit.project)}` : "";
 		lines.push(`[${hit.source}] ${hit.id}  hits=${hit.hits}${project}`);
-		lines.push(SESSION_EXCERPT_BEGIN);
-		for (const snippet of hit.snippets) lines.push(redactSecrets(snippet));
+		const excerpt = hit.snippets.map((snippet) => redactSecrets(snippet));
 		const omittedSnippets = snippetTruncationInfo(hit);
 		if (omittedSnippets) {
-			lines.push(`… ${omittedSnippets} additional snippet(s) omitted; hits includes all matches.`);
+			excerpt.push(`… ${omittedSnippets} additional snippet(s) omitted; hits includes all matches.`);
 		}
-		lines.push(SESSION_EXCERPT_END);
+		lines.push(fenceUntrusted(SESSION_EXCERPT_BEGIN, SESSION_EXCERPT_END, excerpt.join("\n")));
 	}
 	const info = truncationInfo(hits);
 	const details: string[] = [];

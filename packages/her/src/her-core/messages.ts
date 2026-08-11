@@ -4,7 +4,15 @@ import type { TasksConfig } from "./bg-task-config.ts";
 import { recordEventWake, shouldEventWake } from "./event-wake.ts";
 import type { SessionReadConfig, SessionSourceName } from "./session-read.ts";
 import { listSessionFiles } from "./session-roster.ts";
-import { frontmatter, parseFrontmatter, readText, redactSecrets, retryOnFsContention, writeNewText } from "./store.ts";
+import {
+	fenceUntrusted,
+	frontmatter,
+	parseFrontmatter,
+	readText,
+	redactSecrets,
+	retryOnFsContention,
+	writeNewText,
+} from "./store.ts";
 
 export const MIN_BATCH = 3;
 export const MAX_AGE_MS = 30 * 60 * 1000;
@@ -129,7 +137,7 @@ export function formatInbox(messages: HerMessage[]): string {
 	if (messages.length === 0) return "No Her inbox messages.";
 	const blocks = messages.map((message) => {
 		const header = `[${redactSecrets(message.from)} → ${redactSecrets(message.to)}] ${redactSecrets(message.at)}${message.urgent ? " urgent" : ""}`;
-		return [header, INBOX_MESSAGE_BEGIN, redactSecrets(message.body), INBOX_MESSAGE_END].join("\n");
+		return [header, fenceUntrusted(INBOX_MESSAGE_BEGIN, INBOX_MESSAGE_END, redactSecrets(message.body))].join("\n");
 	});
 	return blocks.join("\n\n");
 }

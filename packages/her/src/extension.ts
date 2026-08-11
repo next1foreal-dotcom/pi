@@ -37,6 +37,7 @@ import {
 	deliveryDecision,
 	drainInbox,
 	enqueueTaskTelegramNotices,
+	fenceUntrusted,
 	formatBgTaskStatusBoard,
 	formatInbox,
 	formatSessionList,
@@ -134,7 +135,12 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	her_session_list: { destructive: false },
 	her_session_read: { destructive: false },
 	her_session_search: { destructive: false },
-	her_session_send: { destructive: false },
+	// Writes into the memory store, can trigger a paid wake, and puts text into
+	// another agent's system prompt — the same side-effect family as
+	// her_task_continue, not the read-only family. Cedar is deny-by-default for
+	// destructive tools, so this ships denied until Fei grants a named permit
+	// (the her_task_spawn / _stop / _continue precedent in her-trust.cedar).
+	her_session_send: { destructive: true },
 	her_feedback: { destructive: false },
 	her_sync: { destructive: false },
 	her_task_create: { destructive: false },
@@ -471,12 +477,12 @@ export function renderRecall(notes: Awaited<ReturnType<Memory["recall"]>>): stri
 			return `${index + 1}. ${note.id} (${note.kind})\n${excerpt}`;
 		})
 		.join("\n\n");
-	return [memoryBegin, body, memoryEnd].join("\n");
+	return fenceUntrusted(memoryBegin, memoryEnd, body);
 }
 
 export function renderMirror(note: NonNullable<Awaited<ReturnType<Memory["surface"]>>>): string {
 	const excerpt = note.text.trim().replace(/\s+/g, " ").slice(0, 700);
-	return [`A memory surfaced: ${note.id}`, "", memoryBegin, excerpt, memoryEnd].join("\n");
+	return [`A memory surfaced: ${note.id}`, "", fenceUntrusted(memoryBegin, memoryEnd, excerpt)].join("\n");
 }
 
 function renderGoalContinuation(task: LongTaskRecord): string {
