@@ -126,7 +126,7 @@ async function checkCursor(ctx: DoctorContext): Promise<CheckResult> {
 	} else return resultFor("DR-02", "cursor-sync", "fail", "invalid cursor shape");
 	const cursorMs = parseTimestamp(cursorTs);
 	if (cursorMs === undefined) return resultFor("DR-02", "cursor-sync", "fail", "invalid cursor timestamp");
-	const { episodes } = await rawEpisodes(ctx.root);
+	const { episodes, unparsed } = await rawEpisodes(ctx.root);
 	const newest = episodes.at(-1);
 	if (!newest)
 		return resultFor(
@@ -150,8 +150,10 @@ async function checkCursor(ctx: DoctorContext): Promise<CheckResult> {
 		"DR-02",
 		"cursor-sync",
 		status,
-		`cursor=${compactTimestamp(cursorTs)} lag=${lag} (${status === "warn" ? ">" : "<"} ${ctx.config.cursorLagWarn})`,
-		{ lag },
+		// unparsed episodes are invisible to lag, so a bare number would understate
+		// the backlog — say it in the line itself, not just in counts.
+		`cursor=${compactTimestamp(cursorTs)} lag=${lag} (${status === "warn" ? ">" : "<"} ${ctx.config.cursorLagWarn})${unparsed ? `, unparsed=${unparsed} not counted — true backlog is larger` : ""}`,
+		{ lag, unparsed },
 	);
 }
 async function checkFrontmatter(ctx: DoctorContext): Promise<CheckResult> {
@@ -285,12 +287,12 @@ async function rawEpisodes(root: string): Promise<{ episodes: RawEpisode[]; unpa
 		const stem = name.slice(0, -3);
 		const marker = stem.indexOf("--");
 		const prefix = marker < 0 ? "" : stem.slice(0, marker);
-		const ms = parseTimestamp(prefix);
-		if (ms === undefined) {
+		const parsed = parseEpisodePrefix(prefix);
+		if (parsed === undefined) {
 			unparsed++;
 			continue;
 		}
-		episodes.push({ name, path, ts: prefix, ms, id: stem.slice(marker + 2) });
+		episodes.push({ name, path, ts: parsed.ts, ms: parsed.ms, id: stem.slice(marker + 2) });
 	}
 	episodes.sort((a, b) => a.ms - b.ms || a.name.localeCompare(b.name));
 	return { episodes, unparsed };
@@ -403,6 +405,30 @@ function wikilinkExists(target: string, known: Set<string>): boolean {
 		? [normalized]
 		: ["semantic", "world", "topics", "ideas"].map((dir) => `${dir}/${normalized}`);
 	return names.some((name) => known.has(name.endsWith(".md") ? name : `${name}.md`));
+}
+/**
+ * Raw filenames exist in three generations: the current `2026-08-11T14_03--<id>`,
+ * the older compact `2026-05-07T0056--<id>`, and bulk session exports named by
+ * date only (`2026-06-05--FULL-SESSION-export--<id>`). Recognising only the first
+ * left 3999 of 5533 episodes invisible to DR-01/DR-02, so the reported lag read
+ * far lower than the real backlog. Kept separate from parseTimestamp, which
+ * guards the cursor and must stay strict (DR-02 fails loud on odd shapes).
+ */
+function parseEpisodePrefix(prefix: string): { ms: number; ts: string } | undefined {
+	const text = prefix.trim();
+	const withTime = /^(\d{4}-\d{2}-\d{2})T(\d{2})[_:]?(\d{2})/.exec(text);
+	if (withTime) {
+		const ts = `${withTime[1]}T${withTime[2]}:${withTime[3]}`;
+		const ms = Date.parse(`${ts}Z`);
+		return Number.isFinite(ms) ? { ms, ts } : undefined;
+	}
+	const dateOnly = /^(\d{4}-\d{2}-\d{2})$/.exec(text);
+	if (dateOnly) {
+		// Day-granular: a bulk export carries no clock time, so it sorts at midnight.
+		const ms = Date.parse(`${dateOnly[1]}T00:00Z`);
+		return Number.isFinite(ms) ? { ms, ts: `${dateOnly[1]}T00:00` } : undefined;
+	}
+	return undefined;
 }
 function parseTimestamp(raw: string): number | undefined {
 	const text = raw.trim().replace(/_/g, ":");

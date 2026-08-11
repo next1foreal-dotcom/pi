@@ -153,6 +153,41 @@ test("DR-03 enforces raw minimum keys and allows unknown keys", async () => {
 	});
 });
 
+test("DR-01/DR-02 count all three raw filename generations", async () => {
+	await withStore(async (root) => {
+		const rawDir = join(root, "episodic", "raw");
+		const day = new Date().toISOString().slice(0, 10);
+		const body = (id: string) =>
+			`${frontmatter({ id, timestamp: `${day}T00:00`, project: "p", session_id: id })}text\n`;
+		// current: THH_MM · legacy compact: THHMM · bulk export: date only
+		await writeText(join(rawDir, `${day}T09_15--current.md`), body("current"));
+		await writeText(join(rawDir, `${day}T0915--legacy.md`), body("legacy"));
+		await writeText(join(rawDir, `${day}--FULL-SESSION-export--bulk.md`), body("bulk"));
+
+		const report = await runDoctor(root, { checks: ["DR-01"] });
+		assert.equal(report.checks[0].counts?.parsed, 3, report.checks[0].detail);
+		assert.equal(report.checks[0].counts?.unparsed, 0);
+	});
+});
+
+test("DR-02 surfaces unparsed episodes so the lag is not read as the whole truth", async () => {
+	await withStore(async (root) => {
+		const rawDir = join(root, "episodic", "raw");
+		const day = new Date().toISOString().slice(0, 10);
+		await writeText(
+			join(rawDir, `${day}T09_15--seen.md`),
+			`${frontmatter({ id: "seen", timestamp: `${day}T09:15`, project: "p", session_id: "seen" })}text\n`,
+		);
+		await writeText(join(rawDir, "totally-unparseable.md"), "no timestamp anywhere\n");
+		await writeJson(join(root, ".her", "state.json"), { cursor: { ts: `${day}T09:00`, done_ids: [] } });
+
+		const report = await runDoctor(root, { checks: ["DR-02"] });
+		// The lag number alone would understate the backlog; the detail must say so.
+		assert.match(report.checks[0].detail, /unparsed=1/);
+		assert.equal(report.checks[0].counts?.unparsed, 1);
+	});
+});
+
 test("DR-04 reports unresolved wikilinks as WARN by default", async () => {
 	await withStore(async (root) => {
 		await writeText(
