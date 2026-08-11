@@ -151,6 +151,8 @@ export {
 	resolvePiCliPath,
 	runDispatch,
 } from "./dispatch.ts";
+export type { CheckResult, CheckStatus, DoctorOptions, DoctorReport, Severity } from "./doctor.ts";
+export { runDoctor } from "./doctor.ts";
 export { createEmbeddingSearch } from "./embedding-search.ts";
 export type { EvalTrendPoint, EvalTrendReport, TrendDirection } from "./eval-trend.ts";
 export { computeEvalTrend, renderEvalTrendReport, runEvalTrend } from "./eval-trend.ts";

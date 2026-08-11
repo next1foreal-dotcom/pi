@@ -79,7 +79,15 @@ import {
 	type TelegramReplyMode,
 	telegramResponderReadOnlyTools,
 } from "./cli/types.ts";
-import { errorMessage, intakeContentHash, parseOptionalPositiveNumber, requireEnv, UsageError } from "./cli/utils.ts";
+import {
+	errorMessage,
+	intakeContentHash,
+	parseOptionalPositiveNumber,
+	requireEnv,
+	requireNonBlank,
+	requireOptionValue,
+	UsageError,
+} from "./cli/utils.ts";
 import {
 	appendTasteIntakeLog,
 	assemblePrior,
@@ -116,6 +124,7 @@ import {
 	recordTelegramConfirmationFromText,
 	resolveTasteToolConfig,
 	runDispatch,
+	runDoctor,
 	runEvalTrend,
 	runGoldenEvals,
 	runMemoryLint,
@@ -152,6 +161,10 @@ export async function runHerCli(
 	// CONTEXT.md (the approve-only invariant stays intact).
 	if (argv[0] === "persona") {
 		return runPersonaCommand(argv.slice(1), env, cwd, io);
+	}
+
+	if (argv[0] === "doctor") {
+		return runDoctorCommand(argv.slice(1), env, cwd, io);
 	}
 
 	let command: CliCommand;
@@ -887,6 +900,73 @@ function renderPersona(payload: CliPersonaPayload): string {
 	return payload.result.persona;
 }
 
+function formatDoctorReport(report: Awaited<ReturnType<typeof runDoctor>>, options: { json?: boolean } = {}): string {
+	if (options.json)
+		return JSON.stringify(
+			report.error
+				? [{ id: "ERROR", name: "doctor", severity: "fail", status: "fail", detail: report.error }]
+				: report.checks,
+			null,
+			2,
+		);
+	return [
+		`her doctor — store: ${report.root}`,
+		...(report.error ? [`[ERROR] doctor — ${report.error}`] : []),
+		...report.checks.map((check) => `[${check.status.toUpperCase()}] ${check.id} ${check.name} — ${check.detail}`),
+		`exit ${report.exitCode}`,
+	].join("\n");
+}
+function parseDoctorCommandArgs(argv: string[]): { root?: string; json: boolean; strict: boolean; checks?: string[] } {
+	let root: string | undefined;
+	let json = false;
+	let strict = false;
+	const checks: string[] = [];
+	for (let index = 0; index < argv.length; index++) {
+		const arg = argv[index];
+		if (arg === "--root") {
+			root = requireNonBlank(requireOptionValue(argv[++index], arg), arg);
+			continue;
+		}
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--strict") {
+			strict = true;
+			continue;
+		}
+		if (arg === "--check") {
+			checks.push(
+				...requireOptionValue(argv[++index], arg)
+					.split(",")
+					.map((item) => item.trim())
+					.filter(Boolean),
+			);
+			while (index + 1 < argv.length && !argv[index + 1].startsWith("--"))
+				checks.push(
+					...argv[++index]
+						.split(",")
+						.map((item) => item.trim())
+						.filter(Boolean),
+				);
+			continue;
+		}
+		throw new UsageError(`unknown doctor option: ${arg}`);
+	}
+	return { root, json, strict, ...(checks.length > 0 ? { checks } : {}) };
+}
+async function runDoctorCommand(args: string[], env: NodeJS.ProcessEnv, cwd: string, io: CliIo): Promise<number> {
+	try {
+		const options = parseDoctorCommandArgs(args);
+		const root = options.root ? resolve(cwd, options.root) : getMemoryDir(env, cwd);
+		const report = await runDoctor(root, options);
+		writeLine(io.stdout, formatDoctorReport(report, { json: options.json }));
+		return report.exitCode;
+	} catch (error) {
+		writeLine(io.stderr, `her doctor: ${errorMessage(error)}`);
+		return 2;
+	}
+}
 async function runPersonaCommand(args: string[], env: NodeJS.ProcessEnv, cwd: string, io: CliIo): Promise<number> {
 	const json = args.includes("--json");
 	const memoryDir = getMemoryDir(env, cwd);
