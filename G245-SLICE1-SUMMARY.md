@@ -4,11 +4,11 @@
 
 | 文件 | 改动 |
 | --- | --- |
-| `packages/her/src/her-core/session-roster.ts` | 新增 246 行：会话文件枚举、列表、全文搜索、活跃度标签、脱敏与不可信栅栏渲染。 |
-| `packages/her/test/session-roster.test.ts` | 新增 154 行：AC-1 至 AC-7 的临时夹具测试。 |
+| `packages/her/src/her-core/session-roster.ts` | 当前 289 行：会话文件枚举、列表、全文搜索、活跃度标签、脱敏与不可信栅栏渲染。 |
+| `packages/her/test/session-roster.test.ts` | 当前 207 行：AC-1 至 AC-7 的临时夹具测试。 |
 | `packages/her/src/her-core/session-read.ts` | 3 行导出改动：仅导出 `activeSpecs`、`walkFiles`、`firstSegment`，未改 `readSession` 语义。 |
-| `packages/her/src/her-core/index.ts` | 新增 9 行导出 roster API。 |
-| `packages/her/src/extension.ts` | 新增 54 行：注册 `her_session_list`、`her_session_search`，并加入非破坏性工具策略。 |
+| `packages/her/src/her-core/index.ts` | 当前新增 12 行 roster API 导出。 |
+| `packages/her/src/extension.ts` | Slice 1 注册代码 54 行，第二轮补充描述和空行：注册 `her_session_list`、`her_session_search`，并加入非破坏性工具策略。 |
 
 未新增依赖；`session-roster.ts` 只读文件，不含网络调用或写入操作；未写 Slice 2 内容。
 
@@ -127,7 +127,7 @@ npm run check
 ## 规格未明确的决定
 
 - `archive` 不是活动 harness，因此 roster 只枚举 Claude Code、Codex、Cursor、pi 四个来源。
-- 搜索按字面、区分大小写匹配；列表和搜索按文件 mtime 从新到旧排序。
+- 搜索按字面、大小写不敏感匹配；列表和搜索按文件 mtime 从新到旧排序。
 - 无法解析的 `since` 不过滤结果，与现有时间过滤惯例一致。
 - 运行环境阻止 `tsx`/Node test runner 创建子进程时，使用 Node 原生 TypeScript strip 模式做等价验证，并在上面明确记录原命令未能运行。
 
@@ -136,5 +136,108 @@ npm run check
 - 三条任务要求的 `node --import tsx --test ...` 命令均因本机 `spawn EPERM` 未能启动测试。
 - `npm run check` 的 browser smoke 和 AC-9 全套测试同样受 `spawn EPERM` 阻断。
 - 未执行 push、merge 或部署；提交仅限当前分支。
+## 第 2 轮修正（CORRECTION-1）
+
+### C1：完整扫描与输出侧上限
+
+修复为逐文件读取完整 transcript，不再用 `SESSION_READ_MAX_BYTES` 或 `SESSION_READ_MAX_RECORDS` 截断扫描；新增 `SESSION_SEARCH_MAX_SNIPPETS_PER_FILE = 5`，`hits` 统计大小写不敏感的真实字面出现次数，渲染总长仍受 `SESSION_READ_MAX_BYTES` 约束并显式说明截断。
+
+验证命令：
+
+```text
+node --experimental-strip-types .tmp-g245-c1.mts
+```
+
+真实输出（脚本已删除）：
+
+```json
+{"bytes":700657,"hits":12,"snippets":5,"maxSnippets":5}
+```
+
+回归命令：
+
+```text
+node --experimental-strip-types packages/her/test/session-roster.test.ts
+```
+
+真实输出尾部：
+
+```text
+✔ searchSessions scans the whole file, counts every match, and caps snippets only
+ℹ tests 9
+ℹ pass 9
+ℹ fail 0
+```
+
+### C2：列表上限
+
+新增 `SESSION_LIST_MAX_LIMIT = 200`；默认仍为 25，显式 `limit: 100` 可返回超过 25 条。
+
+真实输出尾部：
+
+```text
+✔ listSessions permits more than the ambiguous-prefix ceiling when limit is explicit
+ℹ tests 9
+ℹ pass 9
+```
+
+### C3：大小写不敏感匹配与工具描述
+
+搜索改为 literal、case-insensitive；大写查询命中小写正文的断言包含在 C1 大文件回归中。两个工具描述均包含 `literal, case-insensitive`。
+
+命令：
+
+```text
+rg -n 'literal, case-insensitive' packages/her/src/extension.ts
+```
+
+真实输出：命中 `her_session_list` 与 `her_session_search` 两行（1030、1051）。
+
+### C4：UTF-8 字符边界
+
+`clipToBytes` 改为按 Unicode 字符迭代，在字节预算边界停止，不会生成 U+FFFD；输出仍不超过 `SESSION_READ_MAX_BYTES`。
+
+真实输出尾部：
+
+```text
+✔ formatSessionSearch clips rendered output at a character boundary
+ℹ tests 9
+ℹ pass 9
+```
+
+### C5：注册块空行
+
+命令：
+
+```text
+PowerShell structural check for the two registration blocks
+```
+
+真实输出：
+
+```text
+C5 blank-line: true
+```
+
+### 第 2 轮顺序与回归
+
+```text
+npx tsgo --noEmit
+```
+
+真实结果：`exit 0`。
+
+```text
+node --experimental-strip-types packages/her/test/session-roster.test.ts
+node --experimental-strip-types packages/her/test/session-read.test.ts
+```
+
+真实结果：roster `9/9`，session-read `16/16`。
+
+扩展替代验证真实结果：`tests 28 / pass 20 / fail 8`；8 个既有失败仍是 `git` 子进程 `spawn EPERM`。任务要求的 canonical `node --import tsx --test ...` 在本机仍于启动阶段报 `spawn EPERM`，未伪报为通过。
+
+真机冒烟重新运行结果：`rows=25`、`hitSessions=2`、命中的 source 为 `claude` 与 `codex`；一次性脚本已删除。
+
+`npm run check` 真实尾部为 `Checked 1060 files in 1868ms. No fixes applied.`；依赖、相对导入、shrinkwrap、install-lock 通过，browser smoke 因 esbuild `spawn EPERM` 失败，未把该项标绿。
 
 G245-SLICE1-DONE

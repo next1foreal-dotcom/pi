@@ -379,6 +379,9 @@ export {
 	formatSessionSearch,
 	listSessionFiles,
 	listSessions,
+	SESSION_LIST_MAX_LIMIT,
+	SESSION_SEARCH_DEFAULT_MAX_FILES,
+	SESSION_SEARCH_MAX_SNIPPETS_PER_FILE,
 	searchSessions,
 } from "./session-roster.ts";
 export { frontmatter, parseFrontmatter, readJson, readText, writeJson, writeText } from "./store.ts";

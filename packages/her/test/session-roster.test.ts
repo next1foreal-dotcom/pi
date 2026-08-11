@@ -4,11 +4,13 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import type { SessionReadConfig } from "../src/her-core/session-read.ts";
+import { SESSION_READ_MAX_BYTES } from "../src/her-core/session-read.ts";
 import {
 	activityLabel,
 	formatSessionList,
 	formatSessionSearch,
 	listSessions,
+	SESSION_SEARCH_MAX_SNIPPETS_PER_FILE,
 	type SessionRow,
 	searchSessions,
 } from "../src/her-core/session-roster.ts";
@@ -151,4 +153,55 @@ test("missing directories are empty and maxFiles truncation is explicit", async 
 	const hits = await searchSessions(fixture.config, "needle", { maxFiles: 1, limit: 10 });
 	assert.equal(hits.length, 1);
 	assert.match(formatSessionSearch("needle", hits), /truncated/i);
+});
+
+test("listSessions permits more than the ambiguous-prefix ceiling when limit is explicit", async () => {
+	const { config } = await makeWorkspace();
+	for (let i = 0; i < 30; i++) {
+		await writeSession(
+			join(config.claudeDir, "bulk", `bulk-${String(i).padStart(2, "0")}.jsonl`),
+			[`bulk ${i}`],
+			NOW - i * 1000,
+		);
+	}
+	const rows = await listSessions(config, { limit: 100, now: NOW });
+	assert.ok(rows.length > 25);
+});
+
+test("searchSessions scans the whole file, counts every match, and caps snippets only", async () => {
+	const root = await mkdtemp(join(tmpdir(), "her-session-roster-large-"));
+	const config: SessionReadConfig = {
+		claudeDir: join(root, "claude", "projects"),
+		codexDir: join(root, "missing-codex"),
+		cursorDir: join(root, "missing-cursor"),
+		piDir: join(root, "missing-pi"),
+		archiveDir: join(root, "missing-archive"),
+	};
+	const lines = Array.from({ length: 100 }, () => "filler-".repeat(1000));
+	for (let i = 0; i < 11; i++) lines.push(`late-token-${i}`, "separator-a", "separator-b", "separator-c");
+	lines.push("final late-token");
+	const file = join(config.claudeDir, "large", "large-session.jsonl");
+	assert.ok((await writeSession(file, lines)) > SESSION_READ_MAX_BYTES);
+
+	const hits = await searchSessions(config, "LATE-TOKEN", { context: 0, limit: 10 });
+	assert.equal(hits.length, 1);
+	assert.equal(hits[0].hits, 12);
+	assert.equal(hits[0].snippets.length, SESSION_SEARCH_MAX_SNIPPETS_PER_FILE);
+	const output = formatSessionSearch("LATE-TOKEN", hits);
+	assert.match(output, /additional snippet\(s\) omitted/i);
+	assert.ok(!output.includes(String.fromCodePoint(0xfffd)));
+});
+
+test("formatSessionSearch clips rendered output at a character boundary", () => {
+	const output = formatSessionSearch("needle", [
+		{
+			id: CLAUDE_ID,
+			source: "claude",
+			hits: 1,
+			snippets: ["中文".repeat(40_000)],
+		},
+	]);
+	assert.ok(Buffer.byteLength(output, "utf8") <= SESSION_READ_MAX_BYTES);
+	assert.ok(!output.includes(String.fromCodePoint(0xfffd)));
+	assert.match(output, /output truncated/i);
 });
