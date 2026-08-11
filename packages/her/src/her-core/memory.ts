@@ -143,6 +143,20 @@ const DEFAULT_CONSOLIDATE_BATCH_CHARS = 240000;
 // are here), so a larger slice cannot fit — and sending multi-MB inputs to the model is itself costly.
 const DEFAULT_CONSOLIDATE_CHUNK_FLOOR_CHARS = 2000;
 const DEFAULT_CONSOLIDATE_CHUNK_MAX_ATTEMPTS = 64;
+const DEFAULT_TOPICS_BATCH_UNITS = 250;
+const DEFAULT_TOPICS_MIN_BATCH_UNITS = 25;
+const DEFAULT_IDEAS_MAX_UNITS = 400;
+const DEFAULT_IDEAS_MIN_UNITS = 50;
+
+type NoteSummary = { key: string; kind: string; type: string; title: string };
+type OrganKind = "ideas" | "topic-maps";
+type OrganSkipEntry = {
+	ts: string;
+	organ: OrganKind;
+	reason: "truncated-at-floor";
+	units: number;
+	attempts: number;
+};
 
 function envPositiveInt(name: string, fallback: number): number {
 	const raw = process.env[name];
@@ -968,25 +982,87 @@ export class Memory {
 		});
 	}
 
+	private async organJsonWithShrink<T>(
+		units: NoteSummary[],
+		render: (units: NoteSummary[]) => Promise<T>,
+		floor: number,
+		organ: OrganKind,
+	): Promise<T | null> {
+		let current = units;
+		let attempts = 0;
+		for (;;) {
+			attempts++;
+			try {
+				return await render(current);
+			} catch (error) {
+				if (!(error instanceof JsonTruncatedError)) throw error;
+				if (current.length <= floor) {
+					await this.appendOrganSkip({
+						ts: new Date().toISOString(),
+						organ,
+						reason: "truncated-at-floor",
+						units: current.length,
+						attempts,
+					});
+					return null;
+				}
+				const nextLength = Math.max(floor, Math.floor(current.length / 2));
+				current = organ === "ideas" ? current.slice(-nextLength) : current.slice(0, nextLength);
+			}
+		}
+	}
+
+	private async appendOrganSkip(entry: OrganSkipEntry): Promise<void> {
+		await appendText(join(this.paths.root, "audit", "organ-skips.jsonl"), `${JSON.stringify(entry)}\n`);
+	}
+
 	async buildTopicMaps(): Promise<string[]> {
 		return this.withStoreLock(async () => {
 			if (!this.model) throw new Error("buildTopicMaps requires a model");
 			const model = this.model;
 			const units = await this.noteSummaries();
 			if (units.length === 0) return [];
-			const lines = units.map((unit) => `- ${unit.key} (${unit.type}): ${unit.title}`).join("\n");
-			const result = await completeJson<{ maps?: Array<{ theme?: string; summary?: string; members?: string[] }> }>(
-				() => model.complete(topicMapPrompt(lines), { strong: true }),
-			);
+			const batchSize = envPositiveInt("HER_TOPICS_BATCH_UNITS", DEFAULT_TOPICS_BATCH_UNITS);
+			const floor = envPositiveInt("HER_TOPICS_MIN_BATCH_UNITS", DEFAULT_TOPICS_MIN_BATCH_UNITS);
 			const keyset = new Set(units.map((unit) => unit.key));
+			const maps = new Map<string, { theme: string; summary: string; members: Set<string> }>();
+			for (let start = 0; start < units.length; start += batchSize) {
+				const batch = units.slice(start, start + batchSize);
+				const result = await this.organJsonWithShrink(
+					batch,
+					async (current) => {
+						const lines = current.map((unit) => `- ${unit.key} (${unit.type}): ${unit.title}`).join("\n");
+						return completeJson<{ maps?: Array<{ theme?: string; summary?: string; members?: string[] }> }>(() =>
+							model.complete(topicMapPrompt(lines), { strong: true }),
+						);
+					},
+					floor,
+					"topic-maps",
+				);
+				if (result === null) continue;
+				for (const map of result.maps ?? []) {
+					if (!map.theme) continue;
+					const key = slug(map.theme);
+					const members = (map.members ?? []).map(slug).filter((member) => keyset.has(member));
+					const existing = maps.get(key);
+					if (existing) {
+						for (const member of members) existing.members.add(member);
+						if (!existing.summary && map.summary?.trim()) existing.summary = map.summary;
+						continue;
+					}
+					maps.set(key, {
+						theme: map.theme,
+						summary: map.summary?.trim() ? map.summary : "",
+						members: new Set(members),
+					});
+				}
+			}
 			const written: string[] = [];
-			for (const map of result.maps ?? []) {
-				if (!map.theme) continue;
-				const key = slug(map.theme);
-				const members = (map.members ?? []).map(slug).filter((member) => keyset.has(member));
+			for (const [key, map] of maps) {
+				const members = [...map.members];
 				await writeText(
 					join(this.paths.topics, `${key}.md`),
-					`${frontmatter({ theme: map.theme, created: today(), members })}# ${map.theme}\n\n${map.summary ?? ""}\n\n## Units\n${members.map((member) => `- [[${member}]]`).join("\n")}\n`,
+					`${frontmatter({ theme: map.theme, created: today(), members })}# ${map.theme}\n\n${map.summary}\n\n## Units\n${members.map((member) => `- [[${member}]]`).join("\n")}\n`,
 				);
 				written.push(key);
 			}
@@ -1000,18 +1076,31 @@ export class Memory {
 			const model = this.model;
 			const units = await this.noteSummaries();
 			if (units.length === 0) return [];
-			const unitLines = units.map((unit) => `- ${unit.key} (${unit.kind}/${unit.type}): ${unit.title}`).join("\n");
+			const maxUnits = envPositiveInt("HER_IDEAS_MAX_UNITS", DEFAULT_IDEAS_MAX_UNITS);
+			const floor = envPositiveInt("HER_IDEAS_MIN_UNITS", DEFAULT_IDEAS_MIN_UNITS);
+			const subset = units.length > maxUnits ? units.slice(-maxUnits) : units;
 			const topicLines = (await this.topicSummaries()).join("\n") || "(none)";
 			const existing = (await this.existingIdeaTitles()).join("\n") || "(none)";
-			const result = await completeJson<{
-				ideas?: Array<{
-					title?: string;
-					connects?: string[];
-					insight?: string;
-					spark?: string;
-					kind?: string;
-				}>;
-			}>(() => model.complete(ideaEnginePrompt(unitLines, topicLines, existing), { strong: true }));
+			const result = await this.organJsonWithShrink(
+				subset,
+				async (current) => {
+					const unitLines = current
+						.map((unit) => `- ${unit.key} (${unit.kind}/${unit.type}): ${unit.title}`)
+						.join("\n");
+					return completeJson<{
+						ideas?: Array<{
+							title?: string;
+							connects?: string[];
+							insight?: string;
+							spark?: string;
+							kind?: string;
+						}>;
+					}>(() => model.complete(ideaEnginePrompt(unitLines, topicLines, existing), { strong: true }));
+				},
+				floor,
+				"ideas",
+			);
+			if (result === null) return [];
 			const written: Array<{ id: string; title: string; kind: string }> = [];
 			for (const idea of result.ideas ?? []) {
 				if (!idea.title) continue;
