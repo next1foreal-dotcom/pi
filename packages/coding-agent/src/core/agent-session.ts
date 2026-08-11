@@ -2675,7 +2675,9 @@ export class AgentSession {
 			return false;
 		}
 
-		console.info(`[pi-auth] forced oauth refresh + single retry for ${model.provider}`);
+		// stderr, not stdout: print mode streams one JSON object per stdout line
+		// (modes/print-mode.ts), so a diagnostic on stdout would break line-wise parsing.
+		console.error(`[pi-auth] forced oauth refresh + single retry for ${model.provider}`);
 		const messages = this.agent.state.messages;
 		if (messages.length > 0 && messages[messages.length - 1].role === "assistant") {
 			this.agent.state.messages = messages.slice(0, -1);

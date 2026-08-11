@@ -209,7 +209,8 @@ describe("G-241 OAuth 401 refresh retry", () => {
 
 	it("forces one OAuth refresh and retries once with headers resolved again", async () => {
 		current = await createTestSession("oauth-success");
-		const info = vi.spyOn(console, "info").mockImplementation(() => {});
+		// stderr keeps print mode's stdout NDJSON stream parseable.
+		const info = vi.spyOn(console, "error").mockImplementation(() => {});
 
 		await current.session.prompt("Test");
 
