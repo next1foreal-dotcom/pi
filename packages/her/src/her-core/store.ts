@@ -73,6 +73,21 @@ export async function retryOnFsContention<T>(
 	throw lastError;
 }
 
+/** Read-only counterpart to redactSecrets: same patterns, positions instead of masking. */
+export function findSecretMatches(text: string): Array<{ index: number; patternIndex: number }> {
+	const matches: Array<{ index: number; patternIndex: number }> = [];
+	for (const [patternIndex, pattern] of secretPatterns.entries()) {
+		pattern.lastIndex = 0;
+		for (;;) {
+			const match = pattern.exec(text);
+			if (!match) break;
+			matches.push({ index: match.index, patternIndex });
+		}
+		pattern.lastIndex = 0;
+	}
+	return matches.sort((a, b) => a.index - b.index || a.patternIndex - b.patternIndex);
+}
+
 export async function readText(path: string): Promise<string | undefined> {
 	try {
 		return await readFile(path, "utf8");
