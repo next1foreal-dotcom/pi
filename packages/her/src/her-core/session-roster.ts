@@ -273,17 +273,21 @@ export function formatSessionSearch(query: string, hits: SessionHit[], truncated
 	const capNote = `\n… output truncated at ${SESSION_READ_MAX_BYTES} bytes; later session excerpts omitted.`;
 	if (Buffer.byteLength(rendered, "utf8") <= SESSION_READ_MAX_BYTES) return rendered;
 	const bodyBudget = Math.max(0, SESSION_READ_MAX_BYTES - Buffer.byteLength(capNote, "utf8"));
-	const clippedBody = clipToBytes(rendered, bodyBudget).text;
-	const beginIndex = clippedBody.lastIndexOf(SESSION_EXCERPT_BEGIN);
-	const endIndex = clippedBody.lastIndexOf(SESSION_EXCERPT_END);
-	if (beginIndex > endIndex) {
-		const prefix = clippedBody.slice(0, beginIndex + SESSION_EXCERPT_BEGIN.length);
-		const close = `\n${SESSION_EXCERPT_END}`;
-		const innerBudget = bodyBudget - Buffer.byteLength(prefix, "utf8") - Buffer.byteLength(close, "utf8");
-		if (innerBudget >= 0) {
-			const inner = clippedBody.slice(beginIndex + SESSION_EXCERPT_BEGIN.length);
-			return `${prefix}${clipToBytes(inner, innerBudget).text}${close}${capNote}`;
-		}
+	return `${dropUnclosedExcerpt(clipToBytes(rendered, bodyBudget).text)}${capNote}`;
+}
+
+/**
+ * The byte clip can land inside an excerpt, which would leave untrusted text
+ * outside a closed fence. Drop the partial excerpt entirely — cutting back is
+ * always safe, whereas closing a fence by hand needs a byte budget that is not
+ * guaranteed to exist. Also strips a marker the clip cut in half.
+ */
+function dropUnclosedExcerpt(body: string): string {
+	if (body.lastIndexOf(SESSION_EXCERPT_BEGIN) > body.lastIndexOf(SESSION_EXCERPT_END)) {
+		return body.slice(0, body.lastIndexOf(SESSION_EXCERPT_BEGIN)).trimEnd();
 	}
-	return `${clippedBody}${capNote}`;
+	for (let length = SESSION_EXCERPT_BEGIN.length - 1; length > 0; length--) {
+		if (body.endsWith(SESSION_EXCERPT_BEGIN.slice(0, length))) return body.slice(0, -length).trimEnd();
+	}
+	return body;
 }
