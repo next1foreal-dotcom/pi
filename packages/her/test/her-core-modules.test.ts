@@ -24,6 +24,7 @@ import {
 	surfacePrompt,
 	synthesizePrompt,
 } from "../src/her-core/prompts.ts";
+import { isTransientFsContention, retryOnFsContention } from "../src/her-core/store.ts";
 import { isLockContention } from "../src/her-core/store-lock.ts";
 
 test("isLockContention classifies lock create contention errors", () => {
@@ -34,6 +35,74 @@ test("isLockContention classifies lock create contention errors", () => {
 	assert.equal(isLockContention(withCode("ENOENT")), false);
 	assert.equal(isLockContention(undefined), false);
 	assert.equal(isLockContention(new Error("missing code")), false);
+});
+
+test("isTransientFsContention classifies transient Windows fs contention errors", () => {
+	const withCode = (code: string): Error & { code: string } => Object.assign(new Error(), { code });
+
+	assert.equal(isTransientFsContention(withCode("EPERM")), true);
+	assert.equal(isTransientFsContention(withCode("EACCES")), true);
+	assert.equal(isTransientFsContention(withCode("EBUSY")), true);
+	assert.equal(isTransientFsContention(withCode("ENOENT")), false);
+	assert.equal(isTransientFsContention(withCode("ENOSPC")), false);
+	assert.equal(isTransientFsContention(undefined), false);
+	assert.equal(isTransientFsContention(null), false);
+	assert.equal(isTransientFsContention(new Error("missing code")), false);
+});
+
+test("retryOnFsContention retries transient errors and returns on success", async () => {
+	let calls = 0;
+	const eperm = (): Error & { code: string } => Object.assign(new Error("EPERM"), { code: "EPERM" });
+	const result = await retryOnFsContention(
+		async () => {
+			calls++;
+			if (calls < 3) throw eperm();
+			return "ok";
+		},
+		{ attempts: 5, baseDelayMs: 1, label: "test-retry-success" },
+	);
+	assert.equal(result, "ok");
+	assert.equal(calls, 3, "op called exactly 3 times: 2 transient failures + 1 success");
+});
+
+test("retryOnFsContention exhausts attempts then throws the original error object", async () => {
+	let calls = 0;
+	const original = Object.assign(new Error("EPERM"), { code: "EPERM" });
+	await assert.rejects(
+		() =>
+			retryOnFsContention(
+				async () => {
+					calls++;
+					throw original;
+				},
+				{ attempts: 3, baseDelayMs: 1, label: "test-retry-exhaust" },
+			),
+		(thrown: unknown) => {
+			assert.equal(thrown, original, "must throw the original error object, not a wrapper");
+			return true;
+		},
+	);
+	assert.equal(calls, 3, "op called exactly attempts times");
+});
+
+test("retryOnFsContention does not retry non-transient errors", async () => {
+	let calls = 0;
+	const enoent = Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+	await assert.rejects(
+		() =>
+			retryOnFsContention(
+				async () => {
+					calls++;
+					throw enoent;
+				},
+				{ attempts: 5, baseDelayMs: 1, label: "test-no-retry" },
+			),
+		(thrown: unknown) => {
+			assert.equal(thrown, enoent);
+			return true;
+		},
+	);
+	assert.equal(calls, 1, "non-transient error must not be retried");
 });
 
 test("prompts preserve Python memory operation contracts", () => {

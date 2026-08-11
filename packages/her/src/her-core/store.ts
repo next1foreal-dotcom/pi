@@ -19,6 +19,60 @@ export function redactSecrets(text: string): string {
 	return redacted;
 }
 
+/**
+ * Windows transient fs contention predicate.
+ * Real-time antivirus scanners (Defender), search indexers, and other system
+ * processes briefly hold file handles after a write lands on disk.  When
+ * rename / unlink / appendFile hits that window the OS returns EPERM, EACCES,
+ * or EBUSY — all of which self-heal within milliseconds.  Everything else
+ * (ENOENT, ENOSPC, …) is a real error that retrying cannot fix.
+ */
+export function isTransientFsContention(error: unknown): boolean {
+	if (!error || typeof error !== "object" || !("code" in error)) return false;
+	const code = (error as { code: unknown }).code;
+	return code === "EPERM" || code === "EACCES" || code === "EBUSY";
+}
+
+/**
+ * Retry an fs operation when it fails with a transient contention code.
+ * Exponential backoff from `baseDelayMs` (default 25ms), capped at 400ms.
+ * Total worst-case wait at default settings: ~1.6s (8 attempts, 7 waits).
+ * Non-transient errors are rethrown immediately.
+ * On exhaustion the **original error** is rethrown (no wrapper) so upstream
+ * catch semantics are preserved.
+ */
+export async function retryOnFsContention<T>(
+	op: () => Promise<T>,
+	opts?: { attempts?: number; baseDelayMs?: number; label?: string },
+): Promise<T> {
+	const attempts = opts?.attempts ?? 8;
+	const baseDelayMs = opts?.baseDelayMs ?? 25;
+	const label = opts?.label ?? "retryOnFsContention";
+	let lastError: unknown;
+
+	for (let i = 1; i <= attempts; i++) {
+		try {
+			const result = await op();
+			if (i > 1) {
+				console.warn(`[${label}] succeeded on attempt ${i}/${attempts}`);
+			}
+			return result;
+		} catch (error) {
+			if (!isTransientFsContention(error)) {
+				throw error;
+			}
+			lastError = error;
+			if (i < attempts) {
+				const delay = Math.min(baseDelayMs * 2 ** (i - 1), 400);
+				await new Promise<void>((resolve) => setTimeout(resolve, delay));
+			}
+		}
+	}
+	const code = (lastError as { code?: string }).code ?? "unknown";
+	console.warn(`[${label}] giving up after ${attempts} attempts, last error: ${code}`);
+	throw lastError;
+}
+
 export async function readText(path: string): Promise<string | undefined> {
 	try {
 		return await readFile(path, "utf8");
@@ -36,7 +90,9 @@ export async function writeText(path: string, text: string): Promise<void> {
 	const temp = join(dir, `.${basename(path)}.${randomUUID()}.tmp`);
 	try {
 		await writeFile(temp, text, "utf8");
-		await rename(temp, path);
+		await retryOnFsContention(() => rename(temp, path), {
+			label: `writeText:rename(${basename(path)})`,
+		});
 	} catch (error) {
 		await rm(temp, { force: true });
 		throw error;
@@ -50,7 +106,9 @@ export async function writeNewText(path: string, text: string): Promise<void> {
 
 export async function appendText(path: string, text: string): Promise<void> {
 	await mkdir(dirname(path), { recursive: true });
-	await appendFile(path, text, "utf8");
+	await retryOnFsContention(() => appendFile(path, text, "utf8"), {
+		label: `appendText(${basename(path)})`,
+	});
 }
 
 export async function readJson<T>(path: string, fallback: T): Promise<T> {
