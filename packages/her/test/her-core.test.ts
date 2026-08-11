@@ -1686,6 +1686,37 @@ test("surface can use injected semantic rankings when lexical search is silent",
 	assert.equal(state.access?.["world/latent"]?.count, 1);
 });
 
+// G-244: external page text reaches the store verbatim, so a key pasted in an article body used to
+// land unredacted (doctor DR-05 found 3 such notes in world/). The body is redacted on write; the
+// frontmatter (provenance, source url) stays intact.
+test("writeWorldNote redacts credentials found in ingested page text", async () => {
+	const store = await tempStore();
+	const memory = new Memory(store);
+	const leaked = "sk-abcdefghijklmnopqrstuvwxyz012345";
+	await memory.writeWorldNote({
+		title: "Leaky Article",
+		sourceUrl: "https://example.com/leaky",
+		sourceType: "article",
+		contentHash: "hash-leak",
+		memoryStatus: "active" as const,
+		extracted: `The author pasted their key: ${leaked} right in the post.`,
+		coverage: "Read full article.",
+		read: `Also quoted in the read: Bearer ${leaked}`,
+		steal: ["Nothing"],
+		connections: [],
+		take: "Redaction check fixture.",
+		possibleMoves: [],
+	});
+
+	const files = await import("node:fs/promises").then((fs) => fs.readdir(join(store, "world")));
+	const text = (await readText(join(store, "world", files[0]))) ?? "";
+	assert.ok(!text.includes(leaked), "the raw credential must not survive anywhere in the note");
+	assert.match(text, /«REDACTED:secret»/);
+	const parsed = parseFrontmatter(text);
+	assert.equal(parsed.data.provenance, "world-ingested");
+	assert.equal(parsed.data.source_url ?? parsed.data.sourceUrl, "https://example.com/leaky");
+});
+
 test("writeWorldNote writes contract sections and dedupes by content hash", async () => {
 	const store = await tempStore();
 	const memory = new Memory(store);

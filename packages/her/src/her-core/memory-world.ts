@@ -4,7 +4,7 @@ import type { JudgmentFields, WorldNoteData, WorldNoteSnapshot } from "./memory-
 import { appendJudgment, genId, normalizeMemoryStatusReason, slug, stripSection, worldBody } from "./memory-utils.ts";
 import type { StorePaths } from "./paths.ts";
 import { defaultWorldPrivacy, validateMemoryProvenance } from "./privacy.ts";
-import { frontmatter, parseFrontmatter, readJson, readText, writeJson, writeText } from "./store.ts";
+import { frontmatter, parseFrontmatter, readJson, readText, redactSecrets, writeJson, writeText } from "./store.ts";
 
 export async function writeWorldNote(paths: StorePaths, data: WorldNoteData): Promise<string> {
 	const memoryStatusReason = normalizeMemoryStatusReason(data.memoryStatus, data.memoryStatusReason);
@@ -49,7 +49,10 @@ export async function writeWorldNote(paths: StorePaths, data: WorldNoteData): Pr
 	if (data.boards !== undefined) fm.boards = data.boards;
 	if (data.fei !== undefined) fm.fei = data.fei;
 	if (data.snapshot !== undefined) fm.snapshot = data.snapshot;
-	await writeText(path, `${frontmatter(fm)}${worldBody(data, memoryStatusReason)}`);
+	// G-244: world notes carry verbatim external page text, so a key pasted in an article body would
+	// otherwise land in the store unredacted (doctor DR-05 found 3 such notes). Redact the body only —
+	// frontmatter holds provenance/urls the reader needs intact.
+	await writeText(path, `${frontmatter(fm)}${redactSecrets(worldBody(data, memoryStatusReason))}`);
 	seen[data.contentHash] = id;
 	await writeJson(paths.seenFile, seen);
 	return id;
