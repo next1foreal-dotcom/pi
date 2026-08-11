@@ -183,16 +183,21 @@ async function checkWikilinks(ctx: DoctorContext): Promise<CheckResult> {
 	// [[:space:]] / [[...path]] code syntax that is not a wikilink at all, and the
 	// context log's history keeps links to notes long since renamed — both would
 	// drown the check in findings nobody can fix. They still count as targets.
-	const appendOnlySource = (rel: string) => rel.startsWith("episodic/raw/") || rel === "narrative/context-log.md";
+	// evals/ holds generated reports — evals/lint.md is runMemoryLint's own output and
+	// quotes every dead link it found, so scanning it reports those links a second time.
+	const appendOnlySource = (rel: string) =>
+		rel.startsWith("episodic/raw/") || rel.startsWith("evals/") || rel === "narrative/context-log.md";
 	const files = allFiles.filter((file) => !appendOnlySource(relativePath(ctx.root, file)));
 	const known = new Set(allFiles.map((file) => relativePath(ctx.root, file)));
 	// The store's own citation convention links episodes by session id
 	// ([[episodic/raw/<id>]]) while files are named <timestamp>--<id>.md, so
 	// episode links resolve by suffix.
 	const rawIds = new Set<string>();
+	const bareNames = new Set<string>();
 	for (const rel of known) {
 		const match = /^episodic\/raw\/.+--(.+)\.md$/.exec(rel);
 		if (match) rawIds.add(match[1]);
+		bareNames.add(rel.slice(rel.lastIndexOf("/") + 1, -3));
 	}
 	const texts = await readFiles(files);
 	for (let index = 0; index < files.length; index++) {
@@ -206,7 +211,8 @@ async function checkWikilinks(ctx: DoctorContext): Promise<CheckResult> {
 					unresolved.push(`${relativePath(ctx.root, path)}->[[${target}]]`);
 				continue;
 			}
-			if (!wikilinkExists(target, known)) unresolved.push(`${relativePath(ctx.root, path)}->[[${target}]]`);
+			if (!wikilinkExists(target, known, bareNames))
+				unresolved.push(`${relativePath(ctx.root, path)}->[[${target}]]`);
 		}
 	}
 	const severity = ctx.config.linksSeverity;
@@ -399,12 +405,20 @@ function schemaMissing(dir: string, data: Record<string, unknown>): string[] {
 						: [["id"], ["status"], ["created"]];
 	return groups.filter((group) => !group.some((key) => data[key] !== undefined)).map((group) => group.join("|"));
 }
-function wikilinkExists(target: string, known: Set<string>): boolean {
+/**
+ * A path-shaped target must resolve exactly; a bare slug resolves against any
+ * note in the store. The four-directory list this replaced predates
+ * narrative/, goals/, evals/ and choice-model/, so real links like
+ * INDEX.md -> [[CONTEXT]] (narrative/CONTEXT.md) were reported as broken.
+ * A truly dead slug still matches nothing and is still reported.
+ */
+function wikilinkExists(target: string, known: Set<string>, bareNames: Set<string>): boolean {
 	const normalized = target.replace(/^\.\//, "");
-	const names = normalized.includes("/")
-		? [normalized]
-		: ["semantic", "world", "topics", "ideas"].map((dir) => `${dir}/${normalized}`);
-	return names.some((name) => known.has(name.endsWith(".md") ? name : `${name}.md`));
+	if (normalized.includes("/")) {
+		const name = normalized.endsWith(".md") ? normalized : `${normalized}.md`;
+		return known.has(name);
+	}
+	return bareNames.has(normalized.endsWith(".md") ? normalized.slice(0, -3) : normalized);
 }
 /**
  * Raw filenames exist in three generations: the current `2026-08-11T14_03--<id>`,

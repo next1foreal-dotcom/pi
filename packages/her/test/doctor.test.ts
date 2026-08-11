@@ -226,6 +226,36 @@ test("DR-04 ignores bracket syntax inside raw transcripts but keeps them as targ
 	});
 });
 
+test("DR-04 resolves a bare slug against any note dir, not a hardcoded four", async () => {
+	await withStore(async (root) => {
+		// narrative/ was not in the original four-directory list, so real links like
+		// INDEX.md -> [[CONTEXT]] were reported broken.
+		await writeText(join(root, "narrative", "CONTEXT.md"), "the narrative\n");
+		await writeText(join(root, "INDEX.md"), "see [[CONTEXT]]\n");
+		const report = await runDoctor(root, { checks: ["DR-04"] });
+		assert.equal(report.checks[0].status, "pass", report.checks[0].detail);
+	});
+});
+
+test("DR-04 ignores generated eval reports that quote dead links", async () => {
+	await withStore(async (root) => {
+		// evals/lint.md is runMemoryLint's own output; the dead links it quotes are
+		// its findings, not new ones.
+		await writeText(join(root, "evals", "lint.md"), "broken: [[gone-from-store]]\n");
+		const report = await runDoctor(root, { checks: ["DR-04"] });
+		assert.equal(report.checks[0].status, "pass", report.checks[0].detail);
+	});
+});
+
+test("DR-04 still reports a slug that exists nowhere", async () => {
+	await withStore(async (root) => {
+		await writeText(join(root, "INDEX.md"), "see [[nothing-named-this]]\n");
+		const report = await runDoctor(root, { checks: ["DR-04"] });
+		assert.equal(report.checks[0].status, "warn");
+		assert.match(report.checks[0].detail, /nothing-named-this/);
+	});
+});
+
 test("DR-04 still reports a dead episode citation from a curated note", async () => {
 	await withStore(async (root) => {
 		await writeText(
