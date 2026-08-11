@@ -296,6 +296,15 @@ function estimateMessagesTokens(messages: AgentMessage[]): number {
 /** Standard thinking levels */
 const THINKING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high"];
 
+// One forced refresh is enough to invalidate a stale local expiry without opening
+// a general retry path for non-authentication failures.
+const FORCE_REFRESH_VALIDITY_MS = 3_600_000;
+const OAUTH_AUTH_FAILURE_PATTERN = /(?:401|unauthori[sz]ed|token.{0,20}expired|expired.{0,20}token|invalid[_-]?token)/i;
+
+export function isOAuthAuthFailure(errorMessage: string | undefined): boolean {
+	return errorMessage !== undefined && OAUTH_AUTH_FAILURE_PATTERN.test(errorMessage);
+}
+
 // ============================================================================
 // AgentSession Class
 // ============================================================================
@@ -332,6 +341,7 @@ export class AgentSession {
 	// Retry state
 	private _retryAbortController: AbortController | undefined = undefined;
 	private _retryAttempt = 0;
+	private _oauthAuthRetryAttempted = false;
 
 	// Bash execution state
 	private readonly _bashAbortControllers = new Set<AbortController>();
@@ -649,6 +659,7 @@ export class AgentSession {
 				const assistantMsg = event.message as AssistantMessage;
 				if (assistantMsg.stopReason !== "error") {
 					this._overflowRecoveryAttempted = false;
+					this._oauthAuthRetryAttempted = false;
 				}
 
 				// Reset retry counter immediately on successful assistant response
@@ -1059,6 +1070,7 @@ export class AgentSession {
 	// =========================================================================
 
 	private async _runAgentPrompt(messages: AgentMessage | AgentMessage[]): Promise<void> {
+		this._oauthAuthRetryAttempted = false;
 		this._isAgentRunActive = true;
 		try {
 			await this.agent.prompt(messages);
@@ -1079,7 +1091,15 @@ export class AgentSession {
 			return false;
 		}
 
-		if (this._isRetryableError(msg) && (await this._prepareRetry(msg))) {
+		if (this._isOAuthAuthRetryableError(msg) && !this._oauthAuthRetryAttempted) {
+			if (await this._prepareOAuthAuthRetry()) {
+				return true;
+			}
+		}
+
+		// Once the auth-specific retry path has been entered, the same assistant
+		// turn cannot enter the general retry path as a second resend.
+		if (!this._oauthAuthRetryAttempted && this._isRetryableError(msg) && (await this._prepareRetry(msg))) {
 			return true;
 		}
 
@@ -2627,6 +2647,41 @@ export class AgentSession {
 	// =========================================================================
 	// Auto-Retry
 	// =========================================================================
+
+	private _isOAuthAuthRetryableError(message: AssistantMessage): boolean {
+		return (
+			message.stopReason === "error" &&
+			isOAuthAuthFailure(message.errorMessage) &&
+			this._modelRuntime.isUsingOAuth(message.provider)
+		);
+	}
+
+	/**
+	 * Force the existing OAuth resolution lock to refresh once, then continue
+	 * from the pre-assistant context. A failed refresh leaves the original error
+	 * untouched and the flag prevents any second retry path for this turn.
+	 */
+	private async _prepareOAuthAuthRetry(): Promise<boolean> {
+		this._oauthAuthRetryAttempted = true;
+		const model = this.model;
+		if (!model) return false;
+
+		try {
+			const refreshed = await this._modelRuntime.getAuth(model, {
+				minOAuthValidityMs: FORCE_REFRESH_VALIDITY_MS,
+			});
+			if (!refreshed) return false;
+		} catch {
+			return false;
+		}
+
+		console.info(`[pi-auth] forced oauth refresh + single retry for ${model.provider}`);
+		const messages = this.agent.state.messages;
+		if (messages.length > 0 && messages[messages.length - 1].role === "assistant") {
+			this.agent.state.messages = messages.slice(0, -1);
+		}
+		return true;
+	}
 
 	/**
 	 * Check if an error is retryable (overloaded, rate limit, server errors).
