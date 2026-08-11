@@ -5,7 +5,14 @@ interface EmbeddingSearchConfig {
 	baseUrl: string;
 	maxDocChars: number;
 	model: string;
+	timeoutMs: number;
 }
+
+/**
+ * A silent endpoint would otherwise inherit Node's fixed 300s headers deadline,
+ * which stalls recall for five minutes and reads like the store is broken.
+ */
+const DEFAULT_EMBEDDINGS_TIMEOUT_MS = 30_000;
 
 interface EmbeddingsResponse {
 	data?: Array<{ embedding?: unknown }>;
@@ -43,6 +50,7 @@ function readEmbeddingConfig(env: Record<string, string | undefined>): Embedding
 		baseUrl,
 		maxDocChars: positiveNumber(env.HER_EMBEDDINGS_MAX_DOC_CHARS, 6000),
 		model,
+		timeoutMs: positiveNumber(env.HER_EMBEDDINGS_TIMEOUT_MS, DEFAULT_EMBEDDINGS_TIMEOUT_MS),
 	};
 }
 
@@ -51,6 +59,7 @@ async function embed(config: EmbeddingSearchConfig, input: string[], fetcher: ty
 		method: "POST",
 		headers: headers(config.apiKey),
 		body: JSON.stringify({ input, model: config.model }),
+		signal: AbortSignal.timeout(config.timeoutMs),
 	});
 	if (!response.ok) throw new Error(`embedding search failed: HTTP ${response.status}`);
 	const data = (await response.json()) as EmbeddingsResponse;
