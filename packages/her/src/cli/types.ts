@@ -19,6 +19,8 @@ import type {
 	PriorResult,
 	SamanthaJournalKind,
 	SelfNarrativeUpdateResult,
+	SessionMode,
+	SessionReadResult,
 	TasteBoardApplyOutcome,
 	TasteCluster,
 	TasteClusterStatus,
@@ -130,6 +132,7 @@ export type CliCommand =
 	| { action: "list" | "keep" | "revert"; id?: string; json: boolean; kind: "review-narrative" }
 	| { kind: "restore"; json: boolean; semanticKey: string; now?: string }
 	| { kind: "self-narrative"; json: boolean }
+	| { kind: "session"; id: string; json: boolean; mode: SessionMode }
 	| { kind: "synthesize"; json: boolean; ifDue: boolean }
 	| { kind: "synthesize-due"; json: boolean }
 	| { kind: "surface"; json: boolean }
@@ -392,6 +395,11 @@ export interface CliPrivacyCheckPayload extends CliStatusPayload {
 export interface CliPriorPayload {
 	memoryDir: string;
 	result: PriorResult;
+}
+
+export interface CliSessionPayload {
+	memoryDir: string;
+	result: SessionReadResult;
 }
 
 export interface CliGoalPayload extends CliStatusPayload {

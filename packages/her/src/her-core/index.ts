@@ -349,6 +349,27 @@ export { applyMemoryRetraction, planMemoryRetraction } from "./retraction.ts";
 export type { SearchBackend } from "./retrieval.ts";
 export type { HerRunEvent, HerRunKind, HerRunSnapshot, HerRunStatus } from "./runs.ts";
 export { appendHerRunEvent, herRunKinds, herRunStatuses, listHerRunSnapshots, runsEventsPath } from "./runs.ts";
+export type {
+	SessionAmbiguousResult,
+	SessionCandidate,
+	SessionMetaResult,
+	SessionMode,
+	SessionNotFoundResult,
+	SessionReadConfig,
+	SessionReadInput,
+	SessionReadResult,
+	SessionRecordOut,
+	SessionRecordsResult,
+	SessionSourceName,
+} from "./session-read.ts";
+export {
+	DEFAULT_GREP_CONTEXT,
+	formatSessionRead,
+	readSession,
+	resolveSessionReadConfig,
+	SESSION_READ_MAX_BYTES,
+	SESSION_READ_MAX_RECORDS,
+} from "./session-read.ts";
 export { frontmatter, parseFrontmatter, readJson, readText, writeJson, writeText } from "./store.ts";
 export type {
 	CreateHerTaskOptions,

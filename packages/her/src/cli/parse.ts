@@ -1,4 +1,4 @@
-import type { ClaimLedgerEntry, LongTaskStatus, PriorMode, WorldNoteData } from "../her-core/index.ts";
+import type { ClaimLedgerEntry, LongTaskStatus, PriorMode, SessionMode, WorldNoteData } from "../her-core/index.ts";
 import {
 	parseJournal,
 	parseJudgment,
@@ -57,6 +57,7 @@ export function parseArgs(argv: string[]): CliCommand {
 	if (command === "review-narrative") return parseReviewNarrative(rest);
 	if (command === "restore") return parseRestore(rest);
 	if (command === "self-narrative") return parseJsonOnly("self-narrative", rest);
+	if (command === "session") return parseSession(rest);
 	if (command === "surface") return parseJsonOnly("surface", rest);
 	if (command === "synthesize") return parseSynthesize(rest);
 	if (command === "synthesize-due") return parseJsonOnly("synthesize-due", rest);
@@ -328,6 +329,64 @@ function parseStatus(argv: string[]): CliCommand {
 		throw new UsageError(`unknown status option: ${arg}`);
 	}
 	return { kind: "status", json };
+}
+
+function parseSlice(value: string): SessionMode {
+	const parts = value.split(",");
+	if (parts.length !== 2) throw new UsageError("--slice expects <offset>,<limit> (e.g. --slice 100,50)");
+	return {
+		kind: "slice",
+		offset: parseNonNegativeNumber(parts[0], "--slice offset"),
+		limit: parsePositiveNumber(parts[1], "--slice limit"),
+	};
+}
+
+function parseSession(argv: string[]): CliCommand {
+	let json = false;
+	let id: string | undefined;
+	let mode: SessionMode | undefined;
+	let context: number | undefined;
+	const setMode = (next: SessionMode, flag: string): void => {
+		if (mode) throw new UsageError(`session accepts only one of --head/--tail/--slice/--grep (saw ${flag})`);
+		mode = next;
+	};
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--head") {
+			setMode({ kind: "head", count: parsePositiveNumber(requireOptionValue(argv[++i], arg), arg) }, arg);
+			continue;
+		}
+		if (arg === "--tail") {
+			setMode({ kind: "tail", count: parsePositiveNumber(requireOptionValue(argv[++i], arg), arg) }, arg);
+			continue;
+		}
+		if (arg === "--grep") {
+			setMode({ kind: "grep", pattern: requireNonBlank(requireOptionValue(argv[++i], arg), arg) }, arg);
+			continue;
+		}
+		if (arg === "--slice") {
+			setMode(parseSlice(requireOptionValue(argv[++i], arg)), arg);
+			continue;
+		}
+		if (arg === "--context" || arg === "-C") {
+			context = parseNonNegativeNumber(requireOptionValue(argv[++i], arg), arg);
+			continue;
+		}
+		if (arg.startsWith("--")) throw new UsageError(`unknown session option: ${arg}`);
+		if (id !== undefined) throw new UsageError("session accepts only one id");
+		id = arg;
+	}
+	if (!id?.trim()) throw new UsageError("session requires a session id: her session <id>");
+	let finalMode: SessionMode = mode ?? { kind: "meta" };
+	if (context !== undefined) {
+		if (finalMode.kind !== "grep") throw new UsageError("--context only applies to --grep");
+		finalMode = { ...finalMode, context };
+	}
+	return { kind: "session", id: id.trim(), json, mode: finalMode };
 }
 
 function parseSync(argv: string[]): CliCommand {

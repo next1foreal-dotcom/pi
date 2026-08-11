@@ -41,6 +41,7 @@ import {
 	renderRestore,
 	renderReviewNarrative,
 	renderSelfNarrative,
+	renderSession,
 	renderStatus,
 	renderSurface,
 	renderSync,
@@ -65,6 +66,7 @@ import {
 	type CliBootstrapFeedPayload,
 	type CliCommand,
 	type CliIo,
+	type CliSessionPayload,
 	type CliStatusPayload,
 	type CliSurfaceUpdateResult,
 	type CliTriggerStatsPayload,
@@ -108,6 +110,7 @@ import {
 	pollTelegramInbox,
 	pushTelegramOutbox,
 	readPathForWorldNote,
+	readSession,
 	readTriggerStats,
 	readUrlForWorldNote,
 	recordTelegramConfirmationFromText,
@@ -176,6 +179,15 @@ export async function runHerCli(
 		});
 		writePayload(io.stdout, { memoryDir, result }, command.json, renderPrior);
 		return 0;
+	}
+
+	if (command.kind === "session") {
+		// Pure read: never touches the memory store; the memory dir is only the
+		// archive-fallback root. Active harness sources resolve from env/homedir.
+		const result = await readSession({ id: command.id, mode: command.mode, env, config: { archiveDir: memoryDir } });
+		const payload: CliSessionPayload = { memoryDir, result };
+		writePayload(io.stdout, payload, command.json, renderSession);
+		return result.status === "not_found" || result.status === "ambiguous" ? 1 : 0;
 	}
 
 	if (command.kind === "telegram-poll") {

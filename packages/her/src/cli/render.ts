@@ -1,4 +1,4 @@
-import { renderEvalTrendReport } from "../her-core/index.ts";
+import { formatSessionRead, renderEvalTrendReport } from "../her-core/index.ts";
 import type {
 	CliApprovePayload,
 	CliBackfillPayload,
@@ -31,6 +31,7 @@ import type {
 	CliRestorePayload,
 	CliReviewNarrativePayload,
 	CliSelfNarrativePayload,
+	CliSessionPayload,
 	CliStatusPayload,
 	CliSurfaceUpdateResult,
 	CliSyncPayload,
@@ -53,6 +54,10 @@ export function renderPrior(payload: CliPriorPayload): string {
 		.filter(Boolean)
 		.join("\n");
 }
+export function renderSession(payload: CliSessionPayload): string {
+	return formatSessionRead(payload.result);
+}
+
 export function renderStatus(payload: CliStatusPayload): string {
 	return [
 		`Her memory sync: ${payload.status.status}`,
@@ -624,6 +629,7 @@ export function usage(): string {
   her review-narrative [--keep <id>|--revert <id>] [--json]
   her restore --semantic <key> [--now <YYYY-MM-DD>] [--json]
   her self-narrative [--json]
+  her session <id> [--head <n> | --tail <n> | --slice <off,lim> | --grep <pat> [--context <n>]] [--json]
   her synthesize [--if-due] [--json]
   her synthesize-due [--json]
   her sync --status [--json]

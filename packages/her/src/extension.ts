@@ -35,6 +35,7 @@ import {
 	createHerTask,
 	enqueueTaskTelegramNotices,
 	formatBgTaskStatusBoard,
+	formatSessionRead,
 	formatWakeMessage,
 	type GateDecision,
 	type HerProposalRecord,
@@ -60,10 +61,12 @@ import {
 	planMemoryRetraction,
 	queueTelegramInbound,
 	readPathForWorldNote,
+	readSession,
 	reconcileBgTasks,
 	recordHerProposal,
 	recordHerProposalFeedback,
 	type SamanthaZoneCategory,
+	type SessionMode,
 	spawnBgTask,
 	startLongTask,
 	stopBgTask,
@@ -116,6 +119,7 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	ls: { destructive: false },
 	her_status: { destructive: false },
 	her_recall: { destructive: false },
+	her_session_read: { destructive: false },
 	her_feedback: { destructive: false },
 	her_sync: { destructive: false },
 	her_task_create: { destructive: false },
@@ -1002,6 +1006,41 @@ export default function her(pi: ExtensionAPI): void {
 				notes: notes.map((note) => ({ id: note.id, kind: note.kind, path: note.path })),
 				receipts,
 			});
+		},
+	});
+
+	pi.registerTool({
+		name: "her_session_read",
+		label: "Her Session Read",
+		description:
+			"Read-only, paginated access to a raw agent-harness session transcript (Claude Code, Codex, Cursor, or pi) by session id or id-prefix. Default reports metadata only; use head/tail/slice/grep to read records. Never writes.",
+		parameters: Type.Object({
+			id: Type.String({ description: "Session id or a unique id-prefix" }),
+			mode: Type.Optional(StringEnum(["meta", "head", "tail", "slice", "grep"] as const)),
+			n: Type.Optional(Type.Number({ description: "Record count for head/tail (default 20)" })),
+			offset: Type.Optional(Type.Number({ description: "Start record index for slice (default 0)" })),
+			limit: Type.Optional(Type.Number({ description: "Record count for slice (default 50)" })),
+			pattern: Type.Optional(Type.String({ description: "Regex (falls back to substring) for grep" })),
+			context: Type.Optional(Type.Number({ description: "Context records around each grep match (default 2)" })),
+		}),
+		async execute(_toolCallId, params) {
+			const kind = params.mode ?? "meta";
+			if (kind === "grep" && !params.pattern?.trim()) {
+				return textResult("her_session_read: grep mode requires a pattern", { phase: "G-237", status: "error" });
+			}
+			let mode: SessionMode;
+			if (kind === "head") mode = { kind: "head", count: params.n ?? 20 };
+			else if (kind === "tail") mode = { kind: "tail", count: params.n ?? 20 };
+			else if (kind === "slice") mode = { kind: "slice", offset: params.offset ?? 0, limit: params.limit ?? 50 };
+			else if (kind === "grep")
+				mode = {
+					kind: "grep",
+					pattern: params.pattern ?? "",
+					...(params.context !== undefined ? { context: params.context } : {}),
+				};
+			else mode = { kind: "meta" };
+			const result = await readSession({ id: params.id, mode, config: { archiveDir: memoryDir } });
+			return textResult(formatSessionRead(result), { phase: "G-237", ...result });
 		},
 	});
 
