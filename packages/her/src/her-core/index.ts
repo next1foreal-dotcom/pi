@@ -253,6 +253,21 @@ export type {
 } from "./memory-backfill.ts";
 export type { TasteBoardApplyOutcome, TasteBoardApplyResult } from "./memory-world.ts";
 export { applyTasteBoard, findWorldNote } from "./memory-world.ts";
+export type { DeliveryDecision, HerMessage } from "./messages.ts";
+export {
+	archiveInbox,
+	deliveryDecision,
+	drainInbox,
+	formatInbox,
+	INBOX_MESSAGE_BEGIN,
+	INBOX_MESSAGE_END,
+	MAX_AGE_MS,
+	MIN_BATCH,
+	maybeWake,
+	NON_PI_DELIVERY_REFUSAL,
+	resolveTargetSource,
+	writeMessage,
+} from "./messages.ts";
 export type { ModelLike } from "./model.ts";
 export { FakeModel, OpenAICompatibleModel } from "./model.ts";
 export {

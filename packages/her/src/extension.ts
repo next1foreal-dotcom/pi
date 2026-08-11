@@ -22,6 +22,7 @@ import {
 } from "./her-core/event-wake.ts";
 import {
 	applyMemoryRetraction,
+	archiveInbox,
 	buildRecallReceipts,
 	type ChoiceModelDomain,
 	checkMemoryExport,
@@ -33,8 +34,11 @@ import {
 	continueBgTask,
 	createEmbeddingSearch,
 	createHerTask,
+	deliveryDecision,
+	drainInbox,
 	enqueueTaskTelegramNotices,
 	formatBgTaskStatusBoard,
+	formatInbox,
 	formatSessionList,
 	formatSessionRead,
 	formatSessionSearch,
@@ -61,6 +65,7 @@ import {
 	Memory,
 	type MemorySyncResult,
 	type MemorySyncStatus,
+	maybeWake,
 	planMemoryRetraction,
 	queueTelegramInbound,
 	readPathForWorldNote,
@@ -69,6 +74,7 @@ import {
 	recordHerProposal,
 	recordHerProposalFeedback,
 	resolveSessionReadConfig,
+	resolveTargetSource,
 	type SamanthaZoneCategory,
 	type SessionMode,
 	searchSessions,
@@ -79,6 +85,7 @@ import {
 	updateHerTask,
 	type WorldNoteData,
 	writeCostReport,
+	writeMessage,
 } from "./her-core/index.ts";
 import { type ReviewEvidenceItem, verifyEvidence } from "./her-core/review-evidence.ts";
 import { appendAuditLog } from "./lib/audit.ts";
@@ -127,6 +134,7 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	her_session_list: { destructive: false },
 	her_session_read: { destructive: false },
 	her_session_search: { destructive: false },
+	her_session_send: { destructive: false },
 	her_feedback: { destructive: false },
 	her_sync: { destructive: false },
 	her_task_create: { destructive: false },
@@ -809,6 +817,20 @@ export default function her(pi: ExtensionAPI): void {
 			const detail = error instanceof Error ? error.message : String(error);
 			console.warn(`[her] bg-task reconcile skipped: ${detail}`);
 		}
+		try {
+			const selfId = ctx.sessionManager.getSessionId();
+			const inbox = await drainInbox(memoryDir, selfId);
+			if (inbox.length > 0) {
+				systemPrompt = `${systemPrompt}\n\n${formatInbox(inbox)}`;
+				await archiveInbox(
+					memoryDir,
+					selfId,
+					inbox.map((message) => message.path),
+				);
+			}
+		} catch (error) {
+			console.warn(`[her] inbox drain skipped: ${errorMessage(error)}`);
+		}
 		return {
 			systemPrompt,
 			message: {
@@ -1068,6 +1090,49 @@ export default function her(pi: ExtensionAPI): void {
 				...(params.maxFiles !== undefined ? { maxFiles: params.maxFiles } : {}),
 			});
 			return textResult(formatSessionSearch(params.query, hits), { phase: "G-245", count: hits.length });
+		},
+	});
+
+	pi.registerTool({
+		name: "her_session_send",
+		label: "Her Session Send",
+		description:
+			"Queue a message for another pi session. Claude Code, Codex, Cursor, and archive targets are rejected; delivery is storage-mediated and the recipient reads it on its next turn.",
+		parameters: Type.Object({
+			to: Type.String({ description: "Recipient pi session id" }),
+			body: Type.String({ description: "Message body; the recipient treats it as untrusted data" }),
+			urgent: Type.Optional(Type.Boolean({ description: "Request immediate gated wake instead of batching" })),
+		}),
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			const from = ctx.sessionManager.getSessionId();
+			const config = resolveSessionReadConfig(undefined, undefined, { archiveDir: memoryDir });
+			const source = await resolveTargetSource(config, params.to);
+			const decision = deliveryDecision(source);
+			if (!decision.ok) {
+				return textResult(decision.reason, { phase: "G-245", status: "rejected", to: params.to, source });
+			}
+			const stored = await writeMessage(memoryDir, {
+				from,
+				to: params.to,
+				at: new Date().toISOString(),
+				urgent: params.urgent ?? false,
+				origin: from,
+				body: params.body,
+			});
+			let wake: Awaited<ReturnType<typeof maybeWake>> = { woke: false, reason: "not-attempted" };
+			try {
+				wake = await maybeWake(memoryDir, params.to, loadRuntimeConfig(memoryDir).tasks);
+			} catch (error) {
+				console.warn(`[her] message wake check skipped: ${errorMessage(error)}`);
+			}
+			return textResult(`Message queued for ${params.to}.`, {
+				phase: "G-245",
+				status: "queued",
+				from,
+				to: params.to,
+				path: stored.path,
+				wake,
+			});
 		},
 	});
 
