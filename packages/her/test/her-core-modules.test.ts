@@ -24,6 +24,17 @@ import {
 	surfacePrompt,
 	synthesizePrompt,
 } from "../src/her-core/prompts.ts";
+import { isLockContention } from "../src/her-core/store-lock.ts";
+
+test("isLockContention classifies lock create contention errors", () => {
+	const withCode = (code: string): Error & { code: string } => Object.assign(new Error(), { code });
+
+	assert.equal(isLockContention(withCode("EEXIST")), true);
+	assert.equal(isLockContention(withCode("EPERM")), true);
+	assert.equal(isLockContention(withCode("ENOENT")), false);
+	assert.equal(isLockContention(undefined), false);
+	assert.equal(isLockContention(new Error("missing code")), false);
+});
 
 test("prompts preserve Python memory operation contracts", () => {
 	assert.match(summaryPrompt("raw session"), /exactly these fields/);

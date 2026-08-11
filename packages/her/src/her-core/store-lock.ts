@@ -48,12 +48,16 @@ async function acquireStoreLock(lockPath: string, owner: string, opts: StoreLock
 			await writeFile(lockPath, `${JSON.stringify(payload)}\n`, { encoding: "utf8", flag: "wx" });
 			return;
 		} catch (error) {
-			if (!isFileExists(error)) throw error;
+			if (!isLockContention(error)) throw error;
 		}
 		const lockStat = await stat(lockPath).catch(() => undefined);
 		if (!lockStat) continue;
 		if (Date.now() - lockStat.mtimeMs > staleAfterMs) {
-			await rm(lockPath, { force: true });
+			try {
+				await rm(lockPath, { force: true });
+			} catch {
+				continue;
+			}
 			continue;
 		}
 		if (Date.now() >= deadline) {
@@ -73,8 +77,11 @@ async function releaseStoreLock(lockPath: string, owner: string): Promise<void> 
 	}
 }
 
-function isFileExists(error: unknown): boolean {
-	return Boolean(error && typeof error === "object" && "code" in error && error.code === "EEXIST");
+export function isLockContention(error: unknown): boolean {
+	// Windows reports EPERM when a concurrent create/delete leaves the lock in DELETE_PENDING.
+	return Boolean(
+		error && typeof error === "object" && "code" in error && (error.code === "EEXIST" || error.code === "EPERM"),
+	);
 }
 
 function sleep(ms: number): Promise<void> {
