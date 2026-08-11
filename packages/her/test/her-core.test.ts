@@ -1030,7 +1030,10 @@ test("consolidate halves the batch on a truncated reply and still drains the bac
 	assert.equal(third.episodes, 0); // backlog empty — pipeline never wedged
 });
 
-test("consolidate fails loud on a single-episode truncation and consumes nothing", async () => {
+// supersedes G-231 fail-loud contract: skip+account instead of wedge, decided in G-234 follow-up —
+// the fail-loud value survives as console.warn + audit ledger + append-only raw; only the blocking
+// behavior (which wedged the queue head forever) is removed.
+test("consolidate skips a single-episode truncation, accounts it, and advances past it", async () => {
 	const store = await tempStore();
 	await writeRawEpisode(store, "2026-06-22T0001", "stuck-1", "Unprocessable episode.");
 	const rawPath = join(store, "episodic", "raw", "2026-06-22T0001--stuck-1.md");
@@ -1043,19 +1046,25 @@ test("consolidate fails loud on a single-episode truncation and consumes nothing
 		},
 	});
 
-	// One episode cannot be shrunk further, so it surfaces the failure instead of silently skipping.
-	await assert.rejects(() => memory.consolidate(4), /truncat/i);
+	// One episode cannot be shrunk further; rather than wedge the queue head forever it is skipped.
+	const result = await memory.consolidate(4);
+	assert.deepEqual(result, { episodes: 0, notesTouched: 0, moments: 0 });
 	assert.equal(calls, 1); // no futile re-asks
 
-	// Durability first: raw is untouched and the episode was NOT consumed — a later run (model now
-	// healthy) still processes it, proving the failed batch did not advance the cursor.
+	// Raw is append-only and untouched; the skip is accounted to the audit ledger.
 	assert.equal(await readText(rawPath), rawBefore);
+	const skips = (await readText(join(store, "audit", "consolidate-skips.jsonl"))) ?? "";
+	const lines = skips.trim().split(/\r?\n/).filter(Boolean);
+	assert.equal(lines.length, 1);
+	assert.equal((JSON.parse(lines[0]) as { episode: string }).episode, "stuck-1");
+
+	// Cursor advanced past the skip: a later healthy run finds nothing new to consume.
 	const healed = new Memory(store, {
 		complete() {
-			return JSON.stringify({ notes: [], moments: [{ trigger: "t", shift: "s" }] });
+			return JSON.stringify({ notes: [], moments: [] });
 		},
 	});
-	assert.equal((await healed.consolidate(4)).episodes, 1);
+	assert.equal((await healed.consolidate(4)).episodes, 0);
 });
 
 test("consolidate truncates long raw episodes in the prompt without changing raw", async () => {
