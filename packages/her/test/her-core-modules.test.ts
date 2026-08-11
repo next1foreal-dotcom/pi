@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { mock } from "node:test";
@@ -593,4 +593,220 @@ test("G-234 consolidatePrompt caps note count to bound output and folds (not dro
 	const prompt = consolidatePrompt("[ep] text", []);
 	assert.match(prompt, /at most 10 notes/i, "an explicit notes cap must be present");
 	assert.match(prompt, /fold|merge/i, "secondary points are folded into fewer notes, not dropped");
+});
+
+// --- G-235: chunk the single super-fat episode instead of dropping it whole ----------------------
+// When one episode's distilled output still truncates at batch size 1, its content is split by
+// recursive halving; pieces that fit are distilled through the normal path, and pieces that still
+// truncate at/below the char floor (or fall past the per-episode attempt budget) are QUARANTINED —
+// full content preserved under <store>/.her/quarantine/, never silently dropped. The env overrides
+// pin the char ceiling/floor/budget so the trees are small and deterministic in the test.
+
+async function withChunkEnv(overrides: Record<string, string | undefined>, fn: () => Promise<void>): Promise<void> {
+	const prev: Record<string, string | undefined> = {};
+	for (const [key, value] of Object.entries(overrides)) {
+		prev[key] = process.env[key];
+		if (value === undefined) delete process.env[key];
+		else process.env[key] = value;
+	}
+	try {
+		await fn();
+	} finally {
+		for (const [key, value] of Object.entries(prev)) {
+			if (value === undefined) delete process.env[key];
+			else process.env[key] = value;
+		}
+	}
+}
+
+async function readQuarantine(store: string): Promise<Array<{ name: string; raw: string; body: string }>> {
+	let names: string[];
+	try {
+		names = (await readdir(join(store, ".her", "quarantine"))).filter((name) => name.endsWith(".md")).sort();
+	} catch {
+		return [];
+	}
+	const out: Array<{ name: string; raw: string; body: string }> = [];
+	for (const name of names) {
+		const raw = await readFile(join(store, ".her", "quarantine", name), "utf8");
+		// frontmatter shape: `---\n<meta>\n---\n<body>\n`; the closer is the only `\n---\n`.
+		const parts = raw.split("\n---\n");
+		const body = parts.length > 1 ? parts.slice(1).join("\n---\n").replace(/\n$/, "") : raw;
+		out.push({ name, raw, body });
+	}
+	return out;
+}
+
+test("G-235 fat episode is chunked and every segment's content is distilled (no quarantine, cursor advances)", async () => {
+	await withChunkEnv({ HER_CONSOLIDATE_EPISODE_CHARS: "800", HER_CONSOLIDATE_CHUNK_FLOOR_CHARS: "200" }, async () => {
+		const store = await g234Store();
+		// 8 distinct ~200-char lines, each tagged with a unique SEG0N token at its start.
+		const lines = Array.from({ length: 8 }, (_, i) => `SEG0${i + 1} ${"x".repeat(193)}`);
+		await writeRawEpisode(store, "2026-08-11T0001", "fat-ep", lines.join("\n"));
+
+		// Large chunk -> truncated JSON; small-enough chunk -> one note per SEG token it contains.
+		const model = {
+			complete(prompt: string): string {
+				if (prompt.includes("EXISTING NOTE:")) return "";
+				const chunk = prompt.slice(prompt.indexOf("EPISODES:\n") + "EPISODES:\n".length);
+				if (chunk.length > 500) return '{"notes": [{"key": "k", "content": "half';
+				const tokens = [...chunk.matchAll(/SEG0\d/g)].map((match) => match[0].toLowerCase());
+				return JSON.stringify({
+					notes: tokens.map((token) => ({
+						key: token,
+						type: "concept",
+						content: `distilled ${token}`,
+						sources: ["fat-ep"],
+					})),
+				});
+			},
+		};
+
+		await new Memory(store, model).consolidate();
+
+		const noteFiles = new Set((await readdir(join(store, "semantic"))).filter((name) => name.endsWith(".md")));
+		for (let i = 1; i <= 8; i++) {
+			assert.ok(noteFiles.has(`seg0${i}.md`), `segment carrying SEG0${i} was distilled into its own note`);
+		}
+		assert.equal((await readQuarantine(store)).length, 0, "nothing quarantined — every segment fit once split");
+
+		const state = await readJson<{ cursor?: { ts?: string; done_ids?: string[] } }>(
+			join(store, ".her", "state.json"),
+			{},
+		);
+		assert.equal(state.cursor?.ts, "2026-08-11T0001", "cursor advanced past the chunked episode");
+		assert.ok(state.cursor?.done_ids?.includes("fat-ep"), "chunked episode recorded in cursor done_ids");
+	});
+});
+
+test("G-235 a bottomed-out segment is QUARANTINED with full content preserved; cursor advances, audit + log recorded", async () => {
+	await withChunkEnv({ HER_CONSOLIDATE_EPISODE_CHARS: "800", HER_CONSOLIDATE_CHUNK_FLOOR_CHARS: "200" }, async () => {
+		const store = await g234Store();
+		const body = `HEAD ${"a".repeat(280)}ZZMARKERZZ${"b".repeat(300)} TAIL`; // ~600 chars, single line
+		await writeRawEpisode(store, "2026-08-11T0002", "dense-ep", body);
+		const model = { complete: (): string => '{"notes": [{"key": "k", "content": "unterminated' }; // always truncated
+		const warn = mock.method(console, "warn");
+		try {
+			const result = await new Memory(store, model).consolidate();
+			assert.deepEqual(result, { episodes: 0, notesTouched: 0, moments: 0 }, "no throw; the queue keeps draining");
+
+			const quarantine = await readQuarantine(store);
+			assert.ok(quarantine.length >= 1, "at least one quarantine file written");
+			assert.equal(
+				quarantine.reduce((sum, file) => sum + file.body.length, 0),
+				body.length,
+				"quarantined segments preserve the episode content byte-for-byte (nothing lost)",
+			);
+			assert.equal(
+				quarantine.filter((file) => file.body.includes("ZZMARKERZZ")).length,
+				1,
+				"the unique marker survives intact in exactly one segment",
+			);
+			for (const file of quarantine)
+				assert.match(file.raw, /reason: truncated/, "each quarantine file records why it was isolated");
+
+			const skips = (await readText(join(store, "audit", "consolidate-skips.jsonl"))) ?? "";
+			const skipLines = skips.trim().split(/\r?\n/).filter(Boolean);
+			assert.equal(skipLines.length, quarantine.length, "one audit line per quarantined segment");
+			assert.equal((JSON.parse(skipLines[0]) as { episode: string }).episode, "dense-ep");
+
+			assert.ok(
+				warn.mock.calls.some((call) => /QUARANTINED/.test(String(call.arguments[0]))),
+				"a loud QUARANTINED warning is emitted",
+			);
+
+			const state = await readJson<{ cursor?: { ts?: string; done_ids?: string[] } }>(
+				join(store, ".her", "state.json"),
+				{},
+			);
+			assert.equal(state.cursor?.ts, "2026-08-11T0002", "cursor advanced past the fully-quarantined episode");
+			assert.ok(state.cursor?.done_ids?.includes("dense-ep"));
+		} finally {
+			warn.mock.restore();
+		}
+	});
+});
+
+test("G-235 a non-truncation hard failure during chunking applies nothing and leaves the cursor frozen", async () => {
+	await withChunkEnv({ HER_CONSOLIDATE_EPISODE_CHARS: "800", HER_CONSOLIDATE_CHUNK_FLOOR_CHARS: "200" }, async () => {
+		const store = await g234Store();
+		await writeRawEpisode(store, "2026-08-11T0003", "crash-ep", `HEAD ${"c".repeat(390)} TAIL`); // ~400 chars, <= ceil
+		let calls = 0;
+		const model = {
+			complete(): string {
+				calls++;
+				if (calls === 1) return '{"notes": [{"key": "k", "content": "half'; // batch=1 truncates -> enter chunking
+				throw new Error("model crashed mid-chunk (test)"); // first chunk attempt hard-fails
+			},
+		};
+		await assert.rejects(new Memory(store, model).consolidate(), /model crashed mid-chunk/);
+
+		const state = await readJson<{ cursor?: unknown }>(join(store, ".her", "state.json"), {});
+		assert.equal(state.cursor, null, "cursor did NOT advance on a hard failure (stays at the init null)");
+		assert.equal((await readQuarantine(store)).length, 0, "nothing quarantined on a hard failure");
+		assert.equal(
+			(await readdir(join(store, "semantic"))).filter((name) => name.endsWith(".md")).length,
+			0,
+			"no notes written on a hard failure",
+		);
+		assert.equal(await readText(join(store, "audit", "consolidate-skips.jsonl")), undefined, "nothing accounted");
+	});
+});
+
+test("G-235 chunking terminates on a single huge line with no newlines (convergence) and loses no content", async () => {
+	await withChunkEnv({ HER_CONSOLIDATE_EPISODE_CHARS: "800", HER_CONSOLIDATE_CHUNK_FLOOR_CHARS: "200" }, async () => {
+		const store = await g234Store();
+		const body = "Z".repeat(2000); // single line, no newline — forces the char-midpoint split path
+		await writeRawEpisode(store, "2026-08-11T0005", "line-ep", body);
+		const model = { complete: (): string => '{"notes": [{"unterminated' }; // always truncated
+		// If the recursion did not strictly shrink each step, this would infinite-loop / stack-overflow
+		// instead of returning — so simply completing is the convergence proof.
+		const result = await new Memory(store, model).consolidate();
+		assert.deepEqual(result, { episodes: 0, notesTouched: 0, moments: 0 });
+		const quarantine = await readQuarantine(store);
+		assert.ok(quarantine.length > 0, "the indigestible single line was quarantined, not looped on");
+		assert.equal(
+			quarantine.reduce((sum, file) => sum + file.body.length, 0),
+			body.length,
+			"single-line char-splitting still preserves every byte across quarantine files",
+		);
+		const state = await readJson<{ cursor?: { ts?: string } }>(join(store, ".her", "state.json"), {});
+		assert.equal(state.cursor?.ts, "2026-08-11T0005", "cursor advanced (episode fully handled)");
+	});
+});
+
+test("G-235 chunking honors the per-episode attempt budget: bounds model calls and quarantines the remainder", async () => {
+	await withChunkEnv(
+		{
+			HER_CONSOLIDATE_EPISODE_CHARS: "800",
+			HER_CONSOLIDATE_CHUNK_FLOOR_CHARS: "200",
+			HER_CONSOLIDATE_CHUNK_MAX_ATTEMPTS: "3",
+		},
+		async () => {
+			const store = await g234Store();
+			await writeRawEpisode(store, "2026-08-11T0006", "budget-ep", "Q".repeat(2000));
+			let calls = 0;
+			const model = {
+				complete(): string {
+					calls++;
+					return '{"notes": [{"half'; // always truncated
+				},
+			};
+			await new Memory(store, model).consolidate();
+			// 1 main-loop batch=1 attempt + at most 3 chunk attempts = <= 4 calls; no unbounded fan-out.
+			assert.ok(calls <= 4, `chunking spent at most budget-many model calls, got ${calls}`);
+			const quarantine = await readQuarantine(store);
+			assert.ok(
+				quarantine.some((file) => /reason: attempt-budget/.test(file.raw)),
+				"the un-attempted remainder is quarantined under the budget reason",
+			);
+			assert.equal(
+				quarantine.reduce((sum, file) => sum + file.body.length, 0),
+				2000,
+				"budget-capped quarantine still preserves all content",
+			);
+			const state = await readJson<{ cursor?: { ts?: string } }>(join(store, ".her", "state.json"), {});
+			assert.equal(state.cursor?.ts, "2026-08-11T0006", "cursor advances even when the budget caps chunking");
+		},
+	);
 });

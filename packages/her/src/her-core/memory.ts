@@ -130,6 +130,19 @@ import { appendTriggerEvent } from "./trigger-log.ts";
 
 const DEFAULT_CONSOLIDATE_EPISODE_CHARS = 8000;
 const DEFAULT_CONSOLIDATE_BATCH_CHARS = 240000;
+// G-235 fat-episode chunking. When a SINGLE episode's distilled output still truncates at batch
+// size 1, we split its content and distill the pieces that fit instead of dropping the whole turn.
+// - FLOOR: a chunk at/below this size that STILL truncates is quarantined (its dense content can't
+//   be compiled into a reply that fits the model's output ceiling) — never split below this.
+// - MAX_ATTEMPTS: per-episode ceiling on model calls the chunker may spend. A dense multi-MB episode
+//   would otherwise fan out into hundreds of calls (real money, in an unattended nightly job); once
+//   the budget is spent the remaining un-distilled content is quarantined (preserved, not dropped)
+//   and the cursor advances. Generous by default (the real dam episodes are 4-16KB); env-tunable.
+// The attempt CEIL reuses DEFAULT_CONSOLIDATE_EPISODE_CHARS: a chunk larger than that is split
+// without spending a call, because a <=CEIL slice of THIS episode already truncated (that is why we
+// are here), so a larger slice cannot fit — and sending multi-MB inputs to the model is itself costly.
+const DEFAULT_CONSOLIDATE_CHUNK_FLOOR_CHARS = 2000;
+const DEFAULT_CONSOLIDATE_CHUNK_MAX_ATTEMPTS = 64;
 
 function envPositiveInt(name: string, fallback: number): number {
 	const raw = process.env[name];
@@ -173,6 +186,23 @@ function selectConsolidateBatch<T extends { id: string; text: string }>(
 		chars += promptText.length;
 	}
 	return batch;
+}
+
+// Split text into two strictly-smaller halves for G-235 recursive fat-episode chunking. Cuts at the
+// first newline at/after the midpoint so whole lines stay together (the least-invasive cut for
+// transcript text), falling back to the raw midpoint for a single oversized line. The cut is a plain
+// slice, so `left + right === text` byte-for-byte — quarantined content is preserved exactly, never
+// dropping the boundary newline. Every non-trivial input yields two non-empty parts each shorter than
+// the input, which is what guarantees the chunking recursion terminates.
+function splitTextInHalf(text: string): [string, string] {
+	const mid = Math.floor(text.length / 2);
+	const newline = text.indexOf("\n", mid);
+	const cut = newline === -1 ? mid : newline + 1;
+	if (cut <= 0 || cut >= text.length) {
+		const half = Math.floor(text.length / 2);
+		return [text.slice(0, half), text.slice(half)];
+	}
+	return [text.slice(0, cut), text.slice(cut)];
 }
 
 export type {
@@ -625,24 +655,56 @@ export class Memory {
 						continue;
 					}
 					if (error instanceof JsonTruncatedError && episodes.length === 1) {
-						// Backstop: this single episode's distilled output overflows the model's default output
-						// ceiling and reproduces the same truncation on every retry. Throwing would freeze the
-						// cursor and wedge the whole backlog behind it. Skip it — account, advance, keep draining;
-						// the raw episode remains in raw/ for manual recovery. Fail loud; never silently drop.
-						const skipped = episodes[0];
-						await appendText(
-							consolidateSkipsPath,
-							`${JSON.stringify({
-								at: new Date().toISOString(),
-								episode: skipped.id,
-								ts: skipped.ts,
-								reason: "truncated",
-								response_head: error.responseHead.slice(0, 200),
-							})}\n`,
-						);
-						console.warn(
-							`[her] consolidate: skipping episode ${skipped.id} — output still truncated at batch size 1; recorded to audit/consolidate-skips.jsonl and advanced the cursor past it`,
-						);
+						// G-235 fat-episode chunking. This single episode's distilled output overflows the model's
+						// output ceiling even alone, and re-asking reproduces it. Dropping the whole turn (the old
+						// backstop) loses everything it holds; instead split its content and distill the pieces that
+						// fit. Segments that still truncate at/below the char floor — or that fall past the per-episode
+						// attempt budget — are loudly QUARANTINED: their full content is written to .her/quarantine/
+						// for human recovery and accounted to audit/consolidate-skips.jsonl. Isolation is not deletion.
+						// The model calls happen inside digestFatEpisode; a non-truncation HARD failure there
+						// propagates out with nothing applied and the cursor frozen (G-231 durability). Only after
+						// every segment is distilled or quarantined do we upsert, quarantine, and advance the cursor.
+						const fat = episodes[0];
+						const outcome = await this.digestFatEpisode(fat, existing, error.responseHead);
+
+						let mergeFailures = 0;
+						for (const note of outcome.notes) {
+							if ((await this.upsertNote(note)) === "merge-failed") mergeFailures++;
+						}
+						if (mergeFailures > 0) {
+							console.warn(
+								`[her] consolidate: ${mergeFailures}/${outcome.notes.length} chunked note(s) from episode ${fat.id} failed to merge; old bodies kept, see their Timeline pending entries`,
+							);
+						}
+						for (const segment of outcome.quarantined) {
+							await this.quarantineSegment(fat, segment);
+							await appendText(
+								consolidateSkipsPath,
+								`${JSON.stringify({
+									at: new Date().toISOString(),
+									episode: fat.id,
+									ts: fat.ts,
+									part: segment.part,
+									reason: segment.reason,
+									response_head: segment.responseHead.slice(0, 200),
+								})}\n`,
+							);
+							console.warn(
+								`[her] consolidate: QUARANTINED segment part ${segment.part} of episode ${fat.id} (${segment.text.length} chars, ${segment.reason}) — content saved to .her/quarantine/ and accounted to audit/consolidate-skips.jsonl`,
+							);
+						}
+						if (outcome.moments.length > 0) {
+							const date = fat.ts.slice(0, 10);
+							await appendText(
+								this.paths.becoming,
+								outcome.moments
+									.map(
+										(moment) =>
+											`- ${date} · trigger: ${moment.trigger ?? ""} · shift: ${moment.shift ?? ""}\n`,
+									)
+									.join(""),
+							);
+						}
 						const advanced = advanceConsolidateCursor(workingCursor, episodes);
 						await writeJson(this.paths.stateFile, { ...state, cursor: advanced, last_consolidate: advanced.ts });
 						workingCursor = parseConsolidateCursor(advanced);
@@ -685,6 +747,112 @@ export class Memory {
 			}
 		});
 	}
+	// G-235: distill a single fat episode by recursive halving instead of dropping it whole. Splits the
+	// episode's FULL content (not the batch-truncated prefix) and distills every piece that fits the
+	// model's output ceiling; pieces that still truncate at/below the char floor, or that fall past the
+	// per-episode attempt budget, are returned as `quarantined` for the caller to preserve. A chunk larger
+	// than the attempt ceiling is split WITHOUT a model call (a <=ceil slice already truncated, so a larger
+	// one cannot fit, and multi-MB inputs are costly). Entry is through splitOrQuarantine, never a fresh
+	// attempt on the whole episode: the batch=1 attempt in consolidate ALREADY proved it truncates, so
+	// re-asking would only burn a token (the her-core "no futile re-asks" contract). Model calls happen
+	// only here; a non-truncation hard failure throws out so the caller applies nothing and the cursor
+	// stays frozen. Recursion terminates because splitTextInHalf yields strictly-shorter parts and the
+	// floor stops the descent.
+	private async digestFatEpisode(
+		episode: { id: string; text: string },
+		existing: string[],
+		initialResponseHead: string,
+	): Promise<{
+		notes: Array<Record<string, unknown>>;
+		moments: Array<{ trigger?: string; shift?: string }>;
+		quarantined: Array<{ part: string; text: string; responseHead: string; reason: string }>;
+	}> {
+		if (!this.model) throw new Error("consolidate requires a model");
+		const model = this.model;
+		const ceil = envPositiveInt("HER_CONSOLIDATE_EPISODE_CHARS", DEFAULT_CONSOLIDATE_EPISODE_CHARS);
+		const floor = envPositiveInt("HER_CONSOLIDATE_CHUNK_FLOOR_CHARS", DEFAULT_CONSOLIDATE_CHUNK_FLOOR_CHARS);
+		const maxAttempts = envPositiveInt("HER_CONSOLIDATE_CHUNK_MAX_ATTEMPTS", DEFAULT_CONSOLIDATE_CHUNK_MAX_ATTEMPTS);
+
+		const notes: Array<Record<string, unknown>> = [];
+		const moments: Array<{ trigger?: string; shift?: string }> = [];
+		const quarantined: Array<{ part: string; text: string; responseHead: string; reason: string }> = [];
+		let attempts = 0;
+
+		// A chunk known to truncate: quarantine it if it is already at/below the floor (pathologically
+		// dense — its full content is preserved for recovery), otherwise split and recurse the strictly
+		// smaller halves, which are new inputs worth a fresh attempt.
+		async function splitOrQuarantine(text: string, part: string, responseHead: string): Promise<void> {
+			const [left, right] = text.length <= floor ? ["", ""] : splitTextInHalf(text);
+			if (text.length <= floor || left.length === 0 || right.length === 0) {
+				quarantined.push({ part, text, responseHead, reason: "truncated" });
+				return;
+			}
+			await recurse(left, `${part}.1`);
+			await recurse(right, `${part}.2`);
+		}
+
+		async function recurse(text: string, part: string): Promise<void> {
+			// Cost cap: once the attempt budget is spent, preserve the rest of this episode as one blob per
+			// remaining subtree rather than fan out into hundreds more model calls (real money, nightly).
+			if (attempts >= maxAttempts) {
+				quarantined.push({ part, text, responseHead: "", reason: "attempt-budget" });
+				return;
+			}
+			// Larger than the attempt ceiling: split without spending a call — a <=ceil slice of THIS episode
+			// already truncated, so a larger slice cannot fit, and multi-MB inputs are themselves costly.
+			if (text.length > ceil) {
+				const [left, right] = splitTextInHalf(text);
+				if (left.length === 0 || right.length === 0) {
+					quarantined.push({ part, text, responseHead: "", reason: "unsplittable" });
+					return;
+				}
+				await recurse(left, `${part}.1`);
+				await recurse(right, `${part}.2`);
+				return;
+			}
+			attempts++;
+			let result: {
+				notes?: Array<Record<string, unknown>>;
+				moments?: Array<{ trigger?: string; shift?: string }>;
+			};
+			try {
+				result = await completeJson(() => model.complete(consolidatePrompt(`[${episode.id}] ${text}`, existing)));
+			} catch (error) {
+				if (error instanceof JsonTruncatedError) {
+					await splitOrQuarantine(text, part, error.responseHead);
+					return;
+				}
+				throw error; // hard failure — propagate; caller applies nothing, cursor stays frozen
+			}
+			for (const note of result.notes ?? []) notes.push(note);
+			for (const moment of result.moments ?? []) moments.push(moment);
+		}
+
+		// The batch=1 attempt already proved the whole episode truncates — enter through the known-truncated
+		// path, never re-attempting the whole. A <=floor episode quarantines here with no further model call.
+		await splitOrQuarantine(episode.text, "1", initialResponseHead);
+		return { notes, moments, quarantined };
+	}
+
+	// G-235: write one quarantined fat-episode segment to <store>/.her/quarantine/ — full content plus the
+	// metadata needed to recover or re-run it by hand. Isolation preserves; it never deletes.
+	private async quarantineSegment(
+		episode: { id: string; ts: string },
+		segment: { part: string; text: string; responseHead: string; reason: string },
+	): Promise<void> {
+		const stem = `${safeStem(episode.id)}--part-${safeStem(segment.part)}`;
+		const meta = {
+			episode: episode.id,
+			part: segment.part,
+			ts: episode.ts,
+			quarantined_at: new Date().toISOString(),
+			reason: segment.reason,
+			chars: segment.text.length,
+			...(segment.responseHead ? { response_head: segment.responseHead.slice(0, 200) } : {}),
+		};
+		await writeText(join(this.paths.herDir, "quarantine", `${stem}.md`), `${frontmatter(meta)}${segment.text}\n`);
+	}
+
 	async backfill(opts: BackfillOptions = {}): Promise<BackfillRunResult> {
 		return runBackfill(this, opts);
 	}
