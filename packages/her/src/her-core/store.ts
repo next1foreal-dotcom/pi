@@ -74,14 +74,14 @@ export async function retryOnFsContention<T>(
 }
 
 /** Read-only counterpart to redactSecrets: same patterns, positions instead of masking. */
-export function findSecretMatches(text: string): Array<{ index: number; patternIndex: number }> {
-	const matches: Array<{ index: number; patternIndex: number }> = [];
+export function findSecretMatches(text: string): Array<{ index: number; patternIndex: number; length: number }> {
+	const matches: Array<{ index: number; patternIndex: number; length: number }> = [];
 	for (const [patternIndex, pattern] of secretPatterns.entries()) {
 		pattern.lastIndex = 0;
 		for (;;) {
 			const match = pattern.exec(text);
 			if (!match) break;
-			matches.push({ index: match.index, patternIndex });
+			matches.push({ index: match.index, patternIndex, length: match[0].length });
 		}
 		pattern.lastIndex = 0;
 	}

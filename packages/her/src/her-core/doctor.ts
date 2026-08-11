@@ -177,16 +177,20 @@ async function checkFrontmatter(ctx: DoctorContext): Promise<CheckResult> {
 	);
 }
 async function checkWikilinks(ctx: DoctorContext): Promise<CheckResult> {
-	const unresolved: string[] = [];
+	const unresolved: Array<{ target: string; from: string }> = [];
 	const allFiles = await scanFiles(ctx.root, (file) => file.toLowerCase().endsWith(".md"));
-	// Append-only surfaces are excluded as link SOURCES: raw transcripts carry
-	// [[:space:]] / [[...path]] code syntax that is not a wikilink at all, and the
-	// context log's history keeps links to notes long since renamed — both would
-	// drown the check in findings nobody can fix. They still count as targets.
-	// evals/ holds generated reports — evals/lint.md is runMemoryLint's own output and
-	// quotes every dead link it found, so scanning it reports those links a second time.
+	// Excluded as link SOURCES — every one of these carries links that are not this
+	// store's debt, and together they buried the real findings under ~8.8k noise:
+	//   episodic/raw   verbatim transcripts, where [[:space:]] / [[...path]] is code
+	//   narrative/context-log  frozen history pointing at long-renamed notes
+	//   evals/         generated reports; evals/lint.md quotes the dead links it found
+	//   world/         ingested articles, whose links point at the author's own vault
+	// All of them still count as link TARGETS.
 	const appendOnlySource = (rel: string) =>
-		rel.startsWith("episodic/raw/") || rel.startsWith("evals/") || rel === "narrative/context-log.md";
+		rel.startsWith("episodic/raw/") ||
+		rel.startsWith("evals/") ||
+		rel.startsWith("world/") ||
+		rel === "narrative/context-log.md";
 	const files = allFiles.filter((file) => !appendOnlySource(relativePath(ctx.root, file)));
 	const known = new Set(allFiles.map((file) => relativePath(ctx.root, file)));
 	// The store's own citation convention links episodes by session id
@@ -206,26 +210,46 @@ async function checkWikilinks(ctx: DoctorContext): Promise<CheckResult> {
 			const target = (match[1] ?? "").split("|", 1)[0].split("#", 1)[0].trim();
 			if (!target) continue;
 			const episodeId = /^episodic\/raw\/(.+)$/.exec(target)?.[1];
-			if (episodeId !== undefined) {
-				if (!rawIds.has(episodeId) && !known.has(`${target}.md`))
-					unresolved.push(`${relativePath(ctx.root, path)}->[[${target}]]`);
-				continue;
-			}
-			if (!wikilinkExists(target, known, bareNames))
-				unresolved.push(`${relativePath(ctx.root, path)}->[[${target}]]`);
+			const resolved =
+				episodeId !== undefined
+					? rawIds.has(episodeId) || known.has(`${target}.md`)
+					: wikilinkExists(target, known, bareNames);
+			if (resolved) continue;
+			unresolved.push({ target, from: relativePath(ctx.root, path) });
 		}
 	}
+	// Grouped by target, most-referenced first: a flat list of 126 source->target
+	// lines is unreadable, while "[[multi-model-sop]] ×3" is a worklist — either
+	// write that note or fix the links pointing at it.
+	const byTarget = new Map<string, { count: number; from: string }>();
+	for (const item of unresolved) {
+		const seen = byTarget.get(item.target);
+		if (seen) seen.count++;
+		else byTarget.set(item.target, { count: 1, from: item.from });
+	}
+	const ranked = [...byTarget].sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]));
 	const severity = ctx.config.linksSeverity;
 	const status: CheckStatus = unresolved.length === 0 ? "pass" : severity === "fail" ? "fail" : "warn";
 	const detail =
 		unresolved.length === 0
 			? "0 unresolved"
-			: `${unresolved.length} unresolved: ${unresolved.slice(0, 20).join(" ")} (links_severity=${severity})`;
-	return resultFor("DR-04", "wikilinks", status, detail, { unresolved: unresolved.length }, severity);
+			: `${unresolved.length} unresolved across ${ranked.length} targets: ${ranked
+					.slice(0, 20)
+					.map(([target, info]) => `[[${target}]] ×${info.count} (${info.from})`)
+					.join(" ")} (links_severity=${severity})`;
+	return resultFor(
+		"DR-04",
+		"wikilinks",
+		status,
+		detail,
+		{ unresolved: unresolved.length, targets: ranked.length },
+		severity,
+	);
 }
 async function checkSecrets(ctx: DoctorContext): Promise<CheckResult> {
 	const hits: string[] = [];
 	let hitCount = 0;
+	let placeholderCount = 0;
 	const allow = ctx.config.secretsAllowLines.filter(Boolean);
 	const files = await scanFiles(
 		ctx.root,
@@ -239,14 +263,26 @@ async function checkSecrets(ctx: DoctorContext): Promise<CheckResult> {
 		for (const match of findSecretMatches(text)) {
 			const line = text.slice(0, match.index).split(/\r?\n/).length;
 			if (allow.some((allowed) => (lines[line - 1] ?? "").includes(allowed))) continue;
+			// `api_key: "$HER_LLM_API_KEY"` is a config example, not a leak. Counting it
+			// as one trains the reader to ignore the check, which costs more than the
+			// finding is worth.
+			if (/\$\{?[A-Za-z_]/.test(text.slice(match.index, match.index + match.length))) {
+				placeholderCount++;
+				continue;
+			}
 			hitCount++;
 			if (hits.length < 20) hits.push(`${relativePath(ctx.root, path)}:${line}`);
 		}
 	}
 	const status: CheckStatus = hitCount > 0 ? "fail" : "pass";
-	return resultFor("DR-05", "secrets-scan", status, hitCount ? `${hitCount} hits: ${hits.join(", ")}` : "0 hits", {
-		hits: hitCount,
-	});
+	const placeholderNote = placeholderCount ? ` (+${placeholderCount} $VAR placeholder refs, not counted)` : "";
+	return resultFor(
+		"DR-05",
+		"secrets-scan",
+		status,
+		`${hitCount ? `${hitCount} hits: ${hits.join(", ")}` : "0 hits"}${placeholderNote}`,
+		{ hits: hitCount, placeholders: placeholderCount },
+	);
 }
 async function checkLock(ctx: DoctorContext): Promise<CheckResult> {
 	try {

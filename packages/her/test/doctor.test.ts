@@ -284,6 +284,55 @@ test("DR-05 finds world secrets without echoing secret text", async () => {
 	});
 });
 
+test("DR-05 counts $VAR references apart from real values", async () => {
+	await withStore(async (root) => {
+		const secret = "sk-" + "123456789012345678901234";
+		const head = frontmatter({
+			id: "n",
+			title: "T",
+			source_url: "https://example.test",
+			source_type: "web",
+			captured_at: "2026-08-11",
+			content_hash: "h",
+		});
+		// A config example in an architecture doc is not a leak; counting it as one
+		// trains the reader to ignore the check.
+		await writeText(join(root, "world", "doc.md"), `${head}api_key: "$HER_LLM_API_KEY"\nBearer \${TOKEN}\n`);
+		await writeText(join(root, "world", "leak.md"), `${head}body with ${secret}\n`);
+
+		const report = await runDoctor(root, { checks: ["DR-05"] });
+		assert.equal(report.checks[0].counts?.hits, 1, report.checks[0].detail);
+		assert.equal(report.checks[0].counts?.placeholders, 2, report.checks[0].detail);
+		assert.match(report.checks[0].detail, /placeholder/i);
+		// Placeholder-only stores must not fail the check.
+		assert.match(report.checks[0].detail, /world\/leak\.md:\d+/);
+		assert.doesNotMatch(report.checks[0].detail, /world\/doc\.md/);
+	});
+});
+
+test("DR-04 groups findings by target so the output is a worklist", async () => {
+	await withStore(async (root) => {
+		await writeText(join(root, "semantic", "a.md"), "see [[missing-note]]\n");
+		await writeText(join(root, "semantic", "b.md"), "also [[missing-note]]\n");
+		await writeText(join(root, "semantic", "c.md"), "and [[other-gone]]\n");
+		const report = await runDoctor(root, { checks: ["DR-04"] });
+		assert.equal(report.checks[0].counts?.unresolved, 3);
+		assert.equal(report.checks[0].counts?.targets, 2);
+		// The most-referenced dead target leads, with its reference count.
+		assert.match(report.checks[0].detail, /\[\[missing-note\]\] ×2/);
+		assert.match(report.checks[0].detail, /\[\[other-gone\]\]/);
+	});
+});
+
+test("DR-04 ignores wikilinks inside ingested world notes", async () => {
+	await withStore(async (root) => {
+		// world/ bodies are somebody else's article; their links point at their vault.
+		await writeText(join(root, "world", "article.md"), "author wrote [[their-own-note]]\n");
+		const report = await runDoctor(root, { checks: ["DR-04"] });
+		assert.equal(report.checks[0].status, "pass", report.checks[0].detail);
+	});
+});
+
 test("DR-06 distinguishes fresh and stale locks", async () => {
 	await withStore(async (root) => {
 		const lock = join(root, ".her", "lock");
