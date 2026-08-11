@@ -10,6 +10,7 @@ import {
 	completeJson,
 	extractJson,
 	JsonExtractError,
+	JsonMalformedError,
 	JsonTruncatedError,
 	looksTruncated,
 	stripCodeFence,
@@ -889,4 +890,102 @@ test("G-235 chunking honors the per-episode attempt budget: bounds model calls a
 			assert.equal(state.cursor?.ts, "2026-08-11T0006", "cursor advances even when the budget caps chunking");
 		},
 	);
+});
+
+test("completeJson exhausts malformed attempts with JsonMalformedError and preserves responseHead", async () => {
+	const malformed = '{"notes":[{"key":"bad","content":"he said "oops""}]}';
+	let calls = 0;
+	await assert.rejects(
+		() =>
+			completeJson(() => {
+				calls++;
+				return malformed;
+			}),
+		(error: unknown) => {
+			assert.ok(error instanceof JsonMalformedError);
+			assert.equal(error.responseHead, malformed);
+			assert.match(error.message, /model returned invalid JSON in 3 attempts/);
+			return true;
+		},
+	);
+	assert.equal(calls, 3);
+	await assert.rejects(
+		() => completeJson(() => '{"a": 1, "b": ['),
+		(error: unknown) => error instanceof JsonTruncatedError,
+	);
+});
+
+test("malformed fat-episode chunk is quarantined while sibling chunks are digested", async () => {
+	await withChunkEnv({ HER_CONSOLIDATE_EPISODE_CHARS: "800", HER_CONSOLIDATE_CHUNK_FLOOR_CHARS: "200" }, async () => {
+		const store = await g234Store();
+		const body = `BADMARK ${"a".repeat(260)}\nGOODMARK ${"b".repeat(260)}`;
+		await writeRawEpisode(store, "2026-08-11T0010", "malformed-fat", body);
+		const malformed = '{"notes":[{"key":"bad","content":"he said "oops""}]}';
+		let calls = 0;
+		const model = {
+			complete(prompt: string): string {
+				if (prompt.includes("EXISTING NOTE:")) return JSON.stringify({ content: "merged", change: "merged" });
+				if (calls++ === 0) return '{"notes":[{"key":"k","content":"half';
+				if (prompt.includes("BADMARK")) return malformed;
+				return JSON.stringify({
+					notes: [{ key: "goodmark", type: "concept", content: "good sibling", sources: ["malformed-fat"] }],
+				});
+			},
+		};
+		await new Memory(store, model).consolidate();
+		const quarantine = await readQuarantine(store);
+		const malformedFile = quarantine.find(
+			(file) => /reason: malformed/.test(file.raw) && file.body.includes("BADMARK"),
+		);
+		assert.ok(malformedFile, "malformed chunk is quarantined");
+		assert.equal(
+			body.slice(0, malformedFile.body.length),
+			malformedFile.body,
+			"quarantined chunk content is byte-preserved",
+		);
+		const skips = ((await readText(join(store, "audit", "consolidate-skips.jsonl"))) ?? "")
+			.split(/\r?\n/)
+			.filter(Boolean);
+		assert.ok(skips.some((line) => (JSON.parse(line) as { reason?: string }).reason === "malformed"));
+		const state = await readJson<{ cursor?: { ts?: string; done_ids?: string[] } }>(
+			join(store, ".her", "state.json"),
+			{},
+		);
+		assert.equal(state.cursor?.ts, "2026-08-11T0010");
+		assert.ok(state.cursor?.done_ids?.includes("malformed-fat"));
+	});
+});
+
+test("consolidate skips a batch-one malformed response and advances with malformed audit", async () => {
+	const store = await g234Store();
+	await writeRawEpisode(store, "2026-08-11T0011", "malformed-single", "random malformed output");
+	const malformed = '{"notes":[{"key":"bad","content":"he said "oops""}]}';
+	const model = { complete: (): string => malformed };
+	await assert.doesNotReject(() => new Memory(store, model).consolidate());
+	const lines = ((await readText(join(store, "audit", "consolidate-skips.jsonl"))) ?? "")
+		.trim()
+		.split(/\r?\n/)
+		.filter(Boolean);
+	assert.equal(lines.length, 1);
+	assert.equal((JSON.parse(lines[0]) as { reason?: string }).reason, "malformed");
+	const state = await readJson<{ cursor?: { ts?: string; done_ids?: string[] } }>(
+		join(store, ".her", "state.json"),
+		{},
+	);
+	assert.equal(state.cursor?.ts, "2026-08-11T0011");
+	assert.ok(state.cursor?.done_ids?.includes("malformed-single"));
+});
+
+test("consolidate still propagates infrastructure errors and leaves cursor frozen", async () => {
+	const store = await g234Store();
+	await writeRawEpisode(store, "2026-08-11T0012", "infra-error", "must not advance");
+	const model = {
+		complete: (): string => {
+			throw new Error("ECONNRESET");
+		},
+	};
+	await assert.rejects(() => new Memory(store, model).consolidate(), /ECONNRESET/);
+	const state = await readJson<{ cursor?: unknown }>(join(store, ".her", "state.json"), {});
+	assert.equal(state.cursor, null);
+	assert.equal(await readText(join(store, "audit", "consolidate-skips.jsonl")), undefined);
 });

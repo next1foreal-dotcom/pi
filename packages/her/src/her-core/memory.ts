@@ -64,6 +64,7 @@ import {
 	git,
 	hasConflictRelation,
 	isFileExists,
+	JsonMalformedError,
 	JsonTruncatedError,
 	markdownEntries,
 	markdownStems,
@@ -634,7 +635,7 @@ export class Memory {
 
 			// Batch size is our primary lever against output-token truncation: the model interface
 			// (model.ts ModelLike) exposes no max_tokens knob, and a truncated reply repeats identically
-			// for a fixed prompt (so completeJson's re-asks can't fix it). On JsonTruncatedError, halve the
+			// for a fixed prompt (so completeJson's re-asks can't fix it). On JsonTruncatedError or JsonMalformedError, halve the
 			// batch and retry — a smaller batch has less to emit, so the reply fits — letting the backlog
 			// drain instead of wedging forever on batch 1. Halving the realized episode count (not the
 			// requested limit) guarantees strict progress even when the char budget was the binding
@@ -644,6 +645,10 @@ export class Memory {
 			// whose raw text stays recoverable in raw/ (G-234; consolidatePrompt also caps note count to
 			// keep normal replies inside the output budget). workingCursor threads skip advances so
 			// same-timestamp siblings keep correct done_ids.
+			// G-247: a stochastically malformed reply (valid-length but unparseable JSON) gets the same
+			// treatment — halve while the batch is >1, skip+account at batch 1 — because it too must not
+			// cost a whole round. Only a batch-one TRUNCATION enters fat-episode chunking: that one is
+			// deterministic and about size, so splitting the input is what actually helps.
 			const consolidateSkipsPath = join(this.paths.root, "audit", "consolidate-skips.jsonl");
 			let batchLimit = limit;
 			let workingCursor = cursor;
@@ -664,8 +669,33 @@ export class Memory {
 						moments?: Array<{ trigger?: string; shift?: string }>;
 					}>(() => model.complete(consolidatePrompt(joined, existing)));
 				} catch (error) {
-					if (error instanceof JsonTruncatedError && episodes.length > 1) {
+					if (
+						(error instanceof JsonTruncatedError || error instanceof JsonMalformedError) &&
+						episodes.length > 1
+					) {
 						batchLimit = Math.floor(episodes.length / 2);
+						continue;
+					}
+					if (error instanceof JsonMalformedError && episodes.length === 1) {
+						const skipped = episodes[0];
+						await appendText(
+							consolidateSkipsPath,
+							`${JSON.stringify({
+								at: new Date().toISOString(),
+								episode: skipped.id,
+								ts: skipped.ts,
+								reason: "malformed",
+								response_head: error.responseHead.slice(0, 200),
+							})}\n`,
+						);
+						console.warn(
+							`[her] consolidate: SKIPPED malformed episode ${skipped.id}; content remains in episodic/raw and cursor advances; accounted to audit/consolidate-skips.jsonl`,
+						);
+						const advanced = advanceConsolidateCursor(workingCursor, episodes);
+						await writeJson(this.paths.stateFile, { ...state, cursor: advanced, last_consolidate: advanced.ts });
+						workingCursor = parseConsolidateCursor(advanced);
+						remaining = remaining.slice(batch.length);
+						batchLimit = limit;
 						continue;
 					}
 					if (error instanceof JsonTruncatedError && episodes.length === 1) {
@@ -795,10 +825,15 @@ export class Memory {
 		// A chunk known to truncate: quarantine it if it is already at/below the floor (pathologically
 		// dense — its full content is preserved for recovery), otherwise split and recurse the strictly
 		// smaller halves, which are new inputs worth a fresh attempt.
-		async function splitOrQuarantine(text: string, part: string, responseHead: string): Promise<void> {
+		async function splitOrQuarantine(
+			text: string,
+			part: string,
+			responseHead: string,
+			reason: "truncated" | "malformed" = "truncated",
+		): Promise<void> {
 			const [left, right] = text.length <= floor ? ["", ""] : splitTextInHalf(text);
 			if (text.length <= floor || left.length === 0 || right.length === 0) {
-				quarantined.push({ part, text, responseHead, reason: "truncated" });
+				quarantined.push({ part, text, responseHead, reason });
 				return;
 			}
 			await recurse(left, `${part}.1`);
@@ -834,6 +869,10 @@ export class Memory {
 			} catch (error) {
 				if (error instanceof JsonTruncatedError) {
 					await splitOrQuarantine(text, part, error.responseHead);
+					return;
+				}
+				if (error instanceof JsonMalformedError) {
+					await splitOrQuarantine(text, part, error.responseHead, "malformed");
 					return;
 				}
 				throw error; // hard failure — propagate; caller applies nothing, cursor stays frozen

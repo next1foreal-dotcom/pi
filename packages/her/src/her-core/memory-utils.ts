@@ -520,6 +520,15 @@ export class JsonTruncatedError extends Error {
 	}
 }
 
+export class JsonMalformedError extends Error {
+	readonly responseHead: string;
+	constructor(message: string, responseHead: string) {
+		super(message);
+		this.name = "JsonMalformedError";
+		this.responseHead = responseHead;
+	}
+}
+
 // Strip a Markdown code fence wrapping a JSON payload. Covers the four shapes models emit: a
 // closed ```json … ``` block (even with prose around it), an UNCLOSED opening ```json fence (the
 // signature of a response cut off at its token ceiling — stripping the dangling opener is what
@@ -613,8 +622,9 @@ export async function completeJson<T>(complete: () => Promise<string> | string, 
 			}
 		}
 	}
-	throw new Error(
+	throw new JsonMalformedError(
 		`model returned invalid JSON in ${attempts} attempts. last: ${lastError}; response head: ${lastText.slice(0, 200)}`,
+		lastText,
 	);
 }
 
