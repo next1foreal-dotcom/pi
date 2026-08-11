@@ -99,7 +99,7 @@ function stripJsonl(name: string): string {
 	return name.replace(/\.jsonl$/i, "");
 }
 
-function activeSpecs(config: SessionReadConfig): ActiveSourceSpec[] {
+export function activeSpecs(config: SessionReadConfig): ActiveSourceSpec[] {
 	return [
 		{
 			// ~/.claude/projects/<slug>/<session-uuid>.jsonl (+ subagents/agent-*.jsonl).
@@ -141,7 +141,7 @@ function activeSpecs(config: SessionReadConfig): ActiveSourceSpec[] {
 }
 
 /** Best-effort recursive listing of files matching `match`. Never throws. */
-async function walkFiles(dir: string, match: (name: string) => boolean, depth = 0): Promise<string[]> {
+export async function walkFiles(dir: string, match: (name: string) => boolean, depth = 0): Promise<string[]> {
 	if (depth > MAX_WALK_DEPTH || !existsSync(dir)) return [];
 	// A source dir we cannot read is simply a source with no candidates.
 	const entries = await readdir(dir, { withFileTypes: true }).catch(() => null);
@@ -184,7 +184,7 @@ function idMatch(token: string, query: string): "exact" | "prefix" | null {
 	return null;
 }
 
-function firstSegment(root: string, file: string): string | undefined {
+export function firstSegment(root: string, file: string): string | undefined {
 	const rel = relative(root, file);
 	if (!rel || rel.startsWith("..")) return undefined;
 	return rel.split(/[\\/]/)[0] || undefined;

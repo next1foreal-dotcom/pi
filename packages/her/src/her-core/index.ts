@@ -372,6 +372,15 @@ export {
 	SESSION_READ_MAX_BYTES,
 	SESSION_READ_MAX_RECORDS,
 } from "./session-read.ts";
+export type { SessionActivity, SessionFile, SessionHit, SessionRow } from "./session-roster.ts";
+export {
+	activityLabel,
+	formatSessionList,
+	formatSessionSearch,
+	listSessionFiles,
+	listSessions,
+	searchSessions,
+} from "./session-roster.ts";
 export { frontmatter, parseFrontmatter, readJson, readText, writeJson, writeText } from "./store.ts";
 export type {
 	CreateHerTaskOptions,
