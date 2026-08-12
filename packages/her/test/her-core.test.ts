@@ -1075,10 +1075,15 @@ test("consolidate truncates long raw episodes in the prompt without changing raw
 	const before = sha256((await readText(rawPath)) ?? "");
 	const previousEpisodeLimit = process.env.HER_CONSOLIDATE_EPISODE_CHARS;
 	const previousBatchLimit = process.env.HER_CONSOLIDATE_BATCH_CHARS;
+	const previousFineProjects = process.env.HER_CONSOLIDATE_FINE_PROJECTS;
 	let prompt = "";
 	try {
 		process.env.HER_CONSOLIDATE_EPISODE_CHARS = "1000";
 		process.env.HER_CONSOLIDATE_BATCH_CHARS = "5000";
+		// G-249 routes COARSE episodes past the sample budget into slice sampling instead of head
+		// truncation. This fixture's `project: her` matches no fine pattern by default, so declare it
+		// fine here: the contract under test is prompt truncation, which is the fine-grain path.
+		process.env.HER_CONSOLIDATE_FINE_PROJECTS = "her";
 		const result = await new Memory(store, {
 			complete(input) {
 				prompt = input;
@@ -1094,6 +1099,7 @@ test("consolidate truncates long raw episodes in the prompt without changing raw
 	} finally {
 		restoreEnv("HER_CONSOLIDATE_EPISODE_CHARS", previousEpisodeLimit);
 		restoreEnv("HER_CONSOLIDATE_BATCH_CHARS", previousBatchLimit);
+		restoreEnv("HER_CONSOLIDATE_FINE_PROJECTS", previousFineProjects);
 	}
 });
 

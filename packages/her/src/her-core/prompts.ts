@@ -19,6 +19,8 @@ export function consolidatePrompt(episodes: string, existingKeys: string[]): str
 		`Existing note keys (reuse a key to update it; relations may point to them): ${keys}`,
 		"For KEY assertions in each unit's `content`, attach an inline source wikilink `[[episodic/raw/<episode-id>]]` to the episode that supports it, so every claim stays traceable to raw evidence.",
 		"Give each unit a `change`: ONE plain sentence naming what this unit newly captures or updates in the compiled truth (used for the note's changelog Timeline).",
+		"If a segment contains no durable knowledge (for example encrypted, garbled, tool-only, or boilerplate material), return no notes for it; an empty `notes` array is valid. Never create a note saying that knowledge could not be extracted: that is process logging, not memory.",
+		"Keys must be durable topic names. Never put turn numbers, session IDs, build IDs, dates, or other one-off identifiers in a key; reuse one key for the same topic.",
 		"Return AT MOST 10 notes per response. If the material yields more, KEEP the most durable and important and FOLD the secondary points into those notes — do not drop them and do not defer them: this batch of episodes will not be revisited. Prefer fewer, denser notes over many thin ones to stay within the output budget.",
 		'JSON shape: {"notes":[{"key":"slug","type":"opinion","tier":"summarizable","title":"...","content":"prose with [[episodic/raw/<id>]] links on key claims","change":"one-sentence changelog summary","relations":[{"to":"other-key","rel":"confirms"}],"sources":["episode-id"]}],"moments":[{"trigger":"what happened","shift":"what changed in the person"}]}',
 		"",

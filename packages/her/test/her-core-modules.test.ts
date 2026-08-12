@@ -5,8 +5,8 @@ import { join } from "node:path";
 import test, { mock } from "node:test";
 import { DEFAULT_CONFIG, loadConfig, renderConfig } from "../src/her-core/config.ts";
 import { createEmbeddingSearch } from "../src/her-core/embedding-search.ts";
-import { initStore, Memory, readJson, readText, writeText } from "../src/her-core/index.ts";
-import { selectRelevantKeys } from "../src/her-core/memory.ts";
+import { initStore, Memory, readJson, readText, writeJson, writeText } from "../src/her-core/index.ts";
+import { consolidateGrain, isJunkNote, selectRelevantKeys } from "../src/her-core/memory.ts";
 import {
 	completeJson,
 	extractJson,
@@ -680,8 +680,7 @@ test("G-234 consolidatePrompt caps note count to bound output and folds (not dro
 // --- G-235: chunk the single super-fat episode instead of dropping it whole ----------------------
 // When one episode's distilled output still truncates at batch size 1, its content is split by
 // recursive halving; pieces that fit are distilled through the normal path, and pieces that still
-// truncate at/below the char floor (or fall past the per-episode attempt budget) are QUARANTINED —
-// full content preserved under <store>/.her/quarantine/, never silently dropped. The env overrides
+// truncate at/below the char floor (or fall past the per-episode attempt budget) are QUARANTINED -// full content preserved under <store>/.her/quarantine/, never silently dropped. The env overrides
 // pin the char ceiling/floor/budget so the trees are small and deterministic in the test.
 
 async function withChunkEnv(overrides: Record<string, string | undefined>, fn: () => Promise<void>): Promise<void> {
@@ -1074,4 +1073,322 @@ test("G-252 duplicate-body hashing ignores frontmatter differences and preserves
 	assert.equal(skips.length, 1);
 	assert.match(skips[0], /"reason":"duplicate-body"/);
 	assert.match(skips[0], /"duplicate_of":"ep-front-a"/);
+});
+
+test("G-250 isJunkNote rejects self-reported and transient keys but protects normal turn substrings", () => {
+	assert.equal(
+		isJunkNote({ key: "no-extractable-knowledge-from-encrypted-turn", content: "x".repeat(80) }),
+		"self-reported-empty",
+	);
+	assert.equal(isJunkNote({ key: "g223r-turn-17-summary", content: "x".repeat(80) }), "transient-key");
+	assert.equal(isJunkNote({ key: "turnaround-time-baseline", content: "x".repeat(80) }), false);
+	assert.equal(isJunkNote({ key: "durable-topic", content: "durable content".repeat(4) }), false);
+	// Short is not junk: "Fei uses pnpm, never npm" is exactly the durable kind. Only genuinely
+	// empty content is rejected — a length floor dropped real notes and broke six G-234/G-235 tests.
+	assert.equal(isJunkNote({ key: "durable-topic", content: "x".repeat(20) }), false);
+	assert.equal(isJunkNote({ key: "durable-topic", content: "   \n\t " }), "empty-content");
+	assert.equal(isJunkNote({ key: "durable-topic", content: "" }), "empty-content");
+});
+
+test("G-250 consolidate prompt exposes empty-output and durable-key rules", () => {
+	const prompt = consolidatePrompt("[ep] encrypted payload", []);
+	assert.match(prompt, /empty `notes` array is valid/i);
+	assert.match(prompt, /turn numbers, session IDs, build IDs, dates/i);
+	assert.match(prompt, /Never create a note saying/i);
+});
+
+test("G-250 drops junk notes, audits the drop, and advances the cursor", async () => {
+	const store = await g234Store();
+	await writeRawEpisode(
+		store,
+		"2026-08-12T0100",
+		"junk-filter-ep",
+		"durable source material that is long enough for the guard",
+	);
+	const normalContent = "This is durable knowledge that must be retained in semantic memory.";
+	const model = new FakeModel(
+		JSON.stringify({
+			notes: [
+				{ key: "durable-filtered-note", content: normalContent, sources: ["junk-filter-ep"] },
+				{ key: "no-extractable-knowledge-x", content: "x".repeat(80), sources: ["junk-filter-ep"] },
+			],
+			moments: [],
+		}),
+	);
+	await new Memory(store, model).consolidate();
+	assert.ok((await readdir(join(store, "semantic"))).includes("durable-filtered-note.md"));
+	assert.ok(!(await readdir(join(store, "semantic"))).includes("no-extractable-knowledge-x.md"));
+	const skips = ((await readText(join(store, "audit", "consolidate-skips.jsonl"))) ?? "")
+		.trim()
+		.split(/\r?\n/)
+		.filter(Boolean)
+		.map((line) => JSON.parse(line) as { reason?: string; note_key?: string; junk_reason?: string });
+	assert.equal(skips.length, 1);
+	assert.equal(skips[0]?.reason, "junk-note");
+	assert.equal(skips[0]?.note_key, "no-extractable-knowledge-x");
+	assert.equal(skips[0]?.junk_reason, "self-reported-empty");
+	const state = await readJson<{ cursor?: { done_ids?: string[] } }>(join(store, ".her", "state.json"), {});
+	assert.ok(state.cursor?.done_ids?.includes("junk-filter-ep"));
+});
+
+test("G-249 consolidateGrain uses project substrings and env overrides", async () => {
+	assert.equal(consolidateGrain("D:\\@Her\\Her-repo\\samantha"), "fine");
+	assert.equal(consolidateGrain("D:\\@AISkill\\0413\\tapix-platform"), "coarse");
+	assert.equal(consolidateGrain(""), "coarse");
+	await withChunkEnv({ HER_CONSOLIDATE_FINE_PROJECTS: "tapix,custom" }, async () => {
+		assert.equal(consolidateGrain("D:\\work\\tapix-platform"), "fine");
+		assert.equal(consolidateGrain("D:\\@Her\\Her-repo"), "coarse");
+	});
+});
+
+test("G-249 coarse and fine grains use separate chunk attempt budgets", async () => {
+	await withChunkEnv(
+		{
+			HER_CONSOLIDATE_EPISODE_CHARS: "100",
+			HER_CONSOLIDATE_CHUNK_FLOOR_CHARS: "20",
+			HER_CONSOLIDATE_CHUNK_MAX_ATTEMPTS: undefined,
+			HER_CONSOLIDATE_CHUNK_MAX_ATTEMPTS_FINE: "64",
+			HER_CONSOLIDATE_CHUNK_MAX_ATTEMPTS_COARSE: "8",
+			HER_CONSOLIDATE_COARSE_SAMPLE_SLICES: "100",
+		},
+		async () => {
+			const run = async (project: string): Promise<number> => {
+				const store = await g234Store();
+				await writeText(
+					join(store, "episodic", "raw", "2026-08-12T0110--grain-ep.md"),
+					[
+						"---",
+						"id: grain-ep",
+						"timestamp: 2026-08-12T0110",
+						`project: ${project}`,
+						"---",
+						"",
+						"Q".repeat(2000),
+						"",
+					].join("\n"),
+				);
+				let calls = 0;
+				const model = {
+					complete(): string {
+						calls++;
+						if (project === "samantha" && calls === 1) return '{"notes": [';
+						return JSON.stringify({ notes: [], moments: [] });
+					},
+				};
+				await new Memory(store, model).consolidate();
+				return calls;
+			};
+			const coarseCalls = await run("tapix-platform");
+			const fineCalls = await run("samantha");
+			assert.ok(coarseCalls <= 8, `coarse calls: ${coarseCalls}`);
+			assert.ok(fineCalls > 8, `fine calls: ${fineCalls}`);
+		},
+	);
+});
+
+test("G-249 legacy chunk budget overrides the fine budget", async () => {
+	await withChunkEnv(
+		{
+			HER_CONSOLIDATE_EPISODE_CHARS: "100",
+			HER_CONSOLIDATE_CHUNK_FLOOR_CHARS: "20",
+			HER_CONSOLIDATE_CHUNK_MAX_ATTEMPTS: "3",
+			HER_CONSOLIDATE_CHUNK_MAX_ATTEMPTS_FINE: "64",
+			HER_CONSOLIDATE_COARSE_SAMPLE_SLICES: "100",
+		},
+		async () => {
+			const store = await g234Store();
+			await writeText(
+				join(store, "episodic", "raw", "2026-08-12T0111--legacy-budget.md"),
+				[
+					"---",
+					"id: legacy-budget",
+					"timestamp: 2026-08-12T0111",
+					"project: samantha",
+					"---",
+					"",
+					"Q".repeat(2000),
+					"",
+				].join("\n"),
+			);
+			let calls = 0;
+			const model = {
+				complete: (): string => {
+					calls++;
+					return JSON.stringify({ notes: [], moments: [] });
+				},
+			};
+			await new Memory(store, model).consolidate();
+			assert.ok(calls <= 3, `legacy override calls: ${calls}`);
+		},
+	);
+});
+
+test("G-249 coarse sampling sends six slices, preserves raw, and avoids quarantine fan-out", async () => {
+	await withChunkEnv(
+		{
+			HER_CONSOLIDATE_EPISODE_CHARS: "8000",
+			HER_CONSOLIDATE_CHUNK_FLOOR_CHARS: "2000",
+			HER_CONSOLIDATE_CHUNK_MAX_ATTEMPTS: undefined,
+			HER_CONSOLIDATE_CHUNK_MAX_ATTEMPTS_COARSE: "8",
+			HER_CONSOLIDATE_COARSE_SAMPLE_SLICES: "6",
+		},
+		async () => {
+			const store = await g234Store();
+			const body = Array.from(
+				{ length: 300 },
+				(_, index) => `SLICE-${index.toString().padStart(3, "0")} ${"x".repeat(999)}`,
+			).join("\n");
+			await writeText(
+				join(store, "episodic", "raw", "2026-08-12T0112--sampled-ep.md"),
+				[
+					"---",
+					"id: sampled-ep",
+					"timestamp: 2026-08-12T0112",
+					"project: tapix-platform",
+					"---",
+					"",
+					body,
+					"",
+				].join("\n"),
+			);
+			const prompts: string[] = [];
+			const model = {
+				complete(prompt: string): string {
+					prompts.push(prompt);
+					return JSON.stringify({ notes: [], moments: [] });
+				},
+			};
+			await new Memory(store, model).consolidate();
+			assert.ok(prompts.length <= 6, `sample calls: ${prompts.length}`);
+			assert.match(prompts[0] ?? "", /SLICE-000/);
+			assert.match(prompts[0] ?? "", /SLICE-299/);
+			assert.match(prompts[0] ?? "", /\[\.\.\. \u7565\u8fc7/);
+			const skips = ((await readText(join(store, "audit", "consolidate-skips.jsonl"))) ?? "")
+				.trim()
+				.split(/\r?\n/)
+				.filter(Boolean)
+				.map((line) => JSON.parse(line) as { reason?: string; slices?: number });
+			assert.equal(skips.length, 1);
+			assert.equal(skips[0]?.reason, "coarse-sampled");
+			assert.equal(skips[0]?.slices, 6);
+			assert.equal((await readQuarantine(store)).length, 0);
+		},
+	);
+});
+
+test("G-249 batch hint remembers a downgraded successful batch", async () => {
+	const store = await g234Store();
+	for (let index = 0; index < 4; index++) {
+		await writeRawEpisode(store, `2026-08-12T012${index}`, `hint-ep-${index}`, `body ${index}`);
+	}
+	let firstCalls = 0;
+	const model = {
+		complete(prompt: string): string {
+			firstCalls++;
+			const count = (prompt.match(/\[hint-ep-/g) ?? []).length;
+			return count > 1 ? '{"notes": [' : JSON.stringify({ notes: [], moments: [] });
+		},
+	};
+	await new Memory(store, model).consolidate(4);
+	const state = await readJson<{ consolidate_batch_hint?: number }>(join(store, ".her", "state.json"), {});
+	assert.equal(state.consolidate_batch_hint, 1);
+	let secondCalls = 0;
+	const secondModel = {
+		complete: (): string => {
+			secondCalls++;
+			return JSON.stringify({ notes: [], moments: [] });
+		},
+	};
+	await new Memory(store, secondModel).consolidate(4);
+	assert.ok(secondCalls < firstCalls, `second calls ${secondCalls}, first calls ${firstCalls}`);
+});
+
+test("G-249 PARTIAL warning appears only when chunk digestion is incomplete", async () => {
+	await withChunkEnv(
+		{
+			HER_CONSOLIDATE_EPISODE_CHARS: "800",
+			HER_CONSOLIDATE_CHUNK_FLOOR_CHARS: "200",
+			HER_CONSOLIDATE_CHUNK_MAX_ATTEMPTS: "1",
+			HER_CONSOLIDATE_COARSE_SAMPLE_SLICES: "100",
+		},
+		async () => {
+			const partialStore = await g234Store();
+			await writeRawEpisode(partialStore, "2026-08-12T0130", "partial-log-ep", "Q".repeat(2000));
+			const warnings = mock.method(console, "warn");
+			try {
+				await new Memory(partialStore, { complete: (): string => '{"notes": [' }).consolidate();
+				assert.ok(
+					warnings.mock.calls.some((call) => String(call.arguments[0]).includes("PARTIAL episode partial-log-ep")),
+				);
+			} finally {
+				warnings.mock.restore();
+			}
+			const fullStore = await g234Store();
+			await writeRawEpisode(
+				fullStore,
+				"2026-08-12T0131",
+				"full-log-ep",
+				"durable body that fits the normal consolidation path",
+			);
+			const fullWarnings = mock.method(console, "warn");
+			try {
+				await new Memory(fullStore, {
+					complete: (): string => JSON.stringify({ notes: [], moments: [] }),
+				}).consolidate();
+				assert.ok(
+					!fullWarnings.mock.calls.some((call) =>
+						String(call.arguments[0]).includes("PARTIAL episode full-log-ep"),
+					),
+				);
+			} finally {
+				fullWarnings.mock.restore();
+			}
+		},
+	);
+});
+
+test("G-249 invalid or missing batch hints fall back to the requested limit", async () => {
+	for (const hint of [undefined, 0, -2]) {
+		const store = await g234Store();
+		await writeJson(join(store, ".her", "state.json"), hint === undefined ? {} : { consolidate_batch_hint: hint });
+		await writeRawEpisode(store, "2026-08-12T0140", "invalid-hint-a", "a");
+		await writeRawEpisode(store, "2026-08-12T0141", "invalid-hint-b", "b");
+		let prompt = "";
+		const model = {
+			complete: (value: string): string => {
+				prompt = value;
+				return JSON.stringify({ notes: [], moments: [] });
+			},
+		};
+		await assert.doesNotReject(() => new Memory(store, model).consolidate(2));
+		assert.equal((prompt.match(/\[invalid-hint-/g) ?? []).length, 2);
+	}
+});
+test("G-249 coarse episodes within the sample budget do not emit coarse-sampled audit", async () => {
+	await withChunkEnv(
+		{
+			HER_CONSOLIDATE_EPISODE_CHARS: "1000",
+			HER_CONSOLIDATE_COARSE_SAMPLE_SLICES: "6",
+		},
+		async () => {
+			const store = await g234Store();
+			await writeText(
+				join(store, "episodic", "raw", "2026-08-12T0150--coarse-boundary.md"),
+				[
+					"---",
+					"id: coarse-boundary",
+					"timestamp: 2026-08-12T0150",
+					"project: tapix-platform",
+					"---",
+					"",
+					"B".repeat(4000),
+					"",
+				].join("\n"),
+			);
+			const model = { complete: (): string => JSON.stringify({ notes: [], moments: [] }) };
+			await new Memory(store, model).consolidate();
+			const audit = (await readText(join(store, "audit", "consolidate-skips.jsonl"))) ?? "";
+			assert.doesNotMatch(audit, /coarse-sampled/);
+		},
+	);
 });

@@ -147,7 +147,10 @@ const DEFAULT_CONSOLIDATE_KEY_RECENT = 30;
 // without spending a call, because a <=CEIL slice of THIS episode already truncated (that is why we
 // are here), so a larger slice cannot fit — and sending multi-MB inputs to the model is itself costly.
 const DEFAULT_CONSOLIDATE_CHUNK_FLOOR_CHARS = 2000;
-const DEFAULT_CONSOLIDATE_CHUNK_MAX_ATTEMPTS = 64;
+const DEFAULT_CONSOLIDATE_CHUNK_MAX_ATTEMPTS_FINE = 64;
+const DEFAULT_CONSOLIDATE_CHUNK_MAX_ATTEMPTS_COARSE = 8;
+const DEFAULT_CONSOLIDATE_COARSE_SAMPLE_SLICES = 6;
+const DEFAULT_CONSOLIDATE_FINE_PROJECTS = ["Her-repo", "@Her", "samantha", "her-memory"];
 const DEFAULT_TOPICS_BATCH_UNITS = 250;
 const DEFAULT_TOPICS_MIN_BATCH_UNITS = 25;
 const DEFAULT_IDEAS_MAX_UNITS = 400;
@@ -155,7 +158,7 @@ const DEFAULT_IDEAS_MIN_UNITS = 50;
 
 type NoteSummary = { key: string; kind: string; type: string; title: string };
 type OrganKind = "ideas" | "topic-maps";
-type ConsolidateEpisode = { ts: string; id: string; cursorId: string; text: string; body: string };
+type ConsolidateEpisode = { ts: string; id: string; cursorId: string; text: string; body: string; project: string };
 type IndexedConsolidateEpisode = ConsolidateEpisode & {
 	sourceIndex: number;
 	duplicateOf?: { id: string; ts: string };
@@ -234,6 +237,31 @@ async function recentSemanticStems(dir: string, limit: number): Promise<string[]
 		.slice(0, limit)
 		.map((item) => item.stem);
 }
+export function isJunkNote(note: { key?: unknown; title?: unknown; content?: unknown }): false | string {
+	const key = typeof note.key === "string" ? note.key : "";
+	if (/(^|-)(no|not)-extractable/i.test(key) || /no-knowledge/i.test(key) || /unextractable/i.test(key)) {
+		return "self-reported-empty";
+	}
+	if (/(^|-)turn-?\d+/i.test(key) || /(^|-)build-\d{6,}/i.test(key)) return "transient-key";
+	// Only genuinely empty content is junk. A length floor was specified originally and dropped real
+	// notes: short facts ("Fei uses pnpm, never npm") are exactly the durable kind, and six existing
+	// G-234/G-235 tests caught the over-reach. Quality judgement does not belong in a mechanical gate.
+	const content = typeof note.content === "string" ? note.content.trim() : "";
+	if (content.length === 0) return "empty-content";
+	return false;
+}
+export function consolidateGrain(project: string): "fine" | "coarse" {
+	if (!project) return "coarse";
+	const configured = process.env.HER_CONSOLIDATE_FINE_PROJECTS;
+	const patterns = configured?.trim()
+		? configured
+				.split(",")
+				.map((value) => value.trim())
+				.filter(Boolean)
+		: DEFAULT_CONSOLIDATE_FINE_PROJECTS;
+	const lowerProject = project.toLowerCase();
+	return patterns.some((pattern) => lowerProject.includes(pattern.toLowerCase())) ? "fine" : "coarse";
+}
 function envPositiveInt(name: string, fallback: number): number {
 	const raw = process.env[name];
 	if (raw === undefined || raw === "") return fallback;
@@ -293,6 +321,52 @@ function splitTextInHalf(text: string): [string, string] {
 		return [text.slice(0, half), text.slice(half)];
 	}
 	return [text.slice(0, cut), text.slice(cut)];
+}
+
+type CoarseSample = { text: string; sampledChars: number; slices: number };
+
+function alignSampleBoundary(text: string, position: number): number {
+	if (position <= 0) return 0;
+	if (position >= text.length) return text.length;
+	const newline = text.indexOf("\n", position);
+	return newline === -1 ? position : newline + 1;
+}
+
+function sampleCoarseEpisode(text: string, ceil: number, slices: number): CoarseSample {
+	const count = Math.max(1, slices);
+	if (count === 1) {
+		const end = Math.min(text.length, ceil);
+		return { text: text.slice(0, end), sampledChars: end, slices: 1 };
+	}
+	const maxStart = Math.max(0, text.length - ceil);
+	const starts: number[] = [];
+	let previous = 0;
+	for (let index = 0; index < count; index++) {
+		const target = index === 0 ? 0 : Math.round((maxStart * index) / (count - 1));
+		let start = index === 0 ? 0 : alignSampleBoundary(text, target);
+		if (start <= previous) start = target;
+		if (index === count - 1) start = alignSampleBoundary(text, maxStart);
+		start = Math.max(previous, Math.min(text.length, start));
+		starts.push(start);
+		previous = start;
+	}
+	const parts: string[] = [];
+	let sampledChars = 0;
+	for (let index = 0; index < starts.length; index++) {
+		const start = starts[index] ?? 0;
+		const rawEnd = index === starts.length - 1 ? text.length : start + ceil;
+		const end = index === starts.length - 1 ? text.length : Math.min(text.length, alignSampleBoundary(text, rawEnd));
+		const safeEnd = Math.max(start, end);
+		const part = text.slice(start, safeEnd);
+		parts.push(part);
+		sampledChars += part.length;
+		if (index < starts.length - 1) {
+			const nextStart = starts[index + 1] ?? text.length;
+			const skipped = Math.max(0, nextStart - safeEnd);
+			parts.push(`\n\n[... \u7565\u8fc7 ${skipped} \u5b57\u7b26 ...]\n\n`);
+		}
+	}
+	return { text: parts.join(""), sampledChars, slices: count };
 }
 
 export type {
@@ -712,7 +786,7 @@ export class Memory {
 		return this.withStoreLock(async () => {
 			if (!this.model) throw new Error("consolidate requires a model");
 			const model = this.model;
-			const state = await readJson<{ cursor?: unknown; last_consolidate?: string | null }>(this.paths.stateFile, {});
+			const state = await readJson<Record<string, unknown>>(this.paths.stateFile, {});
 			const cursor = parseConsolidateCursor(state.cursor ?? null);
 			const available = await this.episodesSince(cursor);
 			if (available.length === 0) return { episodes: 0, notesTouched: 0, moments: 0 };
@@ -786,16 +860,122 @@ export class Memory {
 			// treatment — halve while the batch is >1, skip+account at batch 1 — because it too must not
 			// cost a whole round. Only a batch-one TRUNCATION enters fat-episode chunking: that one is
 			// deterministic and about size, so splitting the input is what actually helps.
-			let batchLimit = limit;
+			const rawBatchHint = state.consolidate_batch_hint;
+			const batchHint =
+				typeof rawBatchHint === "number" && Number.isInteger(rawBatchHint) && rawBatchHint > 0
+					? Math.min(limit, Math.max(1, rawBatchHint))
+					: limit;
+			let batchLimit = batchHint;
+			let batchWasTruncated = false;
 			let remaining: IndexedConsolidateEpisode[] = uniqueAvailable;
 			if (remaining.length === 0) {
 				await advanceThrough(indexedAvailable.length - 1);
 				return { episodes: available.length, notesTouched: 0, moments: 0 };
 			}
+			const persistBatchHint = async (
+				startedBatchLimit: number,
+				actualBatchLimit: number,
+				truncated: boolean,
+			): Promise<void> => {
+				const nextHint = truncated ? actualBatchLimit : startedBatchLimit + 1;
+				const latest = await readJson<Record<string, unknown>>(this.paths.stateFile, {});
+				await writeJson(this.paths.stateFile, { ...latest, consolidate_batch_hint: Math.max(1, nextHint) });
+			};
+			const processFatEpisode = async (
+				fat: IndexedConsolidateEpisode,
+				initialResponseHead: string,
+				sample?: CoarseSample,
+			): Promise<{ notesTouched: number; moments: number }> => {
+				const digestEpisode = sample ? { ...fat, text: sample.text } : fat;
+				const outcome = await this.digestFatEpisode(digestEpisode, existing, recent, initialResponseHead, {
+					totalChars: fat.text.length,
+					allowOversizeFirst: Boolean(sample),
+				});
+				const notes = await this.filterJunkNotes(outcome.notes, consolidateSkipsPath);
+				let mergeFailures = 0;
+				for (const note of notes) {
+					if ((await this.upsertNote(note)) === "merge-failed") mergeFailures++;
+				}
+				if (mergeFailures > 0) {
+					console.warn(
+						`[her] consolidate: ${mergeFailures}/${notes.length} chunked note(s) from episode ${fat.id} failed to merge; old bodies kept, see their Timeline pending entries`,
+					);
+				}
+				for (const segment of outcome.quarantined) {
+					await this.quarantineSegment(fat, segment);
+					await appendText(
+						consolidateSkipsPath,
+						`${JSON.stringify({
+							at: new Date().toISOString(),
+							episode: fat.id,
+							ts: fat.ts,
+							part: segment.part,
+							reason: segment.reason,
+							response_head: segment.responseHead.slice(0, 200),
+						})}\n`,
+					);
+					console.warn(
+						`[her] consolidate: QUARANTINED segment part ${segment.part} of episode ${fat.id} (${segment.text.length} chars, ${segment.reason}) - content saved to .her/quarantine/ and accounted to audit/consolidate-skips.jsonl`,
+					);
+				}
+				if (outcome.digestedChars < outcome.totalChars) {
+					const pct =
+						outcome.totalChars === 0 ? "100.0" : ((outcome.digestedChars / outcome.totalChars) * 100).toFixed(1);
+					console.warn(
+						`[her] consolidate: PARTIAL episode ${fat.id} grain=${consolidateGrain(fat.project)} digested ${outcome.digestedChars}/${outcome.totalChars} chars (${pct}%), rest quarantined`,
+					);
+				}
+				if (sample) {
+					await appendText(
+						consolidateSkipsPath,
+						JSON.stringify({
+							at: new Date().toISOString(),
+							episodeId: fat.id,
+							episode: fat.id,
+							totalChars: fat.text.length,
+							sampledChars: sample.sampledChars,
+							slices: sample.slices,
+							reason: "coarse-sampled",
+						}) + "\n",
+					);
+					console.warn(
+						`[her] consolidate: COARSE-SAMPLED episode ${fat.id} ${sample.sampledChars}/${fat.text.length} chars in ${sample.slices} slices; raw preserved`,
+					);
+				}
+				if (outcome.moments.length > 0) {
+					const date = fat.ts.slice(0, 10);
+					await appendText(
+						this.paths.becoming,
+						outcome.moments
+							.map((moment) => `- ${date} · trigger: ${moment.trigger ?? ""} · shift: ${moment.shift ?? ""}\n`)
+							.join(""),
+					);
+				}
+				return { notesTouched: notes.length, moments: outcome.moments.length };
+			};
 			for (;;) {
 				const batch = selectConsolidateBatch(remaining, batchLimit);
 				const episodes = batch.map(({ episode }) => episode);
 				if (episodes.length === 0) return { episodes: 0, notesTouched: 0, moments: 0 };
+				const firstEpisode = episodes[0];
+				const sampleCeil = envPositiveInt("HER_CONSOLIDATE_EPISODE_CHARS", DEFAULT_CONSOLIDATE_EPISODE_CHARS);
+				const sampleSlices = envPositiveInt(
+					"HER_CONSOLIDATE_COARSE_SAMPLE_SLICES",
+					DEFAULT_CONSOLIDATE_COARSE_SAMPLE_SLICES,
+				);
+				const sampleBudget = sampleSlices * sampleCeil;
+				const firstGrain = consolidateGrain(firstEpisode.project);
+				if (episodes.length === 1 && firstGrain === "coarse" && firstEpisode.text.length > sampleBudget) {
+					const sample = sampleCoarseEpisode(firstEpisode.text, sampleCeil, sampleSlices);
+					await processFatEpisode(firstEpisode, "", sample);
+					const consumedEnd = duplicateEndAfter(firstEpisode.sourceIndex);
+					await advanceThrough(consumedEnd);
+					remaining = remaining.slice(batch.length);
+					await persistBatchHint(batchHint, batchLimit, batchWasTruncated);
+					batchLimit = limit;
+					batchWasTruncated = false;
+					continue;
+				}
 				const joined = batch.map(({ promptText }) => promptText).join("\n\n");
 				const selectedKeys = selectRelevantKeys(joined, existing, { recent });
 				// stderr, not stdout: the CLI writes its --json payload to stdout (cli.ts:335), so an
@@ -824,7 +1004,11 @@ export class Memory {
 						(error instanceof JsonTruncatedError || error instanceof JsonMalformedError) &&
 						episodes.length > 1
 					) {
-						batchLimit = Math.floor(episodes.length / 2);
+						const fromBatchLimit = batchLimit;
+						const nextBatchLimit = Math.floor(episodes.length / 2);
+						console.warn(`[her] consolidate: batch ${fromBatchLimit} \u2192 ${nextBatchLimit} (truncated)`);
+						batchLimit = nextBatchLimit;
+						batchWasTruncated = true;
 						continue;
 					}
 					if (error instanceof JsonMalformedError && episodes.length === 1) {
@@ -846,6 +1030,7 @@ export class Memory {
 						await advanceThrough(consumedEnd);
 						remaining = remaining.slice(batch.length);
 						batchLimit = limit;
+						batchWasTruncated = false;
 						continue;
 					}
 					if (error instanceof JsonTruncatedError && episodes.length === 1) {
@@ -859,56 +1044,20 @@ export class Memory {
 						// propagates out with nothing applied and the cursor frozen (G-231 durability). Only after
 						// every segment is distilled or quarantined do we upsert, quarantine, and advance the cursor.
 						const fat = episodes[0];
-						const outcome = await this.digestFatEpisode(fat, existing, recent, error.responseHead);
-
-						let mergeFailures = 0;
-						for (const note of outcome.notes) {
-							if ((await this.upsertNote(note)) === "merge-failed") mergeFailures++;
-						}
-						if (mergeFailures > 0) {
-							console.warn(
-								`[her] consolidate: ${mergeFailures}/${outcome.notes.length} chunked note(s) from episode ${fat.id} failed to merge; old bodies kept, see their Timeline pending entries`,
-							);
-						}
-						for (const segment of outcome.quarantined) {
-							await this.quarantineSegment(fat, segment);
-							await appendText(
-								consolidateSkipsPath,
-								`${JSON.stringify({
-									at: new Date().toISOString(),
-									episode: fat.id,
-									ts: fat.ts,
-									part: segment.part,
-									reason: segment.reason,
-									response_head: segment.responseHead.slice(0, 200),
-								})}\n`,
-							);
-							console.warn(
-								`[her] consolidate: QUARANTINED segment part ${segment.part} of episode ${fat.id} (${segment.text.length} chars, ${segment.reason}) — content saved to .her/quarantine/ and accounted to audit/consolidate-skips.jsonl`,
-							);
-						}
-						if (outcome.moments.length > 0) {
-							const date = fat.ts.slice(0, 10);
-							await appendText(
-								this.paths.becoming,
-								outcome.moments
-									.map(
-										(moment) =>
-											`- ${date} · trigger: ${moment.trigger ?? ""} · shift: ${moment.shift ?? ""}\n`,
-									)
-									.join(""),
-							);
-						}
-						const consumedEnd = duplicateEndAfter(episodes.at(-1)?.sourceIndex ?? -1);
+						await processFatEpisode(fat, error.responseHead);
+						const consumedEnd = duplicateEndAfter(fat.sourceIndex);
 						await advanceThrough(consumedEnd);
 						remaining = remaining.slice(batch.length);
+						await persistBatchHint(batchHint, batchLimit, batchWasTruncated);
 						batchLimit = limit;
+						batchWasTruncated = false;
 						continue;
 					}
 					throw error;
 				}
 
-				const notes = result.notes ?? [];
+				const rawNotes = result.notes ?? [];
+				const notes = await this.filterJunkNotes(rawNotes, consolidateSkipsPath);
 				const moments = result.moments ?? [];
 				const consumedEnd = duplicateEndAfter(episodes.at(-1)?.sourceIndex ?? -1);
 				const newCursor = await advanceThrough(consumedEnd);
@@ -932,6 +1081,7 @@ export class Memory {
 					);
 				}
 
+				await persistBatchHint(batchHint, batchLimit, batchWasTruncated);
 				return { episodes: episodes.length, notesTouched: notes.length, moments: moments.length };
 			}
 		});
@@ -948,25 +1098,41 @@ export class Memory {
 	// stays frozen. Recursion terminates because splitTextInHalf yields strictly-shorter parts and the
 	// floor stops the descent.
 	private async digestFatEpisode(
-		episode: { id: string; text: string },
+		episode: { id: string; text: string; project: string },
 		existing: string[],
 		recent: string[],
 		initialResponseHead: string,
+		options: { totalChars?: number; allowOversizeFirst?: boolean } = {},
 	): Promise<{
 		notes: Array<Record<string, unknown>>;
 		moments: Array<{ trigger?: string; shift?: string }>;
 		quarantined: Array<{ part: string; text: string; responseHead: string; reason: string }>;
+		digestedChars: number;
+		totalChars: number;
 	}> {
 		if (!this.model) throw new Error("consolidate requires a model");
 		const model = this.model;
 		const ceil = envPositiveInt("HER_CONSOLIDATE_EPISODE_CHARS", DEFAULT_CONSOLIDATE_EPISODE_CHARS);
 		const floor = envPositiveInt("HER_CONSOLIDATE_CHUNK_FLOOR_CHARS", DEFAULT_CONSOLIDATE_CHUNK_FLOOR_CHARS);
-		const maxAttempts = envPositiveInt("HER_CONSOLIDATE_CHUNK_MAX_ATTEMPTS", DEFAULT_CONSOLIDATE_CHUNK_MAX_ATTEMPTS);
+		const grain = consolidateGrain(episode.project);
+		const legacyMaxAttempts = process.env.HER_CONSOLIDATE_CHUNK_MAX_ATTEMPTS;
+		const maxAttempts = legacyMaxAttempts?.trim()
+			? envPositiveInt("HER_CONSOLIDATE_CHUNK_MAX_ATTEMPTS", 1)
+			: envPositiveInt(
+					grain === "fine"
+						? "HER_CONSOLIDATE_CHUNK_MAX_ATTEMPTS_FINE"
+						: "HER_CONSOLIDATE_CHUNK_MAX_ATTEMPTS_COARSE",
+					grain === "fine"
+						? DEFAULT_CONSOLIDATE_CHUNK_MAX_ATTEMPTS_FINE
+						: DEFAULT_CONSOLIDATE_CHUNK_MAX_ATTEMPTS_COARSE,
+				);
 
 		const notes: Array<Record<string, unknown>> = [];
 		const moments: Array<{ trigger?: string; shift?: string }> = [];
 		const quarantined: Array<{ part: string; text: string; responseHead: string; reason: string }> = [];
 		let attempts = 0;
+		let digestedChars = 0;
+		const totalChars = options.totalChars ?? episode.text.length;
 
 		// A chunk known to truncate: quarantine it if it is already at/below the floor (pathologically
 		// dense — its full content is preserved for recovery), otherwise split and recurse the strictly
@@ -995,7 +1161,7 @@ export class Memory {
 			}
 			// Larger than the attempt ceiling: split without spending a call — a <=ceil slice of THIS episode
 			// already truncated, so a larger slice cannot fit, and multi-MB inputs are themselves costly.
-			if (text.length > ceil) {
+			if (text.length > ceil && !(options.allowOversizeFirst && attempts === 0)) {
 				const [left, right] = splitTextInHalf(text);
 				if (left.length === 0 || right.length === 0) {
 					quarantined.push({ part, text, responseHead: "", reason: "unsplittable" });
@@ -1006,6 +1172,7 @@ export class Memory {
 				return;
 			}
 			attempts++;
+			digestedChars += text.length;
 			let result: {
 				notes?: Array<Record<string, unknown>>;
 				moments?: Array<{ trigger?: string; shift?: string }>;
@@ -1041,8 +1208,9 @@ export class Memory {
 
 		// The batch=1 attempt already proved the whole episode truncates — enter through the known-truncated
 		// path, never re-attempting the whole. A <=floor episode quarantines here with no further model call.
-		await splitOrQuarantine(episode.text, "1", initialResponseHead);
-		return { notes, moments, quarantined };
+		if (options.allowOversizeFirst) await recurse(episode.text, "1");
+		else await splitOrQuarantine(episode.text, "1", initialResponseHead);
+		return { notes, moments, quarantined, digestedChars, totalChars };
 	}
 
 	// G-235: write one quarantined fat-episode segment to <store>/.her/quarantine/ — full content plus the
@@ -1566,9 +1734,35 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 				cursorId,
 				text: parsed.body.trim(),
 				body: parsed.body,
+				project: String(parsed.data.project ?? ""),
 			});
 		}
 		return episodes.sort((a, b) => a.ts.localeCompare(b.ts));
+	}
+	private async filterJunkNotes(
+		notes: Array<Record<string, unknown>>,
+		consolidateSkipsPath: string,
+	): Promise<Array<Record<string, unknown>>> {
+		const accepted: Array<Record<string, unknown>> = [];
+		for (const note of notes) {
+			const junkReason = isJunkNote(note);
+			if (!junkReason) {
+				accepted.push(note);
+				continue;
+			}
+			const noteKey = typeof note.key === "string" ? note.key : typeof note.title === "string" ? note.title : "";
+			await appendText(
+				consolidateSkipsPath,
+				JSON.stringify({
+					at: new Date().toISOString(),
+					reason: "junk-note",
+					note_key: noteKey,
+					junk_reason: junkReason,
+				}) + "\n",
+			);
+			console.warn(`[her] consolidate: DROPPED junk note "${noteKey}" (${junkReason})`);
+		}
+		return accepted;
 	}
 	private async upsertNote(note: Record<string, unknown>): Promise<"created" | "merged" | "merge-failed"> {
 		const key = slug(String(note.key ?? note.title ?? "note"));
