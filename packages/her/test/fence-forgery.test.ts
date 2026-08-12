@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { renderMirror, renderRecall } from "../src/extension.ts";
-import { FENCE_MARKER_REMOVED, fenceUntrusted } from "../src/her-core/store.ts";
 import { formatInbox, type HerMessage, INBOX_MESSAGE_BEGIN, INBOX_MESSAGE_END } from "../src/her-core/messages.ts";
 import { formatSessionSearch, type SessionHit } from "../src/her-core/session-roster.ts";
+import { FENCE_MARKER_REMOVED, fenceUntrusted } from "../src/her-core/store.ts";
 
 /**
  * A fence only protects if untrusted content cannot forge its delimiters.

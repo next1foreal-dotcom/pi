@@ -400,8 +400,8 @@ export {
 	searchSessions,
 } from "./session-roster.ts";
 export {
-	fenceUntrusted,
 	FENCE_MARKER_REMOVED,
+	fenceUntrusted,
 	frontmatter,
 	parseFrontmatter,
 	readJson,
