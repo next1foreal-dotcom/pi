@@ -48,6 +48,7 @@ import type {
 	WorldNoteData,
 } from "./memory-types.ts";
 import {
+	assertNarrativeComplete,
 	CHOICE_MODEL_SYNTHESIZE_AFTER_DAYS,
 	CHOICE_RULES_MARKER,
 	changedAfter,
@@ -926,6 +927,10 @@ export class Memory {
 					strong: true,
 				},
 			);
+			// Fail before anything lands. The proposal, CONTEXT.md and last_synthesize all advance
+			// together below, so a draft cut off at the token ceiling would overwrite the core
+			// narrative and stamp the week done — which is exactly what happened on 08-09/08-11.
+			assertNarrativeComplete(draft, current);
 			const proposalId = `${today()}-narrative-update`;
 			await writeText(join(this.paths.proposals, `${proposalId}.md`), draft);
 			const state = await readJson<Record<string, unknown>>(this.paths.stateFile, {});

@@ -529,6 +529,66 @@ export class JsonMalformedError extends Error {
 	}
 }
 
+// The narrative counterpart of JsonTruncatedError. The JSON paths only notice a cut-off reply
+// because JSON.parse fails; a narrative draft is free prose, so a reply that stopped at the
+// output-token ceiling lands on disk looking exactly like a short one and every check passes.
+export class NarrativeIncompleteError extends Error {
+	readonly responseTail: string;
+	constructor(message: string, responseTail: string) {
+		super(message);
+		this.name = "NarrativeIncompleteError";
+		this.responseTail = responseTail;
+	}
+}
+
+// A draft under half the narrative it replaces is treated as damage even when it reads cleanly.
+// Shrinking the core narrative by more than this is a decision for approve(), not a side effect
+// of one model call.
+const NARRATIVE_MIN_RATIO = 0.5;
+
+// ...but only once there is a narrative worth protecting. The seeded CONTEXT.md is 113 chars,
+// while every real narrative in her-memory's history has been 5,434+ (smallest, 2026-06-04) up
+// to 38,052. Without this floor the ratio guard would reject a first synthesize on a fresh store
+// for the crime of having little to say yet.
+const NARRATIVE_ESTABLISHED_MIN_CHARS = 2000;
+
+// Emphasis and quoting may trail the terminator — the last good narrative ends `Contractor."*`.
+const TRAILING_MARKUP = /[)\]}"'”’»*_`\s]+$/u;
+const SENTENCE_END = /[.!?…。！？」』]$/u;
+
+/**
+ * Throws unless `draft` looks like a narrative the model finished writing.
+ *
+ * Two independent signals, because either alone is thin: prose that stops mid-sentence is
+ * unambiguous but a cut can land just after a period, and a collapse in length is catastrophic
+ * even when it ends cleanly. Both are cheap and neither needs provider metadata — no model
+ * client here reports finish_reason.
+ *
+ * Why it exists: on 2026-08-09 and 08-11 synthesize wrote a 3,395-byte stump ending mid-word
+ * ("…and Flux-Fill/SD") over a 38,052-byte narrative, then advanced last_synthesize, so the
+ * damage recorded itself as success and would not have retried for a week.
+ */
+export function assertNarrativeComplete(draft: string, current: string): void {
+	const text = draft.trim();
+	const tail = text.slice(-120);
+	if (!text) {
+		throw new NarrativeIncompleteError("synthesize returned an empty narrative", "");
+	}
+	if (!SENTENCE_END.test(text.replace(TRAILING_MARKUP, ""))) {
+		throw new NarrativeIncompleteError(
+			`synthesize returned a narrative that stops mid-sentence (${text.length} chars)`,
+			tail,
+		);
+	}
+	const currentLength = current.trim().length;
+	if (currentLength >= NARRATIVE_ESTABLISHED_MIN_CHARS && text.length < currentLength * NARRATIVE_MIN_RATIO) {
+		throw new NarrativeIncompleteError(
+			`synthesize returned ${text.length} chars, under half of the ${currentLength}-char narrative it would replace`,
+			tail,
+		);
+	}
+}
+
 // Strip a Markdown code fence wrapping a JSON payload. Covers the four shapes models emit: a
 // closed ```json … ``` block (even with prose around it), an UNCLOSED opening ```json fence (the
 // signature of a response cut off at its token ceiling — stripping the dangling opener is what
