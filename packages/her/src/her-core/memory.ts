@@ -154,7 +154,12 @@ const DEFAULT_CONSOLIDATE_CHUNK_FLOOR_CHARS = 2000;
 const DEFAULT_CONSOLIDATE_CHUNK_MAX_ATTEMPTS_FINE = 64;
 const DEFAULT_CONSOLIDATE_CHUNK_MAX_ATTEMPTS_COARSE = 8;
 const DEFAULT_CONSOLIDATE_COARSE_SAMPLE_SLICES = 6;
-const DEFAULT_CONSOLIDATE_FINE_PROJECTS = ["Her-repo", "@Her", "samantha", "her-memory"];
+// Checked against the store's real `project:` values (last 600 episodes, 2026-08-12): the paths that
+// matter carry Her-repo / samantha / @Her, and Her's own worktrees are named wt-<card>. Deliberately
+// NOT fine: `her-heartbeat` and `tasks` — heartbeats are log-like (deep digestion of them is what
+// produced the heartbeat-runs-regularly-<date> junk notes) and `tasks` is Codex worker transcripts,
+// mostly boilerplate, and the source of most byte-identical duplicates.
+const DEFAULT_CONSOLIDATE_FINE_PROJECTS = ["Her-repo", "@Her", "samantha", "her-memory", "wt-"];
 const DEFAULT_TOPICS_BATCH_UNITS = 250;
 const DEFAULT_TOPICS_MIN_BATCH_UNITS = 25;
 const DEFAULT_IDEAS_MAX_UNITS = 400;
