@@ -55,3 +55,18 @@ permit(
   action == Action::"CallTool",
   resource == Tool::"her_task_continue"
 );
+
+// G-245 — Fei 拍板放行(2026-08-12「发」)。her_session_send 注册为 destructive:true
+// (写记忆库、能触发要花钱的唤醒、把文字塞进另一个 agent 的系统提示词——与
+// her_task_continue 同一副作用族),故上面的 allow_memory_tools 不覆盖它,建成即
+// deny(运行时实证 deny matched=[])。阀门不在这里:收件方 drainInbox 对正文一律
+// fenceUntrusted(伪造栅栏 8/11 已修)、唤醒走既有 event-wake gate(同 origin 只唤
+// 一次、日额闸不变)、from 取自发送方自己的 sessionId 不可自报。只放这一个工具;
+// 心跳档 her-trust-heartbeat.cedar 是独立策略集、不含具名 permit,发证不会漏进
+// 无人值守轮。
+@id("permit_her_session_send")
+permit(
+  principal == Agent::"samantha",
+  action == Action::"CallTool",
+  resource == Tool::"her_session_send"
+);

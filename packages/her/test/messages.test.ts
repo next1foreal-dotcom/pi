@@ -299,3 +299,34 @@ test("drainInbox skips malformed frontmatter without throwing", async () => {
 	await writeFile(join(inbox, "bad.md"), "---\nfrom: sender\nto: target\n", "utf8");
 	assert.deepEqual(await drainInbox(root, PI_ID), []);
 });
+
+// Fei granted permit_her_session_send on 2026-08-12 (「发」). Pins the exact verdict shape on
+// both profiles so neither a lost permit nor an accidental heartbeat leak can pass silently:
+// sending is attended-only — the heartbeat profile's blanket forbid must keep winning there.
+test("Cedar: her_session_send is allowed by its named permit and stays denied on heartbeat", async () => {
+	const { evaluate, policyEnvelope } = await import("../src/lib/cedar.ts");
+	const { governedTools } = await import("../src/extension.ts");
+	type AuthorizationCall = Parameters<typeof evaluate>[0];
+	assert.equal(governedTools.her_session_send?.destructive, true, "send must stay destructive");
+	const call = (profile: "default" | "heartbeat"): AuthorizationCall => ({
+		principal: { type: "Agent", id: "samantha" },
+		action: { type: "Action", id: "CallTool" },
+		resource: { type: "Tool", id: "her_session_send" },
+		context: {},
+		entities: [
+			{ uid: { type: "Agent", id: "samantha" }, attrs: {}, parents: [] },
+			{
+				uid: { type: "Tool", id: "her_session_send" },
+				attrs: { name: "her_session_send", destructive: true },
+				parents: [],
+			},
+		],
+		...policyEnvelope(profile),
+	});
+	const attended = evaluate(call("default"));
+	assert.equal(attended.decision, "allow");
+	assert.deepEqual(attended.matched, ["permit_her_session_send"]);
+	const unattended = evaluate(call("heartbeat"));
+	assert.equal(unattended.decision, "deny");
+	assert.deepEqual(unattended.matched, ["heartbeat_forbid_destructive_tools"]);
+});
