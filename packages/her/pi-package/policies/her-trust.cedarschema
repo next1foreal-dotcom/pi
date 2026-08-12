@@ -3,6 +3,8 @@ entity Agent;
 entity Tool = {
   name: String,
   destructive: Bool,
+  anchorPath?: Bool,
+  allowedSelfModPath?: Bool,
 };
 
 action "CallTool" appliesTo {

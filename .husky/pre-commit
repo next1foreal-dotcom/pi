@@ -3,6 +3,11 @@
 # Get list of staged files before running check
 STAGED_FILES=$(git diff --cached --name-only)
 
+git diff --cached --name-only -z | node --experimental-strip-types .githooks/anchor-path-gate.ts
+if [ $? -ne 0 ]; then
+  exit 1
+fi
+
 node scripts/check-lockfile-commit.mjs
 if [ $? -ne 0 ]; then
   exit 1
