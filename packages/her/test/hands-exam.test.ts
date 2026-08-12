@@ -328,7 +328,34 @@ test("runner composes the prompt and keeps the fixture server inside its root", 
 
 test("runner preflight rejects deepseek before a host call and list is pure", async () => {
 	await assert.rejects(() => preflight({ model: "deepseek-v4-flash" }), /deepseek/i);
-	await preflight({ model: "gpt-5.6-luna", fetchImpl: async () => new Response("{}", { status: 200 }) });
+	const status = (body: Record<string, unknown>): typeof fetch =>
+		(async () => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } })) as unknown as typeof fetch;
+	// A launched browser under agent control is the only state the exam may start in.
+	await preflight({ model: "gpt-5.6-luna", fetchImpl: status({ ok: true, alive: true, controlOwner: "agent" }) });
+	// Studio answers instantly in every one of these; the old agent-read probe blocked for undici's
+	// 300s deadline and then blamed Studio for a browser that simply was never launched.
+	await assert.rejects(
+		() => preflight({ model: "gpt-5.6-luna", fetchImpl: status({ ok: true, alive: false, controlOwner: "human" }) }),
+		/not launched/i,
+	);
+	await assert.rejects(
+		() => preflight({ model: "gpt-5.6-luna", fetchImpl: status({ ok: true, alive: true, controlOwner: "human" }) }),
+		/control is with Fei/i,
+	);
+	await assert.rejects(
+		() =>
+			preflight({
+				model: "gpt-5.6-luna",
+				fetchImpl: (async () => {
+					throw new Error("TimeoutError");
+				}) as unknown as typeof fetch,
+			}),
+		/did not answer/i,
+	);
+	await assert.rejects(
+		() => preflight({ model: "gpt-5.6-luna", fetchImpl: (async () => new Response("nope", { status: 503 })) as unknown as typeof fetch }),
+		/HTTP 503/,
+	);
 	const lines: string[] = [];
 	await main(["--list"], (line) => lines.push(line));
 	assert.equal(lines.length, 14);

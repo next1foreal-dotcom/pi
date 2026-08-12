@@ -40,17 +40,31 @@ export function composePrompt(task: ExamTask, fixtureBaseUrl: string, outDirAbs:
 	return `${preamble.replaceAll("{{OUT_DIR}}", outDirAbs).trim()}\n\n${prompt}`;
 }
 
-export async function preflight(opts: { uiBase?: string; model?: string; fetchImpl?: typeof fetch } = {}): Promise<void> {
+export async function preflight(opts: { uiBase?: string; model?: string; fetchImpl?: typeof fetch; probeTimeoutMs?: number } = {}): Promise<void> {
 	const model = opts.model?.trim() || process.env.HER_EXAM_MODEL?.trim() || "gpt-5.6";
 	if (/deepseek/i.test(model)) throw new Error(`deepseek model is refused for hands exam: ${model}`);
 	const fetchImpl = opts.fetchImpl ?? fetch;
+	const base = opts.uiBase ?? resolveUiBase();
+	// /api/browser/status answers immediately whatever the browser is doing. The driving routes
+	// (agent-read and friends) await the co-drive browser with no bound, so probing one of those
+	// costs undici's fixed 300s header deadline and then reports "fetch failed" - which reads as
+	// "Studio is down" when Studio is in fact healthy and only the browser was never launched.
 	let response: Response;
 	try {
-		response = await fetchImpl(`${opts.uiBase ?? resolveUiBase()}/api/browser/agent-read`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ maxChars: 500 }) });
+		response = await fetchImpl(`${base}/api/browser/status`, { signal: AbortSignal.timeout(opts.probeTimeoutMs ?? 10_000) });
 	} catch (error) {
-		throw new Error(`Studio is not running; the exam will not start it: ${error instanceof Error ? error.message : String(error)}`);
+		throw new Error(`Studio did not answer at ${base}; the exam will not start it: ${error instanceof Error ? error.message : String(error)}`);
 	}
-	if (!response.ok) throw new Error(`Studio is not running or browser host is unavailable; the exam will not start it: HTTP ${response.status}`);
+	if (!response.ok) throw new Error(`Studio browser status is unavailable; the exam will not start it: HTTP ${response.status}`);
+	let status: { ok?: boolean; alive?: boolean; controlOwner?: string };
+	try {
+		status = (await response.json()) as typeof status;
+	} catch (error) {
+		throw new Error(`browser status was not JSON: ${error instanceof Error ? error.message : String(error)}`);
+	}
+	if (status.ok === false) throw new Error("browser host reported ok:false; fix Studio before running the exam");
+	if (!status.alive) throw new Error("the co-drive browser is not launched; start it from Studio - the exam will not start it");
+	if (status.controlOwner === "human") throw new Error("control is with Fei; hand control back to the agent before running the exam");
 }
 
 export function resolveFixturePath(root: string, requestPath: string): { status: number; path?: string; mime?: string } {
