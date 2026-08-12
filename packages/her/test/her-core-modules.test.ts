@@ -6,6 +6,7 @@ import test, { mock } from "node:test";
 import { DEFAULT_CONFIG, loadConfig, renderConfig } from "../src/her-core/config.ts";
 import { createEmbeddingSearch } from "../src/her-core/embedding-search.ts";
 import { initStore, Memory, readJson, readText, writeText } from "../src/her-core/index.ts";
+import { selectRelevantKeys } from "../src/her-core/memory.ts";
 import {
 	completeJson,
 	extractJson,
@@ -988,4 +989,89 @@ test("consolidate still propagates infrastructure errors and leaves cursor froze
 	const state = await readJson<{ cursor?: unknown }>(join(store, ".her", "state.json"), {});
 	assert.equal(state.cursor, null);
 	assert.equal(await readText(join(store, "audit", "consolidate-skips.jsonl")), undefined);
+});
+
+test("G-251 selectRelevantKeys is deterministic and relevance-ranked", () => {
+	const stems = [
+		"liquid-glass-expanding-action-button-spec",
+		"bg-task-acceptance-evidence-gate-verification",
+		"bg-task-acceptance-evidence",
+		"alpha-beta-gamma-delta",
+	];
+	const episode = "The bg task acceptance evidence gate verification is the durable contract.";
+	const first = selectRelevantKeys(episode, stems, { max: 10 });
+	const second = selectRelevantKeys(episode, stems, { max: 10 });
+	assert.deepEqual(first, second);
+	assert.equal(first[0], "bg-task-acceptance-evidence-gate-verification");
+	assert.ok(first.includes("bg-task-acceptance-evidence"));
+	assert.ok(!first.includes("liquid-glass-expanding-action-button-spec"));
+});
+
+test("G-251 selectRelevantKeys obeys budget, recent fallback, and empty boundaries", () => {
+	const stems = Array.from({ length: 2000 }, (_, index) => "topic-" + index + "-evidence");
+	const recent = ["unrelated-recent-key", "topic-17-evidence", "unrelated-recent-key"];
+	const selected = selectRelevantKeys("topic evidence", stems, { max: 7, recent });
+	assert.ok(selected.length <= 9);
+	assert.ok(selected.includes("unrelated-recent-key"));
+	assert.equal(selected.filter((stem) => stem === "unrelated-recent-key").length, 1);
+	assert.deepEqual(selectRelevantKeys("", stems, { recent: ["empty-fallback"] }), ["empty-fallback"]);
+	assert.deepEqual(selectRelevantKeys("body", [], { recent: ["empty-stems"] }), ["empty-stems"]);
+	assert.doesNotThrow(() => selectRelevantKeys("!!! ???", ["%%%%", "123-@@@"], { recent: ["odd-recent"] }));
+});
+
+test("G-252 writeRawEpisode reuses identical bytes and allocates a real duplicate for different bytes", async () => {
+	const store = await g234Store();
+	const memory = new Memory(store);
+	const writer = (
+		memory as unknown as { writeRawEpisode(baseStem: string, text: string): Promise<string> }
+	).writeRawEpisode.bind(memory);
+	const first = await writer("same-event", "same bytes");
+	const second = await writer("same-event", "same bytes");
+	const different = await writer("same-event", "different bytes");
+	assert.equal(first, "same-event");
+	assert.equal(second, first);
+	assert.equal(different, "same-event--dup-1");
+	assert.deepEqual(await readdir(join(store, "episodic", "raw")), ["same-event.md", "same-event--dup-1.md"].sort());
+});
+
+test("G-252 consolidate skips duplicate bodies without a model call and advances the cursor", async () => {
+	const store = await g234Store();
+	await writeRawEpisode(store, "2026-08-12T0001", "ep-a", "same body");
+	await writeRawEpisode(store, "2026-08-12T0002", "ep-b--dup-1", "same body");
+	await writeRawEpisode(store, "2026-08-12T0003", "ep-c", "different body");
+	const model = new FakeModel(JSON.stringify({ notes: [], moments: [] }));
+	const memory = new Memory(store, model);
+	await memory.consolidate(1);
+	await memory.consolidate(1);
+	assert.equal(model.calls.length, 2);
+	const skips = ((await readText(join(store, "audit", "consolidate-skips.jsonl"))) ?? "")
+		.trim()
+		.split(/\r?\n/)
+		.filter(Boolean)
+		.map((line) => JSON.parse(line) as { reason?: string; episode?: string; duplicate_of?: string });
+	assert.equal(skips.length, 1);
+	assert.equal(skips[0]?.reason, "duplicate-body");
+	assert.equal(skips[0]?.episode, "ep-b--dup-1");
+	assert.equal(skips[0]?.duplicate_of, "ep-a");
+	const state = await readJson<{ cursor?: { ts?: string } }>(join(store, ".her", "state.json"), {});
+	assert.equal(state.cursor?.ts, "2026-08-12T0003");
+});
+
+test("G-252 duplicate-body hashing ignores frontmatter differences and preserves distinct bodies", async () => {
+	const store = await g234Store();
+	await writeRawEpisode(store, "2026-08-12T0010", "ep-front-a", "same body");
+	await writeRawEpisode(store, "2026-08-12T0011", "ep-front-b--dup-1", "same body");
+	await writeRawEpisode(store, "2026-08-12T0012", "ep-front-c", "different body");
+	const model = new FakeModel(JSON.stringify({ notes: [], moments: [] }));
+	const memory = new Memory(store, model);
+	await memory.consolidate(1);
+	await memory.consolidate(1);
+	assert.equal(model.calls.length, 2);
+	const skips = ((await readText(join(store, "audit", "consolidate-skips.jsonl"))) ?? "")
+		.trim()
+		.split(/\r?\n/)
+		.filter(Boolean);
+	assert.equal(skips.length, 1);
+	assert.match(skips[0], /"reason":"duplicate-body"/);
+	assert.match(skips[0], /"duplicate_of":"ep-front-a"/);
 });

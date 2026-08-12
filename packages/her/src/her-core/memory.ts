@@ -1,4 +1,5 @@
-import { mkdir, readdir } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, readdir, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { type HerConfig, loadConfig } from "./config.ts";
 import { type BackfillOptions, type BackfillRunResult, runBackfill } from "./memory-backfill.ts";
@@ -132,6 +133,8 @@ import { appendTriggerEvent } from "./trigger-log.ts";
 
 const DEFAULT_CONSOLIDATE_EPISODE_CHARS = 8000;
 const DEFAULT_CONSOLIDATE_BATCH_CHARS = 240000;
+const DEFAULT_CONSOLIDATE_KEY_BUDGET = 120;
+const DEFAULT_CONSOLIDATE_KEY_RECENT = 30;
 // G-235 fat-episode chunking. When a SINGLE episode's distilled output still truncates at batch
 // size 1, we split its content and distill the pieces that fit instead of dropping the whole turn.
 // - FLOOR: a chunk at/below this size that STILL truncates is quarantined (its dense content can't
@@ -152,6 +155,11 @@ const DEFAULT_IDEAS_MIN_UNITS = 50;
 
 type NoteSummary = { key: string; kind: string; type: string; title: string };
 type OrganKind = "ideas" | "topic-maps";
+type ConsolidateEpisode = { ts: string; id: string; cursorId: string; text: string; body: string };
+type IndexedConsolidateEpisode = ConsolidateEpisode & {
+	sourceIndex: number;
+	duplicateOf?: { id: string; ts: string };
+};
 type OrganSkipEntry = {
 	ts: string;
 	organ: OrganKind;
@@ -160,6 +168,72 @@ type OrganSkipEntry = {
 	attempts: number;
 };
 
+export function selectRelevantKeys(
+	episodeText: string,
+	stems: string[],
+	opts?: { max?: number; recent?: string[] },
+): string[] {
+	const recent = [...new Set(opts?.recent ?? [])];
+	if (!episodeText.trim() || stems.length === 0) return recent;
+
+	const words = new Set(
+		episodeText
+			.toLowerCase()
+			.split(/[^\p{L}\p{N}]+/u)
+			.filter((word) => word.length >= 4),
+	);
+	if (words.size === 0) return recent;
+
+	const max = opts?.max ?? envPositiveInt("HER_CONSOLIDATE_KEY_BUDGET", DEFAULT_CONSOLIDATE_KEY_BUDGET);
+	const budget = Number.isFinite(max) ? Math.max(0, Math.floor(max)) : 0;
+	const scored = [...new Set(stems)]
+		.map((stem) => {
+			const parts = [
+				...new Set(
+					stem
+						.toLowerCase()
+						.split("-")
+						.filter((part) => part.length >= 4 && !/^\d+$/.test(part)),
+				),
+			];
+			const score = parts.filter((part) => words.has(part)).length;
+			return { stem, score };
+		})
+		.filter((item) => item.score > 0)
+		.sort((a, b) => b.score - a.score || (a.stem < b.stem ? -1 : a.stem > b.stem ? 1 : 0));
+
+	const result: string[] = [];
+	const selected = new Set<string>();
+	for (const item of scored.slice(0, budget)) {
+		result.push(item.stem);
+		selected.add(item.stem);
+	}
+	for (const stem of recent) {
+		if (selected.has(stem)) continue;
+		result.push(stem);
+		selected.add(stem);
+	}
+	return result;
+}
+
+async function recentSemanticStems(dir: string, limit: number): Promise<string[]> {
+	if (limit <= 0) return [];
+	const entries = await markdownEntries(dir);
+	const stamped = await Promise.all(
+		entries.map(async (entry) => {
+			try {
+				return { stem: entry.replace(/\.md$/, ""), mtimeMs: (await stat(join(dir, entry))).mtimeMs };
+			} catch {
+				return undefined;
+			}
+		}),
+	);
+	return stamped
+		.filter((item): item is { stem: string; mtimeMs: number } => item !== undefined)
+		.sort((a, b) => b.mtimeMs - a.mtimeMs || (a.stem < b.stem ? -1 : a.stem > b.stem ? 1 : 0))
+		.slice(0, limit)
+		.map((item) => item.stem);
+}
 function envPositiveInt(name: string, fallback: number): number {
 	const raw = process.env[name];
 	if (raw === undefined || raw === "") return fallback;
@@ -358,8 +432,19 @@ export class Memory {
 	private async writeRawEpisode(baseStem: string, text: string): Promise<string> {
 		for (let duplicate = 0; duplicate < 1000; duplicate++) {
 			const stem = duplicate === 0 ? baseStem : `${baseStem}--dup-${duplicate}`;
+			const path = join(this.paths.raw, `${stem}.md`);
+			let existing: string | undefined;
 			try {
-				await writeNewText(join(this.paths.raw, `${stem}.md`), text);
+				existing = await readText(path);
+			} catch {
+				// A transient read failure must not change the append-only allocation path.
+			}
+			if (existing !== undefined && existing === text) {
+				console.warn(`[her] capture: identical episode already stored as ${stem}; reusing (no duplicate written)`);
+				return stem;
+			}
+			try {
+				await writeNewText(path, text);
 				return stem;
 			} catch (error) {
 				if (isFileExists(error)) continue;
@@ -368,7 +453,6 @@ export class Memory {
 		}
 		throw new Error(`could not allocate raw episode filename for ${baseStem}`);
 	}
-
 	async getContext(opts: GetContextOptions = {}): Promise<MemoryContext> {
 		const context = (await readText(this.paths.contextFile)) ?? SEED_CONTEXT;
 		const facts = (await readText(this.paths.factsFile)) ?? "";
@@ -633,6 +717,58 @@ export class Memory {
 			const available = await this.episodesSince(cursor);
 			if (available.length === 0) return { episodes: 0, notesTouched: 0, moments: 0 };
 			const existing = await markdownStems(this.paths.semantic);
+			const consolidateSkipsPath = join(this.paths.root, "audit", "consolidate-skips.jsonl");
+			let workingCursor = cursor;
+			const recent = await recentSemanticStems(
+				this.paths.semantic,
+				envPositiveInt("HER_CONSOLIDATE_KEY_RECENT", DEFAULT_CONSOLIDATE_KEY_RECENT),
+			);
+			const seenBodies = new Map<string, { id: string; ts: string }>();
+			const indexedAvailable: IndexedConsolidateEpisode[] = available.map((episode, sourceIndex) => {
+				const digest = createHash("sha256").update(episode.body, "utf8").digest("hex");
+				// Only allocator-created --dup-N names identify capture replays; independent events may share prose.
+				const duplicateOf = episode.cursorId.includes("--dup-") ? seenBodies.get(digest) : undefined;
+				if (!duplicateOf) seenBodies.set(digest, { id: episode.id, ts: episode.ts });
+				return { ...episode, sourceIndex, ...(duplicateOf ? { duplicateOf } : {}) };
+			});
+			const uniqueAvailable = indexedAvailable.filter((episode) => !episode.duplicateOf);
+			const recordedDuplicateIndices = new Set<number>();
+			const duplicateEndAfter = (sourceIndex: number): number => {
+				let end = sourceIndex;
+				while (end + 1 < indexedAvailable.length && indexedAvailable[end + 1]?.duplicateOf) end++;
+				return end;
+			};
+			const recordDuplicateSkipsThrough = async (endIndex: number): Promise<void> => {
+				for (const episode of indexedAvailable.slice(0, endIndex + 1)) {
+					if (!episode.duplicateOf || recordedDuplicateIndices.has(episode.sourceIndex)) continue;
+					await appendText(
+						consolidateSkipsPath,
+						JSON.stringify({
+							at: new Date().toISOString(),
+							episode: episode.id,
+							ts: episode.ts,
+							reason: "duplicate-body",
+							duplicate_of: episode.duplicateOf.id,
+						}) + "\n",
+					);
+					console.warn(
+						"[her] consolidate: SKIPPED duplicate episode " +
+							episode.id +
+							" (identical body as " +
+							episode.duplicateOf.id +
+							"); no model call",
+					);
+					recordedDuplicateIndices.add(episode.sourceIndex);
+				}
+			};
+			const advanceThrough = async (endIndex: number): Promise<ReturnType<typeof advanceConsolidateCursor>> => {
+				const consumed = indexedAvailable.slice(0, endIndex + 1);
+				await recordDuplicateSkipsThrough(endIndex);
+				const advanced = advanceConsolidateCursor(workingCursor, consumed);
+				await writeJson(this.paths.stateFile, { ...state, cursor: advanced, last_consolidate: advanced.ts });
+				workingCursor = parseConsolidateCursor(advanced);
+				return advanced;
+			};
 
 			// Batch size is our primary lever against output-token truncation: the model interface
 			// (model.ts ModelLike) exposes no max_tokens knob, and a truncated reply repeats identically
@@ -650,15 +786,29 @@ export class Memory {
 			// treatment — halve while the batch is >1, skip+account at batch 1 — because it too must not
 			// cost a whole round. Only a batch-one TRUNCATION enters fat-episode chunking: that one is
 			// deterministic and about size, so splitting the input is what actually helps.
-			const consolidateSkipsPath = join(this.paths.root, "audit", "consolidate-skips.jsonl");
 			let batchLimit = limit;
-			let workingCursor = cursor;
-			let remaining = available;
+			let remaining: IndexedConsolidateEpisode[] = uniqueAvailable;
+			if (remaining.length === 0) {
+				await advanceThrough(indexedAvailable.length - 1);
+				return { episodes: available.length, notesTouched: 0, moments: 0 };
+			}
 			for (;;) {
 				const batch = selectConsolidateBatch(remaining, batchLimit);
 				const episodes = batch.map(({ episode }) => episode);
 				if (episodes.length === 0) return { episodes: 0, notesTouched: 0, moments: 0 };
 				const joined = batch.map(({ promptText }) => promptText).join("\n\n");
+				const selectedKeys = selectRelevantKeys(joined, existing, { recent });
+				// stderr, not stdout: the CLI writes its --json payload to stdout (cli.ts:335), so an
+				// operational line on stdout would be interleaved into the JSON any consumer parses.
+				console.warn(
+					"[her] consolidate: keys " +
+						existing.length +
+						" \u2192 " +
+						selectedKeys.length +
+						" (relevance-filtered, budget " +
+						envPositiveInt("HER_CONSOLIDATE_KEY_BUDGET", DEFAULT_CONSOLIDATE_KEY_BUDGET) +
+						")",
+				);
 
 				let result: {
 					notes?: Array<Record<string, unknown>>;
@@ -668,7 +818,7 @@ export class Memory {
 					result = await completeJson<{
 						notes?: Array<Record<string, unknown>>;
 						moments?: Array<{ trigger?: string; shift?: string }>;
-					}>(() => model.complete(consolidatePrompt(joined, existing)));
+					}>(() => model.complete(consolidatePrompt(joined, selectedKeys)));
 				} catch (error) {
 					if (
 						(error instanceof JsonTruncatedError || error instanceof JsonMalformedError) &&
@@ -692,9 +842,8 @@ export class Memory {
 						console.warn(
 							`[her] consolidate: SKIPPED malformed episode ${skipped.id}; content remains in episodic/raw and cursor advances; accounted to audit/consolidate-skips.jsonl`,
 						);
-						const advanced = advanceConsolidateCursor(workingCursor, episodes);
-						await writeJson(this.paths.stateFile, { ...state, cursor: advanced, last_consolidate: advanced.ts });
-						workingCursor = parseConsolidateCursor(advanced);
+						const consumedEnd = duplicateEndAfter(episodes.at(-1)?.sourceIndex ?? -1);
+						await advanceThrough(consumedEnd);
 						remaining = remaining.slice(batch.length);
 						batchLimit = limit;
 						continue;
@@ -710,7 +859,7 @@ export class Memory {
 						// propagates out with nothing applied and the cursor frozen (G-231 durability). Only after
 						// every segment is distilled or quarantined do we upsert, quarantine, and advance the cursor.
 						const fat = episodes[0];
-						const outcome = await this.digestFatEpisode(fat, existing, error.responseHead);
+						const outcome = await this.digestFatEpisode(fat, existing, recent, error.responseHead);
 
 						let mergeFailures = 0;
 						for (const note of outcome.notes) {
@@ -750,9 +899,8 @@ export class Memory {
 									.join(""),
 							);
 						}
-						const advanced = advanceConsolidateCursor(workingCursor, episodes);
-						await writeJson(this.paths.stateFile, { ...state, cursor: advanced, last_consolidate: advanced.ts });
-						workingCursor = parseConsolidateCursor(advanced);
+						const consumedEnd = duplicateEndAfter(episodes.at(-1)?.sourceIndex ?? -1);
+						await advanceThrough(consumedEnd);
 						remaining = remaining.slice(batch.length);
 						batchLimit = limit;
 						continue;
@@ -762,7 +910,8 @@ export class Memory {
 
 				const notes = result.notes ?? [];
 				const moments = result.moments ?? [];
-				const newCursor = advanceConsolidateCursor(workingCursor, episodes);
+				const consumedEnd = duplicateEndAfter(episodes.at(-1)?.sourceIndex ?? -1);
+				const newCursor = await advanceThrough(consumedEnd);
 
 				let mergeFailures = 0;
 				for (const note of notes) {
@@ -783,11 +932,6 @@ export class Memory {
 					);
 				}
 
-				await writeJson(this.paths.stateFile, {
-					...state,
-					cursor: newCursor,
-					last_consolidate: newCursor.ts,
-				});
 				return { episodes: episodes.length, notesTouched: notes.length, moments: moments.length };
 			}
 		});
@@ -806,6 +950,7 @@ export class Memory {
 	private async digestFatEpisode(
 		episode: { id: string; text: string },
 		existing: string[],
+		recent: string[],
 		initialResponseHead: string,
 	): Promise<{
 		notes: Array<Record<string, unknown>>;
@@ -866,7 +1011,19 @@ export class Memory {
 				moments?: Array<{ trigger?: string; shift?: string }>;
 			};
 			try {
-				result = await completeJson(() => model.complete(consolidatePrompt(`[${episode.id}] ${text}`, existing)));
+				const promptText = "[" + episode.id + "] " + text;
+				const selectedKeys = selectRelevantKeys(promptText, existing, { recent });
+				// stderr, not stdout — same reason as the batch path above.
+				console.warn(
+					"[her] consolidate: keys " +
+						existing.length +
+						" \u2192 " +
+						selectedKeys.length +
+						" (relevance-filtered, budget " +
+						envPositiveInt("HER_CONSOLIDATE_KEY_BUDGET", DEFAULT_CONSOLIDATE_KEY_BUDGET) +
+						")",
+				);
+				result = await completeJson(() => model.complete(consolidatePrompt(promptText, selectedKeys)));
 			} catch (error) {
 				if (error instanceof JsonTruncatedError) {
 					await splitOrQuarantine(text, part, error.responseHead);
@@ -1392,11 +1549,9 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 		return syncStatus(this.paths);
 	}
 
-	private async episodesSince(
-		cursor: ParsedConsolidateCursor | null,
-	): Promise<Array<{ ts: string; id: string; cursorId: string; text: string }>> {
+	private async episodesSince(cursor: ParsedConsolidateCursor | null): Promise<ConsolidateEpisode[]> {
 		const entries = await markdownEntries(this.paths.raw);
-		const episodes: Array<{ ts: string; id: string; cursorId: string; text: string }> = [];
+		const episodes: ConsolidateEpisode[] = [];
 		for (const entry of entries) {
 			if (!shouldReadRawEpisodeName(entry, cursor)) continue;
 			const path = join(this.paths.raw, entry);
@@ -1410,6 +1565,7 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 				id: String(parsed.data.id ?? entry.replace(/\.md$/, "")),
 				cursorId,
 				text: parsed.body.trim(),
+				body: parsed.body,
 			});
 		}
 		return episodes.sort((a, b) => a.ts.localeCompare(b.ts));
