@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -117,4 +117,68 @@ test("loadTasks validates frozen task structure", async () => {
 	assert.equal(tasks.tasks.some((item) => item.id === "T11"), false);
 	assert.deepEqual(tasks.toolPolicy.allow, ["browser_navigate", "browser_read_page", "browser_act", "write"]);
 	assert.throws(() => loadTasks({ tasks: [{ category: "scrape" }] }), /id/);
+});
+
+
+const fixtureRoot = join(process.cwd(), "packages", "her", "exam", "fixtures");
+
+async function fixture(relative: string): Promise<string> {
+	return readFile(join(fixtureRoot, relative), "utf8");
+}
+
+test("fixtures pin the required data, delayed tokens, and ASCII-only source", async () => {
+	const pages = await Promise.all(["t01/dir-1.html", "t01/dir-2.html", "t01/dir-3.html"].map(fixture));
+	const directory = pages.join("\n");
+	assert.equal((directory.match(/class="product"/g) ?? []).length, 60);
+	assert.equal(new Set([...directory.matchAll(/PROD-\d{3}/g)].map((match) => match[0])).size, 53);
+	for (const value of ["$3.20", "$21.60", "$47.80", "$88.40"]) assert.ok(directory.includes(value));
+	assert.match(pages[0] ?? "", /dir-2\.html/);
+	assert.match(pages[1] ?? "", /dir-3\.html/);
+	const t02 = await fixture("t02/table.html");
+	for (const sku of ["SKU-7719", "SKU-7724", "SKU-7730"]) assert.ok(t02.includes(sku));
+	for (const qty of [">14<", ">3<", ">58<"]) assert.ok(t02.includes(qty));
+	assert.match(t02, /user-select/);
+	assert.match(t02, /oncopy/);
+	for (const [country, capital] of [["Portugal", "Lisbon"], ["Kenya", "Nairobi"], ["Vietnam", "Hanoi"], ["Uruguay", "Montevideo"], ["Georgia", "Tbilisi"], ["Nepal", "Kathmandu"]]) {
+		const detail = await fixture(`t04/capital-${country.toLowerCase()}.html`);
+		assert.ok(detail.includes(capital));
+		for (const other of ["Lisbon", "Nairobi", "Hanoi", "Montevideo", "Tbilisi", "Kathmandu"].filter((value) => value !== capital)) assert.equal(detail.includes(other), false);
+	}
+	const t05 = `${await fixture("t05/product.html")} ${await fixture("t05/pricing.html")} ${await fixture("t05/faq.html")}`;
+	for (const value of ["Northlight", "$14.50", "31", "support@northlight.test", "27"]) assert.ok(t05.includes(value));
+	const t06 = `${await fixture("t06/pricing.html")} ${await fixture("t06/faq.html")}`;
+	assert.ok(t06.includes("$14.50") && t06.includes("$17"));
+	const v1 = await fixture("t07/page-v1.html");
+	const v2 = await fixture("t07/page-v2.html");
+	assert.ok(v1.includes("$9") && v2.includes("$11"));
+	assert.equal(v1.includes("Priority queue"), false);
+	assert.equal(v2.includes("Fax support"), false);
+	const sharedV1 = v1.replace("$9", "$X").replace("Fax support", "FEATURE");
+	const sharedV2 = v2.replace("$11", "$X").replace("Priority queue", "FEATURE");
+	assert.equal(sharedV1, sharedV2);
+	const status = await fixture("t08/status.html");
+	assert.equal((status.match(/2026-08-(03|05|09)/g) ?? []).length, 3);
+	assert.equal((await fixture("t09/form.html")).includes("FORM-OK-7391"), false);
+	assert.equal((await fixture("t13/delayed.html")).includes("LATE-OK-8823"), false);
+	const t10 = await fixture("t10/catalog.html");
+	assert.match(t10, /VD-330/);
+	const t12 = await fixture("t12/scroll.html");
+	const t12Ids = [...t12.matchAll(/ITEM-\d{3}/g)].map((match) => match[0]);
+	assert.equal(t12Ids.length, 100);
+	assert.equal(new Set(t12Ids).size, 100);
+	assert.match(t12, /ITEM-001/);
+	assert.match(t12, /ITEM-100/);
+	const t14 = `${await fixture("t14/index.html")} ${await fixture("t14/app.js")}`;
+	for (const value of ["export-btn", "logo.png", "initTelemetry", "7 tasks", "Water plants"]) assert.ok(t14.includes(value));
+	assert.equal((t14.match(/Water plants/g) ?? []).length, 2);
+	const t15 = await fixture("t15/notes.html");
+	for (const value of ["14:30", "12,400", "Chen", "9&#x6708;3&#x65E5;", "4B", "v2", "supplier@acme.test"]) assert.ok(t15.includes(value));
+	const dirs = await readdir(fixtureRoot, { withFileTypes: true });
+	const paths: string[] = [];
+	for (const dir of dirs) for (const child of await readdir(join(fixtureRoot, dir.name))) paths.push(join(dir.name, child));
+	const files = await Promise.all(paths.map(fixture));
+	for (const source of files) {
+		assert.equal(/https?:\/\//.test(source), false);
+		assert.equal(/[^\x00-\x7F]/.test(source), false);
+	}
 });
