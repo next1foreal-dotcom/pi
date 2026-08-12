@@ -1,4 +1,4 @@
-﻿import type { ToolCallSummary } from "./score.ts";
+import type { ToolCallSummary } from "./score.ts";
 
 function toolNameFromEvent(event: Record<string, unknown>): string | undefined {
 	if (event.type === "tool_execution_start" && typeof event.toolName === "string") return event.toolName;

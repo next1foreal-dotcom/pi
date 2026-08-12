@@ -119,8 +119,8 @@ function failure(kind: string, detail: string, evidence?: string): CheckResult {
 	return { kind, earned: 0, possible: 1, ok: false, detail, ...(evidence ? { evidence } : {}) };
 }
 
-function scalarMatch(actual: unknown, expected: string, contains: boolean): boolean {
-	const value = typeof actual === "string" || typeof actual === "number" || typeof actual === "boolean" ? String(actual) : "";
+function scalarMatch(actual: unknown, expected: string, contains: boolean, coerce = false): boolean {
+	const value = typeof actual === "string" ? actual : coerce && (typeof actual === "number" || typeof actual === "boolean") ? String(actual) : "";
 	return contains ? value.includes(expected) : value === expected;
 }
 
@@ -169,7 +169,7 @@ async function scoreCheck(check: ExamCheck, outDir: string, calls: ToolCallSumma
 			const passed = Object.entries(check.expect).every(([key, expected]) => {
 				const actualKey = check.keyNormalize === "lower" ? Object.keys(value).find((candidate) => candidate.toLowerCase() === key.toLowerCase()) : key;
 				const actual = actualKey ? value[actualKey] : undefined;
-				return scalarMatch(actual, expected, check.valueMatch === "contains");
+				return scalarMatch(actual, expected, check.valueMatch === "contains", check.coerce === "string");
 			});
 			return passed ? { kind: check.kind, earned: 1, possible: 1, ok: true, detail: "expected object mapping matched" } : failure(check.kind, "object mapping does not match expected values", artifact.path);
 		}
@@ -179,7 +179,7 @@ async function scoreCheck(check: ExamCheck, outDir: string, calls: ToolCallSumma
 			const actualKey = row[check.keyField];
 			const key = typeof actualKey === "string" && check.keyNormalize === "lower" ? actualKey.toLowerCase() : actualKey;
 			const wanted = check.keyNormalize === "lower" ? expectedKey.toLowerCase() : expectedKey;
-			return key === wanted && scalarMatch(row[check.valueField], expectedValue, check.valueMatch === "contains");
+			return key === wanted && scalarMatch(row[check.valueField], expectedValue, check.valueMatch === "contains", check.coerce === "string");
 		}));
 		return matched ? { kind: check.kind, earned: 1, possible: 1, ok: true, detail: "expected row mappings matched" } : failure(check.kind, "row mapping does not match expected values", artifact.path);
 	}
