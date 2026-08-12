@@ -18,8 +18,10 @@ export interface AuditEntry {
 	context?: Record<string, unknown>;
 }
 
-export function appendAuditLog(entry: AuditEntry): void {
-	const memoryDir = process.env.HER_MEMORY_DIR ?? resolve(process.cwd(), "..", "her-memory");
+export function appendAuditLog(
+	entry: AuditEntry,
+	memoryDir = process.env.HER_MEMORY_DIR ?? resolve(process.cwd(), "..", "her-memory"),
+): void {
 	const auditDir = resolve(memoryDir, "audit");
 	mkdirSync(auditDir, { recursive: true });
 

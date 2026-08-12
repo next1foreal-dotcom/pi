@@ -1,20 +1,23 @@
 import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { AuthorizationCall } from "@cedar-policy/cedar-wasm/nodejs";
 import {
 	type AuthorizationAnswer,
-	type AuthorizationCall,
 	checkParseSchema,
 	isAuthorized,
 	policySetTextToParts,
 	policyToJson,
 } from "@cedar-policy/cedar-wasm/nodejs";
+import { isAllowedSelfModPath, isAnchorPath } from "../rsi/anchors.ts";
+import { appendAuditLog } from "./audit.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const policyDir = resolve(here, "..", "..", "pi-package", "policies");
 const schemaPath = resolve(policyDir, "her-trust.cedarschema");
+const repositoryRoot = resolve(here, "..", "..", "..", "..");
 
-export type CedarProfile = "default" | "heartbeat";
+export type CedarProfile = "default" | "heartbeat" | "selfmod";
 
 export const POLICY_TEXT = readPolicyText("default");
 export const SCHEMA_TEXT = readFileSync(schemaPath, "utf8");
@@ -22,6 +25,15 @@ export const SCHEMA_TEXT = readFileSync(schemaPath, "utf8");
 export interface Verdict {
 	decision: "allow" | "deny";
 	matched: string[];
+}
+
+export interface SelfModToolRequest {
+	cwd: string;
+	memoryDir: string;
+	now?: string;
+	targetPath: string;
+	toolCallId?: string;
+	toolName: string;
 }
 
 function parseNamedPolicies(text: string): Record<string, string> {
@@ -53,7 +65,12 @@ export const NAMED_POLICIES = parseNamedPolicies(POLICY_TEXT);
 assertSchemaParses(SCHEMA_TEXT);
 
 export function readPolicyText(profile: CedarProfile = selectedProfile()): string {
-	const file = profile === "heartbeat" ? "her-trust-heartbeat.cedar" : "her-trust.cedar";
+	const file =
+		profile === "heartbeat"
+			? "her-trust-heartbeat.cedar"
+			: profile === "selfmod"
+				? "her-trust-selfmod.cedar"
+				: "her-trust.cedar";
 	return readFileSync(resolve(policyDir, file), "utf8");
 }
 
@@ -79,6 +96,57 @@ export function policyEnvelope(
 	};
 }
 
+export function authorizeSelfModTool(request: SelfModToolRequest): Verdict {
+	const targetPath = logicalTargetPath(request);
+	const anchorPath = isAnchorPath(targetPath);
+	const allowedSelfModPath = isAllowedSelfModPath(targetPath);
+	const destructive = ["bash", "edit", "write"].includes(request.toolName);
+	const verdict = evaluate({
+		principal: { type: "Agent", id: "samantha" },
+		action: { type: "Action", id: "CallTool" },
+		resource: { type: "Tool", id: request.toolName },
+		context: {},
+		entities: [
+			{ uid: { type: "Agent", id: "samantha" }, attrs: {}, parents: [] },
+			{
+				uid: { type: "Tool", id: request.toolName },
+				attrs: { name: request.toolName, destructive, anchorPath, allowedSelfModPath },
+				parents: [],
+			},
+		],
+		...policyEnvelope("selfmod"),
+	});
+	appendAuditLog(
+		{
+			ts: request.now ?? new Date().toISOString(),
+			tool: request.toolName,
+			toolCallId: request.toolCallId,
+			verdict: verdict.decision === "allow" ? "ALLOW" : "DENY",
+			rule: verdict.matched.join(",") || null,
+			context: { targetPath, anchorPath, allowedSelfModPath, profile: "selfmod" },
+		},
+		request.memoryDir,
+	);
+	return verdict;
+}
+
+function logicalTargetPath(request: Pick<SelfModToolRequest, "cwd" | "memoryDir" | "targetPath">): string {
+	const supplied = request.targetPath.replaceAll("\\", "/");
+	if (supplied.toLowerCase().startsWith("her-memory/")) return supplied;
+	const absoluteTarget = resolve(request.cwd, request.targetPath);
+	const memoryPath = relativeWithin(request.memoryDir, absoluteTarget);
+	if (memoryPath !== null) return `her-memory/${memoryPath}`;
+	const repositoryPath = relativeWithin(repositoryRoot, absoluteTarget);
+	return repositoryPath ?? supplied;
+}
+
+function relativeWithin(basePath: string, targetPath: string): string | null {
+	const candidate = relative(resolve(basePath), targetPath);
+	if (candidate.startsWith("..") || isAbsolute(candidate)) return null;
+	return candidate.replaceAll("\\", "/");
+}
+
 function selectedProfile(): CedarProfile {
-	return process.env.HER_CEDAR_PROFILE === "heartbeat" ? "heartbeat" : "default";
+	const profile = process.env.HER_CEDAR_PROFILE;
+	return profile === "heartbeat" || profile === "selfmod" ? profile : "default";
 }
