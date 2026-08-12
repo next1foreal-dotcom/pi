@@ -135,6 +135,10 @@ const DEFAULT_CONSOLIDATE_EPISODE_CHARS = 8000;
 const DEFAULT_CONSOLIDATE_BATCH_CHARS = 240000;
 const DEFAULT_CONSOLIDATE_KEY_BUDGET = 120;
 const DEFAULT_CONSOLIDATE_KEY_RECENT = 30;
+const DEFAULT_CONSOLIDATE_CIPHER_MIN_CHARS = 300;
+// Distinct characters a long run must use before it counts as cipher rather than filler or a rule.
+// Base64 of 300+ chars essentially always clears 16; "-".repeat(300) and "A".repeat(20000) never do.
+const DEFAULT_CONSOLIDATE_CIPHER_MIN_VARIETY = 16;
 // G-235 fat-episode chunking. When a SINGLE episode's distilled output still truncates at batch
 // size 1, we split its content and distill the pieces that fit instead of dropping the whole turn.
 // - FLOOR: a chunk at/below this size that STILL truncates is quarantined (its dense content can't
@@ -286,6 +290,26 @@ function truncateEpisodeText(text: string, maxChars: number): string {
 	const marker = `...[truncated, original ${text.length} chars]`;
 	const keep = Math.max(0, maxChars - marker.length);
 	return `${text.slice(0, keep)}${marker}`;
+}
+
+export function stripCipherBlobs(text: string): { text: string; strippedChars: number; blobs: number } {
+	const configured = Number(process.env.HER_CONSOLIDATE_CIPHER_MIN_CHARS ?? DEFAULT_CONSOLIDATE_CIPHER_MIN_CHARS);
+	const minChars =
+		Number.isFinite(configured) && configured >= 1 ? Math.floor(configured) : DEFAULT_CONSOLIDATE_CIPHER_MIN_CHARS;
+	let strippedChars = 0;
+	let blobs = 0;
+	const stripped = text.replace(/[A-Za-z0-9+/_=-]+/g, (match) => {
+		if (match.length < minChars) return match;
+		// Length alone is not enough: a 300-dash rule, a run of "====", or repeated filler all sit in
+		// the base64 alphabet, and eight existing G-235/G-249 tests caught exactly that (their fixtures
+		// are "A".repeat(20000)). Real base64 of this length is high-variety — an encoded payload uses
+		// most of its alphabet — so require variety as well as length before calling something cipher.
+		if (new Set(match).size < DEFAULT_CONSOLIDATE_CIPHER_MIN_VARIETY) return match;
+		strippedChars += match.length;
+		blobs++;
+		return `[cipher ${match.length} chars]`;
+	});
+	return { text: stripped, strippedChars, blobs };
 }
 
 function selectConsolidateBatch<T extends { id: string; text: string }>(
@@ -1728,11 +1752,18 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 			const ts = String(parsed.data.timestamp ?? rawEpisodeTimestamp(entry));
 			const cursorId = rawEpisodeIdFromName(entry);
 			if (!shouldUseRawEpisode(ts, cursorId, cursor)) continue;
+			const id = String(parsed.data.id ?? entry.replace(/\.md$/, ""));
+			const stripped = stripCipherBlobs(parsed.body.trim());
+			if (stripped.blobs > 0) {
+				console.warn(
+					`[her] consolidate: stripped ${stripped.blobs} cipher blob(s), ${stripped.strippedChars} chars, from ${id}`,
+				);
+			}
 			episodes.push({
 				ts,
-				id: String(parsed.data.id ?? entry.replace(/\.md$/, "")),
+				id,
 				cursorId,
-				text: parsed.body.trim(),
+				text: stripped.text,
 				body: parsed.body,
 				project: String(parsed.data.project ?? ""),
 			});

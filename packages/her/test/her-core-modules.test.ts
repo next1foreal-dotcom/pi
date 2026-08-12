@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,7 +7,7 @@ import test, { mock } from "node:test";
 import { DEFAULT_CONFIG, loadConfig, renderConfig } from "../src/her-core/config.ts";
 import { createEmbeddingSearch } from "../src/her-core/embedding-search.ts";
 import { initStore, Memory, readJson, readText, writeJson, writeText } from "../src/her-core/index.ts";
-import { consolidateGrain, isJunkNote, selectRelevantKeys } from "../src/her-core/memory.ts";
+import { consolidateGrain, isJunkNote, selectRelevantKeys, stripCipherBlobs } from "../src/her-core/memory.ts";
 import {
 	completeJson,
 	extractJson,
@@ -1391,4 +1392,124 @@ test("G-249 coarse episodes within the sample budget do not emit coarse-sampled 
 			assert.doesNotMatch(audit, /coarse-sampled/);
 		},
 	);
+});
+
+// Fixtures must look like real cipher: high variety, not repeated filler. "A".repeat(n) is what
+// eight G-235/G-249 tests use for bulk, and the stripper deliberately leaves that alone.
+const base64Fixture = (length: number): string => {
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+	return Array.from({ length }, (_, index) => alphabet[index % alphabet.length]).join("");
+};
+
+test("G-255 stripCipherBlobs replaces a long base64 blob and preserves surrounding prose", async () => {
+	await withChunkEnv({ HER_CONSOLIDATE_CIPHER_MIN_CHARS: undefined }, async () => {
+		const cipher = base64Fixture(1000);
+		const result = stripCipherBlobs(`before ${cipher} after`);
+		assert.equal(result.text, "before [cipher 1000 chars] after");
+		assert.equal(result.strippedChars, 1000);
+		assert.equal(result.blobs, 1);
+	});
+});
+
+test("G-255 stripCipherBlobs keeps a 299-character base64 run at the boundary", async () => {
+	await withChunkEnv({ HER_CONSOLIDATE_CIPHER_MIN_CHARS: "300" }, async () => {
+		const cipher = base64Fixture(299);
+		const result = stripCipherBlobs(`before ${cipher} after`);
+		assert.equal(result.text, `before ${cipher} after`);
+		assert.equal(result.strippedChars, 0);
+		assert.equal(result.blobs, 0);
+	});
+});
+
+test("G-255 stripCipherBlobs does not misclassify normal prose, URLs, or git hashes", async () => {
+	await withChunkEnv({ HER_CONSOLIDATE_CIPHER_MIN_CHARS: "300" }, async () => {
+		const longUrl = `https://example.com/path?${Array.from(
+			{ length: 24 },
+			(_, index) => `p${index}=${"x".repeat(12)}`,
+		).join("&")}`;
+		const prose = `A normal paragraph with code and a long URL ${longUrl} plus git hash ${"0123456789abcdef".repeat(4)}.`;
+		const result = stripCipherBlobs(prose);
+		assert.equal(result.text, prose);
+		assert.equal(result.strippedChars, 0);
+		assert.equal(result.blobs, 0);
+	});
+});
+
+test("G-255 stripCipherBlobs needs variety, not just length: filler and rules survive, real base64 does not", async () => {
+	await withChunkEnv({ HER_CONSOLIDATE_CIPHER_MIN_CHARS: "300" }, async () => {
+		// Length alone flagged "A".repeat(20000) and a 400-dash rule as cipher, which broke eight
+		// existing G-235/G-249 fixtures. Real base64 uses most of its alphabet; filler uses one char.
+		const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+		const realBase64 = Array.from({ length: 600 }, (_, index) => alphabet[index % alphabet.length]).join("");
+
+		for (const filler of ["A".repeat(20_000), "-".repeat(400), "=".repeat(400)]) {
+			const kept = stripCipherBlobs(`before ${filler} after`);
+			assert.equal(kept.blobs, 0, `low-variety run must survive: ${filler.slice(0, 3)}… (${filler.length} chars)`);
+			assert.equal(kept.text, `before ${filler} after`);
+		}
+
+		const cut = stripCipherBlobs(`before ${realBase64} after`);
+		assert.equal(cut.blobs, 1);
+		assert.equal(cut.text, "before [cipher 600 chars] after");
+	});
+});
+
+test("G-255 consolidate strips cipher input for the model while raw bytes and hash stay unchanged", async () => {
+	await withChunkEnv(
+		{ HER_CONSOLIDATE_CIPHER_MIN_CHARS: undefined, HER_CONSOLIDATE_EPISODE_CHARS: "8000" },
+		async () => {
+			const store = await g234Store();
+			const cipher = base64Fixture(1000);
+			const body = `real signal before\n${cipher}\nreal signal after`;
+			await writeRawEpisode(store, "2026-08-12T0200", "cipher-ep", body);
+			const rawPath = join(store, "episodic", "raw", "2026-08-12T0200--cipher-ep.md");
+			const before = await readFile(rawPath);
+			const beforeHash = createHash("sha256").update(before).digest("hex");
+			const prompts: string[] = [];
+			const model = {
+				complete(prompt: string): string {
+					prompts.push(prompt);
+					return JSON.stringify({ notes: [], moments: [] });
+				},
+			};
+			const warnings = mock.method(console, "warn");
+			try {
+				await new Memory(store, model).consolidate();
+				assert.ok(prompts.some((prompt) => prompt.includes("[cipher 1000 chars]")));
+				assert.ok(prompts.every((prompt) => !prompt.includes(cipher)));
+				assert.ok(
+					warnings.mock.calls.some((call) =>
+						String(call.arguments[0]).includes(
+							"[her] consolidate: stripped 1 cipher blob(s), 1000 chars, from cipher-ep",
+						),
+					),
+				);
+			} finally {
+				warnings.mock.restore();
+			}
+			const after = await readFile(rawPath);
+			assert.deepEqual(after, before);
+			assert.equal(createHash("sha256").update(after).digest("hex"), beforeHash);
+		},
+	);
+});
+
+test("G-255 duplicate-body hashing keeps same-prose episodes with different cipher lengths distinct", async () => {
+	await withChunkEnv({ HER_CONSOLIDATE_CIPHER_MIN_CHARS: "300", HER_CONSOLIDATE_EPISODE_CHARS: "8000" }, async () => {
+		const store = await g234Store();
+		await writeRawEpisode(store, "2026-08-12T0210", "cipher-same-a", `shared prose\n${base64Fixture(1000)}\nend`);
+		await writeRawEpisode(
+			store,
+			"2026-08-12T0211",
+			"cipher-same-b--dup-1",
+			`shared prose\n${base64Fixture(1200)}\nend`,
+		);
+		const model = new FakeModel(JSON.stringify({ notes: [], moments: [] }));
+		const memory = new Memory(store, model);
+		await memory.consolidate(1);
+		await memory.consolidate(1);
+		assert.equal(model.calls.length, 2, "different raw bodies must both reach the model");
+		const audit = (await readText(join(store, "audit", "consolidate-skips.jsonl"))) ?? "";
+		assert.doesNotMatch(audit, /duplicate-body/);
+	});
 });
