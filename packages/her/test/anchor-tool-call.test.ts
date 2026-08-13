@@ -4,6 +4,7 @@ import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 import type { Provider } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, ProviderConfig, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import her from "../src/extension.ts";
@@ -183,6 +184,20 @@ test("resolveToolCallAnchor canonicalizes Windows long-path prefix and session c
 	} finally {
 		await rm(alias, { recursive: true, force: true });
 	}
+
+	const fromAtPrefix = resolveToolCallAnchor({
+		cwd: foreignCwd,
+		memoryDir: store,
+		input: { path: `@${soul}` },
+	});
+	assert.equal(fromAtPrefix?.anchorPath, true, "@file prefix must not hide SOUL.md");
+
+	const fromFileUrl = resolveToolCallAnchor({
+		cwd: foreignCwd,
+		memoryDir: store,
+		input: { path: pathToFileURL(soul).href },
+	});
+	assert.equal(fromFileUrl?.anchorPath, true, "file:// URL of SOUL.md is an anchor");
 });
 
 test("extension Cedar uses ctx.cwd, not process.cwd, for relative anchor writes", async () => {

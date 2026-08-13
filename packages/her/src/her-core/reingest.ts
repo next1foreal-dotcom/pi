@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { isJunkNote, Memory, selectRelevantKeys, stripCipherBlobs } from "./memory.ts";
@@ -20,6 +20,7 @@ const DEFAULT_LIMIT = 50;
 const DEFAULT_EPISODE_CHARS = 8000;
 const DEFAULT_KEY_BUDGET = 120;
 const DEFAULT_KEY_RECENT = 30;
+const DEFAULT_LEASE_MS = 15 * 60 * 1000;
 const LEDGER_VERSION = 1 as const;
 
 export interface ReingestOptions {
@@ -45,12 +46,14 @@ export interface ReingestReport {
 	failed: number;
 	ingested: number;
 	scanned: number;
-	skipped: { alreadyProcessed: number; duplicateBody: number };
+	skipped: { alreadyProcessed: number; duplicateBody: number; inFlight: number };
 }
 
 interface ReingestLedgerRecord {
 	at: string;
 	bodySha256: string;
+	leaseOwner?: string;
+	leaseUntil?: number;
 	outcome: string;
 }
 
@@ -70,6 +73,11 @@ interface QuarantineSegment {
 	quarantineReason: string;
 	raw: string;
 	ts: string;
+}
+
+interface DistilledSegment {
+	moments: Array<{ shift?: string; trigger?: string }>;
+	notes: Array<Record<string, unknown>>;
 }
 
 function envPositiveInt(name: string, fallback: number): number {
@@ -230,11 +238,92 @@ async function recordProcessed(
 	await saveLedger(ledgerPath(paths), ledger);
 }
 
-async function digestSegment(
+async function persistDistilled(
 	memory: Memory,
-	model: ModelLike,
 	segment: QuarantineSegment,
-): Promise<{ noteKeys: string[] }> {
+	distilled: DistilledSegment,
+): Promise<string[]> {
+	const noteKeys: string[] = [];
+	for (const note of distilled.notes) {
+		const key = slug(String(note.key ?? note.title ?? "note"));
+		await memory.upsertSemanticNote(note);
+		noteKeys.push(key);
+	}
+	if (distilled.moments.length > 0) {
+		const date = (segment.ts || new Date().toISOString()).slice(0, 10);
+		await appendText(
+			memory.paths.becoming,
+			distilled.moments
+				.map((moment) => `- ${date} · trigger: ${moment.trigger ?? ""} · shift: ${moment.shift ?? ""}\n`)
+				.join(""),
+		);
+	}
+	return noteKeys;
+}
+
+function isTerminalOutcome(outcome: string): boolean {
+	return outcome === "ingested" || outcome === "skipped";
+}
+
+function isOurClaim(record: ReingestLedgerRecord | undefined, owner: string): boolean {
+	return record?.outcome === "claimed" && record.leaseOwner === owner;
+}
+
+function isLiveForeignClaim(record: ReingestLedgerRecord | undefined, owner: string, now: number): boolean {
+	if (!record || record.outcome !== "claimed" || record.leaseOwner === owner) return false;
+	return typeof record.leaseUntil === "number" && record.leaseUntil > now;
+}
+
+function leaseMs(): number {
+	return envPositiveInt("HER_REINGEST_LEASE_MS", DEFAULT_LEASE_MS);
+}
+
+async function refreshLedger(paths: StorePaths, ledger: ReingestLedger): Promise<void> {
+	const fresh = await loadLedger(ledgerPath(paths));
+	ledger.processed = { ...ledger.processed, ...fresh.processed };
+}
+
+async function claimSegment(
+	root: string,
+	paths: StorePaths,
+	ledger: ReingestLedger,
+	segment: QuarantineSegment,
+	owner: string,
+	now: number,
+): Promise<"claimed" | "terminal" | "inflight"> {
+	return storeLock(root, async () => {
+		await refreshLedger(paths, ledger);
+		const current = ledger.processed[segment.id];
+		if (current && isTerminalOutcome(current.outcome)) return "terminal";
+		if (isLiveForeignClaim(current, owner, now)) return "inflight";
+		ledger.processed[segment.id] = {
+			at: new Date(now).toISOString(),
+			bodySha256: segment.bodySha256,
+			outcome: "claimed",
+			leaseOwner: owner,
+			leaseUntil: now + leaseMs(),
+		};
+		await saveLedger(ledgerPath(paths), ledger);
+		return "claimed";
+	});
+}
+
+async function releaseClaim(
+	root: string,
+	paths: StorePaths,
+	ledger: ReingestLedger,
+	segment: QuarantineSegment,
+	owner: string,
+): Promise<void> {
+	await storeLock(root, async () => {
+		await refreshLedger(paths, ledger);
+		if (!isOurClaim(ledger.processed[segment.id], owner)) return;
+		delete ledger.processed[segment.id];
+		await saveLedger(ledgerPath(paths), ledger);
+	});
+}
+
+async function distillSegment(memory: Memory, model: ModelLike, segment: QuarantineSegment): Promise<DistilledSegment> {
 	const stripped = stripCipherBlobs(segment.body.trim());
 	if (stripped.blobs > 0) {
 		console.warn(
@@ -262,24 +351,10 @@ async function digestSegment(
 		if (isJunkNote(note)) continue;
 		accepted.push(note);
 	}
-	const bound = bindNotesToOrigin(accepted, segment.episode);
-	const noteKeys: string[] = [];
-	for (const note of bound) {
-		const key = slug(String(note.key ?? note.title ?? "note"));
-		await memory.upsertSemanticNote(note);
-		noteKeys.push(key);
-	}
-	const moments = Array.isArray(result.moments) ? result.moments : [];
-	if (moments.length > 0) {
-		const date = (segment.ts || new Date().toISOString()).slice(0, 10);
-		await appendText(
-			memory.paths.becoming,
-			moments
-				.map((moment) => `- ${date} · trigger: ${moment.trigger ?? ""} · shift: ${moment.shift ?? ""}\n`)
-				.join(""),
-		);
-	}
-	return { noteKeys };
+	return {
+		notes: bindNotesToOrigin(accepted, segment.episode),
+		moments: Array.isArray(result.moments) ? result.moments : [],
+	};
 }
 
 function failureReason(error: unknown): "malformed" | "truncated" | undefined {
@@ -300,14 +375,14 @@ export async function runReingest(root: string, opts: ReingestOptions = {}): Pro
 	// response must remain retryable on a later run.
 	const seenHashes = new Set(
 		Object.values(ledger.processed)
-			.filter((record) => record.outcome !== "failed")
+			.filter((record) => isTerminalOutcome(record.outcome))
 			.map((record) => record.bodySha256),
 	);
 	const unprocessed: QuarantineSegment[] = [];
 	let alreadyProcessed = 0;
 	for (const segment of segments) {
 		const record = ledger.processed[segment.id];
-		if (record && record.outcome !== "failed") {
+		if (record && isTerminalOutcome(record.outcome)) {
 			alreadyProcessed++;
 			continue;
 		}
@@ -317,7 +392,7 @@ export async function runReingest(root: string, opts: ReingestOptions = {}): Pro
 	const report: ReingestReport = {
 		scanned: segments.length,
 		ingested: 0,
-		skipped: { alreadyProcessed, duplicateBody: 0 },
+		skipped: { alreadyProcessed, duplicateBody: 0, inFlight: 0 },
 		failed: 0,
 		entries: [],
 	};
@@ -341,13 +416,12 @@ export async function runReingest(root: string, opts: ReingestOptions = {}): Pro
 	const model = opts.model;
 	const memory = new Memory(root, model);
 
-	// Lock-window discipline (G-36A): model calls run OUTSIDE the store lock.
-	// digestSegment's distill and any upsert merges take their own short lock
-	// windows; holding the lock across a whole batch starves every other
-	// writer (nightly consolidate would hit its acquire timeout).
+	// Lock-window discipline (G-36A): distill and upsert-merge model calls run
+	// OUTSIDE the store lock. A short claim lease is taken first so a concurrent
+	// reingest cannot distill the same segment and clobber the ledger.
 	for (const segment of batch) {
 		const record = ledger.processed[segment.id];
-		if (record && record.outcome !== "failed") {
+		if (record && isTerminalOutcome(record.outcome)) {
 			report.skipped.alreadyProcessed++;
 			continue;
 		}
@@ -366,31 +440,60 @@ export async function runReingest(root: string, opts: ReingestOptions = {}): Pro
 			});
 			continue;
 		}
-		let noteKeys: string[] = [];
+		const owner = randomUUID();
+		const claim = await claimSegment(root, paths, ledger, segment, owner, Date.now());
+		if (claim === "terminal") {
+			report.skipped.alreadyProcessed++;
+			continue;
+		}
+		if (claim === "inflight") {
+			report.skipped.inFlight++;
+			continue;
+		}
+		let distilled: DistilledSegment | undefined;
 		let failed: "malformed" | "truncated" | undefined;
 		try {
-			noteKeys = (await digestSegment(memory, model, segment)).noteKeys;
+			distilled = await distillSegment(memory, model, segment);
 		} catch (error) {
 			const reason = failureReason(error);
-			if (!reason) throw error;
+			if (!reason) {
+				await releaseClaim(root, paths, ledger, segment, owner);
+				throw error;
+			}
 			failed = reason;
 		}
-		const recorded = await storeLock(root, async (): Promise<boolean> => {
-			// Premise recheck: another reingest process may have recorded this
-			// segment while our model call was in flight; disk wins.
-			const fresh = await loadLedger(ledgerPath(paths));
-			ledger.processed = { ...ledger.processed, ...fresh.processed };
+		let noteKeys: string[] = [];
+		if (!failed && distilled) {
+			const stillMine = await storeLock(root, async () => {
+				await refreshLedger(paths, ledger);
+				return isOurClaim(ledger.processed[segment.id], owner);
+			});
+			if (!stillMine) {
+				report.skipped.inFlight++;
+				continue;
+			}
+			try {
+				noteKeys = await persistDistilled(memory, segment, distilled);
+			} catch (error) {
+				await releaseClaim(root, paths, ledger, segment, owner);
+				throw error;
+			}
+		}
+		const recorded = await storeLock(root, async (): Promise<"ok" | "inflight" | "terminal"> => {
+			await refreshLedger(paths, ledger);
 			const current = ledger.processed[segment.id];
-			if (current && current.outcome !== "failed") return false;
+			if (current && isTerminalOutcome(current.outcome) && !isOurClaim(current, owner)) return "terminal";
+			if (!isOurClaim(current, owner)) return "inflight";
 			if (failed) {
 				await recordProcessed(paths, ledger, segment, "failed", failed, []);
 			} else {
 				await recordProcessed(paths, ledger, segment, "ingested", segment.quarantineReason || "ingested", noteKeys);
 			}
-			return true;
+			return "ok";
 		});
-		if (!recorded) {
-			report.skipped.alreadyProcessed++;
+		if (recorded !== "ok") {
+			if (recorded === "terminal") report.skipped.alreadyProcessed++;
+			else report.skipped.inFlight++;
 			continue;
 		}
 		if (failed) {

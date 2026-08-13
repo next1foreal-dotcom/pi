@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
+import { homedir } from "node:os";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AuthorizationCall } from "@cedar-policy/cedar-wasm/nodejs";
 import {
@@ -283,8 +284,28 @@ function canonicalizeFilesystemPath(absPath: string): string {
 	}
 }
 
+const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
+
+/** Match coding-agent path-utils so Cedar sees the same file the tool will write. */
+function expandToolPath(raw: string): string {
+	let normalized = stripWindowsNamespace(raw.trim()).replace(UNICODE_SPACES, " ");
+	if (normalized.startsWith("@")) normalized = normalized.slice(1);
+	if (normalized === "~") return homedir();
+	if (normalized.startsWith("~/") || normalized.startsWith("~\\")) {
+		return join(homedir(), normalized.slice(2));
+	}
+	if (/^file:/i.test(normalized)) {
+		try {
+			return fileURLToPath(normalized);
+		} catch {
+			return normalized;
+		}
+	}
+	return normalized;
+}
+
 function logicalTargetPath(request: Pick<SelfModToolRequest, "cwd" | "memoryDir" | "targetPath">): string {
-	const stripped = stripWindowsNamespace(request.targetPath);
+	const stripped = expandToolPath(request.targetPath);
 	const supplied = stripped.replaceAll("\\", "/");
 	if (supplied.toLowerCase().startsWith("her-memory/")) return supplied;
 	const absoluteTarget = canonicalizeFilesystemPath(resolve(request.cwd, stripped));

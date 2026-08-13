@@ -455,6 +455,40 @@ test("limit bounds unprocessed segments and produced notes never cite quarantine
 	});
 });
 
+test("concurrent reingest claims a segment so the loser does not call the model", async () => {
+	await withStore(async (root) => {
+		await writeQuarantine(root, {
+			episode: "lease-one",
+			body: "Lease fixture: only the owner of the claim may distill this segment.",
+		});
+		let nestedCalls = 0;
+		let nested: Awaited<ReturnType<typeof runReingest>> | undefined;
+		const first = {
+			async complete(prompt: string): Promise<string> {
+				nested = await runReingest(root, {
+					model: {
+						complete(inner: string): string {
+							nestedCalls += 1;
+							return noteJson(episodeIdFromPrompt(inner), "loser-must-not-land");
+						},
+					},
+				});
+				return noteJson(episodeIdFromPrompt(prompt), "lease-owner-note");
+			},
+		};
+		const report = await runReingest(root, { model: first });
+		assert.equal(report.ingested, 1);
+		assert.equal(nested?.ingested, 0);
+		assert.equal(nested?.skipped.inFlight, 1);
+		assert.equal(nestedCalls, 0, "the losing run must not distill while the claim is live");
+		assert.match(
+			(await readText(join(root, "semantic", "lease-owner-note.md"))) ?? "",
+			/\[\[episodic\/raw\/lease-one\]\]/,
+		);
+		assert.equal(await readText(join(root, "semantic", "loser-must-not-land.md")), undefined);
+	});
+});
+
 test("parseArgs accepts reingest flags", () => {
 	assert.deepEqual(parseArgs(["reingest", "--dry-run", "--limit", "5", "--root", "D:\\tmp\\store", "--json"]), {
 		kind: "reingest",
