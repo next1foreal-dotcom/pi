@@ -1,0 +1,22 @@
+{
+  "surface": "consolidate-cursor",
+  "case": "future-timestamp",
+  "valid": false,
+  "input": "2099-01-01T00:00",
+  "expect": {
+    "parse": {
+      "ok": true,
+      "value": { "ts": "2099-01-01T00:00", "done_ids": [], "legacy": true }
+    },
+    "doctor": {
+      "shape": "pass",
+      "timestamp": "pass",
+      "later_than_newest": true,
+      "newest_episode_ts": "2026-08-11T14:03"
+    },
+    "filter": [
+      { "ts": "2026-08-11T14:03", "id": "current", "included": false },
+      { "ts": "2099-01-01T00:01", "id": "after-cursor", "included": true }
+    ]
+  }
+}

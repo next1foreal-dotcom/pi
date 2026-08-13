@@ -1,0 +1,21 @@
+{
+  "surface": "consolidate-cursor",
+  "case": "compact-string",
+  "valid": true,
+  "input": "2026-06-02T1000",
+  "expect": {
+    "parse": {
+      "ok": true,
+      "value": { "ts": "2026-06-02T1000", "done_ids": [], "legacy": true }
+    },
+    "doctor": { "shape": "pass", "timestamp": "fail" },
+    "filter": [
+      { "ts": "2026-06-02T0999", "id": "before", "included": false },
+      { "ts": "2026-06-02T1000", "id": "boundary", "included": false },
+      { "ts": "2026-06-02T1001", "id": "after", "included": true }
+    ]
+  },
+  "python": {
+    "note": "Python Memory.consolidate writes this compact string (episode ts from capture default %Y-%m-%dT%H%M). Filter agrees with the TS legacy parser. DR-02 timestamp parse rejects it (requires T\\d{2}:\\d{2} after underscore-to-colon). Pin, do not fix."
+  }
+}

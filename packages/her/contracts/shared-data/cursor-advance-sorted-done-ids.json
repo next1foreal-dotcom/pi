@@ -1,0 +1,22 @@
+{
+  "surface": "consolidate-cursor-advance",
+  "case": "sorted-done-ids",
+  "valid": true,
+  "input": {
+    "cursor": { "ts": "2026-07-04T0000", "done_ids": ["zeta", "alpha", "mike"] },
+    "episodes": [
+      { "ts": "2026-07-04T0000", "cursorId": "zeta" },
+      { "ts": "2026-07-04T0000", "cursorId": "alpha" },
+      { "ts": "2026-07-04T0000", "cursorId": "mike" },
+      { "ts": "2026-07-04T0000", "cursorId": "bravo" }
+    ]
+  },
+  "expect": {
+    "ts": "2026-07-04T0000",
+    "done_ids": ["alpha", "bravo", "mike", "zeta"]
+  },
+  "python": {
+    "discrepancy": "Memory.consolidate writes state['cursor'] as the last episode ts string (memory.py:227), not {ts, done_ids}. There is no memory_cursor.py in her-core on this tree.",
+    "expect": { "cursor": "2026-07-04T0000" }
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "surface": "raw-episode-frontmatter",
+  "case": "required-keys",
+  "valid": true,
+  "filename": "2026-08-11T14_03--sess01.md",
+  "input_file": "raw-fm-required-keys.md",
+  "expect": {
+    "data": {
+      "id": "sess01",
+      "timestamp": "2026-08-11T14:03",
+      "project": "her",
+      "session_id": "sess01"
+    },
+    "body": "\nEpisode body.\n",
+    "schema_missing": []
+  },
+  "python": {
+    "discrepancy": "parse_frontmatter lstrip('\\n') strips every leading newline after the closing ---; TS parseFrontmatter strips only one. Same file, Python body is 'Episode body.\\n'.",
+    "expect": {
+      "data": {
+        "id": "sess01",
+        "timestamp": "2026-08-11T14:03",
+        "project": "her",
+        "session_id": "sess01"
+      },
+      "body": "Episode body.\n",
+      "schema_missing": []
+    }
+  }
+}

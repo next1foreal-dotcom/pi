@@ -1,0 +1,16 @@
+{
+  "surface": "consolidate-cursor",
+  "case": "number",
+  "valid": false,
+  "input": 42,
+  "expect": {
+    "parse": { "ok": false, "error": "invalid consolidate cursor" },
+    "doctor": { "shape": "fail" }
+  },
+  "python": {
+    "discrepancy": "Python has no cursor parser; json 42 becomes int and str(42)=='42'. Episode timestamps starting with '2' are not > '42', so _episodes_since includes nothing.",
+    "filter": [
+      { "ts": "2026-06-02T10:00", "id": "any", "included": false }
+    ]
+  }
+}

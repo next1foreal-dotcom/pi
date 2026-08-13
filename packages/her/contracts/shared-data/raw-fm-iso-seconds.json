@@ -1,0 +1,25 @@
+{
+  "surface": "raw-episode-frontmatter",
+  "case": "iso-seconds",
+  "valid": true,
+  "filename": "2026-08-11T14_03_00--sess01.md",
+  "input_file": "raw-fm-iso-seconds.md",
+  "expect": {
+    "data": {
+      "id": "sess01",
+      "timestamp": "2026-08-11T14:03:00",
+      "project": "her",
+      "session_id": "sess01"
+    },
+    "body": "seconds body\n",
+    "schema_missing": []
+  },
+  "python": {
+    "discrepancy": "yaml.safe_load parses a YAML 1.1 timestamp with seconds as datetime.datetime; TS parseFrontmatter keeps the literal string. Production writers currently use minute precision (no seconds), so this is latent. Pin, do not fix.",
+    "expect": {
+      "timestamp_type": "datetime",
+      "timestamp_iso_prefix": "2026-08-11T14:03:00",
+      "schema_missing": []
+    }
+  }
+}

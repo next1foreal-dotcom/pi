@@ -1,0 +1,13 @@
+{
+  "surface": "consolidate-cursor",
+  "case": "empty-string",
+  "valid": false,
+  "input": "",
+  "expect": {
+    "parse": { "ok": true, "value": null },
+    "doctor": { "shape": "pass", "timestamp": "fail" },
+    "filter": [
+      { "ts": "2026-06-02T10:00", "id": "any", "included": true }
+    ]
+  }
+}

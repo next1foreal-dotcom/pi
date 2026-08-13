@@ -1,0 +1,28 @@
+{
+  "surface": "raw-episode-frontmatter",
+  "case": "missing-session-id",
+  "valid": false,
+  "filename": "2026-08-11T14_03--sess01.md",
+  "input_file": "raw-fm-missing-session-id.md",
+  "expect": {
+    "data": {
+      "id": "sess01",
+      "timestamp": "2026-08-11T14:03",
+      "project": "her"
+    },
+    "body": "\nmissing session_id\n",
+    "schema_missing": ["session_id"]
+  },
+  "python": {
+    "discrepancy": "Same leading-newline body split as required-keys. Schema (DR-03) still missing session_id on both sides.",
+    "expect": {
+      "data": {
+        "id": "sess01",
+        "timestamp": "2026-08-11T14:03",
+        "project": "her"
+      },
+      "body": "missing session_id\n",
+      "schema_missing": ["session_id"]
+    }
+  }
+}

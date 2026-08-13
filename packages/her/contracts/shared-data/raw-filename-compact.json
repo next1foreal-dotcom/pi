@@ -1,0 +1,7 @@
+{
+  "surface": "raw-filename",
+  "case": "legacy-compact",
+  "valid": true,
+  "input": { "timestamp": "2026-06-02T2330", "session_id": "sess01" },
+  "expect": { "filename": "2026-06-02T2330--sess01.md" }
+}

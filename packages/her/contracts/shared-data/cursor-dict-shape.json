@@ -1,0 +1,28 @@
+{
+  "surface": "consolidate-cursor",
+  "case": "dict-shape",
+  "valid": true,
+  "input": { "ts": "2026-06-02T10:00", "done_ids": ["boundary"] },
+  "expect": {
+    "parse": {
+      "ok": true,
+      "value": { "ts": "2026-06-02T10:00", "done_ids": ["boundary"], "legacy": false }
+    },
+    "doctor": { "shape": "pass", "timestamp": "pass" },
+    "filter": [
+      { "ts": "2026-06-02T09:00", "id": "before", "included": false },
+      { "ts": "2026-06-02T10:00", "id": "boundary", "included": false },
+      { "ts": "2026-06-02T10:00", "id": "same-ts-other", "included": true },
+      { "ts": "2026-06-02T11:00", "id": "after", "included": true }
+    ]
+  },
+  "python": {
+    "discrepancy": "G-35: Memory._episodes_since compares ts > str(cursor). A dict stringifies to a '{...}' token; no ISO/compact episode ts is greater, so consolidate silently no-ops. TS parseConsolidateCursor + shouldUseRawEpisode honor {ts, done_ids}.",
+    "filter": [
+      { "ts": "2026-06-02T09:00", "id": "before", "included": false },
+      { "ts": "2026-06-02T10:00", "id": "boundary", "included": false },
+      { "ts": "2026-06-02T10:00", "id": "same-ts-other", "included": false },
+      { "ts": "2026-06-02T11:00", "id": "after", "included": false }
+    ]
+  }
+}

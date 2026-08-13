@@ -1,0 +1,23 @@
+{
+  "surface": "consolidate-cursor",
+  "case": "stringified-dict",
+  "valid": false,
+  "input": "{'ts': '2026-06-02T10:00', 'done_ids': []}",
+  "expect": {
+    "parse": {
+      "ok": true,
+      "value": {
+        "ts": "{'ts': '2026-06-02T10:00', 'done_ids': []}",
+        "done_ids": [],
+        "legacy": true
+      }
+    },
+    "doctor": { "shape": "pass", "timestamp": "fail" },
+    "filter": [
+      { "ts": "2026-06-02T11:00", "id": "after", "included": false }
+    ]
+  },
+  "python": {
+    "note": "If this Python-repr string is stored as the JSON string cursor, both sides treat it as a legacy string and lexicographically exclude ISO timestamps (they start with '2', the repr starts with '{'). The live G-35 bug was the dict OBJECT in state.json, not this string."
+  }
+}
