@@ -1800,6 +1800,12 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 		}
 		return accepted;
 	}
+
+	/** Public seam for quarantine reingest: same create/merge path consolidate uses. */
+	async upsertSemanticNote(note: Record<string, unknown>): Promise<"created" | "merged" | "merge-failed"> {
+		return this.upsertNote(note);
+	}
+
 	private async upsertNote(note: Record<string, unknown>): Promise<"created" | "merged" | "merge-failed"> {
 		const key = slug(String(note.key ?? note.title ?? "note"));
 		const path = join(this.paths.semantic, `${key}.md`);

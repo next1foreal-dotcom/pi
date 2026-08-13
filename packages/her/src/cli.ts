@@ -38,6 +38,7 @@ import {
 	renderPrivacyCheck,
 	renderRecall,
 	renderReflect,
+	renderReingest,
 	renderRestore,
 	renderReviewNarrative,
 	renderSelfNarrative,
@@ -128,6 +129,7 @@ import {
 	runEvalTrend,
 	runGoldenEvals,
 	runMemoryLint,
+	runReingest,
 	runTasteWeekly,
 	StorePaths,
 	sendTelegramMessage,
@@ -306,6 +308,18 @@ export async function runHerCli(
 		const payload: CliVoiceTaskCompleteNotifyPayload = { ...(await buildFreshStatusPayload(memoryDir, env)), result };
 		writePayload(io.stdout, payload, command.json, renderVoiceTaskCompleteNotify);
 		return payload.status.status === "unknown" ? 1 : 0;
+	}
+
+	if (command.kind === "reingest") {
+		const root = command.root ? resolve(cwd, command.root) : memoryDir;
+		const result = await runReingest(root, {
+			dryRun: command.dryRun,
+			limit: command.limit,
+			model: command.dryRun ? undefined : createCliModel(root, env),
+		});
+		const payload = { ...(await buildFreshStatusPayload(root, env)), result };
+		writePayload(io.stdout, payload, command.json, renderReingest);
+		return 0;
 	}
 
 	const memory = createCliMemory(memoryDir, env);
