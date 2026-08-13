@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import { citationHref, resolveCitation } from "../src/compendium/citation.ts";
-import { renderSynthesisHtml, renderSynthesisMarkdown } from "../src/compendium/deliver.ts";
+import { deliverSynthesis, renderSynthesisHtml, renderSynthesisMarkdown } from "../src/compendium/deliver.ts";
 import {
 	CHAPTER_ANALYSIS_BEGIN,
 	CHAPTER_ANALYSIS_END,
@@ -11,6 +14,8 @@ import {
 } from "../src/compendium/prompts-synth.ts";
 import { synthesize } from "../src/compendium/synth.ts";
 import type { ChapterAnalysis, CitationSource, SynthesisDoc, SynthManifest } from "../src/compendium/types.ts";
+import { stopPublishServer } from "../src/her-core/her-publish.ts";
+import { initStore } from "../src/her-core/index.ts";
 import { FakeModel } from "../src/her-core/model.ts";
 
 const catalog: CitationSource[] = [
@@ -305,4 +310,51 @@ test("renderSynthesisHtml emits the four briefing sections without fabricated UR
 	assert.ok(html.includes("Build the agent first"));
 	assert.equal(html.includes("evil.example"), false);
 	assert.ok(!html.includes("<script"));
+});
+
+async function listNames(dir: string): Promise<string[]> {
+	try {
+		return (await readdir(dir)).sort();
+	} catch (error) {
+		if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return [];
+		throw error;
+	}
+}
+
+test("deliver writes world note and published html without touching quarantine or episodic", async () => {
+	const store = await mkdtemp(join(tmpdir(), "compendium-deliver-"));
+	await initStore(store);
+	const episodicBefore = await listNames(join(store, "episodic"));
+	const rawBefore = await listNames(join(store, "episodic", "raw"));
+	const quarantineBefore = await listNames(join(store, ".her", "quarantine"));
+	try {
+		const result = await deliverSynthesis({
+			doc: briefingDoc,
+			memoryRoot: store,
+			publish: {
+				bind: "127.0.0.1",
+				port: 18941,
+				inlineThresholdBytes: 524_288,
+				maxAssetBytes: 5_000_000,
+			},
+		});
+		const world = await readFile(join(store, "world", "builder-talk.md"), "utf8");
+		for (const heading of Object.values(SYNTHESIS_SECTIONS)) {
+			assert.ok(world.includes(heading), `world note missing ${heading}`);
+		}
+		assert.match(world, /claim_count:/);
+		assert.match(world, /provenance:/);
+		const published = await readFile(join(store, "published", "builder-talk.html"), "utf8");
+		assert.ok(published.includes("Builder talk"));
+		for (const heading of Object.values(SYNTHESIS_SECTIONS)) {
+			assert.ok(published.includes(heading));
+		}
+		assert.equal(result.published.path, "published/builder-talk.html");
+		assert.deepEqual(await listNames(join(store, "episodic")), episodicBefore);
+		assert.deepEqual(await listNames(join(store, "episodic", "raw")), rawBefore);
+		assert.deepEqual(await listNames(join(store, ".her", "quarantine")), quarantineBefore);
+	} finally {
+		await stopPublishServer();
+		await rm(store, { recursive: true, force: true });
+	}
 });

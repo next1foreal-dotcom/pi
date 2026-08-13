@@ -1,3 +1,11 @@
+import { createHash } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+
+import type { PublishConfig } from "../her-core/bg-task-config.ts";
+import { herPublish, type PublishResult } from "../her-core/her-publish.ts";
+import { Memory } from "../her-core/memory.ts";
+import type { ClaimLedgerEntry, WorldNoteData } from "../her-core/memory-types.ts";
 import { SYNTHESIS_SECTIONS } from "./prompts-synth.ts";
 import type { Citation, SynthesisDoc, VerdictLevel } from "./types.ts";
 
@@ -116,4 +124,81 @@ function formatCitationHtml(citation: Citation): string {
 
 function escapeHtml(value: string): string {
 	return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+const PUBLISH_SLUG = /^[a-z0-9-]{1,64}$/;
+
+export type DeliverSynthesisInput = {
+	doc: SynthesisDoc;
+	memoryRoot: string;
+	sourceUrl?: string;
+	publish?: PublishConfig;
+};
+
+export type DeliverSynthesisResult = {
+	worldNoteId: string;
+	published: PublishResult;
+};
+
+export async function deliverSynthesis(input: DeliverSynthesisInput): Promise<DeliverSynthesisResult> {
+	const slug = input.doc.slug.trim();
+	if (!PUBLISH_SLUG.test(slug)) throw new Error(`invalid publish slug: ${slug}`);
+	const markdown = renderSynthesisMarkdown(input.doc);
+	const html = renderSynthesisHtml(input.doc);
+	const sourceUrl = input.sourceUrl?.trim() || `compendium:${slug}`;
+	const memory = new Memory(input.memoryRoot);
+	const worldNoteId = await memory.writeWorldNote(worldNoteFromDoc(input.doc, markdown, sourceUrl));
+	const stagingDir = join(input.memoryRoot, ".her", "compendium", slug);
+	await mkdir(stagingDir, { recursive: true });
+	const stagingPath = join(stagingDir, "briefing.html");
+	await writeFile(stagingPath, html, "utf8");
+	const published = await herPublish(input.memoryRoot, {
+		filePath: stagingPath,
+		title: input.doc.title,
+		description: `Compendium briefing ${slug}`,
+		slug,
+		...(input.publish ? { publish: input.publish } : {}),
+	});
+	return { worldNoteId, published };
+}
+
+function worldNoteFromDoc(doc: SynthesisDoc, markdown: string, sourceUrl: string): WorldNoteData {
+	return {
+		title: doc.title,
+		sourceUrl,
+		sourceType: "compendium",
+		contentHash: createHash("sha256").update(`${sourceUrl}\n${markdown}`).digest("hex"),
+		memoryStatus: "active",
+		extracted: markdown,
+		coverage: `Synthesized ${doc.timeline.length} timeline facts, ${doc.disagreements.length} disagreements, ${doc.quotes.length} quotes, ${doc.decisions.length} decisions.`,
+		claims: claimsFromDoc(doc),
+		read: readFromDoc(doc),
+		steal: doc.quotes.map((entry) => entry.text),
+		connections: [],
+		take: doc.decisions[0]?.question ?? doc.title,
+		possibleMoves: doc.decisions.map((entry) => entry.question),
+		provenance: "world-ingested",
+	};
+}
+
+function claimsFromDoc(doc: SynthesisDoc): ClaimLedgerEntry[] {
+	return doc.disagreements.flatMap((entry) =>
+		entry.claims.map((claim) => ({
+			claim: claim.claim,
+			verdict: claimVerdict(entry.verdict),
+			evidence: `${claim.citation.sourceId} ${claim.citation.locator} ${claim.citation.href}`.trim(),
+			sourceQuality: "primary" as const,
+		})),
+	);
+}
+
+function claimVerdict(verdict: VerdictLevel): ClaimLedgerEntry["verdict"] {
+	if (verdict === "verified") return "supported";
+	if (verdict === "retracted" || verdict === "misattributed") return "contradicted";
+	return "insufficient_evidence";
+}
+
+function readFromDoc(doc: SynthesisDoc): string {
+	if (!doc.disagreements.length) return `Cited synthesis of ${doc.title}.`;
+	return doc.disagreements.map((entry) => `${entry.topic}: ${VERDICT_LABEL[entry.verdict]}`).join(" ");
 }
