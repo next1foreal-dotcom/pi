@@ -175,7 +175,7 @@ type IndexedConsolidateEpisode = ConsolidateEpisode & {
 type OrganSkipEntry = {
 	ts: string;
 	organ: OrganKind;
-	reason: "truncated-at-floor";
+	reason: "truncated-at-floor" | "premise-moved";
 	units: number;
 	attempts: number;
 };
@@ -350,6 +350,17 @@ function splitTextInHalf(text: string): [string, string] {
 		return [text.slice(0, half), text.slice(half)];
 	}
 	return [text.slice(0, cut), text.slice(cut)];
+}
+
+function cursorFingerprint(cursor: ParsedConsolidateCursor | null): string {
+	if (!cursor) return "";
+	return `${cursor.legacy ? "L" : "N"}:${cursor.ts}:${[...cursor.doneIds].sort().join(",")}`;
+}
+
+function textFingerprint(text: string | undefined): string {
+	return createHash("sha256")
+		.update(text ?? "", "utf8")
+		.digest("hex");
 }
 
 type CoarseSample = { text: string; sampledChars: number; slices: number };
@@ -754,16 +765,15 @@ export class Memory {
 	// model call. Mirrors her-core/her/memory.py's Memory.surface (Python names this op "surface"; the
 	// TS port is named "reflect" so it doesn't collide with the existing retrieval-only surface() here).
 	async reflect(opts: ReflectOptions = {}): Promise<ReflectResult> {
-		return this.withStoreLock(async () => {
+		const prepared = await this.withStoreLock(async () => {
 			const state = await readJson<{ last_reflect?: string | null }>(this.paths.stateFile, {});
 			const lastReflect = typeof state.last_reflect === "string" ? state.last_reflect : undefined;
 			const cadenceDays = reflectCadenceDays(this.config);
 			const daysSinceLastReflect = daysSince(parseDate(lastReflect));
 			const due = daysSinceLastReflect === undefined || daysSinceLastReflect >= cadenceDays;
-			if (opts.ifDue && !due) return { ran: false, due: false };
+			if (opts.ifDue && !due) return { kind: "not-due" as const };
 
 			if (!this.model) throw new Error("reflect requires a model");
-			const model = this.model;
 
 			const recent = (await this.episodesSince(null)).slice(-5);
 			const recentText = recent.map((episode) => episode.text).join("\n\n");
@@ -773,8 +783,22 @@ export class Memory {
 				if (body) existingTexts.push(body);
 			}
 			const existing = existingTexts.join("\n") || "(none)";
+			return { kind: "ready" as const, lastReflect, due, recent, recentText, existing };
+		});
+		if (prepared.kind === "not-due") return { ran: false, due: false };
 
-			const out = ((await model.complete(surfacePrompt(recentText, existing), { strong: true })) ?? "").trim();
+		if (!this.model) throw new Error("reflect requires a model");
+		const out = (
+			(await this.model.complete(surfacePrompt(prepared.recentText, prepared.existing), { strong: true })) ?? ""
+		).trim();
+
+		return this.withStoreLock(async () => {
+			const state = await readJson<{ last_reflect?: string | null }>(this.paths.stateFile, {});
+			const lastReflect = typeof state.last_reflect === "string" ? state.last_reflect : undefined;
+			if (lastReflect !== prepared.lastReflect) {
+				console.warn("[her] reflect: last_reflect moved during model call; discarding draft");
+				return { ran: false, ...(opts.ifDue ? { due: prepared.due } : {}) };
+			}
 
 			// A NONE reply is the model's built-in restraint (nothing non-obvious to surface), not a
 			// failure: it still counts as this cadence period's reflection, so last_reflect always
@@ -782,7 +806,7 @@ export class Memory {
 			// cadence tracking at all (Memory.surface there is called on-demand, never gated).
 			await writeJson(this.paths.stateFile, { ...state, last_reflect: today() });
 
-			if (!out || out.toUpperCase() === "NONE") return { ran: true, ...(opts.ifDue ? { due } : {}) };
+			if (!out || out.toUpperCase() === "NONE") return { ran: true, ...(opts.ifDue ? { due: prepared.due } : {}) };
 
 			const date = today();
 			const id = genId(date, out);
@@ -791,13 +815,13 @@ export class Memory {
 				id,
 				status: "pending",
 				created: date,
-				provenance: recent.map((episode) => episode.id),
+				provenance: prepared.recent.map((episode) => episode.id),
 				response_episode: null,
 			};
 			await writeText(join(this.paths.recognitions, fileName), `${frontmatter(fm)}${out}\n`);
 			await git(this.paths.root, "add", "--", `recognitions/${fileName}`, ".her/state.json");
 			await git(this.paths.root, "commit", "-m", `memory: reflect recognition ${id}`);
-			return { ran: true, ...(opts.ifDue ? { due } : {}), id, text: out };
+			return { ran: true, ...(opts.ifDue ? { due: prepared.due } : {}), id, text: out };
 		});
 	}
 
@@ -812,192 +836,302 @@ export class Memory {
 	}
 
 	async consolidate(limit = 25): Promise<ConsolidateResult> {
-		return this.withStoreLock(async () => {
-			if (!this.model) throw new Error("consolidate requires a model");
-			const model = this.model;
+		if (!this.model) throw new Error("consolidate requires a model");
+		const model = this.model;
+		const boot = await this.withStoreLock(async () => {
 			const state = await readJson<Record<string, unknown>>(this.paths.stateFile, {});
 			const cursor = parseConsolidateCursor(state.cursor ?? null);
 			const available = await this.episodesSince(cursor);
-			if (available.length === 0) return { episodes: 0, notesTouched: 0, moments: 0 };
+			if (available.length === 0) return undefined;
 			const existing = await markdownStems(this.paths.semantic);
-			const consolidateSkipsPath = join(this.paths.root, "audit", "consolidate-skips.jsonl");
-			let workingCursor = cursor;
 			const recent = await recentSemanticStems(
 				this.paths.semantic,
 				envPositiveInt("HER_CONSOLIDATE_KEY_RECENT", DEFAULT_CONSOLIDATE_KEY_RECENT),
 			);
-			const seenBodies = new Map<string, { id: string; ts: string }>();
-			const indexedAvailable: IndexedConsolidateEpisode[] = available.map((episode, sourceIndex) => {
-				const digest = createHash("sha256").update(episode.body, "utf8").digest("hex");
-				// Only allocator-created --dup-N names identify capture replays; independent events may share prose.
-				const duplicateOf = episode.cursorId.includes("--dup-") ? seenBodies.get(digest) : undefined;
-				if (!duplicateOf) seenBodies.set(digest, { id: episode.id, ts: episode.ts });
-				return { ...episode, sourceIndex, ...(duplicateOf ? { duplicateOf } : {}) };
-			});
-			const uniqueAvailable = indexedAvailable.filter((episode) => !episode.duplicateOf);
-			const recordedDuplicateIndices = new Set<number>();
-			const duplicateEndAfter = (sourceIndex: number): number => {
-				let end = sourceIndex;
-				while (end + 1 < indexedAvailable.length && indexedAvailable[end + 1]?.duplicateOf) end++;
-				return end;
-			};
-			const recordDuplicateSkipsThrough = async (endIndex: number): Promise<void> => {
-				for (const episode of indexedAvailable.slice(0, endIndex + 1)) {
-					if (!episode.duplicateOf || recordedDuplicateIndices.has(episode.sourceIndex)) continue;
-					await appendText(
-						consolidateSkipsPath,
-						JSON.stringify({
-							at: new Date().toISOString(),
-							episode: episode.id,
-							ts: episode.ts,
-							reason: "duplicate-body",
-							duplicate_of: episode.duplicateOf.id,
-						}) + "\n",
-					);
-					console.warn(
-						"[her] consolidate: SKIPPED duplicate episode " +
-							episode.id +
-							" (identical body as " +
-							episode.duplicateOf.id +
-							"); no model call",
-					);
-					recordedDuplicateIndices.add(episode.sourceIndex);
-				}
-			};
-			const advanceThrough = async (endIndex: number): Promise<ReturnType<typeof advanceConsolidateCursor>> => {
+			return { state, cursor, available, existing, recent };
+		});
+		if (!boot) return { episodes: 0, notesTouched: 0, moments: 0 };
+		const { state, cursor, available, existing, recent } = boot;
+		const consolidateSkipsPath = join(this.paths.root, "audit", "consolidate-skips.jsonl");
+		let workingCursor = cursor;
+		const seenBodies = new Map<string, { id: string; ts: string }>();
+		const indexedAvailable: IndexedConsolidateEpisode[] = available.map((episode, sourceIndex) => {
+			const digest = createHash("sha256").update(episode.body, "utf8").digest("hex");
+			// Only allocator-created --dup-N names identify capture replays; independent events may share prose.
+			const duplicateOf = episode.cursorId.includes("--dup-") ? seenBodies.get(digest) : undefined;
+			if (!duplicateOf) seenBodies.set(digest, { id: episode.id, ts: episode.ts });
+			return { ...episode, sourceIndex, ...(duplicateOf ? { duplicateOf } : {}) };
+		});
+		const uniqueAvailable = indexedAvailable.filter((episode) => !episode.duplicateOf);
+		const recordedDuplicateIndices = new Set<number>();
+		const duplicateEndAfter = (sourceIndex: number): number => {
+			let end = sourceIndex;
+			while (end + 1 < indexedAvailable.length && indexedAvailable[end + 1]?.duplicateOf) end++;
+			return end;
+		};
+		const recordDuplicateSkipsThrough = async (endIndex: number): Promise<void> => {
+			for (const episode of indexedAvailable.slice(0, endIndex + 1)) {
+				if (!episode.duplicateOf || recordedDuplicateIndices.has(episode.sourceIndex)) continue;
+				await appendText(
+					consolidateSkipsPath,
+					JSON.stringify({
+						at: new Date().toISOString(),
+						episode: episode.id,
+						ts: episode.ts,
+						reason: "duplicate-body",
+						duplicate_of: episode.duplicateOf.id,
+					}) + "\n",
+				);
+				console.warn(
+					"[her] consolidate: SKIPPED duplicate episode " +
+						episode.id +
+						" (identical body as " +
+						episode.duplicateOf.id +
+						"); no model call",
+				);
+				recordedDuplicateIndices.add(episode.sourceIndex);
+			}
+		};
+		const advanceThrough = async (endIndex: number): Promise<ReturnType<typeof advanceConsolidateCursor>> => {
+			return this.withStoreLock(async () => {
+				const latest = await readJson<Record<string, unknown>>(this.paths.stateFile, {});
+				const latestCursor = parseConsolidateCursor(latest.cursor ?? null);
 				const consumed = indexedAvailable.slice(0, endIndex + 1);
+				if (cursorFingerprint(latestCursor) !== cursorFingerprint(workingCursor)) {
+					console.warn("[her] consolidate: cursor moved before advance; skipping stale cursor write");
+					workingCursor = latestCursor;
+					if (!latestCursor) throw new Error("cannot advance consolidate cursor without episodes");
+					return { ts: latestCursor.ts, done_ids: [...latestCursor.doneIds].sort() };
+				}
 				await recordDuplicateSkipsThrough(endIndex);
 				const advanced = advanceConsolidateCursor(workingCursor, consumed);
-				await writeJson(this.paths.stateFile, { ...state, cursor: advanced, last_consolidate: advanced.ts });
+				await writeJson(this.paths.stateFile, { ...latest, cursor: advanced, last_consolidate: advanced.ts });
 				workingCursor = parseConsolidateCursor(advanced);
 				return advanced;
-			};
+			});
+		};
 
-			// Batch size is our primary lever against output-token truncation: the model interface
-			// (model.ts ModelLike) exposes no max_tokens knob, and a truncated reply repeats identically
-			// for a fixed prompt (so completeJson's re-asks can't fix it). On JsonTruncatedError or JsonMalformedError, halve the
-			// batch and retry — a smaller batch has less to emit, so the reply fits — letting the backlog
-			// drain instead of wedging forever on batch 1. Halving the realized episode count (not the
-			// requested limit) guarantees strict progress even when the char budget was the binding
-			// constraint. If a SINGLE episode still truncates (its dense turn overflows even alone, and
-			// retrying reproduces it), we skip it: account it to audit/consolidate-skips.jsonl, advance the
-			// cursor past it, and keep draining — a frozen backlog is worse than one un-distilled turn,
-			// whose raw text stays recoverable in raw/ (G-234; consolidatePrompt also caps note count to
-			// keep normal replies inside the output budget). workingCursor threads skip advances so
-			// same-timestamp siblings keep correct done_ids.
-			// G-247: a stochastically malformed reply (valid-length but unparseable JSON) gets the same
-			// treatment — halve while the batch is >1, skip+account at batch 1 — because it too must not
-			// cost a whole round. Only a batch-one TRUNCATION enters fat-episode chunking: that one is
-			// deterministic and about size, so splitting the input is what actually helps.
-			const rawBatchHint = state.consolidate_batch_hint;
-			const batchHint =
-				typeof rawBatchHint === "number" && Number.isInteger(rawBatchHint) && rawBatchHint > 0
-					? Math.min(limit, Math.max(1, rawBatchHint))
-					: limit;
-			let batchLimit = batchHint;
-			let batchWasTruncated = false;
-			let remaining: IndexedConsolidateEpisode[] = uniqueAvailable;
-			if (remaining.length === 0) {
-				await advanceThrough(indexedAvailable.length - 1);
-				return { episodes: available.length, notesTouched: 0, moments: 0 };
-			}
-			const persistBatchHint = async (
-				startedBatchLimit: number,
-				actualBatchLimit: number,
-				truncated: boolean,
-			): Promise<void> => {
+		// Batch size is our primary lever against output-token truncation: the model interface
+		// (model.ts ModelLike) exposes no max_tokens knob, and a truncated reply repeats identically
+		// for a fixed prompt (so completeJson's re-asks can't fix it). On JsonTruncatedError or JsonMalformedError, halve the
+		// batch and retry — a smaller batch has less to emit, so the reply fits — letting the backlog
+		// drain instead of wedging forever on batch 1. Halving the realized episode count (not the
+		// requested limit) guarantees strict progress even when the char budget was the binding
+		// constraint. If a SINGLE episode still truncates (its dense turn overflows even alone, and
+		// retrying reproduces it), we skip it: account it to audit/consolidate-skips.jsonl, advance the
+		// cursor past it, and keep draining — a frozen backlog is worse than one un-distilled turn,
+		// whose raw text stays recoverable in raw/ (G-234; consolidatePrompt also caps note count to
+		// keep normal replies inside the output budget). workingCursor threads skip advances so
+		// same-timestamp siblings keep correct done_ids.
+		// G-247: a stochastically malformed reply (valid-length but unparseable JSON) gets the same
+		// treatment — halve while the batch is >1, skip+account at batch 1 — because it too must not
+		// cost a whole round. Only a batch-one TRUNCATION enters fat-episode chunking: that one is
+		// deterministic and about size, so splitting the input is what actually helps.
+		const rawBatchHint = state.consolidate_batch_hint;
+		const batchHint =
+			typeof rawBatchHint === "number" && Number.isInteger(rawBatchHint) && rawBatchHint > 0
+				? Math.min(limit, Math.max(1, rawBatchHint))
+				: limit;
+		let batchLimit = batchHint;
+		let batchWasTruncated = false;
+		let remaining: IndexedConsolidateEpisode[] = uniqueAvailable;
+		if (remaining.length === 0) {
+			await advanceThrough(indexedAvailable.length - 1);
+			return { episodes: available.length, notesTouched: 0, moments: 0 };
+		}
+		const persistBatchHint = async (
+			startedBatchLimit: number,
+			actualBatchLimit: number,
+			truncated: boolean,
+		): Promise<void> => {
+			await this.withStoreLock(async () => {
 				const nextHint = truncated ? actualBatchLimit : startedBatchLimit + 1;
 				const latest = await readJson<Record<string, unknown>>(this.paths.stateFile, {});
 				await writeJson(this.paths.stateFile, { ...latest, consolidate_batch_hint: Math.max(1, nextHint) });
+			});
+		};
+		const processFatEpisode = async (
+			fat: IndexedConsolidateEpisode,
+			initialResponseHead: string,
+			sample?: CoarseSample,
+		): Promise<{ notesTouched: number; moments: number }> => {
+			const digestEpisode = sample ? { ...fat, text: sample.text } : fat;
+			const outcome = await this.digestFatEpisode(digestEpisode, existing, recent, initialResponseHead, {
+				totalChars: fat.text.length,
+				allowOversizeFirst: Boolean(sample),
+			});
+			const fatStale = await this.withStoreLock(async () => {
+				const latest = await readJson<Record<string, unknown>>(this.paths.stateFile, {});
+				return (
+					cursorFingerprint(parseConsolidateCursor(latest.cursor ?? null)) !== cursorFingerprint(workingCursor)
+				);
+			});
+			if (fatStale) {
+				console.warn(
+					`[her] consolidate: cursor moved during fat-episode model call for ${fat.id}; discarding output`,
+				);
+				await appendText(
+					consolidateSkipsPath,
+					`${JSON.stringify({
+						at: new Date().toISOString(),
+						reason: "premise-moved",
+						episode: fat.id,
+					})}\n`,
+				);
+				return { notesTouched: 0, moments: 0 };
+			}
+			const notes = await this.filterJunkNotes(outcome.notes, consolidateSkipsPath);
+			let mergeFailures = 0;
+			for (const note of notes) {
+				if ((await this.upsertNote(note)) === "merge-failed") mergeFailures++;
+			}
+			if (mergeFailures > 0) {
+				console.warn(
+					`[her] consolidate: ${mergeFailures}/${notes.length} chunked note(s) from episode ${fat.id} failed to merge; old bodies kept, see their Timeline pending entries`,
+				);
+			}
+			for (const segment of outcome.quarantined) {
+				await this.quarantineSegment(fat, segment);
+				await appendText(
+					consolidateSkipsPath,
+					`${JSON.stringify({
+						at: new Date().toISOString(),
+						episode: fat.id,
+						ts: fat.ts,
+						part: segment.part,
+						reason: segment.reason,
+						response_head: segment.responseHead.slice(0, 200),
+					})}\n`,
+				);
+				console.warn(
+					`[her] consolidate: QUARANTINED segment part ${segment.part} of episode ${fat.id} (${segment.text.length} chars, ${segment.reason}) - content saved to .her/quarantine/ and accounted to audit/consolidate-skips.jsonl`,
+				);
+			}
+			if (outcome.digestedChars < outcome.totalChars) {
+				const pct =
+					outcome.totalChars === 0 ? "100.0" : ((outcome.digestedChars / outcome.totalChars) * 100).toFixed(1);
+				console.warn(
+					`[her] consolidate: PARTIAL episode ${fat.id} grain=${consolidateGrain(fat.project)} digested ${outcome.digestedChars}/${outcome.totalChars} chars (${pct}%), rest quarantined`,
+				);
+			}
+			if (sample) {
+				await appendText(
+					consolidateSkipsPath,
+					JSON.stringify({
+						at: new Date().toISOString(),
+						episodeId: fat.id,
+						episode: fat.id,
+						totalChars: fat.text.length,
+						sampledChars: sample.sampledChars,
+						slices: sample.slices,
+						reason: "coarse-sampled",
+					}) + "\n",
+				);
+				console.warn(
+					`[her] consolidate: COARSE-SAMPLED episode ${fat.id} ${sample.sampledChars}/${fat.text.length} chars in ${sample.slices} slices; raw preserved`,
+				);
+			}
+			if (outcome.moments.length > 0) {
+				const date = fat.ts.slice(0, 10);
+				await appendText(
+					this.paths.becoming,
+					outcome.moments
+						.map((moment) => `- ${date} · trigger: ${moment.trigger ?? ""} · shift: ${moment.shift ?? ""}\n`)
+						.join(""),
+				);
+			}
+			return { notesTouched: notes.length, moments: outcome.moments.length };
+		};
+		for (;;) {
+			const batch = selectConsolidateBatch(remaining, batchLimit);
+			const episodes = batch.map(({ episode }) => episode);
+			if (episodes.length === 0) return { episodes: 0, notesTouched: 0, moments: 0 };
+			const firstEpisode = episodes[0];
+			const sampleCeil = envPositiveInt("HER_CONSOLIDATE_EPISODE_CHARS", DEFAULT_CONSOLIDATE_EPISODE_CHARS);
+			const sampleSlices = envPositiveInt(
+				"HER_CONSOLIDATE_COARSE_SAMPLE_SLICES",
+				DEFAULT_CONSOLIDATE_COARSE_SAMPLE_SLICES,
+			);
+			const sampleBudget = sampleSlices * sampleCeil;
+			const firstGrain = consolidateGrain(firstEpisode.project);
+			if (episodes.length === 1 && firstGrain === "coarse" && firstEpisode.text.length > sampleBudget) {
+				const sample = sampleCoarseEpisode(firstEpisode.text, sampleCeil, sampleSlices);
+				await processFatEpisode(firstEpisode, "", sample);
+				const consumedEnd = duplicateEndAfter(firstEpisode.sourceIndex);
+				await advanceThrough(consumedEnd);
+				remaining = remaining.slice(batch.length);
+				await persistBatchHint(batchHint, batchLimit, batchWasTruncated);
+				batchLimit = limit;
+				batchWasTruncated = false;
+				continue;
+			}
+			const joined = batch.map(({ promptText }) => promptText).join("\n\n");
+			const selectedKeys = selectRelevantKeys(joined, existing, { recent });
+			// stderr, not stdout: the CLI writes its --json payload to stdout (cli.ts:335), so an
+			// operational line on stdout would be interleaved into the JSON any consumer parses.
+			console.warn(
+				"[her] consolidate: keys " +
+					existing.length +
+					" \u2192 " +
+					selectedKeys.length +
+					" (relevance-filtered, budget " +
+					envPositiveInt("HER_CONSOLIDATE_KEY_BUDGET", DEFAULT_CONSOLIDATE_KEY_BUDGET) +
+					")",
+			);
+
+			let result: {
+				notes?: Array<Record<string, unknown>>;
+				moments?: Array<{ trigger?: string; shift?: string }>;
 			};
-			const processFatEpisode = async (
-				fat: IndexedConsolidateEpisode,
-				initialResponseHead: string,
-				sample?: CoarseSample,
-			): Promise<{ notesTouched: number; moments: number }> => {
-				const digestEpisode = sample ? { ...fat, text: sample.text } : fat;
-				const outcome = await this.digestFatEpisode(digestEpisode, existing, recent, initialResponseHead, {
-					totalChars: fat.text.length,
-					allowOversizeFirst: Boolean(sample),
-				});
-				const notes = await this.filterJunkNotes(outcome.notes, consolidateSkipsPath);
-				let mergeFailures = 0;
-				for (const note of notes) {
-					if ((await this.upsertNote(note)) === "merge-failed") mergeFailures++;
+			try {
+				result = await completeJson<{
+					notes?: Array<Record<string, unknown>>;
+					moments?: Array<{ trigger?: string; shift?: string }>;
+				}>(() => model.complete(consolidatePrompt(joined, selectedKeys)));
+			} catch (error) {
+				if ((error instanceof JsonTruncatedError || error instanceof JsonMalformedError) && episodes.length > 1) {
+					const fromBatchLimit = batchLimit;
+					const nextBatchLimit = Math.floor(episodes.length / 2);
+					console.warn(`[her] consolidate: batch ${fromBatchLimit} \u2192 ${nextBatchLimit} (truncated)`);
+					batchLimit = nextBatchLimit;
+					batchWasTruncated = true;
+					continue;
 				}
-				if (mergeFailures > 0) {
-					console.warn(
-						`[her] consolidate: ${mergeFailures}/${notes.length} chunked note(s) from episode ${fat.id} failed to merge; old bodies kept, see their Timeline pending entries`,
-					);
-				}
-				for (const segment of outcome.quarantined) {
-					await this.quarantineSegment(fat, segment);
+				if (error instanceof JsonMalformedError && episodes.length === 1) {
+					const skipped = episodes[0];
 					await appendText(
 						consolidateSkipsPath,
 						`${JSON.stringify({
 							at: new Date().toISOString(),
-							episode: fat.id,
-							ts: fat.ts,
-							part: segment.part,
-							reason: segment.reason,
-							response_head: segment.responseHead.slice(0, 200),
+							episode: skipped.id,
+							ts: skipped.ts,
+							reason: "malformed",
+							response_head: error.responseHead.slice(0, 200),
 						})}\n`,
 					);
 					console.warn(
-						`[her] consolidate: QUARANTINED segment part ${segment.part} of episode ${fat.id} (${segment.text.length} chars, ${segment.reason}) - content saved to .her/quarantine/ and accounted to audit/consolidate-skips.jsonl`,
+						`[her] consolidate: SKIPPED malformed episode ${skipped.id}; content remains in episodic/raw and cursor advances; accounted to audit/consolidate-skips.jsonl`,
 					);
+					const consumedEnd = duplicateEndAfter(episodes.at(-1)?.sourceIndex ?? -1);
+					await advanceThrough(consumedEnd);
+					remaining = remaining.slice(batch.length);
+					batchLimit = limit;
+					batchWasTruncated = false;
+					continue;
 				}
-				if (outcome.digestedChars < outcome.totalChars) {
-					const pct =
-						outcome.totalChars === 0 ? "100.0" : ((outcome.digestedChars / outcome.totalChars) * 100).toFixed(1);
-					console.warn(
-						`[her] consolidate: PARTIAL episode ${fat.id} grain=${consolidateGrain(fat.project)} digested ${outcome.digestedChars}/${outcome.totalChars} chars (${pct}%), rest quarantined`,
-					);
-				}
-				if (sample) {
-					await appendText(
-						consolidateSkipsPath,
-						JSON.stringify({
-							at: new Date().toISOString(),
-							episodeId: fat.id,
-							episode: fat.id,
-							totalChars: fat.text.length,
-							sampledChars: sample.sampledChars,
-							slices: sample.slices,
-							reason: "coarse-sampled",
-						}) + "\n",
-					);
-					console.warn(
-						`[her] consolidate: COARSE-SAMPLED episode ${fat.id} ${sample.sampledChars}/${fat.text.length} chars in ${sample.slices} slices; raw preserved`,
-					);
-				}
-				if (outcome.moments.length > 0) {
-					const date = fat.ts.slice(0, 10);
-					await appendText(
-						this.paths.becoming,
-						outcome.moments
-							.map((moment) => `- ${date} · trigger: ${moment.trigger ?? ""} · shift: ${moment.shift ?? ""}\n`)
-							.join(""),
-					);
-				}
-				return { notesTouched: notes.length, moments: outcome.moments.length };
-			};
-			for (;;) {
-				const batch = selectConsolidateBatch(remaining, batchLimit);
-				const episodes = batch.map(({ episode }) => episode);
-				if (episodes.length === 0) return { episodes: 0, notesTouched: 0, moments: 0 };
-				const firstEpisode = episodes[0];
-				const sampleCeil = envPositiveInt("HER_CONSOLIDATE_EPISODE_CHARS", DEFAULT_CONSOLIDATE_EPISODE_CHARS);
-				const sampleSlices = envPositiveInt(
-					"HER_CONSOLIDATE_COARSE_SAMPLE_SLICES",
-					DEFAULT_CONSOLIDATE_COARSE_SAMPLE_SLICES,
-				);
-				const sampleBudget = sampleSlices * sampleCeil;
-				const firstGrain = consolidateGrain(firstEpisode.project);
-				if (episodes.length === 1 && firstGrain === "coarse" && firstEpisode.text.length > sampleBudget) {
-					const sample = sampleCoarseEpisode(firstEpisode.text, sampleCeil, sampleSlices);
-					await processFatEpisode(firstEpisode, "", sample);
-					const consumedEnd = duplicateEndAfter(firstEpisode.sourceIndex);
+				if (error instanceof JsonTruncatedError && episodes.length === 1) {
+					// G-235 fat-episode chunking. This single episode's distilled output overflows the model's
+					// output ceiling even alone, and re-asking reproduces it. Dropping the whole turn (the old
+					// backstop) loses everything it holds; instead split its content and distill the pieces that
+					// fit. Segments that still truncate at/below the char floor — or that fall past the per-episode
+					// attempt budget — are loudly QUARANTINED: their full content is written to .her/quarantine/
+					// for human recovery and accounted to audit/consolidate-skips.jsonl. Isolation is not deletion.
+					// The model calls happen inside digestFatEpisode; a non-truncation HARD failure there
+					// propagates out with nothing applied and the cursor frozen (G-231 durability). Only after
+					// every segment is distilled or quarantined do we upsert, quarantine, and advance the cursor.
+					const fat = episodes[0];
+					await processFatEpisode(fat, error.responseHead);
+					const consumedEnd = duplicateEndAfter(fat.sourceIndex);
 					await advanceThrough(consumedEnd);
 					remaining = remaining.slice(batch.length);
 					await persistBatchHint(batchHint, batchLimit, batchWasTruncated);
@@ -1005,115 +1139,58 @@ export class Memory {
 					batchWasTruncated = false;
 					continue;
 				}
-				const joined = batch.map(({ promptText }) => promptText).join("\n\n");
-				const selectedKeys = selectRelevantKeys(joined, existing, { recent });
-				// stderr, not stdout: the CLI writes its --json payload to stdout (cli.ts:335), so an
-				// operational line on stdout would be interleaved into the JSON any consumer parses.
-				console.warn(
-					"[her] consolidate: keys " +
-						existing.length +
-						" \u2192 " +
-						selectedKeys.length +
-						" (relevance-filtered, budget " +
-						envPositiveInt("HER_CONSOLIDATE_KEY_BUDGET", DEFAULT_CONSOLIDATE_KEY_BUDGET) +
-						")",
+				throw error;
+			}
+
+			const rawNotes = result.notes ?? [];
+			const consumedEnd = duplicateEndAfter(episodes.at(-1)?.sourceIndex ?? -1);
+			const stale = await this.withStoreLock(async () => {
+				const latest = await readJson<Record<string, unknown>>(this.paths.stateFile, {});
+				const latestCursor = parseConsolidateCursor(latest.cursor ?? null);
+				if (cursorFingerprint(latestCursor) === cursorFingerprint(workingCursor)) return false;
+				await appendText(
+					consolidateSkipsPath,
+					`${JSON.stringify({
+						at: new Date().toISOString(),
+						reason: "premise-moved",
+						episodes: episodes.map((episode) => episode.id),
+					})}\n`,
 				);
+				console.warn(
+					"[her] consolidate: cursor moved during model call; discarding batch without writing or advancing",
+				);
+				return true;
+			});
+			if (stale) return { episodes: 0, notesTouched: 0, moments: 0 };
 
-				let result: {
-					notes?: Array<Record<string, unknown>>;
-					moments?: Array<{ trigger?: string; shift?: string }>;
-				};
-				try {
-					result = await completeJson<{
-						notes?: Array<Record<string, unknown>>;
-						moments?: Array<{ trigger?: string; shift?: string }>;
-					}>(() => model.complete(consolidatePrompt(joined, selectedKeys)));
-				} catch (error) {
-					if (
-						(error instanceof JsonTruncatedError || error instanceof JsonMalformedError) &&
-						episodes.length > 1
-					) {
-						const fromBatchLimit = batchLimit;
-						const nextBatchLimit = Math.floor(episodes.length / 2);
-						console.warn(`[her] consolidate: batch ${fromBatchLimit} \u2192 ${nextBatchLimit} (truncated)`);
-						batchLimit = nextBatchLimit;
-						batchWasTruncated = true;
-						continue;
-					}
-					if (error instanceof JsonMalformedError && episodes.length === 1) {
-						const skipped = episodes[0];
-						await appendText(
-							consolidateSkipsPath,
-							`${JSON.stringify({
-								at: new Date().toISOString(),
-								episode: skipped.id,
-								ts: skipped.ts,
-								reason: "malformed",
-								response_head: error.responseHead.slice(0, 200),
-							})}\n`,
-						);
-						console.warn(
-							`[her] consolidate: SKIPPED malformed episode ${skipped.id}; content remains in episodic/raw and cursor advances; accounted to audit/consolidate-skips.jsonl`,
-						);
-						const consumedEnd = duplicateEndAfter(episodes.at(-1)?.sourceIndex ?? -1);
-						await advanceThrough(consumedEnd);
-						remaining = remaining.slice(batch.length);
-						batchLimit = limit;
-						batchWasTruncated = false;
-						continue;
-					}
-					if (error instanceof JsonTruncatedError && episodes.length === 1) {
-						// G-235 fat-episode chunking. This single episode's distilled output overflows the model's
-						// output ceiling even alone, and re-asking reproduces it. Dropping the whole turn (the old
-						// backstop) loses everything it holds; instead split its content and distill the pieces that
-						// fit. Segments that still truncate at/below the char floor — or that fall past the per-episode
-						// attempt budget — are loudly QUARANTINED: their full content is written to .her/quarantine/
-						// for human recovery and accounted to audit/consolidate-skips.jsonl. Isolation is not deletion.
-						// The model calls happen inside digestFatEpisode; a non-truncation HARD failure there
-						// propagates out with nothing applied and the cursor frozen (G-231 durability). Only after
-						// every segment is distilled or quarantined do we upsert, quarantine, and advance the cursor.
-						const fat = episodes[0];
-						await processFatEpisode(fat, error.responseHead);
-						const consumedEnd = duplicateEndAfter(fat.sourceIndex);
-						await advanceThrough(consumedEnd);
-						remaining = remaining.slice(batch.length);
-						await persistBatchHint(batchHint, batchLimit, batchWasTruncated);
-						batchLimit = limit;
-						batchWasTruncated = false;
-						continue;
-					}
-					throw error;
-				}
+			const notes = await this.filterJunkNotes(rawNotes, consolidateSkipsPath);
+			const moments = result.moments ?? [];
+			const newCursor = await advanceThrough(consumedEnd);
 
-				const rawNotes = result.notes ?? [];
-				const notes = await this.filterJunkNotes(rawNotes, consolidateSkipsPath);
-				const moments = result.moments ?? [];
-				const consumedEnd = duplicateEndAfter(episodes.at(-1)?.sourceIndex ?? -1);
-				const newCursor = await advanceThrough(consumedEnd);
-
-				let mergeFailures = 0;
-				for (const note of notes) {
-					if ((await this.upsertNote(note)) === "merge-failed") mergeFailures++;
-				}
-				if (mergeFailures > 0) {
-					console.warn(
-						`[her] consolidate: ${mergeFailures}/${notes.length} note(s) failed to merge; old bodies kept, see their Timeline pending entries`,
-					);
-				}
-				if (moments.length > 0) {
-					const date = newCursor.ts.slice(0, 10);
+			let mergeFailures = 0;
+			for (const note of notes) {
+				if ((await this.upsertNote(note)) === "merge-failed") mergeFailures++;
+			}
+			if (mergeFailures > 0) {
+				console.warn(
+					`[her] consolidate: ${mergeFailures}/${notes.length} note(s) failed to merge; old bodies kept, see their Timeline pending entries`,
+				);
+			}
+			if (moments.length > 0) {
+				const date = newCursor.ts.slice(0, 10);
+				await this.withStoreLock(async () => {
 					await appendText(
 						this.paths.becoming,
 						moments
 							.map((moment) => `- ${date} · trigger: ${moment.trigger ?? ""} · shift: ${moment.shift ?? ""}\n`)
 							.join(""),
 					);
-				}
-
-				await persistBatchHint(batchHint, batchLimit, batchWasTruncated);
-				return { episodes: episodes.length, notesTouched: notes.length, moments: moments.length };
+				});
 			}
-		});
+
+			await persistBatchHint(batchHint, batchLimit, batchWasTruncated);
+			return { episodes: episodes.length, notesTouched: notes.length, moments: moments.length };
+		}
 	}
 	// G-235: distill a single fat episode by recursive halving instead of dropping it whole. Splits the
 	// episode's FULL content (not the batch-truncated prefix) and distills every piece that fits the
@@ -1266,8 +1343,8 @@ export class Memory {
 	}
 
 	async synthesize(): Promise<string> {
-		return this.withStoreLock(async () => {
-			if (!this.model) throw new Error("synthesize requires a model");
+		if (!this.model) throw new Error("synthesize requires a model");
+		const prepared = await this.withStoreLock(async () => {
 			const current = (await readText(this.paths.contextFile)) ?? SEED_CONTEXT;
 			const notes = await readMarkdownDir(this.paths.semantic);
 			const moments = (await readText(this.paths.becoming)) ?? "";
@@ -1275,16 +1352,41 @@ export class Memory {
 			const soul = (await readText(this.paths.soulFile)) ?? SEED_SOUL;
 			const self = (await readText(this.paths.selfFile)) ?? SEED_SELF_NARRATIVE;
 			const choiceModel = (await readText(this.paths.choiceModelFile)) ?? SEED_CHOICE_MODEL;
-			const draft = await this.model.complete(
-				synthesizePrompt(current, notes, moments, facts, soul, self, choiceModel),
-				{
-					strong: true,
-				},
-			);
-			// Fail before anything lands. The proposal, CONTEXT.md and last_synthesize all advance
-			// together below, so a draft cut off at the token ceiling would overwrite the core
-			// narrative and stamp the week done — which is exactly what happened on 08-09/08-11.
-			assertNarrativeComplete(draft, current);
+			return {
+				current,
+				notes,
+				moments,
+				facts,
+				soul,
+				self,
+				choiceModel,
+				contextFingerprint: textFingerprint(current),
+			};
+		});
+		const draft = await this.model.complete(
+			synthesizePrompt(
+				prepared.current,
+				prepared.notes,
+				prepared.moments,
+				prepared.facts,
+				prepared.soul,
+				prepared.self,
+				prepared.choiceModel,
+			),
+			{
+				strong: true,
+			},
+		);
+		// Fail before anything lands. The proposal, CONTEXT.md and last_synthesize all advance
+		// together below, so a draft cut off at the token ceiling would overwrite the core
+		// narrative and stamp the week done — which is exactly what happened on 08-09/08-11.
+		assertNarrativeComplete(draft, prepared.current);
+		return this.withStoreLock(async () => {
+			const current = (await readText(this.paths.contextFile)) ?? SEED_CONTEXT;
+			if (textFingerprint(current) !== prepared.contextFingerprint) {
+				console.warn("[her] synthesize: CONTEXT.md changed during model call; discarding draft");
+				return `${today()}-narrative-update`;
+			}
 			const proposalId = `${today()}-narrative-update`;
 			await writeText(join(this.paths.proposals, `${proposalId}.md`), draft);
 			const state = await readJson<Record<string, unknown>>(this.paths.stateFile, {});
@@ -1415,45 +1517,60 @@ export class Memory {
 	}
 
 	async buildTopicMaps(): Promise<string[]> {
-		return this.withStoreLock(async () => {
-			if (!this.model) throw new Error("buildTopicMaps requires a model");
-			const model = this.model;
+		if (!this.model) throw new Error("buildTopicMaps requires a model");
+		const model = this.model;
+		const prepared = await this.withStoreLock(async () => {
 			const units = await this.noteSummaries();
-			if (units.length === 0) return [];
-			const batchSize = envPositiveInt("HER_TOPICS_BATCH_UNITS", DEFAULT_TOPICS_BATCH_UNITS);
-			const floor = envPositiveInt("HER_TOPICS_MIN_BATCH_UNITS", DEFAULT_TOPICS_MIN_BATCH_UNITS);
-			const keyset = new Set(units.map((unit) => unit.key));
-			const maps = new Map<string, { theme: string; summary: string; members: Set<string> }>();
-			for (let start = 0; start < units.length; start += batchSize) {
-				const batch = units.slice(start, start + batchSize);
-				const result = await this.organJsonWithShrink(
-					batch,
-					async (current) => {
-						const lines = current.map((unit) => `- ${unit.key} (${unit.type}): ${unit.title}`).join("\n");
-						return completeJson<{ maps?: Array<{ theme?: string; summary?: string; members?: string[] }> }>(() =>
-							model.complete(topicMapPrompt(lines), { strong: true }),
-						);
-					},
-					floor,
-					"topic-maps",
-				);
-				if (result === null) continue;
-				for (const map of result.maps ?? []) {
-					if (!map.theme) continue;
-					const key = slug(map.theme);
-					const members = (map.members ?? []).map(slug).filter((member) => keyset.has(member));
-					const existing = maps.get(key);
-					if (existing) {
-						for (const member of members) existing.members.add(member);
-						if (!existing.summary && map.summary?.trim()) existing.summary = map.summary;
-						continue;
-					}
-					maps.set(key, {
-						theme: map.theme,
-						summary: map.summary?.trim() ? map.summary : "",
-						members: new Set(members),
-					});
+			return { units, fingerprint: textFingerprint(JSON.stringify(units)) };
+		});
+		if (prepared.units.length === 0) return [];
+		const batchSize = envPositiveInt("HER_TOPICS_BATCH_UNITS", DEFAULT_TOPICS_BATCH_UNITS);
+		const floor = envPositiveInt("HER_TOPICS_MIN_BATCH_UNITS", DEFAULT_TOPICS_MIN_BATCH_UNITS);
+		const keyset = new Set(prepared.units.map((unit) => unit.key));
+		const maps = new Map<string, { theme: string; summary: string; members: Set<string> }>();
+		for (let start = 0; start < prepared.units.length; start += batchSize) {
+			const batch = prepared.units.slice(start, start + batchSize);
+			const result = await this.organJsonWithShrink(
+				batch,
+				async (current) => {
+					const lines = current.map((unit) => `- ${unit.key} (${unit.type}): ${unit.title}`).join("\n");
+					return completeJson<{ maps?: Array<{ theme?: string; summary?: string; members?: string[] }> }>(() =>
+						model.complete(topicMapPrompt(lines), { strong: true }),
+					);
+				},
+				floor,
+				"topic-maps",
+			);
+			if (result === null) continue;
+			for (const map of result.maps ?? []) {
+				if (!map.theme) continue;
+				const key = slug(map.theme);
+				const members = (map.members ?? []).map(slug).filter((member) => keyset.has(member));
+				const existing = maps.get(key);
+				if (existing) {
+					for (const member of members) existing.members.add(member);
+					if (!existing.summary && map.summary?.trim()) existing.summary = map.summary;
+					continue;
 				}
+				maps.set(key, {
+					theme: map.theme,
+					summary: map.summary?.trim() ? map.summary : "",
+					members: new Set(members),
+				});
+			}
+		}
+		return this.withStoreLock(async () => {
+			const units = await this.noteSummaries();
+			if (textFingerprint(JSON.stringify(units)) !== prepared.fingerprint) {
+				console.warn("[her] buildTopicMaps: note summaries changed during model call; discarding maps");
+				await this.appendOrganSkip({
+					ts: new Date().toISOString(),
+					organ: "topic-maps",
+					reason: "premise-moved",
+					units: units.length,
+					attempts: 0,
+				});
+				return [];
 			}
 			const written: string[] = [];
 			for (const [key, map] of maps) {
@@ -1469,36 +1586,60 @@ export class Memory {
 	}
 
 	async generateIdeas(): Promise<Array<{ id: string; title: string; kind: string }>> {
-		return this.withStoreLock(async () => {
-			if (!this.model) throw new Error("generateIdeas requires a model");
-			const model = this.model;
+		if (!this.model) throw new Error("generateIdeas requires a model");
+		const model = this.model;
+		const prepared = await this.withStoreLock(async () => {
 			const units = await this.noteSummaries();
-			if (units.length === 0) return [];
-			const maxUnits = envPositiveInt("HER_IDEAS_MAX_UNITS", DEFAULT_IDEAS_MAX_UNITS);
-			const floor = envPositiveInt("HER_IDEAS_MIN_UNITS", DEFAULT_IDEAS_MIN_UNITS);
-			const subset = units.length > maxUnits ? units.slice(-maxUnits) : units;
 			const topicLines = (await this.topicSummaries()).join("\n") || "(none)";
 			const existing = (await this.existingIdeaTitles()).join("\n") || "(none)";
-			const result = await this.organJsonWithShrink(
-				subset,
-				async (current) => {
-					const unitLines = current
-						.map((unit) => `- ${unit.key} (${unit.kind}/${unit.type}): ${unit.title}`)
-						.join("\n");
-					return completeJson<{
-						ideas?: Array<{
-							title?: string;
-							connects?: string[];
-							insight?: string;
-							spark?: string;
-							kind?: string;
-						}>;
-					}>(() => model.complete(ideaEnginePrompt(unitLines, topicLines, existing), { strong: true }));
-				},
-				floor,
-				"ideas",
-			);
-			if (result === null) return [];
+			return {
+				units,
+				topicLines,
+				existing,
+				fingerprint: textFingerprint(`${JSON.stringify(units)}\n${topicLines}\n${existing}`),
+			};
+		});
+		if (prepared.units.length === 0) return [];
+		const maxUnits = envPositiveInt("HER_IDEAS_MAX_UNITS", DEFAULT_IDEAS_MAX_UNITS);
+		const floor = envPositiveInt("HER_IDEAS_MIN_UNITS", DEFAULT_IDEAS_MIN_UNITS);
+		const subset = prepared.units.length > maxUnits ? prepared.units.slice(-maxUnits) : prepared.units;
+		const result = await this.organJsonWithShrink(
+			subset,
+			async (current) => {
+				const unitLines = current
+					.map((unit) => `- ${unit.key} (${unit.kind}/${unit.type}): ${unit.title}`)
+					.join("\n");
+				return completeJson<{
+					ideas?: Array<{
+						title?: string;
+						connects?: string[];
+						insight?: string;
+						spark?: string;
+						kind?: string;
+					}>;
+				}>(() =>
+					model.complete(ideaEnginePrompt(unitLines, prepared.topicLines, prepared.existing), { strong: true }),
+				);
+			},
+			floor,
+			"ideas",
+		);
+		if (result === null) return [];
+		return this.withStoreLock(async () => {
+			const units = await this.noteSummaries();
+			const topicLines = (await this.topicSummaries()).join("\n") || "(none)";
+			const existing = (await this.existingIdeaTitles()).join("\n") || "(none)";
+			if (textFingerprint(`${JSON.stringify(units)}\n${topicLines}\n${existing}`) !== prepared.fingerprint) {
+				console.warn("[her] generateIdeas: units/topics/ideas changed during model call; discarding ideas");
+				await this.appendOrganSkip({
+					ts: new Date().toISOString(),
+					organ: "ideas",
+					reason: "premise-moved",
+					units: units.length,
+					attempts: 0,
+				});
+				return [];
+			}
 			const written: Array<{ id: string; title: string; kind: string }> = [];
 			for (const idea of result.ideas ?? []) {
 				if (!idea.title) continue;
@@ -1542,13 +1683,22 @@ export class Memory {
 	}
 
 	async synthesizeChoiceModel(): Promise<ChoiceModelUpdateResult> {
-		return this.withStoreLock(async () => {
-			if (!this.model) throw new Error("synthesizeChoiceModel requires a model");
+		if (!this.model) throw new Error("synthesizeChoiceModel requires a model");
+		const prepared = await this.withStoreLock(async () => {
 			const trails = await this.choiceModelJudgmentTrails();
 			if (trails.length === 0) throw new Error("synthesizeChoiceModel requires Judgment Trail evidence");
 			const current = (await readText(this.paths.choiceModelFile)) ?? SEED_CHOICE_MODEL;
 			const evidence = trails.map((trail) => `${trail.ref}\n${trail.text}`).join("\n\n");
-			const draft = await this.model.complete(choiceModelPrompt(current, evidence), { strong: true });
+			return { trails, current, evidence, fingerprint: textFingerprint(current) };
+		});
+		const draft = await this.model.complete(choiceModelPrompt(prepared.current, prepared.evidence), { strong: true });
+		return this.withStoreLock(async () => {
+			const current = (await readText(this.paths.choiceModelFile)) ?? SEED_CHOICE_MODEL;
+			if (textFingerprint(current) !== prepared.fingerprint) {
+				console.warn("[her] synthesizeChoiceModel: CHOICE-MODEL.md changed during model call; discarding draft");
+				const timestamp = new Date().toISOString();
+				return { id: genId(timestamp, "choice-model"), commit: "" };
+			}
 			const timestamp = new Date().toISOString();
 			const id = genId(timestamp, "choice-model");
 			await writeText(this.paths.choiceModelFile, draft);
@@ -1557,7 +1707,7 @@ export class Memory {
 				choiceModelLogBlock(
 					id,
 					timestamp,
-					trails.map((trail) => trail.ref),
+					prepared.trails.map((trail) => trail.ref),
 				),
 			);
 			const state = await readJson<Record<string, unknown>>(this.paths.stateFile, {});
@@ -1577,8 +1727,8 @@ export class Memory {
 	}
 
 	async synthesizeSelfNarrative(): Promise<SelfNarrativeUpdateResult> {
-		return this.withStoreLock(async () => {
-			if (!this.model) throw new Error("synthesizeSelfNarrative requires a model");
+		if (!this.model) throw new Error("synthesizeSelfNarrative requires a model");
+		const prepared = await this.withStoreLock(async () => {
 			const evidence = await this.selfNarrativeEvidence();
 			if (!evidence.moments.trim() && evidence.recognitions.length === 0) {
 				throw new Error("synthesizeSelfNarrative requires becoming moments or recognitions");
@@ -1588,15 +1738,24 @@ export class Memory {
 			const recognitionText = evidence.recognitions
 				.map((recognition) => `${recognition.ref}\n${recognition.text}`)
 				.join("\n\n");
-			const draft = await this.model.complete(
-				selfNarrativePrompt(current, context, evidence.moments, recognitionText),
-				{ strong: true },
-			);
+			return { evidence, current, context, recognitionText, fingerprint: textFingerprint(current) };
+		});
+		const draft = await this.model.complete(
+			selfNarrativePrompt(prepared.current, prepared.context, prepared.evidence.moments, prepared.recognitionText),
+			{ strong: true },
+		);
+		return this.withStoreLock(async () => {
+			const current = (await readText(this.paths.selfFile)) ?? SEED_SELF_NARRATIVE;
+			if (textFingerprint(current) !== prepared.fingerprint) {
+				console.warn("[her] synthesizeSelfNarrative: SAMANTHA.md changed during model call; discarding draft");
+				const timestamp = new Date().toISOString();
+				return { id: genId(timestamp, "self-narrative"), commit: "" };
+			}
 			const timestamp = new Date().toISOString();
 			const id = genId(timestamp, "self-narrative");
 			const refs = [
-				...(evidence.moments.trim() ? ["[[narrative/becoming-moments]]"] : []),
-				...evidence.recognitions.map((recognition) => recognition.ref),
+				...(prepared.evidence.moments.trim() ? ["[[narrative/becoming-moments]]"] : []),
+				...prepared.evidence.recognitions.map((recognition) => recognition.ref),
 			];
 			await writeText(this.paths.selfFile, draft);
 			await appendText(this.selfNarrativeLogFile(), selfNarrativeLogBlock(id, timestamp, refs));
@@ -1803,38 +1962,42 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 	private async upsertNote(note: Record<string, unknown>): Promise<"created" | "merged" | "merge-failed"> {
 		const key = slug(String(note.key ?? note.title ?? "note"));
 		const path = join(this.paths.semantic, `${key}.md`);
-		const existingText = await readText(path);
-		const existing = parseFrontmatter(existingText);
-		const existingSources = Array.isArray(existing.data.sources) ? existing.data.sources.map(String) : [];
 		const incomingSources = Array.isArray(note.sources) ? note.sources.map(String) : [];
-		const sources = [...new Set([...existingSources, ...incomingSources])].sort();
-		const type = typeof note.type === "string" && UNIT_TYPES.has(note.type) ? note.type : "note";
-		const tier = normalizeActiveTier(note.tier, existing.data.tier);
-		const relations = normalizeRelations(note);
-		const fm = {
-			key,
-			type,
-			tier,
-			created: existing.data.created ?? today(),
-			updated: today(),
-			sources,
-			relations,
-		};
 		const incoming = typeof note.content === "string" ? note.content : "";
+		const relations = normalizeRelations(note);
+
+		const snapshot = await this.withStoreLock(async () => {
+			const existingText = await readText(path);
+			const existing = parseFrontmatter(existingText);
+			const existingSources = Array.isArray(existing.data.sources) ? existing.data.sources.map(String) : [];
+			const sources = [...new Set([...existingSources, ...incomingSources])].sort();
+			const type = typeof note.type === "string" && UNIT_TYPES.has(note.type) ? note.type : "note";
+			const tier = normalizeActiveTier(note.tier, existing.data.tier);
+			const isExisting = existingText !== undefined;
+			const oldProse = isExisting ? stripSection(stripSection(existing.body, "Relations"), "Timeline").trim() : "";
+			const priorTimeline = isExisting ? extractSection(existing.body, "Timeline") : "";
+			return {
+				fingerprint: textFingerprint(existingText),
+				created: existing.data.created ?? today(),
+				sources,
+				type,
+				tier,
+				isExisting,
+				oldProse,
+				priorTimeline,
+			};
+		});
+
+		const srcLabel = incomingSources.length > 0 ? incomingSources.join(", ") : "(unknown)";
 
 		// G-234 law 1 — compiled truth is a REWRITE, never a blind overwrite. On a key that already
 		// exists, letting the new content replace the body wholesale silently drops the old note's other
 		// knowledge, so we integrate (old prose + new) via one LLM call. New keys write directly. The
 		// old `## Relations`/`## Timeline` scaffolding is stripped first so only real prose is reconciled.
-		const isExisting = existingText !== undefined;
-		const oldProse = isExisting ? stripSection(stripSection(existing.body, "Relations"), "Timeline").trim() : "";
-		const priorTimeline = isExisting ? extractSection(existing.body, "Timeline") : "";
-		const srcLabel = incomingSources.length > 0 ? incomingSources.join(", ") : "(unknown)";
-
 		let body: string;
 		let change: string;
 		let outcome: "created" | "merged" | "merge-failed";
-		if (!isExisting) {
+		if (!snapshot.isExisting) {
 			body = incoming;
 			change = typeof note.change === "string" && note.change.trim() ? note.change : "created";
 			outcome = "created";
@@ -1842,7 +2005,7 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 			const model = this.model;
 			try {
 				const merged = await completeJson<{ content?: unknown; change?: unknown }>(() =>
-					model.complete(mergeNotePrompt(oldProse, incoming, relations)),
+					model.complete(mergeNotePrompt(snapshot.oldProse, incoming, relations)),
 				);
 				const mergedContent = typeof merged.content === "string" ? merged.content.trim() : "";
 				if (!mergedContent) throw new Error("merge returned empty content");
@@ -1856,7 +2019,7 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 				console.warn(
 					`[her] upsertNote merge failed for note "${key}": ${errorMessage(error)}; keeping old body, new info pending in episode ${srcLabel}`,
 				);
-				body = oldProse;
+				body = snapshot.oldProse;
 				change = `merge failed, new info in episode ${srcLabel} pending`;
 				outcome = "merge-failed";
 			}
@@ -1865,25 +2028,53 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 			console.warn(
 				`[her] upsertNote has no model to merge note "${key}"; keeping old body, new info pending in episode ${srcLabel}`,
 			);
-			body = oldProse;
+			body = snapshot.oldProse;
 			change = `merge failed, new info in episode ${srcLabel} pending`;
 			outcome = "merge-failed";
 		}
 
-		// G-234 law 2 — semantic-level changelog. `## Timeline` lives after `## Relations` and is
-		// append-only: prior entries are carried forward unchanged and one line is appended per upsert.
-		const relationBody =
-			relations.length > 0
-				? `\n\n## Relations\n${relations.map((relation) => `- ${relation.rel}: [[${relation.to}]]`).join("\n")}\n`
-				: "\n";
-		const timelineBody = `\n## Timeline\n${[priorTimeline, timelineEntry(today(), change, incomingSources)]
-			.filter((part) => part.trim())
-			.join("\n")}\n`;
-		await writeText(path, `${frontmatter(fm)}${body.trimEnd()}${relationBody}${timelineBody}`);
-		for (const relation of relations) {
-			if (relation.rel === "replaces") await this.markSemanticNoteSuperseded(relation.to, key);
-		}
-		return outcome;
+		return this.withStoreLock(async () => {
+			const currentText = await readText(path);
+			if (textFingerprint(currentText) !== snapshot.fingerprint) {
+				console.warn(`[her] upsertNote: note changed during merge ("${key}"); skipping stale write`);
+				await appendText(
+					join(this.paths.root, "audit", "consolidate-skips.jsonl"),
+					`${JSON.stringify({
+						at: new Date().toISOString(),
+						reason: "premise-moved",
+						note_key: key,
+					})}\n`,
+				);
+				return "merge-failed";
+			}
+			const fm = {
+				key,
+				type: snapshot.type,
+				tier: snapshot.tier,
+				created: snapshot.created,
+				updated: today(),
+				sources: snapshot.sources,
+				relations,
+			};
+
+			// G-234 law 2 — semantic-level changelog. `## Timeline` lives after `## Relations` and is
+			// append-only: prior entries are carried forward unchanged and one line is appended per upsert.
+			const relationBody =
+				relations.length > 0
+					? `\n\n## Relations\n${relations.map((relation) => `- ${relation.rel}: [[${relation.to}]]`).join("\n")}\n`
+					: "\n";
+			const timelineBody = `\n## Timeline\n${[
+				snapshot.priorTimeline,
+				timelineEntry(today(), change, incomingSources),
+			]
+				.filter((part) => part.trim())
+				.join("\n")}\n`;
+			await writeText(path, `${frontmatter(fm)}${body.trimEnd()}${relationBody}${timelineBody}`);
+			for (const relation of relations) {
+				if (relation.rel === "replaces") await this.markSemanticNoteSuperseded(relation.to, key);
+			}
+			return outcome;
+		});
 	}
 
 	private async markSemanticNoteSuperseded(targetKey: string, replacementKey: string): Promise<void> {
