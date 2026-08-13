@@ -2,13 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { citationHref, resolveCitation } from "../src/compendium/citation.ts";
+import { renderSynthesisHtml, renderSynthesisMarkdown } from "../src/compendium/deliver.ts";
 import {
 	CHAPTER_ANALYSIS_BEGIN,
 	CHAPTER_ANALYSIS_END,
 	createSynthesisPrompt,
+	SYNTHESIS_SECTIONS,
 } from "../src/compendium/prompts-synth.ts";
 import { synthesize } from "../src/compendium/synth.ts";
-import type { ChapterAnalysis, CitationSource, SynthManifest } from "../src/compendium/types.ts";
+import type { ChapterAnalysis, CitationSource, SynthesisDoc, SynthManifest } from "../src/compendium/types.ts";
 import { FakeModel } from "../src/her-core/model.ts";
 
 const catalog: CitationSource[] = [
@@ -204,4 +206,103 @@ test("synthesize shrinks truncated JSON until a valid reply fits, then fails lou
 	assert.equal(doc.timeline.length, 3);
 	const floorModel = { complete: (): string => '{"quotes":[{"text":"' };
 	await assert.rejects(() => synthesize(manifest, analyses.slice(0, 1), floorModel), /truncated/i);
+});
+
+const briefingDoc: SynthesisDoc = {
+	title: "Builder talk",
+	slug: "builder-talk",
+	timeline: [
+		{
+			date: "2024-03-01",
+			fact: "Company founded",
+			citation: {
+				sourceId: "talk",
+				sourceUrl: "https://www.youtube.com/watch?v=abc",
+				locator: "00:01:00",
+				href: "https://www.youtube.com/watch?v=abc&t=60",
+			},
+		},
+	],
+	disagreements: [
+		{
+			topic: "Which funding round in June 2024",
+			verdict: "partial",
+			claims: [
+				{
+					sourceId: "talk",
+					claim: "Series A",
+					citation: {
+						sourceId: "talk",
+						sourceUrl: "https://www.youtube.com/watch?v=abc",
+						locator: "00:12:03",
+						href: "https://www.youtube.com/watch?v=abc&t=723",
+					},
+				},
+				{
+					sourceId: "essay",
+					claim: "Seed round",
+					citation: {
+						sourceId: "essay",
+						sourceUrl: "https://example.test/essay",
+						locator: "p.12",
+						href: "https://example.test/essay",
+					},
+				},
+			],
+		},
+	],
+	quotes: [
+		{
+			text: "Build the agent first",
+			citation: {
+				sourceId: "talk",
+				sourceUrl: "https://www.youtube.com/watch?v=abc",
+				locator: "00:08:00",
+				href: "https://www.youtube.com/watch?v=abc&t=480",
+			},
+		},
+	],
+	decisions: [
+		{
+			question: "Ship agent-first or wrap a chat UI?",
+			options: [
+				{ label: "Agent-first", cost: "Slower first demo" },
+				{ label: "Chat wrap", cost: "Retrain users later" },
+			],
+		},
+		{
+			question: "Trust the funding narrative?",
+			options: [
+				{ label: "Use talk", cost: "May overstate round" },
+				{ label: "Use essay", cost: "May understate round" },
+			],
+		},
+	],
+	droppedCitations: [],
+};
+
+test("renderSynthesisMarkdown emits the four briefing sections with catalog citations", () => {
+	const markdown = renderSynthesisMarkdown(briefingDoc);
+	for (const heading of Object.values(SYNTHESIS_SECTIONS)) {
+		assert.match(markdown, new RegExp(`^## ${heading}$`, "m"));
+	}
+	assert.match(markdown, /\[Source: talk, 00:01:00\]\(https:\/\/www\.youtube\.com\/watch\?v=abc&t=60\)/);
+	assert.match(markdown, /Partially verified/);
+	assert.match(markdown, /Build the agent first/);
+	assert.match(markdown, /Slower first demo/);
+	assert.equal(markdown.includes("evil.example"), false);
+});
+
+test("renderSynthesisHtml emits the four briefing sections without fabricated URLs", () => {
+	const html = renderSynthesisHtml(briefingDoc);
+	for (const heading of Object.values(SYNTHESIS_SECTIONS)) {
+		assert.ok(html.includes(heading));
+	}
+	assert.ok(
+		html.includes("https://www.youtube.com/watch?v=abc&amp;t=60") ||
+			html.includes("https://www.youtube.com/watch?v=abc&t=60"),
+	);
+	assert.ok(html.includes("Build the agent first"));
+	assert.equal(html.includes("evil.example"), false);
+	assert.ok(!html.includes("<script"));
 });
