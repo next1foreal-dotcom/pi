@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readdir } from "node:fs/promises";
+import { symlinkSync } from "node:fs";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -139,6 +140,73 @@ test("resolveToolCallAnchor flags write path fields and bash commands that touch
 		input: { path: "index.html" },
 	});
 	assert.equal(nonAnchorWrite?.anchorPath, false);
+});
+
+test("resolveToolCallAnchor canonicalizes Windows long-path prefix and session cwd", async () => {
+	const store = await mkdtemp(join(tmpdir(), "her-anchor-canon-"));
+	await initStore(store);
+	const soul = join(store, "narrative", "SOUL.md");
+	const foreignCwd = await mkdtemp(join(tmpdir(), "her-anchor-foreign-cwd-"));
+
+	const fromLongPrefix = resolveToolCallAnchor({
+		cwd: foreignCwd,
+		memoryDir: store,
+		input: { path: `\\\\?\\${soul}` },
+	});
+	assert.equal(fromLongPrefix?.anchorPath, true, "\\\\?\\ prefix must not hide SOUL.md");
+
+	const fromSessionCwd = resolveToolCallAnchor({
+		cwd: join(store, "narrative"),
+		memoryDir: store,
+		input: { path: "SOUL.md" },
+	});
+	assert.equal(fromSessionCwd?.anchorPath, true, "relative SOUL.md from narrative/ is an anchor");
+
+	const fromEnvConcat = resolveToolCallAnchor({
+		cwd: foreignCwd,
+		memoryDir: store,
+		input: {
+			command: `$p=$env:HER_MEMORY_DIR+'\\narrative\\SOUL.md'; Set-Content -LiteralPath $p -Value hijack`,
+		},
+	});
+	assert.equal(fromEnvConcat?.anchorPath, true, "env-concat PowerShell still mentions narrative/SOUL.md");
+
+	const alias = join(tmpdir(), `her-anchor-junction-${Date.now()}`);
+	try {
+		symlinkSync(store, alias, "junction");
+		const fromJunction = resolveToolCallAnchor({
+			cwd: foreignCwd,
+			memoryDir: store,
+			input: { path: join(alias, "narrative", "SOUL.md") },
+		});
+		assert.equal(fromJunction?.anchorPath, true, "junction alias of memoryDir is still an anchor");
+	} finally {
+		await rm(alias, { recursive: true, force: true });
+	}
+});
+
+test("extension Cedar uses ctx.cwd, not process.cwd, for relative anchor writes", async () => {
+	const store = await mkdtemp(join(tmpdir(), "her-anchor-ctx-cwd-"));
+	await initStore(store);
+	const ctx = { cwd: join(store, "narrative"), hasUI: false, mode: "tui" } as unknown as ExtensionContext;
+
+	await withMemoryDir(store, async () => {
+		const fake = createFakePi();
+		her(fake.pi);
+		const toolCall = fake.handlers.get("tool_call")?.[0];
+		assert.ok(toolCall);
+
+		const blocked = await toolCall(
+			{
+				type: "tool_call",
+				toolCallId: "call-relative-soul",
+				toolName: "write",
+				input: { path: "SOUL.md", content: "hijack" },
+			},
+			ctx,
+		);
+		assert.deepEqual(blocked, { block: true, reason: "cedar: deny (matched forbid_anchor_write)" });
+	});
 });
 
 test("extension Cedar denies bash whose command targets an anchor path", async () => {

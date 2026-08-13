@@ -907,15 +907,18 @@ export default function her(pi: ExtensionAPI): void {
 		};
 	});
 
-	pi.on("tool_call", (event) => {
+	pi.on("tool_call", (event, ctx) => {
 		const tool = resolveGovernedTool(event.toolName);
 
 		const ts = new Date().toISOString();
 		// G-257 追补 (2026-08-13 live probe): a name-only gate let the registered
 		// `write` tool replace SOUL.md wholesale. Resolve path fields and bash
 		// command strings selfmod-style so forbid_anchor_write can see the target.
+		// Use the session cwd, not process.cwd(): a session rooted in
+		// her-memory/narrative can write relative SOUL.md while the process
+		// still sits in the samantha checkout.
 		const target = resolveToolCallAnchor({
-			cwd: process.cwd(),
+			cwd: ctx.cwd || process.cwd(),
 			memoryDir,
 			input: event.input as Record<string, unknown> | undefined,
 		});

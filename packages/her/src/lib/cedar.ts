@@ -1,5 +1,5 @@
-import { readFileSync } from "node:fs";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AuthorizationCall } from "@cedar-policy/cedar-wasm/nodejs";
 import {
@@ -136,8 +136,13 @@ export function isAnchorTargetPath(request: Pick<SelfModToolRequest, "cwd" | "me
 	anchorPath: boolean;
 	targetPath: string;
 } {
-	const targetPath = logicalTargetPath(request);
-	return { anchorPath: isAnchorPath(targetPath), targetPath };
+	try {
+		const targetPath = logicalTargetPath(request);
+		return { anchorPath: isAnchorPath(targetPath), targetPath };
+	} catch {
+		// Fail closed: a path we cannot classify is treated as an anchor.
+		return { anchorPath: true, targetPath: request.targetPath };
+	}
 }
 
 const PATH_FIELD_KEYS = [
@@ -227,7 +232,11 @@ function extractPathCandidates(command: string): string[] {
 
 function mentionAnchorPath(command: string, memoryDir: string): string | undefined {
 	const haystack = command.replaceAll("\\", "/").toLowerCase();
-	const memoryRoot = resolve(memoryDir).replaceAll("\\", "/");
+	const memoryRoot = canonicalizeFilesystemPath(resolve(memoryDir)).replaceAll("\\", "/");
+	const memoryRelativeAnchors = ["narrative/SOUL.md", "narrative/FACTS.md", "narrative/CONTEXT.md"] as const;
+	for (const relativeAnchor of memoryRelativeAnchors) {
+		if (haystack.includes(relativeAnchor.toLowerCase())) return `her-memory/${relativeAnchor}`;
+	}
 	const needles = [
 		...ANCHOR_PATHS,
 		"packages/her/src/rsi/anchors.ts",
@@ -242,13 +251,47 @@ function mentionAnchorPath(command: string, memoryDir: string): string | undefin
 	return undefined;
 }
 
+/** Strip `\\?\` / `\\?\UNC\` so lexical compare and realpath see the same file. */
+function stripWindowsNamespace(raw: string): string {
+	const asBackslash = raw.replaceAll("/", "\\");
+	if (/^\\\\\?\\UNC\\/i.test(asBackslash)) {
+		return `\\\\${asBackslash.slice("\\\\?\\UNC\\".length)}`;
+	}
+	if (/^\\\\\?\\/i.test(asBackslash)) {
+		return asBackslash.slice("\\\\?\\".length);
+	}
+	return raw;
+}
+
+/** Resolve junctions/symlinks/8.3 names on the longest existing prefix. */
+function canonicalizeFilesystemPath(absPath: string): string {
+	const missing: string[] = [];
+	let current = absPath;
+	for (;;) {
+		try {
+			if (existsSync(current)) {
+				const real = realpathSync(current);
+				return missing.length === 0 ? real : resolve(real, ...missing);
+			}
+		} catch {
+			return absPath;
+		}
+		const parent = dirname(current);
+		if (parent === current) return absPath;
+		missing.unshift(basename(current));
+		current = parent;
+	}
+}
+
 function logicalTargetPath(request: Pick<SelfModToolRequest, "cwd" | "memoryDir" | "targetPath">): string {
-	const supplied = request.targetPath.replaceAll("\\", "/");
+	const stripped = stripWindowsNamespace(request.targetPath);
+	const supplied = stripped.replaceAll("\\", "/");
 	if (supplied.toLowerCase().startsWith("her-memory/")) return supplied;
-	const absoluteTarget = resolve(request.cwd, request.targetPath);
-	const memoryPath = relativeWithin(request.memoryDir, absoluteTarget);
+	const absoluteTarget = canonicalizeFilesystemPath(resolve(request.cwd, stripped));
+	const memoryRoot = canonicalizeFilesystemPath(resolve(request.memoryDir));
+	const memoryPath = relativeWithin(memoryRoot, absoluteTarget);
 	if (memoryPath !== null) return `her-memory/${memoryPath}`;
-	const repositoryPath = relativeWithin(repositoryRoot, absoluteTarget);
+	const repositoryPath = relativeWithin(canonicalizeFilesystemPath(repositoryRoot), absoluteTarget);
 	return repositoryPath ?? supplied;
 }
 
