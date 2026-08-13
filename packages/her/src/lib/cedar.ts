@@ -11,6 +11,7 @@ import {
 } from "@cedar-policy/cedar-wasm/nodejs";
 import { isAllowedSelfModPath, isAnchorPath } from "../rsi/anchors.ts";
 import { appendAuditLog } from "./audit.ts";
+import { resolveGovernedTool } from "./governed-tools.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const policyDir = resolve(here, "..", "..", "pi-package", "policies");
@@ -100,7 +101,7 @@ export function authorizeSelfModTool(request: SelfModToolRequest): Verdict {
 	const targetPath = logicalTargetPath(request);
 	const anchorPath = isAnchorPath(targetPath);
 	const allowedSelfModPath = isAllowedSelfModPath(targetPath);
-	const destructive = ["bash", "edit", "write"].includes(request.toolName);
+	const destructive = resolveGovernedTool(request.toolName).destructive;
 	const verdict = evaluate({
 		principal: { type: "Agent", id: "samantha" },
 		action: { type: "Action", id: "CallTool" },

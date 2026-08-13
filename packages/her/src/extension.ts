@@ -91,6 +91,7 @@ import {
 import { type ReviewEvidenceItem, verifyEvidence } from "./her-core/review-evidence.ts";
 import { appendAuditLog } from "./lib/audit.ts";
 import { evaluate, policyEnvelope } from "./lib/cedar.ts";
+import { governedTools, resolveGovernedTool } from "./lib/governed-tools.ts";
 import { registerMcpTools } from "./mcp/tools.ts";
 import { registerPreviewTools } from "./preview/tools.ts";
 import { registerRelayProviderTools } from "./providers-relay/tools.ts";
@@ -122,85 +123,7 @@ const herTaskStepSchema = Type.Object({
 	title: Type.String(),
 	exitCriteria: Type.Array(Type.String()),
 });
-export const governedTools: Record<string, { destructive: boolean }> = {
-	bash: { destructive: true },
-	edit: { destructive: true },
-	write: { destructive: true },
-	read: { destructive: false },
-	grep: { destructive: false },
-	find: { destructive: false },
-	ls: { destructive: false },
-	her_status: { destructive: false },
-	her_recall: { destructive: false },
-	her_session_list: { destructive: false },
-	her_session_read: { destructive: false },
-	her_session_search: { destructive: false },
-	// Writes into the memory store, can trigger a paid wake, and puts text into
-	// another agent's system prompt — the same side-effect family as
-	// her_task_continue, not the read-only family. Cedar is deny-by-default for
-	// destructive tools, so this ships denied until Fei grants a named permit
-	// (the her_task_spawn / _stop / _continue precedent in her-trust.cedar).
-	her_session_send: { destructive: true },
-	her_feedback: { destructive: false },
-	her_sync: { destructive: false },
-	her_task_create: { destructive: false },
-	her_task_update: { destructive: false },
-	her_task_list: { destructive: false },
-	her_task_spawn: { destructive: true },
-	her_task_continue: { destructive: true },
-	her_task_stop: { destructive: true },
-	her_task_output: { destructive: false },
-	her_bg_task_list: { destructive: false },
-	her_publish: { destructive: true },
-	her_privacy_audit: { destructive: false },
-	her_privacy_check: { destructive: false },
-	her_memory_retract: { destructive: false },
-	her_cost_report: { destructive: false },
-	her_telegram_queue: { destructive: false },
-	her_proposal_record: { destructive: false },
-	her_proposal_feedback: { destructive: false },
-	her_proposal_stats: { destructive: false },
-	her_proposal_list: { destructive: false },
-	her_goal_start: { destructive: false },
-	her_goal_next: { destructive: false },
-	her_goal_checkpoint: { destructive: false },
-	her_goal_complete: { destructive: false },
-	her_goal_list: { destructive: false },
-	her_synthesize_choice_model: { destructive: false },
-	her_synthesize_self_narrative: { destructive: false },
-	her_review_context: { destructive: false },
-	her_review_verify: { destructive: false },
-	her_keep: { destructive: false },
-	her_revert: { destructive: false },
-	her_remember: { destructive: false },
-	her_world_note: { destructive: false },
-	her_intake_source: { destructive: false },
-	her_intake_path: { destructive: false },
-	her_bootstrap_feed: { destructive: false },
-	her_zone_note: { destructive: false },
-	her_taste_judgment: { destructive: false },
-	her_idea: { destructive: false },
-	her_judgment: { destructive: false },
-	her_memory_status: { destructive: false },
-	her_hands_snapshot: { destructive: false },
-	her_hands_act: { destructive: false },
-	preview_open_review: { destructive: false },
-	browser_navigate: { destructive: false },
-	browser_read_page: { destructive: false },
-	browser_act: { destructive: false },
-	artifact_publish: { destructive: true },
-	her_show_widget: { destructive: false },
-	her_ui_act: { destructive: false },
-	her_act: { destructive: false },
-	her_upsert_relay_provider: { destructive: false },
-	her_convert: { destructive: false },
-	her_ocr: { destructive: false },
-	her_archive: { destructive: false },
-	her_imgmin: { destructive: false },
-	her_pdf: { destructive: false },
-	her_mcp_list: { destructive: false },
-	her_mcp_call: { destructive: false },
-};
+export { governedTools, resolveGovernedTool };
 const claimLedgerSchema = Type.Array(
 	Type.Object({
 		claim: Type.String(),
@@ -577,10 +500,9 @@ function toolAuthorizationCall(toolName: string, destructive: boolean): Authoriz
 	};
 }
 
-function authorizationGateForUsedTools(toolNames: string[] | undefined): GateDecision | undefined {
+export function authorizationGateForUsedTools(toolNames: string[] | undefined): GateDecision | undefined {
 	for (const toolName of toolNames ?? []) {
-		const tool = governedTools[toolName];
-		if (!tool) continue;
+		const tool = resolveGovernedTool(toolName);
 		try {
 			const verdict = evaluate(toolAuthorizationCall(toolName, tool.destructive));
 			if (verdict.decision !== "deny") continue;
@@ -982,8 +904,7 @@ export default function her(pi: ExtensionAPI): void {
 	});
 
 	pi.on("tool_call", (event) => {
-		const tool = governedTools[event.toolName];
-		if (!tool) return undefined;
+		const tool = resolveGovernedTool(event.toolName);
 
 		const ts = new Date().toISOString();
 		try {
