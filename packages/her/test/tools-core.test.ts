@@ -120,8 +120,16 @@ test("buildImgminPlan: lossless routing per format, visual is separate, others r
 	assert.equal((buildImgminPlan("gif", "lossless", "i.gif", "o") as { ok: boolean }).ok, false);
 });
 
-test("all five organs are registered as non-destructive governed tools", () => {
-	for (const name of ["her_convert", "her_ocr", "her_archive", "her_imgmin", "her_pdf"] as const) {
+test("file-craft organs are registered as non-destructive governed tools", () => {
+	for (const name of [
+		"her_convert",
+		"her_ocr",
+		"her_archive",
+		"her_imgmin",
+		"her_pdf",
+		"her_doc_read",
+		"her_doc_edit",
+	] as const) {
 		assert.deepEqual(governedTools[name], { destructive: false }, `${name} must be governed non-destructive`);
 	}
 });

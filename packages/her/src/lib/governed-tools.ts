@@ -76,6 +76,10 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	her_archive: { destructive: false },
 	her_imgmin: { destructive: false },
 	her_pdf: { destructive: false },
+	her_doc_read: { destructive: false },
+	// writes a fresh file next to the source and never overwrites anything,
+	// same class as her_convert (registered non-destructive by that precedent)
+	her_doc_edit: { destructive: false },
 	her_mcp_list: { destructive: false },
 	her_mcp_call: { destructive: false },
 };

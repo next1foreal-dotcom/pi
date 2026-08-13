@@ -6,6 +6,8 @@
     { "id": "her_archive", "name": "打包解压", "description": "zip/7z/rar,含密码", "icon": "archive" },
     { "id": "her_imgmin", "name": "图片瘦身", "description": "无损为主的图片压缩", "icon": "image-down" },
     { "id": "her_pdf", "name": "PDF 工具箱", "description": "合并/抽页/加解密/瘦身", "icon": "file-stack" },
+    { "id": "her_doc_read", "name": "读文档", "description": "进程内读 docx/pptx/xlsx 与纯文本,无外部二进制", "icon": "file-text" },
+    { "id": "her_doc_edit", "name": "改 Word", "description": "字节保真改 .docx 段落,不覆盖原文件", "icon": "file-pen" },
     { "id": "her_show_widget", "name": "画草图", "description": "对话内递可视化草图", "icon": "brush" },
     { "id": "her_upsert_relay_provider", "name": "加中转", "description": "对话内保存 OpenAI 兼容万金油中转", "icon": "plug-zap" },
     { "id": "her_mcp_list", "name": "外接服务清点", "description": "查看已配置外接服务与可用工具", "icon": "plug" },
