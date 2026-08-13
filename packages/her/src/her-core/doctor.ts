@@ -159,21 +159,27 @@ async function checkCursor(ctx: DoctorContext): Promise<CheckResult> {
 async function checkFrontmatter(ctx: DoctorContext): Promise<CheckResult> {
 	const missing: string[] = [];
 	let filesChecked = 0;
+	let missingCount = 0;
 	for (const dir of SCHEMA_DIRS)
 		for (const path of await markdownFiles(join(ctx.root, dir))) {
 			if (basename(path).toLowerCase() === "readme.md") continue;
+			const rel = relativePath(ctx.root, path);
+			// Capture-time snapshots under world/, not live world notes.
+			if (rel.includes("/_snapshots/")) continue;
 			filesChecked++;
 			const { data } = parseFrontmatter(await readFile(path, "utf8"));
-			for (const key of schemaMissing(dir, data))
-				if (missing.length < 20) missing.push(`${relativePath(ctx.root, path)}:${key}`);
+			for (const key of schemaMissing(dir, data)) {
+				missingCount++;
+				if (missing.length < 20) missing.push(`${rel}:${key}`);
+			}
 		}
-	const status: CheckStatus = missing.length > 0 ? "fail" : "pass";
+	const status: CheckStatus = missingCount > 0 ? "fail" : "pass";
 	return resultFor(
 		"DR-03",
 		"frontmatter-schema",
 		status,
-		`${filesChecked} files checked, ${missing.length} missing keys${missing.length ? `; ${missing.join(", ")}` : ""}`,
-		{ files: filesChecked, missing: missing.length },
+		`${filesChecked} files checked, ${missingCount} missing keys${missing.length ? `; ${missing.join(", ")}` : ""}`,
+		{ files: filesChecked, missing: missingCount },
 	);
 }
 async function checkWikilinks(ctx: DoctorContext): Promise<CheckResult> {
@@ -437,7 +443,7 @@ function schemaMissing(dir: string, data: Record<string, unknown>): string[] {
 							["captured_at", "ingested"],
 						]
 					: dir === "topics"
-						? [["theme"], ["created"], ["members"]]
+						? [["theme"], ["created", "updated"], ["members"]]
 						: [["id"], ["status"], ["created"]];
 	return groups.filter((group) => !group.some((key) => data[key] !== undefined)).map((group) => group.join("|"));
 }

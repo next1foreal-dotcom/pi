@@ -12,15 +12,22 @@ permit(
   resource == Tool::"artifact_publish"
 );
 
+// Sol 2026-08-13: the old form was unconditional — any bash/edit/write matched,
+// so a name-only tool_call hook (no path attrs) ALLOW-wrote SOUL.md. Do not
+// delete this permit (coding dies). Scope it: if the hook classified a target
+// as an anchor, this permit does not apply; forbid_anchor_write still wins.
+// usedTools / bash with no path omit the attr (`!(resource has anchorPath)`),
+// so project writes and pathless shell still code. Computed bash remains a hole.
 @id("permit_coding_destructive_tools")
 permit(
   principal == Agent::"samantha",
   action == Action::"CallTool",
   resource
 ) when {
-  resource == Tool::"bash" ||
-  resource == Tool::"edit" ||
-  resource == Tool::"write"
+  (resource == Tool::"bash" ||
+   resource == Tool::"edit" ||
+   resource == Tool::"write") &&
+  (!(resource has anchorPath) || resource.anchorPath == false)
 };
 
 // G-257 追补 — 2026-08-13 活体探针实证:注册在案的 write 靠上面的 permit 整文件

@@ -81,7 +81,10 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	// same class as her_convert (registered non-destructive by that precedent)
 	her_doc_edit: { destructive: false },
 	her_mcp_list: { destructive: false },
-	her_mcp_call: { destructive: false },
+	// MCP call is an unconstrained side-effect (arbitrary connector/tool).
+	// Deny-by-default until Fei grants a named Cedar permit (her_session_send
+	// precedent). her_mcp_list stays read-only.
+	her_mcp_call: { destructive: true },
 };
 
 export function resolveGovernedTool(name: string): GovernedToolResolution {

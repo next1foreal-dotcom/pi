@@ -408,6 +408,7 @@ export {
 	parseFrontmatter,
 	readJson,
 	readText,
+	redactSecrets,
 	writeJson,
 	writeText,
 } from "./store.ts";

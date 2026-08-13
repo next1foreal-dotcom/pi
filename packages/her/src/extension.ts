@@ -74,6 +74,7 @@ import {
 	reconcileBgTasks,
 	recordHerProposal,
 	recordHerProposalFeedback,
+	redactSecrets,
 	resolveSessionReadConfig,
 	resolveTargetSource,
 	type SamanthaZoneCategory,
@@ -396,7 +397,7 @@ export function renderRecall(notes: Awaited<ReturnType<Memory["recall"]>>): stri
 	if (notes.length === 0) return "No Her memory hits.";
 	const body = notes
 		.map((note, index) => {
-			const excerpt = note.text.trim().replace(/\s+/g, " ").slice(0, 500);
+			const excerpt = redactSecrets(note.text.trim()).replace(/\s+/g, " ").slice(0, 500);
 			return `${index + 1}. ${note.id} (${note.kind})\n${excerpt}`;
 		})
 		.join("\n\n");
@@ -404,7 +405,7 @@ export function renderRecall(notes: Awaited<ReturnType<Memory["recall"]>>): stri
 }
 
 export function renderMirror(note: NonNullable<Awaited<ReturnType<Memory["surface"]>>>): string {
-	const excerpt = note.text.trim().replace(/\s+/g, " ").slice(0, 700);
+	const excerpt = redactSecrets(note.text.trim()).replace(/\s+/g, " ").slice(0, 700);
 	return [`A memory surfaced: ${note.id}`, "", fenceUntrusted(memoryBegin, memoryEnd, excerpt)].join("\n");
 }
 

@@ -41,6 +41,19 @@ test("buildRecallReceipt uses unknown for missing provenance", () => {
 	assert.equal(receipt.slug, "bare");
 });
 
+test("buildRecallReceipt redacts secret-shaped excerpts without touching the store", () => {
+	const secret = "sk-" + "123456789012345678901234";
+	const receipt = buildRecallReceipt({
+		id: "world/leak",
+		kind: "world",
+		path: "world/leak.md",
+		score: 1,
+		text: `${frontmatter({ key: "leak" })}body with ${secret} still in the note\n`,
+	});
+	assert.equal(receipt.excerpt.includes(secret), false);
+	assert.match(receipt.excerpt, /«REDACTED:secret»/);
+});
+
 test("buildRecallReceipt falls back harness to string source", () => {
 	const receipt = buildRecallReceipt({
 		id: "semantic/x",

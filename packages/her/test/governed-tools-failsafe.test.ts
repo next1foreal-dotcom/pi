@@ -8,7 +8,7 @@ import { authorizationGateForUsedTools } from "../src/extension.ts";
 import { authorizeSelfModTool, evaluate, policyEnvelope } from "../src/lib/cedar.ts";
 import { resolveGovernedTool } from "../src/lib/governed-tools.ts";
 
-function defaultCall(toolName: string, destructive: boolean): AuthorizationCall {
+function defaultCall(toolName: string, destructive: boolean, attrs: Record<string, unknown> = {}): AuthorizationCall {
 	return {
 		principal: { type: "Agent", id: "samantha" },
 		action: { type: "Action", id: "CallTool" },
@@ -16,7 +16,7 @@ function defaultCall(toolName: string, destructive: boolean): AuthorizationCall 
 		context: {},
 		entities: [
 			{ uid: { type: "Agent", id: "samantha" }, attrs: {}, parents: [] },
-			{ uid: { type: "Tool", id: toolName }, attrs: { name: toolName, destructive }, parents: [] },
+			{ uid: { type: "Tool", id: toolName }, attrs: { name: toolName, destructive, ...attrs }, parents: [] },
 		],
 		...policyEnvelope("default"),
 	};
@@ -42,6 +42,26 @@ test("default Cedar still allows her_recall via allow_memory_tools", () => {
 	const verdict = evaluate(defaultCall("her_recall", resolved.destructive));
 	assert.equal(verdict.decision, "allow");
 	assert.deepEqual(verdict.matched, ["allow_memory_tools"]);
+});
+
+test("default Cedar denies her_mcp_call until a named permit exists", () => {
+	const resolved = resolveGovernedTool("her_mcp_call");
+	assert.deepEqual(resolved, { destructive: true, registered: true });
+	const verdict = evaluate(defaultCall("her_mcp_call", resolved.destructive));
+	assert.equal(verdict.decision, "deny");
+	assert.deepEqual(verdict.matched, []);
+	assert.deepEqual(authorizationGateForUsedTools(["her_mcp_call"]), {
+		verdict: "DENY",
+		gate: "authorize",
+		rule: "cedar-deny",
+		reason: "tool her_mcp_call denied by Cedar (cedar-deny)",
+	});
+});
+
+test("permit_coding_destructive_tools does not cover an anchor-classified write", () => {
+	const verdict = evaluate(defaultCall("write", true, { anchorPath: true }));
+	assert.equal(verdict.decision, "deny");
+	assert.deepEqual(verdict.matched, ["forbid_anchor_write"]);
 });
 
 test("authorizationGateForUsedTools evaluates unregistered tools instead of skipping them", () => {

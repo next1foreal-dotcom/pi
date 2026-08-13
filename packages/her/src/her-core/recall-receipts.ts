@@ -1,5 +1,5 @@
 import type { Note } from "./retrieval.ts";
-import { parseFrontmatter } from "./store.ts";
+import { parseFrontmatter, redactSecrets } from "./store.ts";
 
 export const UNKNOWN_PROVENANCE = "unknown";
 
@@ -43,7 +43,7 @@ function slugOf(data: Record<string, unknown>, path: string, id: string): string
 }
 
 function excerptOf(body: string, rawText: string): string {
-	const src = (body || rawText).trim();
+	const src = redactSecrets((body || rawText).trim());
 	return src.replace(/\s+/g, " ").slice(0, 240);
 }
 

@@ -153,6 +153,28 @@ test("DR-03 enforces raw minimum keys and allows unknown keys", async () => {
 	});
 });
 
+test("DR-03 skips world/_snapshots and accepts legacy topics that have updated", async () => {
+	await withStore(async (root) => {
+		await writeText(
+			join(root, "world", "_snapshots", "luka-a66892ce", "original.md"),
+			"snapshot body with no frontmatter\n",
+		);
+		await writeText(
+			join(root, "topics", "legacy.md"),
+			`${frontmatter({ theme: "legacy", updated: "2026-06-01", members: ["a"] })}body\n`,
+		);
+		const skipped = await runDoctor(root, { checks: ["DR-03"] });
+		assert.equal(skipped.checks[0].status, "pass", skipped.checks[0].detail);
+		assert.doesNotMatch(skipped.checks[0].detail, /_snapshots/);
+
+		await writeText(join(root, "episodic", "raw", "2026-08-05T1422--no-fm.md"), "bulk export without a fence\n");
+		const stillMissing = await runDoctor(root, { checks: ["DR-03"] });
+		assert.equal(stillMissing.checks[0].status, "fail");
+		assert.equal(stillMissing.checks[0].counts?.missing, 4, stillMissing.checks[0].detail);
+		assert.match(stillMissing.checks[0].detail, /episodic\/raw\/.*:id/);
+	});
+});
+
 test("DR-01/DR-02 count all three raw filename generations", async () => {
 	await withStore(async (root) => {
 		const rawDir = join(root, "episodic", "raw");
