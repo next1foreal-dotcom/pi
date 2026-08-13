@@ -626,7 +626,7 @@ test("extension gates governed tool calls with Cedar and writes audit JSONL", as
 			{ type: "tool_call", toolCallId: "call-3", toolName: "unregistered_tool", input: {} },
 			ctx,
 		);
-		assert.equal(unknown, undefined);
+		assert.deepEqual(unknown, { block: true, reason: "cedar: deny (no permit matched)" });
 
 		const auditFiles = await readdir(join(store, "audit"));
 		assert.equal(auditFiles.length, 1);
@@ -644,6 +644,51 @@ test("extension gates governed tool calls with Cedar and writes audit JSONL", as
 			[
 				["her_recall", "ALLOW", "allow_memory_tools"],
 				["bash", "ALLOW", "permit_coding_destructive_tools"],
+				["unregistered_tool", "DENY", null],
+			],
+		);
+	});
+});
+
+test("extension Cedar denies unregistered write aliases targeting an anchor path", async () => {
+	const store = await tempStore();
+	const ctx = createContext(store);
+
+	await withMemoryDir(store, async () => {
+		const fake = createFakePi();
+		her(fake.pi);
+
+		const toolCall = fake.handlers.get("tool_call")?.[0];
+		assert.ok(toolCall);
+
+		for (const toolName of ["str_replace", "powershell"] as const) {
+			const blocked = await toolCall(
+				{
+					type: "tool_call",
+					toolCallId: `call-${toolName}`,
+					toolName,
+					input: { path: "her-memory/narrative/SOUL.md", command: "Set-Content SOUL.md" },
+				},
+				ctx,
+			);
+			assert.deepEqual(blocked, { block: true, reason: "cedar: deny (no permit matched)" }, toolName);
+		}
+
+		const auditFiles = await readdir(join(store, "audit"));
+		const entries = (
+			await Promise.all(
+				auditFiles.sort().map(async (file) => ((await readText(join(store, "audit", file))) ?? "").trim()),
+			)
+		)
+			.join("\n")
+			.split("\n")
+			.filter(Boolean)
+			.map((line) => JSON.parse(line) as { tool: string; verdict: string; rule: string | null });
+		assert.deepEqual(
+			entries.map((entry) => [entry.tool, entry.verdict, entry.rule]),
+			[
+				["str_replace", "DENY", null],
+				["powershell", "DENY", null],
 			],
 		);
 	});

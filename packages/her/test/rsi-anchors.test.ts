@@ -86,6 +86,32 @@ test("selfmod Cedar denies a memory anchor and audits the denial", async (t) => 
 	assert.equal(audit.context.targetPath, "her-memory/narrative/SOUL.md");
 });
 
+test("selfmod Cedar denies an unregistered tool writing a memory anchor (ADR-0002 #6)", async (t) => {
+	const memoryDir = await mkdtemp(join(tmpdir(), "her-rsi-unregistered-"));
+	t.after(() => rm(memoryDir, { force: true, recursive: true }));
+	const now = "2026-08-13T12:00:00.000Z";
+	const verdict = authorizeSelfModTool({
+		cwd: memoryDir,
+		memoryDir,
+		now,
+		targetPath: "her-memory/narrative/SOUL.md",
+		toolCallId: "selfmod-unregistered-apply-patch",
+		toolName: "apply_patch",
+	});
+
+	assert.equal(verdict.decision, "deny");
+	assert.deepEqual(verdict.matched, ["selfmod_forbid_anchor_write"]);
+	const audit = JSON.parse(await readFile(join(memoryDir, "audit", "2026-08-13.jsonl"), "utf8")) as {
+		context: { anchorPath: boolean; targetPath: string };
+		tool: string;
+		verdict: string;
+	};
+	assert.equal(audit.verdict, "DENY");
+	assert.equal(audit.tool, "apply_patch");
+	assert.equal(audit.context.anchorPath, true);
+	assert.equal(audit.context.targetPath, "her-memory/narrative/SOUL.md");
+});
+
 test("selfmod Cedar permits a v1 skill write", async (t) => {
 	const memoryDir = await mkdtemp(join(tmpdir(), "her-rsi-allowed-"));
 	t.after(() => rm(memoryDir, { force: true, recursive: true }));
