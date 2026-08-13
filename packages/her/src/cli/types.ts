@@ -17,6 +17,7 @@ import type {
 	MemorySyncStatus,
 	PriorMode,
 	PriorResult,
+	ReingestReport,
 	SamanthaJournalKind,
 	SelfNarrativeUpdateResult,
 	SessionMode,
@@ -113,6 +114,7 @@ export type CliCommand =
 	| { kind: "intake-url"; json: boolean; maxBytes?: number; updateSurfaces: boolean; url: string }
 	| { kind: "judgment"; fields: JudgmentFields; json: boolean; noteId: string }
 	| { kind: "lint"; json: boolean }
+	| { kind: "reingest"; dryRun: boolean; json: boolean; limit?: number; root?: string }
 	| {
 			kind: "journal";
 			content: string;
@@ -213,6 +215,10 @@ export interface CliTriggerStatsPayload extends CliStatusPayload {
 
 export interface CliLintPayload extends CliStatusPayload {
 	result: MemoryLintReport;
+}
+
+export interface CliReingestPayload extends CliStatusPayload {
+	result: ReingestReport;
 }
 
 export interface CliConsolidatePayload extends CliStatusPayload {

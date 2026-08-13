@@ -53,6 +53,7 @@ export function parseArgs(argv: string[]): CliCommand {
 	if (command === "privacy-check") return parsePrivacyCheck(rest);
 	if (command === "prior") return parsePrior(rest);
 	if (command === "recall") return parseRecall(rest);
+	if (command === "reingest") return parseReingest(rest);
 	if (command === "reflect") return parseReflect(rest);
 	if (command === "review-narrative") return parseReviewNarrative(rest);
 	if (command === "restore") return parseRestore(rest);
@@ -242,6 +243,34 @@ function parseConsolidate(argv: string[]): CliCommand {
 		throw new UsageError(`unknown consolidate option: ${arg}`);
 	}
 	return { kind: "consolidate", json, limit };
+}
+
+function parseReingest(argv: string[]): CliCommand {
+	let dryRun = false;
+	let json = false;
+	let limit: number | undefined;
+	let root: string | undefined;
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		if (arg === "--dry-run") {
+			dryRun = true;
+			continue;
+		}
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--limit") {
+			limit = parsePositiveNumber(requireOptionValue(argv[++i], arg), arg);
+			continue;
+		}
+		if (arg === "--root") {
+			root = requireNonBlank(requireOptionValue(argv[++i], arg), arg);
+			continue;
+		}
+		throw new UsageError(`unknown reingest option: ${arg}`);
+	}
+	return { kind: "reingest", json, dryRun, ...(limit !== undefined ? { limit } : {}), ...(root ? { root } : {}) };
 }
 
 function parseCost(argv: string[]): CliCommand {

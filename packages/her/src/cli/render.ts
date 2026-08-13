@@ -28,6 +28,7 @@ import type {
 	CliPrivacyCheckPayload,
 	CliRecallPayload,
 	CliReflectPayload,
+	CliReingestPayload,
 	CliRestorePayload,
 	CliReviewNarrativePayload,
 	CliSelfNarrativePayload,
@@ -210,6 +211,21 @@ export function renderLint(payload: CliLintPayload): string {
 		"",
 		renderStatus(payload),
 	].join("\n");
+}
+
+export function renderReingest(payload: CliReingestPayload): string {
+	const dryRun = payload.result.entries.some((entry) => entry.outcome === "dry-run");
+	const lines = [
+		dryRun
+			? `Her reingest dry-run: ${payload.result.entries.length} of ${payload.result.scanned} segment(s) would be processed.`
+			: `Her reingest: scanned ${payload.result.scanned}, ingested ${payload.result.ingested}, failed ${payload.result.failed}.`,
+		`skipped: already-processed ${payload.result.skipped.alreadyProcessed}, duplicate-body ${payload.result.skipped.duplicateBody}`,
+	];
+	for (const entry of payload.result.entries) {
+		lines.push(`${entry.outcome}\t${entry.id}\t${entry.chars}\t${entry.reason}`);
+	}
+	lines.push("", renderStatus(payload));
+	return lines.join("\n");
 }
 export function renderRestore(payload: CliRestorePayload): string {
 	return [`Her memory restored archived semantic note: ${payload.result.key}`, "", renderStatus(payload)].join("\n");
@@ -625,6 +641,7 @@ export function usage(): string {
   her privacy-check --ref <memory-path> [--ref <memory-path>] [--json]
   her prior [--task <text>] [--off|--her-only] [--budget <tokens>] [--json]
   her recall --query <text> [--k <n>] [--archive] [--json]
+  her reingest [--root <store>] [--limit <n>] [--dry-run] [--json]
   her reflect [--if-due] [--json]
   her review-narrative [--keep <id>|--revert <id>] [--json]
   her restore --semantic <key> [--now <YYYY-MM-DD>] [--json]
