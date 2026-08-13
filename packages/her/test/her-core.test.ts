@@ -1958,3 +1958,12 @@ test("frontmatter round-trips strings that look like other scalar types", () => 
 	assert.equal(typed.done, true);
 	assert.equal(typed.none, null);
 });
+
+test("parseFrontmatter reads keys after a UTF-8 BOM (DR-03 false positive)", () => {
+	const parsed = parseFrontmatter(
+		"\uFEFF---\nid: bom-note\ntimestamp: 2026-06-03T00:00:00Z\nproject: her\nsession_id: s1\n---\nBody.\n",
+	);
+	assert.equal(parsed.data.id, "bom-note");
+	assert.equal(parsed.data.session_id, "s1");
+	assert.equal(parsed.body, "Body.\n");
+});

@@ -209,11 +209,12 @@ export function parseFrontmatter(text: string | undefined): {
 	data: Record<string, unknown>;
 	body: string;
 } {
-	if (!text?.startsWith("---")) return { data: {}, body: text ?? "" };
-	const end = text.indexOf("\n---", 3);
-	if (end < 0) return { data: {}, body: text };
-	const raw = text.slice(4, end).replace(/\r/g, "");
-	const body = text.slice(end + 4).replace(/^\r?\n/, "");
+	const source = (text ?? "").replace(/^\uFEFF/, "");
+	if (!source.startsWith("---")) return { data: {}, body: source };
+	const end = source.indexOf("\n---", 3);
+	if (end < 0) return { data: {}, body: source };
+	const raw = source.slice(4, end).replace(/\r/g, "");
+	const body = source.slice(end + 4).replace(/^\r?\n/, "");
 	const data: Record<string, unknown> = {};
 	const lines = raw.split(/\r?\n/);
 	for (let index = 0; index < lines.length; index++) {
