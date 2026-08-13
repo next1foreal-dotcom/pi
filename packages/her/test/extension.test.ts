@@ -671,7 +671,9 @@ test("extension Cedar denies unregistered write aliases targeting an anchor path
 				},
 				ctx,
 			);
-			assert.deepEqual(blocked, { block: true, reason: "cedar: deny (no permit matched)" }, toolName);
+			// Since 2026-08-13 the anchor forbid also matches (path now reaches Cedar),
+			// so the deny names the rule instead of "no permit matched".
+			assert.deepEqual(blocked, { block: true, reason: "cedar: deny (matched forbid_anchor_write)" }, toolName);
 		}
 
 		const auditFiles = await readdir(join(store, "audit"));
@@ -687,10 +689,87 @@ test("extension Cedar denies unregistered write aliases targeting an anchor path
 		assert.deepEqual(
 			entries.map((entry) => [entry.tool, entry.verdict, entry.rule]),
 			[
-				["str_replace", "DENY", null],
-				["powershell", "DENY", null],
+				["str_replace", "DENY", "forbid_anchor_write"],
+				["powershell", "DENY", "forbid_anchor_write"],
 			],
 		);
+	});
+});
+
+test("extension Cedar denies REGISTERED write/edit targeting an anchor path (live probe hole, 2026-08-13)", async () => {
+	const store = await tempStore();
+	const ctx = createContext(store);
+
+	await withMemoryDir(store, async () => {
+		const fake = createFakePi();
+		her(fake.pi);
+
+		const toolCall = fake.handlers.get("tool_call")?.[0];
+		assert.ok(toolCall);
+
+		const writeBlocked = await toolCall(
+			{
+				type: "tool_call",
+				toolCallId: "call-anchor-write",
+				toolName: "write",
+				input: { path: "her-memory/narrative/SOUL.md", content: "G-257 live probe" },
+			},
+			ctx,
+		);
+		assert.deepEqual(writeBlocked, { block: true, reason: "cedar: deny (matched forbid_anchor_write)" });
+
+		const editBlocked = await toolCall(
+			{
+				type: "tool_call",
+				toolCallId: "call-anchor-edit",
+				toolName: "edit",
+				input: { path: join(store, "narrative", "SOUL.md") },
+			},
+			ctx,
+		);
+		assert.deepEqual(editBlocked, { block: true, reason: "cedar: deny (matched forbid_anchor_write)" });
+
+		const normalWrite = await toolCall(
+			{
+				type: "tool_call",
+				toolCallId: "call-normal-write",
+				toolName: "write",
+				input: { path: "index.html", content: "<html></html>" },
+			},
+			ctx,
+		);
+		assert.equal(normalWrite, undefined, "non-anchor writes stay permitted");
+
+		const soul = await readText(join(store, "narrative", "SOUL.md"));
+		assert.doesNotMatch(soul ?? "", /G-257 live probe/, "nothing may land in SOUL.md");
+
+		const auditFiles = await readdir(join(store, "audit"));
+		const entries = (
+			await Promise.all(
+				auditFiles.sort().map(async (file) => ((await readText(join(store, "audit", file))) ?? "").trim()),
+			)
+		)
+			.join("\n")
+			.split("\n")
+			.filter(Boolean)
+			.map(
+				(line) =>
+					JSON.parse(line) as {
+						context: { anchorPath?: boolean; targetPath?: string };
+						rule: string | null;
+						tool: string;
+						verdict: string;
+					},
+			);
+		assert.deepEqual(
+			entries.map((entry) => [entry.tool, entry.verdict, entry.rule, entry.context.anchorPath ?? null]),
+			[
+				["write", "DENY", "forbid_anchor_write", true],
+				["edit", "DENY", "forbid_anchor_write", true],
+				["write", "ALLOW", "permit_coding_destructive_tools", false],
+			],
+		);
+		assert.equal(entries[0]?.context.targetPath, "her-memory/narrative/SOUL.md");
 	});
 });
 

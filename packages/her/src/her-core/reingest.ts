@@ -295,11 +295,19 @@ export async function runReingest(root: string, opts: ReingestOptions = {}): Pro
 	const paths = new StorePaths(root);
 	const ledger = await loadLedger(ledgerPath(paths));
 	const segments = await listQuarantineSegments(paths);
-	const seenHashes = new Set(Object.values(ledger.processed).map((record) => record.bodySha256));
+	// "failed" records stay in the ledger for audit but do not seed the
+	// duplicate-body set and do not park the segment: a truncated model
+	// response must remain retryable on a later run.
+	const seenHashes = new Set(
+		Object.values(ledger.processed)
+			.filter((record) => record.outcome !== "failed")
+			.map((record) => record.bodySha256),
+	);
 	const unprocessed: QuarantineSegment[] = [];
 	let alreadyProcessed = 0;
 	for (const segment of segments) {
-		if (ledger.processed[segment.id]) {
+		const record = ledger.processed[segment.id];
+		if (record && record.outcome !== "failed") {
 			alreadyProcessed++;
 			continue;
 		}
@@ -333,59 +341,83 @@ export async function runReingest(root: string, opts: ReingestOptions = {}): Pro
 	const model = opts.model;
 	const memory = new Memory(root, model);
 
-	await storeLock(root, async () => {
-		for (const segment of batch) {
-			if (ledger.processed[segment.id]) {
-				report.skipped.alreadyProcessed++;
-				continue;
-			}
-			if (seenHashes.has(segment.bodySha256)) {
-				await recordProcessed(paths, ledger, segment, "skipped", "duplicate-body", []);
-				seenHashes.add(segment.bodySha256);
-				report.skipped.duplicateBody++;
-				report.entries.push({
-					id: segment.id,
-					episode: segment.episode,
-					part: segment.part,
-					chars: segment.chars,
-					reason: "duplicate-body",
-					outcome: "skipped",
-					noteKeys: [],
-				});
-				continue;
-			}
-			try {
-				const { noteKeys } = await digestSegment(memory, model, segment);
-				await recordProcessed(paths, ledger, segment, "ingested", segment.quarantineReason || "ingested", noteKeys);
-				seenHashes.add(segment.bodySha256);
-				report.ingested++;
-				report.entries.push({
-					id: segment.id,
-					episode: segment.episode,
-					part: segment.part,
-					chars: segment.chars,
-					reason: segment.quarantineReason || "ingested",
-					outcome: "ingested",
-					noteKeys,
-				});
-			} catch (error) {
-				const reason = failureReason(error);
-				if (!reason) throw error;
-				await recordProcessed(paths, ledger, segment, "failed", reason, []);
-				seenHashes.add(segment.bodySha256);
-				report.failed++;
-				report.entries.push({
-					id: segment.id,
-					episode: segment.episode,
-					part: segment.part,
-					chars: segment.chars,
-					reason,
-					outcome: "failed",
-					noteKeys: [],
-				});
-			}
+	// Lock-window discipline (G-36A): model calls run OUTSIDE the store lock.
+	// digestSegment's distill and any upsert merges take their own short lock
+	// windows; holding the lock across a whole batch starves every other
+	// writer (nightly consolidate would hit its acquire timeout).
+	for (const segment of batch) {
+		const record = ledger.processed[segment.id];
+		if (record && record.outcome !== "failed") {
+			report.skipped.alreadyProcessed++;
+			continue;
 		}
-	});
+		if (seenHashes.has(segment.bodySha256)) {
+			await storeLock(root, () => recordProcessed(paths, ledger, segment, "skipped", "duplicate-body", []));
+			seenHashes.add(segment.bodySha256);
+			report.skipped.duplicateBody++;
+			report.entries.push({
+				id: segment.id,
+				episode: segment.episode,
+				part: segment.part,
+				chars: segment.chars,
+				reason: "duplicate-body",
+				outcome: "skipped",
+				noteKeys: [],
+			});
+			continue;
+		}
+		let noteKeys: string[] = [];
+		let failed: "malformed" | "truncated" | undefined;
+		try {
+			noteKeys = (await digestSegment(memory, model, segment)).noteKeys;
+		} catch (error) {
+			const reason = failureReason(error);
+			if (!reason) throw error;
+			failed = reason;
+		}
+		const recorded = await storeLock(root, async (): Promise<boolean> => {
+			// Premise recheck: another reingest process may have recorded this
+			// segment while our model call was in flight; disk wins.
+			const fresh = await loadLedger(ledgerPath(paths));
+			ledger.processed = { ...ledger.processed, ...fresh.processed };
+			const current = ledger.processed[segment.id];
+			if (current && current.outcome !== "failed") return false;
+			if (failed) {
+				await recordProcessed(paths, ledger, segment, "failed", failed, []);
+			} else {
+				await recordProcessed(paths, ledger, segment, "ingested", segment.quarantineReason || "ingested", noteKeys);
+			}
+			return true;
+		});
+		if (!recorded) {
+			report.skipped.alreadyProcessed++;
+			continue;
+		}
+		if (failed) {
+			report.failed++;
+			report.entries.push({
+				id: segment.id,
+				episode: segment.episode,
+				part: segment.part,
+				chars: segment.chars,
+				reason: failed,
+				outcome: "failed",
+				noteKeys: [],
+			});
+		} else {
+			seenHashes.add(segment.bodySha256);
+			report.ingested++;
+			report.entries.push({
+				id: segment.id,
+				episode: segment.episode,
+				part: segment.part,
+				chars: segment.chars,
+				reason: segment.quarantineReason || "ingested",
+				outcome: "ingested",
+				noteKeys,
+			});
+		}
+	}
 
 	return report;
 }

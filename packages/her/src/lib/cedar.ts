@@ -131,6 +131,15 @@ export function authorizeSelfModTool(request: SelfModToolRequest): Verdict {
 	return verdict;
 }
 
+/** Resolve a tool-call target the way selfmod does and ask if it is an anchor. */
+export function isAnchorTargetPath(request: Pick<SelfModToolRequest, "cwd" | "memoryDir" | "targetPath">): {
+	anchorPath: boolean;
+	targetPath: string;
+} {
+	const targetPath = logicalTargetPath(request);
+	return { anchorPath: isAnchorPath(targetPath), targetPath };
+}
+
 function logicalTargetPath(request: Pick<SelfModToolRequest, "cwd" | "memoryDir" | "targetPath">): string {
 	const supplied = request.targetPath.replaceAll("\\", "/");
 	if (supplied.toLowerCase().startsWith("her-memory/")) return supplied;

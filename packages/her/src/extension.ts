@@ -90,7 +90,7 @@ import {
 } from "./her-core/index.ts";
 import { type ReviewEvidenceItem, verifyEvidence } from "./her-core/review-evidence.ts";
 import { appendAuditLog } from "./lib/audit.ts";
-import { evaluate, policyEnvelope } from "./lib/cedar.ts";
+import { evaluate, isAnchorTargetPath, policyEnvelope } from "./lib/cedar.ts";
 import { governedTools, resolveGovernedTool } from "./lib/governed-tools.ts";
 import { registerMcpTools } from "./mcp/tools.ts";
 import { registerPreviewTools } from "./preview/tools.ts";
@@ -486,7 +486,7 @@ function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
-function toolAuthorizationCall(toolName: string, destructive: boolean): AuthorizationCall {
+function toolAuthorizationCall(toolName: string, destructive: boolean, anchorPath?: boolean): AuthorizationCall {
 	return {
 		principal: { type: "Agent", id: "samantha" },
 		action: { type: "Action", id: "CallTool" },
@@ -494,7 +494,11 @@ function toolAuthorizationCall(toolName: string, destructive: boolean): Authoriz
 		context: {},
 		entities: [
 			{ uid: { type: "Agent", id: "samantha" }, attrs: {}, parents: [] },
-			{ uid: { type: "Tool", id: toolName }, attrs: { name: toolName, destructive }, parents: [] },
+			{
+				uid: { type: "Tool", id: toolName },
+				attrs: { name: toolName, destructive, ...(anchorPath === undefined ? {} : { anchorPath }) },
+				parents: [],
+			},
 		],
 		...policyEnvelope(),
 	};
@@ -907,8 +911,19 @@ export default function her(pi: ExtensionAPI): void {
 		const tool = resolveGovernedTool(event.toolName);
 
 		const ts = new Date().toISOString();
+		// G-257 追补 (2026-08-13 live probe): a name-only gate let the registered
+		// `write` tool replace SOUL.md wholesale. When the call carries a path,
+		// resolve it selfmod-style and let forbid_anchor_write see it.
+		const suppliedPath =
+			typeof (event.input as Record<string, unknown> | undefined)?.path === "string"
+				? ((event.input as Record<string, unknown>).path as string)
+				: undefined;
+		const target =
+			suppliedPath === undefined
+				? undefined
+				: isAnchorTargetPath({ cwd: process.cwd(), memoryDir, targetPath: suppliedPath });
 		try {
-			const verdict = evaluate(toolAuthorizationCall(event.toolName, tool.destructive));
+			const verdict = evaluate(toolAuthorizationCall(event.toolName, tool.destructive, target?.anchorPath));
 			const rule = verdict.matched.join(",") || null;
 			appendAuditLog({
 				ts,
@@ -916,7 +931,10 @@ export default function her(pi: ExtensionAPI): void {
 				toolCallId: event.toolCallId,
 				verdict: verdict.decision === "allow" ? "ALLOW" : "DENY",
 				rule,
-				context: { destructive: tool.destructive },
+				context: {
+					destructive: tool.destructive,
+					...(target === undefined ? {} : { anchorPath: target.anchorPath, targetPath: target.targetPath }),
+				},
 			});
 			if (verdict.decision === "deny") {
 				const reason = rule ? `cedar: deny (matched ${rule})` : "cedar: deny (no permit matched)";

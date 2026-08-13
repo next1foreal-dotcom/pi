@@ -23,6 +23,23 @@ permit(
   resource == Tool::"write"
 };
 
+// G-257 追补 — 2026-08-13 活体探针实证:注册在案的 write 靠上面的 permit 整文件
+// 覆写了真店 SOUL.md(audit ALLOW permit_coding_destructive_tools),因为 tool_call
+// 闸从不看目标路径。此条与 selfmod_forbid_anchor_write 同形:forbid 压过一切 permit,
+// 锚路径(SOUL/FACTS/CONTEXT/evals/policies/.githooks/.env)对破坏性工具一律拒。
+// 攻击面诚实声明:只有带 path 入参的工具(write/edit)会被算 anchorPath;bash 的
+// command 字符串不做路径解析,那一层仍靠 git 闸 + 人审。
+@id("forbid_anchor_write")
+forbid(
+  principal == Agent::"samantha",
+  action == Action::"CallTool",
+  resource
+) when {
+  resource.destructive == true &&
+  resource has anchorPath &&
+  resource.anchorPath == true
+};
+
 // G-187 墙2 — Fei 拍板放行(2026-08-02)。her_task_spawn 注册为 destructive:true,
 // 上面三条都不覆盖它,所以 G-148 活体走链撞到 `cedar: deny (no permit matched)`。
 // policy 文本是她自己起草的那条,逐字采用。

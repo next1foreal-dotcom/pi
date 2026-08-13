@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -310,6 +311,80 @@ test("malformed JSON on segment 2 fails that segment and continues", async () =>
 			assert.doesNotMatch((await readText(join(root, "semantic", name))) ?? "", /\.her\/quarantine/);
 		}
 		assert.deepEqual(await quarantineHashes(root), before);
+	});
+});
+
+test("failed ledger entries stay retryable: a later run re-attempts and flips the outcome", async () => {
+	await withStore(async (root) => {
+		await writeQuarantine(root, {
+			episode: "retry-me",
+			body: "A durable fact that the first run truncates and the second run lands.",
+		});
+		const before = await quarantineHashes(root);
+		let attempt = 0;
+		const model = recordingModel(() => {
+			attempt += 1;
+			if (attempt === 1) return '{"notes":[{"key":"cut-off';
+			return noteJson("retry-me", "retry-lands");
+		});
+		const first = await runReingest(root, { model });
+		assert.equal(first.failed, 1);
+		assert.equal(first.entries[0]?.reason, "truncated");
+		const second = await runReingest(root, { model });
+		assert.equal(second.skipped.alreadyProcessed, 0, "failed must not count as already processed");
+		assert.equal(second.ingested, 1);
+		assert.equal(model.calls.length, 2, "the retry makes exactly one more model call");
+		const ledger = await readJson<{ processed: Record<string, { outcome: string }> }>(
+			join(root, ".her", "reingest-state.json"),
+			{ processed: {} },
+		);
+		assert.equal(ledger.processed["retry-me--part-1"]?.outcome, "ingested");
+		const third = await runReingest(root, { model });
+		assert.equal(third.skipped.alreadyProcessed, 1, "ingested is terminal");
+		assert.equal(model.calls.length, 2);
+		assert.deepEqual(await quarantineHashes(root), before);
+	});
+});
+
+test("reingest does not hold the store lock during model calls and re-acquires it to record", async () => {
+	await withStore(async (root) => {
+		await writeQuarantine(root, {
+			episode: "lock-a",
+			body: "Lock-window fixture A: the distill call must run with the lock released.",
+		});
+		await writeQuarantine(root, {
+			episode: "lock-b",
+			body: "Lock-window fixture B: every model call in the batch stays outside the lock.",
+		});
+		const lockPath = join(root, ".her", "lock");
+		const heldDuringComplete: boolean[] = [];
+		let seenHeldAfterModel = false;
+		let polling = true;
+		const poll = (): void => {
+			if (!polling) return;
+			if (existsSync(lockPath)) seenHeldAfterModel = true;
+			setImmediate(poll);
+		};
+		const model = {
+			complete(prompt: string): string {
+				heldDuringComplete.push(existsSync(lockPath));
+				setImmediate(poll);
+				return noteJson(episodeIdFromPrompt(prompt), `lock-note-${heldDuringComplete.length}`);
+			},
+		};
+		try {
+			const report = await runReingest(root, { model });
+			assert.equal(report.ingested, 2);
+			assert.equal(heldDuringComplete.length, 2);
+			assert.deepEqual(
+				heldDuringComplete,
+				[false, false],
+				"store lock file must be absent during every reingest model call",
+			);
+			assert.equal(seenHeldAfterModel, true, "store lock must be held for the ledger/audit write phase");
+		} finally {
+			polling = false;
+		}
 	});
 });
 
