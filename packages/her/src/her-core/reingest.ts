@@ -10,7 +10,8 @@ import {
 	markdownStems,
 	slug,
 } from "./memory-utils.ts";
-import type { ModelLike } from "./model.ts";
+import { invokeCompletion, type ModelLike } from "./model.ts";
+import { completionMetaOf, withOpBracket } from "./op-brackets.ts";
 import { StorePaths } from "./paths.ts";
 import { reingestPrompt } from "./prompts.ts";
 import { appendText, parseFrontmatter, readJson, readText, writeJson } from "./store.ts";
@@ -344,7 +345,7 @@ async function distillSegment(memory: Memory, model: ModelLike, segment: Quarant
 	const result = await completeJson<{
 		moments?: Array<{ shift?: string; trigger?: string }>;
 		notes?: Array<Record<string, unknown>>;
-	}>(() => model.complete(reingestPrompt(promptText, selectedKeys)));
+	}>(() => invokeCompletion(model, reingestPrompt(promptText, selectedKeys)));
 	const accepted: Array<Record<string, unknown>> = [];
 	const rawNotes = Array.isArray(result.notes) ? result.notes : [];
 	for (const note of rawNotes) {
@@ -364,6 +365,16 @@ function failureReason(error: unknown): "malformed" | "truncated" | undefined {
 }
 
 export async function runReingest(root: string, opts: ReingestOptions = {}): Promise<ReingestReport> {
+	return withOpBracket(root, "reingest", async (ctx) => {
+		try {
+			return await runReingestInner(root, opts);
+		} finally {
+			ctx.noteModel(completionMetaOf(opts.model));
+		}
+	});
+}
+
+async function runReingestInner(root: string, opts: ReingestOptions = {}): Promise<ReingestReport> {
 	const limit = opts.limit ?? DEFAULT_LIMIT;
 	if (!Number.isFinite(limit) || limit <= 0) throw new Error("reingest limit must be positive");
 	const dryRun = opts.dryRun === true;

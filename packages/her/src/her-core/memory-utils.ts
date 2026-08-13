@@ -13,6 +13,7 @@ import type {
 	JudgmentFields,
 	WorldNoteData,
 } from "./memory-types.ts";
+import type { CompletionResult } from "./model.ts";
 import { readText } from "./store.ts";
 
 const execFileAsync = promisify(execFile);
@@ -665,11 +666,26 @@ export function extractJson<T>(text: string): T {
 // and raise JsonTruncatedError immediately — without exhausting attempts — so a caller that
 // controls the input size can shrink the batch. The attempts default stays 3 for genuine
 // stochastic malformations.
-export async function completeJson<T>(complete: () => Promise<string> | string, attempts = 3): Promise<T> {
+export type CompleteJsonSource = () => Promise<string | CompletionResult> | string | CompletionResult;
+
+function unwrapCompletion(value: string | CompletionResult): CompletionResult {
+	if (typeof value === "string") return { text: value };
+	if (value && typeof value.text === "string") return value;
+	throw new Error("completeJson complete() must return a string or CompletionResult");
+}
+
+export async function completeJson<T>(complete: CompleteJsonSource, attempts = 3): Promise<T> {
 	let lastError = "";
 	let lastText = "";
 	for (let attempt = 1; attempt <= attempts; attempt++) {
-		lastText = await complete();
+		const completion = unwrapCompletion(await complete());
+		lastText = completion.text;
+		if (completion.finishReason === "length") {
+			throw new JsonTruncatedError(
+				`model response truncated (finish_reason=length) on attempt ${attempt}/${attempts}; re-asking the same prompt cannot help — reduce the batch. response head: ${lastText.slice(0, 200)}`,
+				lastText,
+			);
+		}
 		try {
 			return extractJson<T>(lastText);
 		} catch (error) {

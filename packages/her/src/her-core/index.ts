@@ -268,8 +268,9 @@ export {
 	resolveTargetSource,
 	writeMessage,
 } from "./messages.ts";
-export type { ModelLike } from "./model.ts";
-export { FakeModel, OpenAICompatibleModel } from "./model.ts";
+export type { CompletionMeta, CompletionResult, CompletionUsage, ModelLike } from "./model.ts";
+export { FakeModel, FinishReasonLengthError, invokeCompletion, OpenAICompatibleModel } from "./model.ts";
+export { detectOrphanBrackets, opsLedgerPath, withOpBracket } from "./op-brackets.ts";
 export {
 	buildPanelChairBrief,
 	type PanelChairBriefParams,

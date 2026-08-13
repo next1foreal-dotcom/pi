@@ -101,7 +101,8 @@ import {
 	type TasteBoardApplyResult,
 	writeWorldNote,
 } from "./memory-world.ts";
-import type { ModelLike } from "./model.ts";
+import { FinishReasonLengthError, invokeCompletion, type ModelLike } from "./model.ts";
+import { completionMetaOf, type OpBracketContext, withOpBracket } from "./op-brackets.ts";
 import { StorePaths } from "./paths.ts";
 import type { PriorMode, PriorResult } from "./prior.ts";
 import { classifyCapturePrivacy, validateMemoryProvenance } from "./privacy.ts";
@@ -836,6 +837,16 @@ export class Memory {
 	}
 
 	async consolidate(limit = 25): Promise<ConsolidateResult> {
+		return withOpBracket(this.paths.root, "consolidate", async (ctx) => {
+			try {
+				return await this.consolidateInner(limit);
+			} finally {
+				ctx.noteModel(completionMetaOf(this.model));
+			}
+		});
+	}
+
+	private async consolidateInner(limit = 25): Promise<ConsolidateResult> {
 		if (!this.model) throw new Error("consolidate requires a model");
 		const model = this.model;
 		const boot = await this.withStoreLock(async () => {
@@ -1087,7 +1098,7 @@ export class Memory {
 				result = await completeJson<{
 					notes?: Array<Record<string, unknown>>;
 					moments?: Array<{ trigger?: string; shift?: string }>;
-				}>(() => model.complete(consolidatePrompt(joined, selectedKeys)));
+				}>(() => invokeCompletion(model, consolidatePrompt(joined, selectedKeys)));
 			} catch (error) {
 				if ((error instanceof JsonTruncatedError || error instanceof JsonMalformedError) && episodes.length > 1) {
 					const fromBatchLimit = batchLimit;
@@ -1296,7 +1307,7 @@ export class Memory {
 						envPositiveInt("HER_CONSOLIDATE_KEY_BUDGET", DEFAULT_CONSOLIDATE_KEY_BUDGET) +
 						")",
 				);
-				result = await completeJson(() => model.complete(consolidatePrompt(promptText, selectedKeys)));
+				result = await completeJson(() => invokeCompletion(model, consolidatePrompt(promptText, selectedKeys)));
 			} catch (error) {
 				if (error instanceof JsonTruncatedError) {
 					await splitOrQuarantine(text, part, error.responseHead);
@@ -1343,6 +1354,10 @@ export class Memory {
 	}
 
 	async synthesize(): Promise<string> {
+		return withOpBracket(this.paths.root, "synthesize", (ctx) => this.synthesizeInner(ctx));
+	}
+
+	private async synthesizeInner(ctx: OpBracketContext): Promise<string> {
 		if (!this.model) throw new Error("synthesize requires a model");
 		const prepared = await this.withStoreLock(async () => {
 			const current = (await readText(this.paths.contextFile)) ?? SEED_CONTEXT;
@@ -1363,7 +1378,8 @@ export class Memory {
 				contextFingerprint: textFingerprint(current),
 			};
 		});
-		const draft = await this.model.complete(
+		const completion = await invokeCompletion(
+			this.model,
 			synthesizePrompt(
 				prepared.current,
 				prepared.notes,
@@ -1377,6 +1393,20 @@ export class Memory {
 				strong: true,
 			},
 		);
+		ctx.noteModel({
+			...(completion.finishReason ? { finishReason: completion.finishReason } : {}),
+			...(completion.usage ? { usage: completion.usage } : {}),
+			...(completion.model ? { model: completion.model } : {}),
+			...(completion.provider ? { provider: completion.provider } : {}),
+		});
+		if (completion.finishReason === "length") {
+			throw new FinishReasonLengthError({
+				finishReason: completion.finishReason,
+				draftBytes: Buffer.byteLength(completion.text, "utf8"),
+				currentBytes: Buffer.byteLength(prepared.current, "utf8"),
+			});
+		}
+		const draft = completion.text;
 		// Fail before anything lands. The proposal, CONTEXT.md and last_synthesize all advance
 		// together below, so a draft cut off at the token ceiling would overwrite the core
 		// narrative and stamp the week done — which is exactly what happened on 08-09/08-11.
@@ -1535,7 +1565,7 @@ export class Memory {
 				async (current) => {
 					const lines = current.map((unit) => `- ${unit.key} (${unit.type}): ${unit.title}`).join("\n");
 					return completeJson<{ maps?: Array<{ theme?: string; summary?: string; members?: string[] }> }>(() =>
-						model.complete(topicMapPrompt(lines), { strong: true }),
+						invokeCompletion(model, topicMapPrompt(lines), { strong: true }),
 					);
 				},
 				floor,
@@ -1618,7 +1648,9 @@ export class Memory {
 						kind?: string;
 					}>;
 				}>(() =>
-					model.complete(ideaEnginePrompt(unitLines, prepared.topicLines, prepared.existing), { strong: true }),
+					invokeCompletion(model, ideaEnginePrompt(unitLines, prepared.topicLines, prepared.existing), {
+						strong: true,
+					}),
 				);
 			},
 			floor,
@@ -2011,7 +2043,7 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 			const model = this.model;
 			try {
 				const merged = await completeJson<{ content?: unknown; change?: unknown }>(() =>
-					model.complete(mergeNotePrompt(snapshot.oldProse, incoming, relations)),
+					invokeCompletion(model, mergeNotePrompt(snapshot.oldProse, incoming, relations)),
 				);
 				const mergedContent = typeof merged.content === "string" ? merged.content.trim() : "";
 				if (!mergedContent) throw new Error("merge returned empty content");
