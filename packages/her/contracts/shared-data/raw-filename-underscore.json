@@ -1,0 +1,7 @@
+{
+  "surface": "raw-filename",
+  "case": "colon-to-underscore",
+  "valid": true,
+  "input": { "timestamp": "2026-08-11T14:03", "session_id": "sess01" },
+  "expect": { "filename": "2026-08-11T14_03--sess01.md" }
+}

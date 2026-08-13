@@ -1,0 +1,19 @@
+{
+  "surface": "raw-episode-frontmatter",
+  "case": "unquoted-colon",
+  "valid": false,
+  "input_file": "raw-fm-unquoted-colon.md",
+  "expect": {
+    "data": { "theme": "Memory and Identity: Evolution" },
+    "body": "Body here.\n",
+    "schema_missing": ["id", "timestamp", "project", "session_id"]
+  },
+  "python": {
+    "discrepancy": "yaml.safe_load raises YAMLError on an unquoted colon in a plain scalar; parse_frontmatter degrades to empty fm + full text as body (store.py:295-296). TS parseFrontmatter splits on the first colon and keeps the rest as a string (store.ts:221-226).",
+    "expect": {
+      "data": {},
+      "body": "---\ntheme: Memory and Identity: Evolution\n---\nBody here.\n",
+      "schema_missing": ["id", "timestamp", "project", "session_id"]
+    }
+  }
+}

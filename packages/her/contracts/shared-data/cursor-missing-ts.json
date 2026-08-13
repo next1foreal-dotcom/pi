@@ -1,0 +1,16 @@
+{
+  "surface": "consolidate-cursor",
+  "case": "missing-ts",
+  "valid": false,
+  "input": { "done_ids": [] },
+  "expect": {
+    "parse": { "ok": false, "error": "invalid consolidate cursor ts" },
+    "doctor": { "shape": "fail" }
+  },
+  "python": {
+    "discrepancy": "Python stringifies the dict and no-ops _episodes_since; it does not throw.",
+    "filter": [
+      { "ts": "2026-06-02T10:00", "id": "any", "included": false }
+    ]
+  }
+}

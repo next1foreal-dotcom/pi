@@ -1,0 +1,18 @@
+{
+  "surface": "consolidate-cursor",
+  "case": "iso-string",
+  "valid": true,
+  "input": "2026-06-02T10:00",
+  "expect": {
+    "parse": {
+      "ok": true,
+      "value": { "ts": "2026-06-02T10:00", "done_ids": [], "legacy": true }
+    },
+    "doctor": { "shape": "pass", "timestamp": "pass" },
+    "filter": [
+      { "ts": "2026-06-02T09:00", "id": "before", "included": false },
+      { "ts": "2026-06-02T10:00", "id": "boundary", "included": false },
+      { "ts": "2026-06-02T11:00", "id": "after", "included": true }
+    ]
+  }
+}

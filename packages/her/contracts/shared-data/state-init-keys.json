@@ -1,0 +1,16 @@
+{
+  "surface": "state-json",
+  "case": "init-keys",
+  "valid": true,
+  "input": {
+    "cursor": null,
+    "last_consolidate": null,
+    "last_synthesize": null
+  },
+  "expect": {
+    "required_keys": ["cursor", "last_consolidate", "last_synthesize"],
+    "cursor": null,
+    "last_consolidate": null,
+    "last_synthesize": null
+  }
+}
