@@ -27,8 +27,8 @@ permit(
 // 覆写了真店 SOUL.md(audit ALLOW permit_coding_destructive_tools),因为 tool_call
 // 闸从不看目标路径。此条与 selfmod_forbid_anchor_write 同形:forbid 压过一切 permit,
 // 锚路径(SOUL/FACTS/CONTEXT/evals/policies/.githooks/.env)对破坏性工具一律拒。
-// 攻击面诚实声明:只有带 path 入参的工具(write/edit)会被算 anchorPath;bash 的
-// command 字符串不做路径解析,那一层仍靠 git 闸 + 人审。
+// bash/powershell 的 command 字符串会扫 path 候选和锚路径子串(含绝对 her-memory
+// 路径);漏解析的绕法仍靠 git 闸 + 人审。
 @id("forbid_anchor_write")
 forbid(
   principal == Agent::"samantha",

@@ -9,7 +9,7 @@ import {
 	policySetTextToParts,
 	policyToJson,
 } from "@cedar-policy/cedar-wasm/nodejs";
-import { isAllowedSelfModPath, isAnchorPath } from "../rsi/anchors.ts";
+import { ANCHOR_PATHS, isAllowedSelfModPath, isAnchorPath } from "../rsi/anchors.ts";
 import { appendAuditLog } from "./audit.ts";
 import { resolveGovernedTool } from "./governed-tools.ts";
 
@@ -138,6 +138,108 @@ export function isAnchorTargetPath(request: Pick<SelfModToolRequest, "cwd" | "me
 } {
 	const targetPath = logicalTargetPath(request);
 	return { anchorPath: isAnchorPath(targetPath), targetPath };
+}
+
+const PATH_FIELD_KEYS = [
+	"path",
+	"file_path",
+	"filePath",
+	"target",
+	"target_file",
+	"targetFile",
+	"filename",
+	"file",
+] as const;
+
+/**
+ * Pull a target path out of a tool-call payload. write/edit carry `path`;
+ * bash/powershell carry a `command` string — scan that too so forbid_anchor_write
+ * sees redirection and Set-Content against SOUL.md.
+ */
+export function resolveToolCallAnchor(request: {
+	cwd: string;
+	memoryDir: string;
+	input: Record<string, unknown> | undefined;
+}): { anchorPath: boolean; targetPath: string } | undefined {
+	const input = request.input;
+	if (!input) return undefined;
+
+	let recorded: { anchorPath: boolean; targetPath: string } | undefined;
+	for (const key of PATH_FIELD_KEYS) {
+		const value = input[key];
+		if (typeof value !== "string" || value.trim() === "") continue;
+		const resolved = isAnchorTargetPath({
+			cwd: request.cwd,
+			memoryDir: request.memoryDir,
+			targetPath: value,
+		});
+		if (resolved.anchorPath) return resolved;
+		recorded ??= resolved;
+	}
+
+	if (typeof input.command === "string" && input.command.trim() !== "") {
+		const fromCommand = resolveAnchorInCommand(input.command, request);
+		if (fromCommand) return fromCommand;
+	}
+	return recorded;
+}
+
+function resolveAnchorInCommand(
+	command: string,
+	request: { cwd: string; memoryDir: string },
+): { anchorPath: boolean; targetPath: string } | undefined {
+	for (const candidate of extractPathCandidates(command)) {
+		const resolved = isAnchorTargetPath({
+			cwd: request.cwd,
+			memoryDir: request.memoryDir,
+			targetPath: candidate,
+		});
+		if (resolved.anchorPath) return resolved;
+	}
+	const mentioned = mentionAnchorPath(command, request.memoryDir);
+	if (!mentioned) return undefined;
+	return isAnchorTargetPath({
+		cwd: request.cwd,
+		memoryDir: request.memoryDir,
+		targetPath: mentioned,
+	});
+}
+
+function extractPathCandidates(command: string): string[] {
+	const candidates: string[] = [];
+	const seen = new Set<string>();
+	const push = (raw: string) => {
+		const trimmed = raw.trim().replace(/^['"`]+|['"`]+$/g, "");
+		if (trimmed.length < 3) return;
+		if (seen.has(trimmed)) return;
+		seen.add(trimmed);
+		candidates.push(trimmed);
+	};
+	for (const match of command.matchAll(/"([^"]+)"|'([^']+)'|`([^`]+)`/g)) {
+		push(match[1] ?? match[2] ?? match[3] ?? "");
+	}
+	for (const token of command.split(/[\s;|&]+/)) {
+		const cleaned = token.replace(/^[<>]+/, "");
+		if (/[\\/]/.test(cleaned) || /\.(md|cedar|ts|env)$/i.test(cleaned)) push(cleaned);
+	}
+	return candidates;
+}
+
+function mentionAnchorPath(command: string, memoryDir: string): string | undefined {
+	const haystack = command.replaceAll("\\", "/").toLowerCase();
+	const memoryRoot = resolve(memoryDir).replaceAll("\\", "/");
+	const needles = [
+		...ANCHOR_PATHS,
+		"packages/her/src/rsi/anchors.ts",
+		...ANCHOR_PATHS.filter((prefix) => prefix.startsWith("her-memory/")).map(
+			(prefix) => `${memoryRoot}/${prefix.slice("her-memory/".length)}`,
+		),
+	];
+	for (const needle of needles) {
+		const normalized = needle.replaceAll("\\", "/").toLowerCase();
+		if (haystack.includes(normalized)) return needle;
+	}
+	return undefined;
 }
 
 function logicalTargetPath(request: Pick<SelfModToolRequest, "cwd" | "memoryDir" | "targetPath">): string {
