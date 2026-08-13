@@ -1,4 +1,4 @@
-// Bundled from https://github.com/genspark-ai/genoffice @ dc4d7e5 (Apache-2.0). See NOTES.md; do not hand-edit.
+// Bundled from https://github.com/genspark-ai/genoffice @ 945c370 (Apache-2.0). See NOTES.md; do not hand-edit.
 var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -10205,7 +10205,7 @@ var COMMON_HTML = {
 var ENTITY_ACTION = Object.freeze({
   /** Resolve and expand the entity normally. */
   ALLOW: "allow",
-  /** Silently skip this entity 鈥?it will not be registered. */
+  /** Silently skip this entity — it will not be registered. */
   BLOCK: "block",
   /** Throw an error, aborting entity registration entirely. */
   THROW: "throw"
@@ -10265,27 +10265,27 @@ function parseNCRConfig(ncr) {
 var EntityDecoder = class {
   /**
    * @param {object} [options]
-   * @param {object|null}  [options.namedEntities]        鈥?extra named entities merged into base map
-   * @param {object}  [options.limit]                 鈥?security limits
-   * @param {number}       [options.limit.maxTotalExpansions=0]  鈥?0 = unlimited
-   * @param {number}       [options.limit.maxExpandedLength=0]   鈥?0 = unlimited
+   * @param {object|null}  [options.namedEntities]        — extra named entities merged into base map
+   * @param {object}  [options.limit]                 — security limits
+   * @param {number}       [options.limit.maxTotalExpansions=0]  — 0 = unlimited
+   * @param {number}       [options.limit.maxExpandedLength=0]   — 0 = unlimited
    * @param {'external'|'base'|'all'|string[]} [options.limit.applyLimitsTo='external']
    *   Which entity tiers count against the security limits:
-   *   - 'external' (default) 鈥?only input/runtime + persistent external entities
-   *   - 'base'               鈥?only DEFAULT_XML_ENTITIES + namedEntities
-   *   - 'all'                鈥?every entity regardless of tier
-   *   - string[]             鈥?explicit combination, e.g. ['external', 'base']
+   *   - 'external' (default) — only input/runtime + persistent external entities
+   *   - 'base'               — only DEFAULT_XML_ENTITIES + namedEntities
+   *   - 'all'                — every entity regardless of tier
+   *   - string[]             — explicit combination, e.g. ['external', 'base']
    * @param {((resolved: string, original: string) => string)|null} [options.postCheck=null]
-   * @param {string[]} [options.remove=[]] 鈥?entity names (e.g. ['nbsp', '#13']) to delete (replace with empty string)
-   * @param {string[]} [options.leave=[]]  鈥?entity names to keep as literal (unchanged in output)
-   * @param {object}   [options.ncr]       鈥?Numeric Character Reference controls
+   * @param {string[]} [options.remove=[]] — entity names (e.g. ['nbsp', '#13']) to delete (replace with empty string)
+   * @param {string[]} [options.leave=[]]  — entity names to keep as literal (unchanged in output)
+   * @param {object}   [options.ncr]       — Numeric Character Reference controls
    * @param {1.0|1.1}  [options.ncr.xmlVersion=1.0]
    *   XML version governing which codepoint ranges are restricted:
-   *   - 1.0 鈥?C0 controls U+0001鈥揢+001F (except U+0009/000A/000D) are prohibited
-   *   - 1.1 鈥?C0 controls are allowed when written as NCRs; C1 (U+007F鈥揢+009F) decoded as-is
+   *   - 1.0 — C0 controls U+0001–U+001F (except U+0009/000A/000D) are prohibited
+   *   - 1.1 — C0 controls are allowed when written as NCRs; C1 (U+007F–U+009F) decoded as-is
    * @param {'allow'|'leave'|'remove'|'throw'} [options.ncr.onNCR='allow']
    *   Base action for numeric references. Severity order: allow < leave < remove < throw.
-   *   For codepoint ranges that carry a minimum level (surrogates 鈫?remove, XML 1.0 C0 鈫?remove),
+   *   For codepoint ranges that carry a minimum level (surrogates → remove, XML 1.0 C0 → remove),
    *   the effective action is max(onNCR, rangeMinimum).
    * @param {'remove'|'throw'} [options.ncr.nullNCR='remove']
    *   Action for U+0000 (null). 'allow' and 'leave' are clamped to 'remove' since null is never safe.
@@ -10330,7 +10330,7 @@ var EntityDecoder = class {
    * @param {((name: string, value: string) => 'allow'|'block'|'throw')|null} hook
    * @param {string} name
    * @param {string} value
-   * @param {string} context  鈥?used in error messages ('external' | 'input')
+   * @param {string} context  — used in error messages ('external' | 'input')
    * @returns {boolean}  true = accept, false = skip
    */
   _applyRegistrationHook(hook, name, value, context) {
@@ -10349,7 +10349,7 @@ var EntityDecoder = class {
   // -------------------------------------------------------------------------
   /**
    * Replace the full set of persistent external entities.
-   * All keys are validated 鈥?throws on invalid characters.
+   * All keys are validated — throws on invalid characters.
    * If `onExternalEntity` is set, it is called once per entry; entries that
    * return `ENTITY_ACTION.BLOCK` are silently omitted, `ENTITY_ACTION.THROW`
    * aborts the whole call.
@@ -10539,7 +10539,7 @@ var EntityDecoder = class {
   /**
    * Returns true if a resolved entity of the given tier should count
    * against the expansion/length limits.
-   * @param {string} tier  鈥?LIMIT_TIER_EXTERNAL | LIMIT_TIER_BASE
+   * @param {string} tier  — LIMIT_TIER_EXTERNAL | LIMIT_TIER_BASE
    * @returns {boolean}
    */
   _tierCounts(tier) {
@@ -10568,13 +10568,13 @@ var EntityDecoder = class {
    * Returns -1 when no minimum is imposed (normal allow path).
    *
    * Ranges checked (in priority order):
-   *   1. U+0000            鈥?null, governed by nullNCR (always 鈮?remove)
-   *   2. U+D800鈥揢+DFFF     鈥?surrogates, always prohibited (min: remove)
-   *   3. U+0001鈥揢+001F \ {0x09,0x0A,0x0D}  鈥?XML 1.0 restricted C0 (min: remove)
-   *      (skipped in XML 1.1 鈥?C0 controls are allowed when written as NCRs)
+   *   1. U+0000            — null, governed by nullNCR (always ≥ remove)
+   *   2. U+D800–U+DFFF     — surrogates, always prohibited (min: remove)
+   *   3. U+0001–U+001F \ {0x09,0x0A,0x0D}  — XML 1.0 restricted C0 (min: remove)
+   *      (skipped in XML 1.1 — C0 controls are allowed when written as NCRs)
    *
-   * @param {number} cp  鈥?codepoint
-   * @returns {number}   鈥?minimum NCR_LEVEL value, or -1 for no restriction
+   * @param {number} cp  — codepoint
+   * @returns {number}   — minimum NCR_LEVEL value, or -1 for no restriction
    */
   _classifyNCR(cp) {
     if (cp === 0) return this._ncrNullLevel;
@@ -10587,14 +10587,14 @@ var EntityDecoder = class {
   /**
    * Execute a resolved NCR action.
    *
-   * @param {number} action   鈥?NCR_LEVEL value
-   * @param {string} token    鈥?raw token (e.g. '#38') for error messages
-   * @param {number} cp       鈥?codepoint, used only for error messages
+   * @param {number} action   — NCR_LEVEL value
+   * @param {string} token    — raw token (e.g. '#38') for error messages
+   * @param {number} cp       — codepoint, used only for error messages
    * @returns {string|undefined}
-   *   - decoded character string  鈫?'allow'
-   *   - ''                        鈫?'remove'
-   *   - undefined                 鈫?'leave' (caller must skip past '&' only)
-   *   - throws Error              鈫?'throw'
+   *   - decoded character string  → 'allow'
+   *   - ''                        → 'remove'
+   *   - undefined                 → 'leave' (caller must skip past '&' only)
+   *   - throws Error              → 'throw'
    */
   _applyNCRAction(action, token, cp) {
     switch (action) {
@@ -10619,15 +10619,15 @@ var EntityDecoder = class {
    * Steps:
    *   1. Parse the codepoint (decimal or hex).
    *   2. Validate the raw codepoint range (NaN, <0, >0x10FFFF).
-   *   3. If numericAllowed is false and no minimum restriction applies 鈫?leave as-is.
+   *   3. If numericAllowed is false and no minimum restriction applies → leave as-is.
    *   4. Classify the codepoint to find the minimum required action level.
    *   5. Resolve effective action = max(onNCR, minimum).
    *   6. Apply and return.
    *
-   * @param {string} token  鈥?e.g. '#38', '#x26', '#X26'
+   * @param {string} token  — e.g. '#38', '#x26', '#X26'
    * @returns {string|undefined}
-   *   - string (incl. '')  鈥?replacement ('' = remove)
-   *   - undefined          鈥?leave original &token; as-is
+   *   - string (incl. '')  — replacement ('' = remove)
+   *   - undefined          — leave original &token; as-is
    */
   _resolveNCR(token) {
     const second = token.charCodeAt(1);
@@ -11124,66 +11124,69 @@ function validateEntityName2(name, xmlVersion) {
 
 // node_modules/anynum/digitTable.js
 var SCRIPT_ZEROS = [
-  // Basic Latin (ASCII) 鈥?included for completeness / pass-through
+  // Basic Latin (ASCII) — included for completeness / pass-through
   48,
   // 0-9
   // Arabic scripts
   1632,
-  // Arabic-Indic 贍佟佗伲伽佶佴侑侉侃
+  // Arabic-Indic ٠١٢٣٤٥٦٧٨٩
   1776,
-  // Extended Arabic-Indic (Urdu/Persian/Sindhi) 郯郾鄄鄢
+  // Extended Arabic-Indic (Urdu/Persian/Sindhi) ۰۱۲۳
   // Indic scripts
   2406,
-  // Devanagari 啷︵ェ啷ㄠォ啷カ啷キ啷ク
+  // Devanagari ०१२३४५६७८९
   2534,
-  // Bengali 唰︵Ё唰ㄠЗ唰Й唰Л唰Н
+  // Bengali ০১২৩৪৫৬৭৮৯
   2662,
-  // Gurmukhi 喋︵┃喋ㄠ┅喋┇喋┉喋┋
+  // Gurmukhi ੦੧੨੩੪੫੬੭੮੯
   2790,
-  // Gujarati 喃︵喃ㄠ喃喃喃
+  // Gujarati ૦૧૨૩૪૫૬૭૮૯
   2918,
-  // Odia 喹︵喹ㄠ喹喹喹
+  // Odia ୦୧୨୩୪୫୬୭୮୯
   3046,
-  // Tamil 喁︵喁ㄠ喁喁喁
+  // Tamil ௦௧௨௩௪௫௬௭௮௯
   3174,
-  // Telugu 啾︵抱啾ㄠ暴啾鲍啾杯啾悲
+  // Telugu ౦౧౨౩౪౫౬౭౮౯
   3302,
-  // Kannada 喑︵厂喑ㄠ畅喑倡喑抄喑朝
+  // Kannada ೦೧೨೩೪೫೬೭೮೯
   3430,
-  // Malayalam 嗟︵掸嗟ㄠ旦嗟但嗟淡嗟弹
+  // Malayalam ൦൧൨൩൪൫൬൭൮൯
   3558,
-  // Sinhala Archaic 喾︵阀喾ㄠ珐喾帆喾翻喾矾
+  // Sinhala Archaic ෦෧෨෩෪෫෬෭෮෯
   // Southeast Asian scripts
   3664,
-  // Thai 喙愢箲喙掄箵喙斷箷喙栢箺喙樴箼
+  // Thai ๐๑๒๓๔๕๖๗๘๙
   3792,
-  // Lao 嗷愢粦嗷掄粨嗷斷粫嗷栢粭嗷樴粰
+  // Lao ໐໑໒໓໔໕໖໗໘໙
   3872,
-  // Tibetan 嗉犩肌嗉⑧迹嗉む讥嗉︵姬嗉ㄠ缉
+  // Tibetan ༠༡༢༣༤༥༦༧༨༩
   4160,
-  // Myanmar 醽€醽佱亗醽冡亜醽呩亞醽囜亪醽?  4240,
-  // Myanmar Shan 醾愥倯醾掅倱醾斸倳醾栣倵醾樶倷
+  // Myanmar ၀၁၂၃၄၅၆၇၈၉
+  4240,
+  // Myanmar Shan ႐႑႒႓႔႕႖႗႘႙
   6112,
-  // Khmer 釤犪煛釤⑨煟釤め煡釤︶煣釤ㄡ煩
+  // Khmer ០១២៣៤៥៦៧៨៩
   6160,
-  // Mongolian 釥愥爲釥掅爴釥斸爼釥栣牀釥樶牂
+  // Mongolian ᠐᠑᠒᠓᠔᠕᠖᠗᠘᠙
   6470,
-  // Limbu 幞嗎幞堘幞娽幞屷幞庒
+  // Limbu ᥆᥇᥈᥉᥊᥋᥌᥍᥎᥏
   6608,
-  // New Tai Lue 岌愥岌掅岌斸岌栣岌樶
+  // New Tai Lue ᧐᧑᧒᧓᧔᧕᧖᧗᧘᧙
   6784,
-  // Tai Tham Hora 岐€岐佱獋岐冡獎岐呩獑岐囜獔岐?  6800,
-  // Tai Tham Tham 岐愥獞岐掅獡岐斸獣岐栣獥岐樶獧
+  // Tai Tham Hora ᪀᪁᪂᪃᪄᪅᪆᪇᪈᪉
+  6800,
+  // Tai Tham Tham ᪐᪑᪒᪓᪔᪕᪖᪗᪘᪙
   6992,
-  // Balinese 岘愥瓚岘掅瓝岘斸瓡岘栣瓧岘樶瓩
+  // Balinese ᭐᭑᭒᭓᭔᭕᭖᭗᭘᭙
   7088,
-  // Sundanese 岙搬岙册岙瘁岙夺岙羔
+  // Sundanese ᮰᮱᮲᮳᮴᮵᮶᮷᮸᮹
   7232,
-  // Lepcha 岜€岜佱眰岜冡眲岜呩眴岜囜眻岜?  7248,
-  // Ol Chiki 岜愥睉岜掅睋岜斸睍岜栣睏岜樶睓
+  // Lepcha ᱀᱁᱂᱃᱄᱅᱆᱇᱈᱉
+  7248,
+  // Ol Chiki ᱐᱑᱒᱓᱔᱕᱖᱗᱘᱙
   // Fullwidth (CJK context)
   65296,
-  // Fullwidth 锛愶紤锛掞紦锛旓紩锛栵紬锛橈紮
+  // Fullwidth ０１２３４５６７８９
   // Mathematical digit variants (Unicode math block)
   120782,
   // Mathematical Bold
@@ -11197,59 +11200,59 @@ var SCRIPT_ZEROS = [
   // Mathematical Monospace
   // Other scripts
   66720,
-  // Osmanya 饜挔饜挕饜挗饜挘饜挙饜挜饜挦饜挧饜挩饜挬
+  // Osmanya 𐒠𐒡𐒢𐒣𐒤𐒥𐒦𐒧𐒨𐒩
   68912,
-  // Hanifi Rohingya 饜窗饜幢饜床饜闯饜创饜吹饜炊饜捶饜锤饜垂
+  // Hanifi Rohingya 𐴰𐴱𐴲𐴳𐴴𐴵𐴶𐴷𐴸𐴹
   69734,
-  // Brahmi 饝仸饝仹饝仺饝仼饝仾饝伀饝伂饝伃饝伄饝伅
+  // Brahmi 𑁦𑁧𑁨𑁩𑁪𑁫𑁬𑁭𑁮𑁯
   69872,
-  // Sora Sompeng 饝儼饝儽饝儾饝兂饝兇饝兊饝兌饝兎饝兏饝児
+  // Sora Sompeng 𑃰𑃱𑃲𑃳𑃴𑃵𑃶𑃷𑃸𑃹
   69942,
-  // Chakma 饝劧饝劮饝劯饝劰饝労饝劵饝劶饝劷饝劸饝効
+  // Chakma 𑄶𑄷𑄸𑄹𑄺𑄻𑄼𑄽𑄾𑄿
   70096,
-  // Sharada 饝噽饝噾饝噿饝嚀饝嚁饝嚂饝嚃饝嚄饝嚇饝嚈
+  // Sharada 𑇐𑇑𑇒𑇓𑇔𑇕𑇖𑇗𑇘𑇙
   70384,
-  // Khudawadi 饝嫲饝嫳饝嫴饝嫵饝嫶饝嫷饝嫸饝嫹饝嫺饝嫻
+  // Khudawadi 𑋰𑋱𑋲𑋳𑋴𑋵𑋶𑋷𑋸𑋹
   70736,
-  // Newa 饝憪饝憫饝憭饝憮饝憯饝憰饝憱饝憲饝憳饝憴
+  // Newa 𑑐𑑑𑑒𑑓𑑔𑑕𑑖𑑗𑑘𑑙
   70864,
-  // Tirhuta 饝搻饝搼饝搾饝摀饝摂饝摃饝摉饝摋饝摌饝摍
+  // Tirhuta 𑓐𑓑𑓒𑓓𑓔𑓕𑓖𑓗𑓘𑓙
   71248,
-  // Modi 饝檺饝檻饝檼饝檽饝檾饝檿饝櫀饝櫁饝櫂饝櫃
+  // Modi 𑙐𑙑𑙒𑙓𑙔𑙕𑙖𑙗𑙘𑙙
   71360,
-  // Takri 饝泙饝泚饝泜饝泝饝泟饝泤饝泦饝泧饝泩饝泬
+  // Takri 𑛀𑛁𑛂𑛃𑛄𑛅𑛆𑛇𑛈𑛉
   71472,
-  // Ahom 饝湴饝湵饝湶饝湷饝湸饝湹饝湺饝湻饝湼饝湽
+  // Ahom 𑜰𑜱𑜲𑜳𑜴𑜵𑜶𑜷𑜸𑜹
   71904,
-  // Warang Citi 饝饝！饝＂饝＃饝￥饝％饝＆饝＇饝（饝）
+  // Warang Citi 𑣠𑣡𑣢𑣣𑣤𑣥𑣦𑣧𑣨𑣩
   72016,
-  // Dives Akuru 饝饝饝饝饝饝饝饝饝饝
+  // Dives Akuru 𑥐𑥑𑥒𑥓𑥔𑥕𑥖𑥗𑥘𑥙
   72688,
-  // Khitan Small Script 饝饝饝饝饝饝饝饝饝饝
+  // Khitan Small Script 𑯰𑯱𑯲𑯳𑯴𑯵𑯶𑯷𑯸𑯹
   72784,
-  // Bhaiksuki 饝睈饝睉饝睊饝睋饝睌饝睍饝睎饝睏饝睒饝睓
+  // Bhaiksuki 𑱐𑱑𑱒𑱓𑱔𑱕𑱖𑱗𑱘𑱙
   73040,
-  // Masaram Gondi 饝祼饝祽饝祾饝祿饝禂饝禃饝禆饝禇饝禈饝禉
+  // Masaram Gondi 𑵐𑵑𑵒𑵓𑵔𑵕𑵖𑵗𑵘𑵙
   73120,
-  // Gunjala Gondi 饝稜饝丁饝盯饝叮饝钉饝顶饝鼎饝锭饝定饝订
+  // Gunjala Gondi 𑶠𑶡𑶢𑶣𑶤𑶥𑶦𑶧𑶨𑶩
   73552,
-  // Kawi 饝綈饝綉饝綊饝綋饝綌饝綍饝綎饝綏饝綐饝綑
+  // Kawi 𑽐𑽑𑽒𑽓𑽔𑽕𑽖𑽗𑽘𑽙
   92768,
-  // Mro 饢饢饢饢饢─饢━饢│饢┃饢┄饢┅
+  // Mro 𖩠𖩡𖩢𖩣𖩤𖩥𖩦𖩧𖩨𖩩
   92864,
-  // Tangsa 饢珋饢珌饢珎饢珒饢珓饢珔饢珕饢珖饢珗饢珘
+  // Tangsa 𖫀𖫁𖫂𖫃𖫄𖫅𖫆𖫇𖫈𖫉
   93008,
-  // Pahawh Hmong 饢瓙饢瓚饢瓛饢瓝饢瓟饢瓡饢瓥饢瓧饢瓨饢瓩
+  // Pahawh Hmong 𖭐𖭑𖭒𖭓𖭔𖭕𖭖𖭗𖭘𖭙
   123200,
-  // Nyiakeng Puachue Hmong 馂厐馂厑馂厒馂厓馂厔馂厖馂厗馂厙馂厛馂厜
+  // Nyiakeng Puachue Hmong 𞅀𞅁𞅂𞅃𞅄𞅅𞅆𞅇𞅈𞅉
   123632,
-  // Wancho 馂嫲馂嫳馂嫴馂嫵馂嫶馂嫷馂嫸馂嫹馂嫺馂嫻
+  // Wancho 𞋰𞋱𞋲𞋳𞋴𞋵𞋶𞋷𞋸𞋹
   124144,
-  // Nag Mundari 馂摪馂摫馂摬馂摮馂摯馂摰馂摱馂摲馂摳馂摴
+  // Nag Mundari 𞓰𞓱𞓲𞓳𞓴𞓵𞓶𞓷𞓸𞓹
   125264,
-  // Adlam 馂馂馂馂馂馂馂馂馂馂
+  // Adlam 𞥐𞥑𞥒𞥓𞥔𞥕𞥖𞥗𞥘𞥙
   130032
-  // Segmented digit symbols 馃馃馃馃馃馃馃馃馃馃
+  // Segmented digit symbols 🯰🯱🯲🯳🯴🯵🯶🯷🯸🯹
 ];
 var NOT_DIGIT = 255;
 var HIGH_MAP = /* @__PURE__ */ new Map();
@@ -11773,10 +11776,10 @@ var ExpressionSet = class {
   /**
    * Test whether the matcher's current path matches any expression in the set.
    *
-   * Evaluation order (cheapest 鈫?most expensive):
-   *  1. Exact depth + tag bucket  鈥?O(1) lookup, typically 0鈥? expressions
-   *  2. Depth-only wildcard bucket 鈥?O(1) lookup, rare
-   *  3. Deep-wildcard list         鈥?always checked, but usually small
+   * Evaluation order (cheapest → most expensive):
+   *  1. Exact depth + tag bucket  — O(1) lookup, typically 0–2 expressions
+   *  2. Depth-only wildcard bucket — O(1) lookup, rare
+   *  3. Deep-wildcard list         — always checked, but usually small
    *
    * @param {import('./Matcher.js').default} matcher - Matcher instance (or readOnly view)
    * @returns {boolean} true if any expression matches the current path
@@ -11792,7 +11795,7 @@ var ExpressionSet = class {
   /**
   * Find and return the first Expression that matches the matcher's current path.
   *
-  * Uses the same evaluation order as matchesAny (cheapest 鈫?most expensive):
+  * Uses the same evaluation order as matchesAny (cheapest → most expensive):
   *  1. Exact depth + tag bucket
   *  2. Depth-only wildcard bucket
   *  3. Deep-wildcard list
@@ -12099,7 +12102,7 @@ var Matcher = class {
    * Get the value of a "kept" attribute from the nearest ancestor (or
    * current node) that declared it via `push(tag, attrs, ns, { keep: [...] })`.
    * Unlike getAttrValue(), this works regardless of how deep the path has
-   * gone since the attribute was pushed 鈥?but only for attribute names that
+   * gone since the attribute was pushed — but only for attribute names that
    * were explicitly marked with `keep` at push time. Cost is proportional to
    * the number of currently-kept attributes (typically 0-3), not path depth.
    * @param {string} attrName
@@ -12334,7 +12337,7 @@ var Matcher = class {
   /**
    * Return the read-only {@link MatcherView} for this matcher.
    *
-   * The same instance is returned on every call 鈥?no allocation occurs.
+   * The same instance is returned on every call — no allocation occurs.
    * It always reflects the current parser state and is safe to pass to
    * user callbacks without risk of accidental mutation.
    *
@@ -12342,8 +12345,10 @@ var Matcher = class {
    *
    * @example
    * const view = matcher.readOnly();
-   * // pass view to callbacks 鈥?it stays in sync automatically
-   * view.matches(expr);       // 鉁?   * view.getCurrentTag();     // 鉁?   * // view.push(...)         // 鉁?method does not exist 鈥?caught by TypeScript
+   * // pass view to callbacks — it stays in sync automatically
+   * view.matches(expr);       // ✓
+   * view.getCurrentTag();     // ✓
+   * // view.push(...)         // ✗ method does not exist — caught by TypeScript
    */
   readOnly() {
     return this._view;
@@ -12628,7 +12633,7 @@ var SQL_PATTERNS = [
   {
     id: "sql-tautology-string",
     description: `Classic string tautology: ' OR '1'='1 or " OR "1"="1"`,
-    // Last quote is optional 鈥?injection may truncate it: ' OR '1'='1--
+    // Last quote is optional — injection may truncate it: ' OR '1'='1--
     pattern: /'\s{0,10}OR\s{0,10}'[^']{0,20}'\s*=\s*'[^']{0,20}/i
   },
   {
@@ -12767,7 +12772,7 @@ var REDOS_PATTERNS = [
   {
     id: "redos-nested-quantifier-plus",
     description: "Nested + quantifier inside a group with outer quantifier: (a+)+, (.+b)*, etc.",
-    // Matches any group containing a + quantifier, with an outer * or + 鈥?catches (a+)+, (.+b)*, etc.
+    // Matches any group containing a + quantifier, with an outer * or + — catches (a+)+, (.+b)*, etc.
     pattern: /\([^)]*\+[^)]*\)[+*]/
   },
   {
@@ -12799,7 +12804,7 @@ var REDOS_PATTERNS = [
   {
     id: "redos-large-repetition",
     description: "Very large fixed or range repetition count {1000,} or {1000,n} \u2014 denial of service via backtracking",
-    // Matches { followed by 4+ digits (鈮?000), then optional ,digits }
+    // Matches { followed by 4+ digits (≥1000), then optional ,digits }
     pattern: /\{\d{4,}(?:,\d*)?\}/
   },
   {
@@ -12814,7 +12819,7 @@ var redos_default = REDOS_PATTERNS;
 // node_modules/is-unsafe/src/contexts/nosql.js
 var sep = `["'\\s]*:`;
 var NOSQL_PATTERNS = [
-  // 鈹€鈹€鈹€ MongoDB $ operator injection 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+  // ─── MongoDB $ operator injection ────────────────────────────────────────
   {
     id: "nosql-where-operator",
     description: "$where \u2014 executes arbitrary JavaScript server-side in MongoDB",
@@ -12880,7 +12885,7 @@ var NOSQL_PATTERNS = [
     description: "$accumulator \u2014 custom aggregation with arbitrary JS execution",
     pattern: new RegExp(`\\$accumulator${sep}`, "i")
   },
-  // 鈹€鈹€鈹€ Prototype pollution 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+  // ─── Prototype pollution ─────────────────────────────────────────────────
   {
     id: "nosql-proto-pollution",
     description: "__proto__ \u2014 prototype pollution via object key injection",
@@ -12903,7 +12908,7 @@ var nosql_default = NOSQL_PATTERNS;
 
 // node_modules/is-unsafe/src/contexts/log.js
 var LOG_PATTERNS = [
-  // 鈹€鈹€鈹€ CRLF / newline injection 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+  // ─── CRLF / newline injection ─────────────────────────────────────────────
   {
     id: "log-crlf-injection",
     description: "CRLF injection: literal \\r or \\n embeds fake log lines",
@@ -12919,7 +12924,7 @@ var LOG_PATTERNS = [
     description: "Unicode newline variants: U+2028 (line separator), U+2029 (paragraph separator)",
     pattern: /[\u2028\u2029]/
   },
-  // 鈹€鈹€鈹€ Log4Shell / JNDI injection (CVE-2021-44228) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+  // ─── Log4Shell / JNDI injection (CVE-2021-44228) ─────────────────────────
   {
     id: "log-log4shell-jndi",
     description: "Log4Shell: ${jndi:...} triggers remote code execution in Apache Log4j",
@@ -12936,7 +12941,7 @@ var LOG_PATTERNS = [
     description: "Log4j lookup syntax: ${env:...}, ${sys:...}, ${ctx:...} \u2014 data exfiltration",
     pattern: /\$\{(?:env|sys|ctx|main|map|sd|web|docker|k8s|spring)\s*:/i
   },
-  // 鈹€鈹€鈹€ Server-Side Template Injection (SSTI) in log messages 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+  // ─── Server-Side Template Injection (SSTI) in log messages ───────────────
   {
     id: "log-ssti-double-brace",
     description: "SSTI double-brace: {{expression}} \u2014 Jinja2, Twig, Handlebars, etc.",
@@ -12960,13 +12965,13 @@ var LOG_PATTERNS = [
     description: "SSTI ERB/ASP tag: <%= expression %> \u2014 Ruby ERB, ASP",
     pattern: /<%=[\s\S]{0,80}%>/
   },
-  // 鈹€鈹€鈹€ Null byte 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+  // ─── Null byte ────────────────────────────────────────────────────────────
   {
     id: "log-null-byte",
     description: "Null byte: \\x00 or %00 \u2014 can truncate log entries in C-backed loggers",
     pattern: /\x00|%00/
   },
-  // 鈹€鈹€鈹€ ANSI escape injection 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+  // ─── ANSI escape injection ────────────────────────────────────────────────
   {
     id: "log-ansi-escape",
     description: "ANSI escape sequence: ESC[ \u2014 can manipulate terminal output when logs are tailed",

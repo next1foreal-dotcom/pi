@@ -1,8 +1,8 @@
 # vendor/genoffice — 对账表
 
 来源: https://github.com/genspark-ai/genoffice
-锚定提交: `dc4d7e5` (Sync snapshot 2026-08-12) · 许可: **Apache-2.0**(商标条款只限 GenOffice/Genspark 名号,不影响引擎代码使用)
-采纳拍板: Fei 2026-08-13「a」(路线 A,见 `scratchpad/genoffice-for-her-eval.md`)
+锚定提交: 机器真相在 `upstream-pin.json`(首次引入 = `dc4d7e5`,Sync snapshot 2026-08-12)· 许可: **Apache-2.0**(商标条款只限 GenOffice/Genspark 名号,不影响引擎代码使用)
+采纳拍板: Fei 2026-08-13「a」(路线 A,见 `scratchpad/genoffice-for-her-eval.md`);刷新脚本 Fei 同日「装」
 
 ## 偷了什么
 
@@ -27,17 +27,15 @@
 
 ## 重建方法(上游升级时)
 
+一条命令(在 samantha 仓根跑):
+
 ```
-cd D:\@Her\genoffice   # clone 于 dc4d7e5,升级前先 git log 对账
-npm install
-# 三个入口文件内容见本目录首次引入 commit 中的 .tmp-*-entry.ts 记录,或按下列等价单行:
-# docx-engine: export * from index + export { patchParagraphTexts } from text-patch
-# extract:     export { docxToText, pptxToText, xlsxToText } (docx-engine 设 --external 后改指 ./docx-engine.mjs)
-# fixtures:    export { buildDocxFixture, buildPptxFixture, buildXlsxFixture }
-npx esbuild <entry> --bundle --format=esm --platform=node --target=node20 --banner:js="..." --outfile=...
+node packages/her/vendor/genoffice/refresh.mjs
 ```
 
-注意: 写出后用 node 校验无 BOM(PowerShell `Set-Content -Encoding utf8` 会加 BOM,本仓血案惯犯)。
+它做的事:上游克隆(默认 `D:\@Her\genoffice`,`GENOFFICE_UPSTREAM` 或 `--upstream` 覆盖)`git pull --ff-only` → 用上游自己的 esbuild 重打三个 bundle(入口内容固化在脚本里)→ extract 重指 `./docx-engine.mjs` → BOM/banner 校验 → 更新 `upstream-pin.json` → 跑 `doc-tools.test.ts` 回归闸。`--no-pull` 只重打当前克隆;`--no-test` 跳过测试(别在要 commit 的时候跳)。绿了之后照常 `git status` → commit(过全套 pre-commit 门禁)。
+
+注意: 一切写文件走 node,禁 PowerShell 重定向(`Set-Content -Encoding utf8` 会加 BOM,本仓血案惯犯);同一上游提交重跑应产出字节相同的 bundle(banner 只含 commit 短哈希,无时间戳),`git status` 不动即为无操作验证。
 
 ## 消费方
 

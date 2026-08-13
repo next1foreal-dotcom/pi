@@ -1,4 +1,4 @@
-// Bundled from https://github.com/genspark-ai/genoffice @ dc4d7e5 (Apache-2.0). See NOTES.md; do not hand-edit.
+// Bundled from https://github.com/genspark-ai/genoffice @ 945c370 (Apache-2.0). See NOTES.md; do not hand-edit.
 var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -27489,7 +27489,7 @@ function extractTextboxes(xml, ctx, opts) {
         for (const r of childrenOf(p)) {
           if (nameOf(r) !== "a:r") continue;
           const t = findChild(r, "a:t");
-          const text = t ? decodeEntities3(textOf(t)) : "";
+          const text = t ? decodeNumericCharRefs(textOf(t)) : "";
           if (text === "") continue;
           const run = { text };
           const rPr = findChild(r, "a:rPr");
@@ -27652,7 +27652,9 @@ function extractParaFormat(pPr) {
 }
 var SIMPLE_INLINE_FIELD_RE = /^\s*(DATE|TIME|CREATEDATE|SAVEDATE|NUMPAGES|FILENAME|AUTHOR|PAGE)\b/;
 function convertibleHyperlink(instr) {
-  const m = /^\s*HYPERLINK\s+"([^"\\]+)"\s*(?:\\o\s+"([^"]*)"\s*)?$/.exec(decodeEntities3(instr));
+  const m = /^\s*HYPERLINK\s+"([^"\\]+)"\s*(?:\\o\s+"([^"]*)"\s*)?$/.exec(
+    decodeNumericCharRefs(instr)
+  );
   if (!m) return null;
   return { href: m[1], ...m[2] ? { tooltip: m[2] } : {} };
 }
@@ -27842,7 +27844,7 @@ function rubyPartText(rubyNode, part) {
   for (const r of childrenOf(partNode)) {
     if (nameOf(r) !== "w:r") continue;
     for (const c of childrenOf(r)) {
-      if (nameOf(c) === "w:t") text += decodeEntities3(textOf(c));
+      if (nameOf(c) === "w:t") text += decodeNumericCharRefs(textOf(c));
     }
   }
   return text;
@@ -27901,7 +27903,7 @@ function buildRun(rNode, link, theme, themeFonts, mediaByRid) {
   let text = "";
   for (const child of childrenOf(rNode)) {
     const name = nameOf(child);
-    if (name === "w:t" || name === "w:delText") text += decodeEntities3(textOf(child));
+    if (name === "w:t" || name === "w:delText") text += decodeNumericCharRefs(textOf(child));
     else if (name === "w:tab") text += "	";
     else if (name === "w:br") text += attrsOf(child)["w:type"] === "page" ? "\f" : "\n";
     else if (name === "w:cr") text += "\n";
@@ -28689,14 +28691,17 @@ function mathTokens(xml) {
   while ((m = re.exec(xml)) !== null) tokens.push(decodeEntities3(m[1]));
   return tokens;
 }
-function decodeEntities3(text) {
+function decodeNumericCharRefs(text) {
   return text.replace(
     /&#(?:x([0-9a-f]+)|([0-9]+));/gi,
     (entity, hex, decimal) => {
       const codePoint = parseInt(hex ?? decimal ?? "", hex ? 16 : 10);
       return Number.isFinite(codePoint) && codePoint >= 0 && codePoint <= 1114111 && !(codePoint >= 55296 && codePoint <= 57343) ? String.fromCodePoint(codePoint) : entity;
     }
-  ).replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, "&");
+  );
+}
+function decodeEntities3(text) {
+  return decodeNumericCharRefs(text).replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, "&");
 }
 function fieldDisplayOf(xml) {
   const styleId = /<w:pStyle w:val="([^"]+)"/.exec(xml)?.[1] ?? "";
@@ -29068,7 +29073,7 @@ function extractLockedCanvas(xml, ctx) {
         const parts = [];
         for (const r of findChildren(p, "a:r")) {
           const t = findChild(r, "a:t");
-          if (t) parts.push(decodeEntities3(textOf(t)));
+          if (t) parts.push(decodeNumericCharRefs(textOf(t)));
           const rPr = findChild(r, "a:rPr");
           if (rPr && sizePt === void 0) {
             const sz = parseInt(attrsOf(rPr)["sz"] ?? "", 10);
@@ -29226,7 +29231,7 @@ async function extractDiagramDrawing(xml, ctx) {
         const parts = [];
         for (const r of findChildren(p, "a:r")) {
           const t = findChild(r, "a:t");
-          if (t) parts.push(decodeEntities3(textOf(t)));
+          if (t) parts.push(decodeNumericCharRefs(textOf(t)));
           const rPr = findChild(r, "a:rPr");
           if (rPr && sizePt === void 0) {
             const sz = parseInt(attrsOf(rPr)["sz"] ?? "", 10);
@@ -29692,7 +29697,7 @@ function parseNumberingLevel(lvlNode) {
   const start = parseInt(attrsOf(findChild(lvlNode, "w:start") ?? {})["w:val"] ?? "0", 10);
   const level = {
     numFmt: attrsOf(findChild(lvlNode, "w:numFmt") ?? {})["w:val"] ?? "decimal",
-    lvlText: decodeEntities3(attrsOf(findChild(lvlNode, "w:lvlText") ?? {})["w:val"] ?? ""),
+    lvlText: decodeNumericCharRefs(attrsOf(findChild(lvlNode, "w:lvlText") ?? {})["w:val"] ?? ""),
     start: Number.isFinite(start) ? start : 0
   };
   const lvlPPr = findChild(lvlNode, "w:pPr");

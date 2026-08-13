@@ -1,4 +1,4 @@
-// Bundled from https://github.com/genspark-ai/genoffice @ dc4d7e5 (Apache-2.0). See NOTES.md; do not hand-edit.
+// Bundled from https://github.com/genspark-ai/genoffice @ 945c370 (Apache-2.0). See NOTES.md; do not hand-edit.
 var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
