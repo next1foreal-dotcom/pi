@@ -57,3 +57,82 @@ export interface AcquiredMaterial {
 	status?: MaterialStatus;
 	error?: string;
 }
+
+/** Catalog entry used by SYNTH. Fanout materials have `id`; acquire items do not. */
+export interface CitationSource {
+	id: string;
+	sourceUrl: string;
+}
+
+export interface Citation {
+	sourceId: string;
+	sourceUrl: string;
+	locator: string;
+	href: string;
+}
+
+export type VerdictLevel = "verified" | "partial" | "unverifiable" | "misattributed" | "retracted";
+
+export interface TimelineEntry {
+	date: string;
+	fact: string;
+	citation: Citation;
+}
+
+export interface DisagreementClaim {
+	sourceId: string;
+	claim: string;
+	citation: Citation;
+}
+
+export interface DisagreementEntry {
+	topic: string;
+	claims: DisagreementClaim[];
+	verdict: VerdictLevel;
+	note?: string;
+}
+
+export interface QuoteEntry {
+	text: string;
+	citation: Citation;
+}
+
+export interface DecisionOption {
+	label: string;
+	cost: string;
+}
+
+export interface DecisionPoint {
+	question: string;
+	options: DecisionOption[];
+}
+
+export interface DroppedCitation {
+	sourceId: string;
+	locator: string;
+	reason: string;
+}
+
+export interface SynthesisDoc {
+	title: string;
+	slug: string;
+	timeline: TimelineEntry[];
+	disagreements: DisagreementEntry[];
+	quotes: QuoteEntry[];
+	decisions: DecisionPoint[];
+	droppedCitations: DroppedCitation[];
+}
+
+/** Fanout chapter analysis consumed by SYNTH. `text` is the reader markdown. */
+export interface ChapterAnalysis {
+	materialId: string;
+	sourceUrl?: string;
+	chunkIndex?: number;
+	text: string;
+}
+
+export interface SynthManifest {
+	slug: string;
+	title?: string;
+	sources: readonly CitationSource[];
+}
