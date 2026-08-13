@@ -93,6 +93,7 @@ import { type ReviewEvidenceItem, verifyEvidence } from "./her-core/review-evide
 import { appendAuditLog } from "./lib/audit.ts";
 import { evaluate, policyEnvelope, resolveToolCallAnchor } from "./lib/cedar.ts";
 import { governedTools, resolveGovernedTool } from "./lib/governed-tools.ts";
+import { CONTEXT_INJECTION_SOURCES, injectLoggedContent } from "./lib/injection-ledger.ts";
 import { registerMcpTools } from "./mcp/tools.ts";
 import { registerPreviewTools } from "./preview/tools.ts";
 import { registerRelayProviderTools } from "./providers-relay/tools.ts";
@@ -274,8 +275,7 @@ function getMemoryDir(): string {
 	return process.env.HER_MEMORY_DIR ?? resolve(process.cwd(), "..", "her-memory");
 }
 
-function composeSystemPrompt(
-	base: string,
+function composeHerMemoryBlock(
 	context: string,
 	facts: string,
 	soul: string,
@@ -287,7 +287,11 @@ function composeSystemPrompt(
 	if (soul.trim()) sections.push(`## Her SOUL.md\n\n${soul.trim()}`);
 	if (self.trim()) sections.push(`## Her SAMANTHA.md\n\n${self.trim()}`);
 	if (choiceModel.trim()) sections.push(`## Her CHOICE-MODEL.md\n\n${choiceModel.trim()}`);
-	return `${base.trimEnd()}\n\n${sections.join("\n\n")}`;
+	return sections.join("\n\n");
+}
+
+function composeSystemPrompt(base: string, herBlock: string): string {
+	return `${base.trimEnd()}\n\n${herBlock}`;
 }
 
 function textResult(text: string, details: Record<string, unknown> = {}) {
@@ -726,7 +730,15 @@ export default function her(pi: ExtensionAPI): void {
 
 	pi.on("before_agent_start", async (event, ctx) => {
 		const { context, facts, soul, self, choiceModel } = await mem.getContext();
-		let systemPrompt = composeSystemPrompt(event.systemPrompt, context, facts, soul, self, choiceModel);
+		const herBlock = composeHerMemoryBlock(context, facts, soul, self, choiceModel);
+		const injectedHer = injectLoggedContent({
+			memoryDir,
+			session: ctx.sessionManager.getSessionId(),
+			kind: "context",
+			content: herBlock,
+			sources: [...CONTEXT_INJECTION_SOURCES],
+		});
+		let systemPrompt = composeSystemPrompt(event.systemPrompt, injectedHer);
 		// G-120…123: reconcile → wake inject → Telegram outbox → TUI board.
 		try {
 			// G-185/S1b — same ownership filter as the idle poller: a turn starting in this
@@ -854,10 +866,22 @@ export default function her(pi: ExtensionAPI): void {
 				sessionId,
 			});
 			if (!hit) return;
+			const mirrored = renderMirror(hit);
+			const content = injectLoggedContent({
+				memoryDir,
+				session: sessionId,
+				kind: "mirror",
+				content: mirrored,
+				sources: [hit.path],
+				extraBlocks:
+					hit.kind === "world"
+						? [{ kind: "world", content: hit.text, sources: [hit.path] }]
+						: undefined,
+			});
 			pi.sendMessage(
 				{
 					customType: "her-mirror",
-					content: renderMirror(hit),
+					content,
 					display: true,
 					details: { noteId: hit.id, kind: hit.kind, pinned: true },
 				},
@@ -978,10 +1002,29 @@ export default function her(pi: ExtensionAPI): void {
 			query: Type.String({ description: "Memory search query" }),
 			k: Type.Optional(Type.Number({ description: "Maximum number of notes to return" })),
 		}),
-		async execute(_toolCallId, params) {
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			const notes = await mem.recall(params.query, { k: params.k });
 			const receipts = buildRecallReceipts(notes);
-			return textResult(renderRecall(notes), {
+			const rendered = renderRecall(notes);
+			const worldNotes = notes.filter((note) => note.kind === "world");
+			const text = injectLoggedContent({
+				memoryDir,
+				session: ctx?.sessionManager.getSessionId(),
+				kind: "recall",
+				content: rendered,
+				sources: notes.map((note) => note.path),
+				extraBlocks:
+					worldNotes.length > 0
+						? [
+								{
+									kind: "world",
+									content: worldNotes.map((note) => note.text).join("\n\n"),
+									sources: worldNotes.map((note) => note.path),
+								},
+							]
+						: undefined,
+			});
+			return textResult(text, {
 				phase: "2",
 				query: params.query,
 				count: notes.length,
