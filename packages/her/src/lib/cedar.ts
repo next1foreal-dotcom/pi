@@ -238,6 +238,20 @@ function mentionAnchorPath(command: string, memoryDir: string): string | undefin
 	for (const relativeAnchor of memoryRelativeAnchors) {
 		if (haystack.includes(relativeAnchor.toLowerCase())) return `her-memory/${relativeAnchor}`;
 	}
+	// Computed joins still name the file even when they never emit `narrative/SOUL.md`
+	// as one substring (`join('narrative','SOUL.md')`). Not a sandbox — just the
+	// remaining lexical hole we can close without denying `echo ok`.
+	for (const leaf of ["soul.md", "facts.md", "context.md"] as const) {
+		if (new RegExp(`(?:^|[^a-z0-9_-])${leaf}(?:[^a-z0-9_-]|$)`, "i").test(haystack)) {
+			return `her-memory/narrative/${leaf === "soul.md" ? "SOUL.md" : leaf === "facts.md" ? "FACTS.md" : "CONTEXT.md"}`;
+		}
+	}
+	if (
+		/\b(python3?|py|node|nodejs|pwsh|powershell)\b[\s\S]*\s(?:-c|-e|-enc|-encodedcommand)\b/i.test(command) &&
+		haystack.includes("her-memory")
+	) {
+		return "her-memory/narrative/SOUL.md";
+	}
 	const needles = [
 		...ANCHOR_PATHS,
 		"packages/her/src/rsi/anchors.ts",

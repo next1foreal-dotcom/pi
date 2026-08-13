@@ -28,6 +28,15 @@ export function consolidatePrompt(episodes: string, existingKeys: string[]): str
 	].join("\n");
 }
 
+/** Quarantine leftovers already overflowed once — keep the JSON tiny so retry is not a second ceiling hit. */
+export function reingestPrompt(episodes: string, existingKeys: string[]): string {
+	return [
+		consolidatePrompt(episodes, existingKeys),
+		"",
+		'REINGEST CONSTRAINT: this segment already overflowed the model output ceiling. Return AT MOST 2 notes. Each content field MUST be <= 400 characters. If the material is encrypted, garbled, or has no durable knowledge, return {"notes":[],"moments":[]}.',
+	].join("\n");
+}
+
 // Law 1 (G-234): compiled truth is a REWRITE, not a blind overwrite. When consolidate reuses an
 // existing note key, upsertNote calls this once to integrate the old body with the new content so
 // prior knowledge is not silently dropped. Output feeds completeJson: {content, change}.

@@ -242,6 +242,10 @@ test("cipher blobs are stripped before the model sees the prompt and prose notes
 		const report = await runReingest(root, { model });
 		assert.equal(report.ingested, 3);
 		assert.equal(model.calls.length, 3);
+		assert.ok(
+			model.calls.every((prompt) => prompt.includes("REINGEST CONSTRAINT")),
+			"reingest uses the slim distill prompt, not the full consolidate ceiling",
+		);
 		assert.ok(model.calls.some((prompt) => prompt.includes("[cipher 400 chars]")));
 		assert.ok(
 			model.calls.every((prompt) => !prompt.includes(cipher)),

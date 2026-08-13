@@ -128,12 +128,33 @@ test("resolveToolCallAnchor flags write path fields and bash commands that touch
 	});
 	assert.equal(fromBackslash?.anchorPath, true);
 
+	const fromComputedJoin = resolveToolCallAnchor({
+		cwd,
+		memoryDir,
+		input: { command: "python -c \"open(__import__('os').path.join('narrative','SOUL.md'),'w').write('x')\"" },
+	});
+	assert.equal(fromComputedJoin?.anchorPath, true, "join('narrative','SOUL.md') still names the leaf");
+
+	const fromInterpreterStore = resolveToolCallAnchor({
+		cwd,
+		memoryDir,
+		input: { command: "python -c \"p=r'D:/@Her/her-memory'; open(p+'/x','w')\"" },
+	});
+	assert.equal(fromInterpreterStore?.anchorPath, true, "interpreter one-liner + her-memory is fail-closed");
+
 	const harmless = resolveToolCallAnchor({
 		cwd,
 		memoryDir,
 		input: { command: "echo ok" },
 	});
 	assert.equal(harmless, undefined);
+
+	const codingRedirect = resolveToolCallAnchor({
+		cwd,
+		memoryDir,
+		input: { command: "echo ok > src/index.ts" },
+	});
+	assert.equal(codingRedirect, undefined, "non-anchor redirects stay coding");
 
 	const nonAnchorWrite = resolveToolCallAnchor({
 		cwd,
@@ -257,6 +278,17 @@ test("extension Cedar denies bash whose command targets an anchor path", async (
 		);
 		assert.equal(allowed, undefined);
 
+		const computed = await toolCall(
+			{
+				type: "tool_call",
+				toolCallId: "call-bash-computed",
+				toolName: "bash",
+				input: { command: "python -c \"open(__import__('os').path.join('narrative','SOUL.md'),'w').write('x')\"" },
+			},
+			ctx,
+		);
+		assert.deepEqual(computed, { block: true, reason: "cedar: deny (matched forbid_anchor_write)" });
+
 		const soul = await readText(join(store, "narrative", "SOUL.md"));
 		assert.doesNotMatch(soul ?? "", /hijack/);
 
@@ -275,6 +307,7 @@ test("extension Cedar denies bash whose command targets an anchor path", async (
 			[
 				["bash", "DENY", "forbid_anchor_write"],
 				["bash", "ALLOW", "permit_coding_destructive_tools"],
+				["bash", "DENY", "forbid_anchor_write"],
 			],
 		);
 	});

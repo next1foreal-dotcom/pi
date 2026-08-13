@@ -12,7 +12,7 @@ import {
 } from "./memory-utils.ts";
 import type { ModelLike } from "./model.ts";
 import { StorePaths } from "./paths.ts";
-import { consolidatePrompt } from "./prompts.ts";
+import { reingestPrompt } from "./prompts.ts";
 import { appendText, parseFrontmatter, readJson, readText, writeJson } from "./store.ts";
 import { storeLock } from "./store-lock.ts";
 
@@ -344,7 +344,7 @@ async function distillSegment(memory: Memory, model: ModelLike, segment: Quarant
 	const result = await completeJson<{
 		moments?: Array<{ shift?: string; trigger?: string }>;
 		notes?: Array<Record<string, unknown>>;
-	}>(() => model.complete(consolidatePrompt(promptText, selectedKeys)));
+	}>(() => model.complete(reingestPrompt(promptText, selectedKeys)));
 	const accepted: Array<Record<string, unknown>> = [];
 	const rawNotes = Array.isArray(result.notes) ? result.notes : [];
 	for (const note of rawNotes) {
