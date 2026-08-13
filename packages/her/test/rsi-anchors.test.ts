@@ -112,6 +112,89 @@ test("selfmod Cedar denies an unregistered tool writing a memory anchor (ADR-000
 	assert.equal(audit.context.targetPath, "her-memory/narrative/SOUL.md");
 });
 
+// ADR-0002 V-06: the two gates are independent -- kill one, the other still blocks.
+test("V-06a: with the git gate provably dead, Cedar still denies a SOUL.md write", async (t) => {
+	const repository = await mkdtemp(join(tmpdir(), "her-v06-git-dead-"));
+	t.after(() => rm(repository, { force: true, recursive: true }));
+	// Reproduce the 2026-08-12 incident shape: hooksPath points at a directory
+	// that does not exist in the checkout, so git runs no hook at all.
+	const policyPath = join(repository, "packages", "her", "pi-package", "policies", "fake.cedar");
+	await mkdir(join(policyPath, ".."), { recursive: true });
+	await writeFile(policyPath, "permit(principal, action, resource);\n", "utf8");
+	for (const args of [
+		["init", "--quiet"],
+		["config", "core.hooksPath", ".husky/_"],
+		["add", "packages/her/pi-package/policies/fake.cedar"],
+		["-c", "user.email=v06@test", "-c", "user.name=v06", "commit", "--quiet", "-m", "anchor sails through"],
+	]) {
+		const result = spawnSync("git", args, { cwd: repository, encoding: "utf8" });
+		assert.equal(result.status, 0, `git ${args.join(" ")}: ${result.stderr}`);
+	}
+	// Gate 1 is dead: the anchor commit above succeeded. Gate 2 must still hold.
+	const memoryDir = await mkdtemp(join(tmpdir(), "her-v06-memory-"));
+	t.after(() => rm(memoryDir, { force: true, recursive: true }));
+	const verdict = authorizeSelfModTool({
+		cwd: memoryDir,
+		memoryDir,
+		now: "2026-08-13T13:00:00.000Z",
+		targetPath: "narrative/SOUL.md",
+		toolCallId: "v06-git-gate-dead",
+		toolName: "write",
+	});
+	assert.equal(verdict.decision, "deny");
+	assert.deepEqual(verdict.matched, ["selfmod_forbid_anchor_write"]);
+	const audit = JSON.parse(await readFile(join(memoryDir, "audit", "2026-08-13.jsonl"), "utf8")) as {
+		verdict: string;
+	};
+	assert.equal(audit.verdict, "DENY");
+	// Independence by construction: the Cedar gate never consults git.
+	const cedarSource = await readFile(resolve("packages", "her", "src", "lib", "cedar.ts"), "utf8");
+	assert.doesNotMatch(cedarSource, /child_process|spawnSync|execSync|\bgit\b/);
+});
+
+test("V-06b: with Cedar absent by construction, the git gate still blocks staged evals and policies", async (t) => {
+	const repository = await mkdtemp(join(tmpdir(), "her-v06-cedar-dead-"));
+	t.after(() => rm(repository, { force: true, recursive: true }));
+	const staged = ["her-memory/evals/graded.md", "packages/her/pi-package/policies/fake.cedar", "README.md"];
+	for (const path of staged) {
+		const absolute = join(repository, ...path.split("/"));
+		await mkdir(join(absolute, ".."), { recursive: true });
+		await writeFile(absolute, "v06\n", "utf8");
+	}
+	for (const args of [
+		["init", "--quiet"],
+		["add", "--all"],
+	]) {
+		const result = spawnSync("git", args, { cwd: repository, encoding: "utf8" });
+		assert.equal(result.status, 0, result.stderr);
+	}
+	const names = spawnSync("git", ["diff", "--cached", "--name-only", "-z"], {
+		cwd: repository,
+		encoding: "buffer",
+	});
+	assert.equal(names.status, 0, names.stderr.toString());
+	// Cedar absent by construction: the gate subprocess loads only the hook
+	// script and anchors.ts, neither of which imports Cedar or the extension.
+	const gatePath = resolve(".githooks", "anchor-path-gate.ts");
+	for (const source of [gatePath, resolve("packages", "her", "src", "rsi", "anchors.ts")]) {
+		assert.doesNotMatch(await readFile(source, "utf8"), /cedar|extension|governed-tools/i);
+	}
+	const environment = { ...process.env };
+	delete environment.HER_CEDAR_PROFILE;
+	delete environment.FEI_ANCHOR_OVERRIDE;
+	const blocked = spawnSync(process.execPath, ["--experimental-strip-types", gatePath], {
+		cwd: repository,
+		encoding: "utf8",
+		env: environment,
+		input: names.stdout,
+	});
+	assert.notEqual(blocked.status, 0);
+	const output = `${blocked.stdout}${blocked.stderr}`;
+	assert.match(output, /her-memory\/evals\/graded\.md/);
+	assert.match(output, /packages\/her\/pi-package\/policies\/fake\.cedar/);
+	assert.doesNotMatch(output, /README\.md/);
+});
+
 test("selfmod Cedar permits a v1 skill write", async (t) => {
 	const memoryDir = await mkdtemp(join(tmpdir(), "her-rsi-allowed-"));
 	t.after(() => rm(memoryDir, { force: true, recursive: true }));
