@@ -143,6 +143,7 @@ import {
 	type WorldNoteData,
 	writeText,
 } from "./her-core/index.ts";
+import { applyDreamProposal, rejectDreamProposal } from "./her-core/evidence-apply.ts";
 import { runDreamScan } from "./her-core/evidence-scan.ts";
 import { redactSecrets } from "./her-core/store.ts";
 import { createSummaryModel } from "./summary-model.ts";
@@ -173,6 +174,14 @@ export async function runHerCli(
 
 	if (argv[0] === "dream-scan") {
 		return runDreamScanCommand(argv.slice(1), env, cwd, io);
+	}
+
+	if (argv[0] === "dream-apply") {
+		return runDreamApplyCommand(argv.slice(1), env, cwd, io);
+	}
+
+	if (argv[0] === "dream-reject") {
+		return runDreamRejectCommand(argv.slice(1), env, cwd, io);
 	}
 
 	let command: CliCommand;
@@ -989,6 +998,64 @@ async function runDreamScanCommand(args: string[], env: NodeJS.ProcessEnv, cwd: 
 		return 0;
 	} catch (error) {
 		writeLine(io.stderr, `her dream-scan: ${errorMessage(error)}`);
+		return 2;
+	}
+}
+
+function parseDreamProposalCommandArgs(argv: string[]): { dryRun: boolean; json: boolean; proposalId: string } {
+	let dryRun = false;
+	let json = false;
+	let proposalId: string | undefined;
+	for (let index = 0; index < argv.length; index++) {
+		const arg = argv[index];
+		if (arg === "--dry-run") {
+			dryRun = true;
+			continue;
+		}
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--proposal") {
+			proposalId = requireNonBlank(requireOptionValue(argv[++index], arg), arg);
+			continue;
+		}
+		throw new UsageError(`unknown dream proposal option: ${arg}`);
+	}
+	if (!proposalId) throw new UsageError("dream apply/reject requires --proposal <id>");
+	return { dryRun, json, proposalId };
+}
+
+function formatDreamApplySummary(result: {
+	proposalId: string;
+	skippedIdempotent: boolean;
+	status: string;
+	written: boolean;
+}): string {
+	const skip = result.skippedIdempotent ? " skipped-idempotent" : "";
+	return `dream ${result.status} ${result.proposalId} written=${result.written}${skip}`;
+}
+
+async function runDreamApplyCommand(args: string[], env: NodeJS.ProcessEnv, cwd: string, io: CliIo): Promise<number> {
+	try {
+		const options = parseDreamProposalCommandArgs(args);
+		const result = await applyDreamProposal(getMemoryDir(env, cwd), options.proposalId, { dryRun: options.dryRun });
+		writeLine(io.stdout, options.json ? JSON.stringify(result, null, 2) : formatDreamApplySummary(result));
+		return 0;
+	} catch (error) {
+		writeLine(io.stderr, `her dream-apply: ${errorMessage(error)}`);
+		return 2;
+	}
+}
+
+async function runDreamRejectCommand(args: string[], env: NodeJS.ProcessEnv, cwd: string, io: CliIo): Promise<number> {
+	try {
+		const options = parseDreamProposalCommandArgs(args);
+		const result = await rejectDreamProposal(getMemoryDir(env, cwd), options.proposalId, { dryRun: options.dryRun });
+		writeLine(io.stdout, options.json ? JSON.stringify(result, null, 2) : formatDreamApplySummary(result));
+		return 0;
+	} catch (error) {
+		writeLine(io.stderr, `her dream-reject: ${errorMessage(error)}`);
 		return 2;
 	}
 }
