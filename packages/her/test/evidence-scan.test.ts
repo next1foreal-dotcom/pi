@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { frontmatter, initStore, parseFrontmatter, readText, writeText } from "../src/her-core/index.ts";
 import { runDreamScan } from "../src/her-core/evidence-scan.ts";
 
@@ -25,6 +27,39 @@ async function writeRawEpisode(root: string, id: string, body: string, ts = "202
 
 function dreamFiles(names: string[]): string[] {
 	return names.filter((name) => name.startsWith("dream-") && name.endsWith(".md")).sort();
+}
+
+async function snapshotTree(root: string, rel: string): Promise<Record<string, string>> {
+	const out: Record<string, string> = {};
+	const walk = async (dir: string, prefix: string): Promise<void> => {
+		let names: string[];
+		try {
+			names = (await readdir(dir)).sort();
+		} catch {
+			return;
+		}
+		for (const name of names) {
+			const full = join(dir, name);
+			const relPath = prefix ? `${prefix}/${name}` : name;
+			const info = await stat(full);
+			if (info.isDirectory()) {
+				await walk(full, relPath);
+				continue;
+			}
+			const buf = await readFile(full);
+			out[relPath] = `${info.size}:${createHash("sha256").update(buf).digest("hex")}`;
+		}
+	};
+	await walk(join(root, rel), rel);
+	return out;
+}
+
+async function snapshotMemoryDirs(root: string): Promise<Record<string, string>> {
+	return {
+		...(await snapshotTree(root, "episodic")),
+		...(await snapshotTree(root, "semantic")),
+		...(await snapshotTree(root, "narrative")),
+	};
 }
 
 test("remember-request user block writes a dream proposal with episode source and snippet", async () => {
@@ -56,5 +91,101 @@ test("explicit-correction user block writes a dream proposal", async () => {
 		assert.equal(parsed.data.signal, "explicit-correction");
 		assert.deepEqual(parsed.data.sources, ["ep-correct-1"]);
 		assert.match(parsed.body ?? "", /不对,我不是这个意思,你应该用 pnpm/);
+	});
+});
+
+test("Codex AGENTS transcript without user blocks writes zero proposals", async () => {
+	await withStore(async (root) => {
+		await writeRawEpisode(
+			root,
+			"ep-agents-1",
+			[
+				"# AGENTS.md",
+				"",
+				"You should always remember to follow these workspace rules.",
+				"From now on, prefer the tools listed below.",
+				"",
+			].join("\n"),
+		);
+		const result = await runDreamScan(root);
+		assert.equal(result.written, 0);
+		assert.equal(result.matched, 0);
+		assert.deepEqual(dreamFiles(await readdir(join(root, "proposals"))), []);
+	});
+});
+
+test("assistant remember wording with a clean user block writes zero proposals", async () => {
+	await withStore(async (root) => {
+		await writeRawEpisode(
+			root,
+			"ep-assistant-1",
+			["user: ship the lint fix", "", "assistant: 记住, I will run lint first.", ""].join("\n"),
+		);
+		const result = await runDreamScan(root);
+		assert.equal(result.written, 0);
+		assert.equal(result.matched, 0);
+		assert.deepEqual(dreamFiles(await readdir(join(root, "proposals"))), []);
+	});
+});
+
+test("evidence-scan module does not import the model module", async () => {
+	const sourcePath = fileURLToPath(new URL("../src/her-core/evidence-scan.ts", import.meta.url));
+	const source = await readFile(sourcePath, "utf8");
+	assert.equal(/from\s+["']\.\/model\.ts["']/.test(source), false);
+	assert.equal(/from\s+["'][^"']*model["']/.test(source), false);
+	assert.equal(/\bFakeModel\b|\bOpenAICompatibleModel\b|\.complete\(/.test(source), false);
+});
+
+test("dream-scan leaves episodic semantic and narrative unchanged and only adds dream proposals", async () => {
+	await withStore(async (root) => {
+		await writeRawEpisode(root, "ep-remember-1", "user: 以后都记住:构建前先跑 lint\n");
+		const before = await snapshotMemoryDirs(root);
+		const proposalsBefore = new Set(await readdir(join(root, "proposals")));
+		const result = await runDreamScan(root);
+		assert.equal(result.written, 1);
+		assert.deepEqual(await snapshotMemoryDirs(root), before);
+		const added = (await readdir(join(root, "proposals"))).filter((name) => !proposalsBefore.has(name));
+		assert.ok(added.length >= 1);
+		assert.ok(added.every((name) => name.startsWith("dream-") && name.endsWith(".md")));
+	});
+});
+
+test("dream-scan does not overwrite an existing narrative-update proposal", async () => {
+	await withStore(async (root) => {
+		const collisionPath = join(root, "proposals", "2026-08-13-narrative-update.md");
+		const original = "---\nid: 2026-08-13-narrative-update\n---\nkeep this body\n";
+		await writeText(collisionPath, original);
+		const before = await readFile(collisionPath);
+		await writeRawEpisode(root, "ep-remember-1", "user: 以后都记住:构建前先跑 lint\n");
+		await runDreamScan(root);
+		const after = await readFile(collisionPath);
+		assert.deepEqual(after, before);
+		assert.equal(after.length, before.length);
+	});
+});
+
+test("second dream-scan on the same fixture writes zero proposals", async () => {
+	await withStore(async (root) => {
+		await writeRawEpisode(root, "ep-remember-1", "user: 以后都记住:构建前先跑 lint\n");
+		const first = await runDreamScan(root);
+		assert.equal(first.written, 1);
+		const filesAfterFirst = dreamFiles(await readdir(join(root, "proposals")));
+		const second = await runDreamScan(root);
+		assert.equal(second.written, 0);
+		assert.equal(second.skippedIdempotent, 1);
+		assert.deepEqual(dreamFiles(await readdir(join(root, "proposals"))), filesAfterFirst);
+	});
+});
+
+test("dry-run reports candidates and writes no proposal files", async () => {
+	await withStore(async (root) => {
+		await writeRawEpisode(root, "ep-remember-1", "user: 以后都记住:构建前先跑 lint\n");
+		const proposalsBefore = new Set(await readdir(join(root, "proposals")));
+		const result = await runDreamScan(root, { dryRun: true });
+		assert.equal(result.written, 0);
+		assert.equal(result.matched, 1);
+		assert.equal(result.candidates.length, 1);
+		assert.equal(result.candidates[0]?.signal, "remember-request");
+		assert.deepEqual(new Set(await readdir(join(root, "proposals"))), proposalsBefore);
 	});
 });
