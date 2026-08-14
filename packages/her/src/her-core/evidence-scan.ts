@@ -45,6 +45,7 @@ export interface RunDreamScanOptions extends ScanEpisodesOptions, WriteDreamProp
 const SNIPPET_MAX = 200;
 const EVIDENCE_CAP = 12;
 const SCORE_REMEMBER = 30;
+const SCORE_CORRECTION = 25;
 
 const HEADING_PROPOSAL = "\u63d0\u6848";
 const HEADING_EVIDENCE = "\u8bc1\u636e";
@@ -58,6 +59,15 @@ const REMEMBER_PATTERNS: RegExp[] = [
 	/\bfrom now on\b/gi,
 	/\bremember\b/gi,
 	/\balways\b/gi,
+];
+
+const CORRECTION_PATTERNS: RegExp[] = [
+	/\u4e0d\u5bf9/g,
+	/\u4e0d\u662f\u8fd9\u4e2a\u610f\u601d/g,
+	/\u4f60\u5e94\u8be5/g,
+	/\bactually\b/gi,
+	/\bwrong\b/gi,
+	/\bnot what I meant\b/gi,
 ];
 
 export function extractUserBlocks(body: string): string[] {
@@ -125,14 +135,17 @@ function collectMatches(userText: string, kind: DreamSignalKind, patterns: RegEx
 }
 
 export function detectSignals(userText: string): DreamEvidence[] {
-	return collectMatches(userText, "remember-request", REMEMBER_PATTERNS);
+	return [
+		...collectMatches(userText, "remember-request", REMEMBER_PATTERNS),
+		...collectMatches(userText, "explicit-correction", CORRECTION_PATTERNS),
+	];
 }
 
 function pickSignal(evidence: DreamEvidence[]): DreamSignalKind {
 	const remember = evidence.filter((item) => item.kind === "remember-request").length;
 	const correction = evidence.filter((item) => item.kind === "explicit-correction").length;
 	const rememberScore = remember * SCORE_REMEMBER;
-	const correctionScore = correction * 25;
+	const correctionScore = correction * SCORE_CORRECTION;
 	if (correctionScore > rememberScore) return "explicit-correction";
 	return "remember-request";
 }
@@ -140,7 +153,7 @@ function pickSignal(evidence: DreamEvidence[]): DreamSignalKind {
 function scoreEvidence(evidence: DreamEvidence[]): number {
 	let score = 0;
 	for (const item of evidence) {
-		score += item.kind === "remember-request" ? SCORE_REMEMBER : 25;
+		score += item.kind === "remember-request" ? SCORE_REMEMBER : SCORE_CORRECTION;
 	}
 	return score;
 }

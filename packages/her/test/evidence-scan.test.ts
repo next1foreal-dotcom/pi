@@ -44,3 +44,17 @@ test("remember-request user block writes a dream proposal with episode source an
 		assert.match(parsed.body ?? "", /以后都记住:构建前先跑 lint/);
 	});
 });
+
+test("explicit-correction user block writes a dream proposal", async () => {
+	await withStore(async (root) => {
+		await writeRawEpisode(root, "ep-correct-1", "user: 不对,我不是这个意思,你应该用 pnpm\n");
+		const result = await runDreamScan(root);
+		assert.equal(result.written, 1);
+		const files = dreamFiles(await readdir(join(root, "proposals")));
+		assert.equal(files.length, 1);
+		const parsed = parseFrontmatter(await readText(join(root, "proposals", files[0])));
+		assert.equal(parsed.data.signal, "explicit-correction");
+		assert.deepEqual(parsed.data.sources, ["ep-correct-1"]);
+		assert.match(parsed.body ?? "", /不对,我不是这个意思,你应该用 pnpm/);
+	});
+});
