@@ -3,8 +3,10 @@ import { createHash } from "node:crypto";
 import { mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PassThrough } from "node:stream";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { runHerCli } from "../src/cli.ts";
 import { frontmatter, initStore, parseFrontmatter, readText, writeText } from "../src/her-core/index.ts";
 import { runDreamScan } from "../src/her-core/evidence-scan.ts";
 
@@ -187,5 +189,96 @@ test("dry-run reports candidates and writes no proposal files", async () => {
 		assert.equal(result.candidates.length, 1);
 		assert.equal(result.candidates[0]?.signal, "remember-request");
 		assert.deepEqual(new Set(await readdir(join(root, "proposals"))), proposalsBefore);
+	});
+});
+
+async function runDreamScanCli(
+	root: string,
+	args: string[],
+): Promise<{ code: number; stdout: string; stderr: string }> {
+	const stdout = new PassThrough();
+	const stderr = new PassThrough();
+	const outChunks: Buffer[] = [];
+	const errChunks: Buffer[] = [];
+	stdout.on("data", (chunk) => outChunks.push(Buffer.from(chunk)));
+	stderr.on("data", (chunk) => errChunks.push(Buffer.from(chunk)));
+	const code = await runHerCli(["dream-scan", ...args], { ...process.env, HER_MEMORY_DIR: root }, root, {
+		stdout,
+		stderr,
+	});
+	return {
+		code,
+		stdout: Buffer.concat(outChunks).toString("utf8"),
+		stderr: Buffer.concat(errChunks).toString("utf8"),
+	};
+}
+
+test("CLI dream-scan prints a one-line summary and writes a proposal", async () => {
+	await withStore(async (root) => {
+		await writeRawEpisode(root, "ep-remember-1", "user: 以后都记住:构建前先跑 lint\n");
+		const { code, stdout } = await runDreamScanCli(root, []);
+		assert.equal(code, 0);
+		assert.match(stdout, /scanned 1 \/ matched 1 \/ proposals written 1 \/ skipped-idempotent 0/);
+		assert.equal(dreamFiles(await readdir(join(root, "proposals"))).length, 1);
+	});
+});
+
+test("CLI --dry-run prints candidates and writes no proposal files", async () => {
+	await withStore(async (root) => {
+		await writeRawEpisode(root, "ep-remember-1", "user: 以后都记住:构建前先跑 lint\n");
+		const proposalsBefore = new Set(await readdir(join(root, "proposals")));
+		const { code, stdout } = await runDreamScanCli(root, ["--dry-run"]);
+		assert.equal(code, 0);
+		assert.match(stdout, /ep-remember-1 remember-request/);
+		assert.match(stdout, /scanned 1 \/ matched 1 \/ proposals written 0 \/ skipped-idempotent 0/);
+		assert.deepEqual(new Set(await readdir(join(root, "proposals"))), proposalsBefore);
+	});
+});
+
+test("user_query block is extracted as a remember-request", async () => {
+	await withStore(async (root) => {
+		await writeRawEpisode(
+			root,
+			"ep-query-1",
+			"<user_query>\n以后都记住:构建前先跑 lint\n</user_query>\n",
+		);
+		const result = await runDreamScan(root);
+		assert.equal(result.written, 1);
+		const files = dreamFiles(await readdir(join(root, "proposals")));
+		const parsed = parseFrontmatter(await readText(join(root, "proposals", files[0] ?? "")));
+		assert.equal(parsed.data.signal, "remember-request");
+		assert.deepEqual(parsed.data.sources, ["ep-query-1"]);
+	});
+});
+
+test("limit processes newest raw files first", async () => {
+	await withStore(async (root) => {
+		await writeRawEpisode(root, "ep-old", "user: 以后都记住:构建前先跑 lint\n", "2026-08-01T1200");
+		await writeRawEpisode(root, "ep-new", "user: ship the lint fix\n", "2026-08-13T1800");
+		const limited = await runDreamScan(root, { limit: 1 });
+		assert.equal(limited.scanned, 1);
+		assert.equal(limited.written, 0);
+		const full = await runDreamScan(root);
+		assert.equal(full.scanned, 2);
+		assert.equal(full.written, 1);
+		assert.deepEqual(full.candidates[0]?.episodeId, "ep-old");
+	});
+});
+
+test("CLI --json emits structured dream-scan output", async () => {
+	await withStore(async (root) => {
+		await writeRawEpisode(root, "ep-remember-1", "user: 以后都记住:构建前先跑 lint\n");
+		const { code, stdout } = await runDreamScanCli(root, ["--json"]);
+		assert.equal(code, 0);
+		const payload = JSON.parse(stdout) as {
+			matched: number;
+			scanned: number;
+			skippedIdempotent: number;
+			written: number;
+		};
+		assert.equal(payload.scanned, 1);
+		assert.equal(payload.matched, 1);
+		assert.equal(payload.written, 1);
+		assert.equal(payload.skippedIdempotent, 0);
 	});
 });
