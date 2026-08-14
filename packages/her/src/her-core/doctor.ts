@@ -1,6 +1,7 @@
 import type { Dirent } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { basename, join, relative, resolve, sep } from "node:path";
+import { detectOrphanBrackets, opsLedgerPath } from "./op-brackets.ts";
 import { findSecretMatches, parseFrontmatter } from "./store.ts";
 export type Severity = "fail" | "warn";
 export type CheckStatus = "pass" | "warn" | "fail";
@@ -27,6 +28,7 @@ type DoctorConfig = {
 	heartbeatMaxAgeHours: number;
 	lockStaleMinutes: number;
 	cursorLagWarn: number;
+	orphanBracketTimeoutMinutes: number;
 	linksSeverity: Severity;
 	secretsAllowLines: string[];
 };
@@ -38,6 +40,7 @@ const DEFAULT_CONFIG: DoctorConfig = {
 	heartbeatMaxAgeHours: 48,
 	lockStaleMinutes: 30,
 	cursorLagWarn: 50,
+	orphanBracketTimeoutMinutes: 60,
 	linksSeverity: "warn",
 	secretsAllowLines: [],
 };
@@ -51,6 +54,7 @@ const CHECKS: CheckDefinition[] = [
 	{ id: "DR-05", name: "secrets-scan", run: checkSecrets },
 	{ id: "DR-06", name: "lock", run: checkLock },
 	{ id: "DR-07", name: "state-config", run: checkStateConfig },
+	{ id: "DR-08", name: "op-brackets", run: checkOrphanBrackets },
 ];
 export async function runDoctor(root: string, opts: DoctorOptions = {}): Promise<DoctorReport> {
 	const absoluteRoot = resolve(root);
@@ -317,6 +321,29 @@ async function checkStateConfig(ctx: DoctorContext): Promise<CheckResult> {
 		problems.length ? problems.join("; ") : "state.json ok, config.yaml ok",
 	);
 }
+async function checkOrphanBrackets(ctx: DoctorContext): Promise<CheckResult> {
+	const timeoutMs = ctx.config.orphanBracketTimeoutMinutes * 60_000;
+	let raw = "";
+	try {
+		raw = await readFile(opsLedgerPath(ctx.root), "utf8");
+	} catch (error) {
+		if (isCode(error, "ENOENT"))
+			return resultFor("DR-08", "op-brackets", "pass", "0 orphans (no audit/ops.jsonl)", { orphans: 0 });
+		return resultFor("DR-08", "op-brackets", "fail", `cannot read audit/ops.jsonl: ${errorMessage(error)}`);
+	}
+	const orphans = detectOrphanBrackets(raw.split(/\r?\n/), Date.now(), timeoutMs);
+	const status: CheckStatus = orphans.length > 0 ? "fail" : "pass";
+	const shown = orphans.slice(0, 8).join(", ");
+	return resultFor(
+		"DR-08",
+		"op-brackets",
+		status,
+		orphans.length
+			? `${orphans.length} orphan start(s) older than ${ctx.config.orphanBracketTimeoutMinutes}m: ${shown}`
+			: `0 orphans (timeout ${ctx.config.orphanBracketTimeoutMinutes}m)`,
+		{ orphans: orphans.length },
+	);
+}
 function resultFor(
 	id: string,
 	name: string,
@@ -364,6 +391,7 @@ async function readDoctorConfig(path: string): Promise<ConfigInfo> {
 			heartbeat_max_age_hours: "heartbeatMaxAgeHours",
 			lock_stale_minutes: "lockStaleMinutes",
 			cursor_lag_warn: "cursorLagWarn",
+			orphan_bracket_timeout_minutes: "orphanBracketTimeoutMinutes",
 		} as const;
 		for (const [key, field] of Object.entries(fields) as Array<[keyof typeof fields, keyof typeof config]>) {
 			const value = raw[key];

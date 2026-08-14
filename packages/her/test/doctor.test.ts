@@ -63,13 +63,42 @@ test("runDoctor returns execution error for a missing root", async () => {
 	}
 });
 
-test("healthy store passes all seven checks", async () => {
+test("healthy store passes all eight checks", async () => {
 	await withStore(async (root) => {
 		await raw(root);
 		const report = await runDoctor(root);
 		assert.equal(report.exitCode, 0);
-		assert.equal(report.checks.length, 7);
+		assert.equal(report.checks.length, 8);
 		assert.ok(report.checks.every((check) => check.status === "pass"));
+		assert.equal(report.checks.at(-1)?.id, "DR-08");
+	});
+});
+
+test("DR-08 fails on a start-without-end past the timeout and stays quiet in-flight", async () => {
+	await withStore(async (root) => {
+		await raw(root);
+		const missing = await runDoctor(root, { checks: ["DR-08"] });
+		assert.equal(missing.checks[0].status, "pass");
+		assert.match(missing.checks[0].detail, /0 orphans/);
+		const now = Date.now();
+		const staleTs = new Date(now - 2 * 60 * 60 * 1000).toISOString();
+		const freshTs = new Date(now - 30 * 1000).toISOString();
+		await writeText(
+			join(root, "audit", "ops.jsonl"),
+			[
+				JSON.stringify({ op: "synthesize", opId: "old-open", phase: "start", ts: staleTs }),
+				JSON.stringify({ op: "consolidate", opId: "closed", phase: "start", ts: staleTs }),
+				JSON.stringify({ op: "consolidate", opId: "closed", phase: "end", ts: staleTs, ok: true }),
+				JSON.stringify({ op: "reingest", opId: "in-flight", phase: "start", ts: freshTs }),
+				"",
+			].join("\n"),
+		);
+		const report = await runDoctor(root, { checks: ["DR-08"] });
+		assert.equal(report.exitCode, 1);
+		assert.equal(report.checks[0].status, "fail");
+		assert.match(report.checks[0].detail, /old-open/);
+		assert.doesNotMatch(report.checks[0].detail, /in-flight/);
+		assert.doesNotMatch(report.checks[0].detail, /closed/);
 	});
 });
 
@@ -415,7 +444,7 @@ test("CLI registers doctor with root, JSON output, and exit code", async () => {
 		assert.equal(code, 0, stderr.join(""));
 		assert.equal(stderr.length, 0);
 		const checks = JSON.parse(stdout.join("")) as Array<{ id: string; severity: string; status: string }>;
-		assert.equal(checks.length, 7);
+		assert.equal(checks.length, 8);
 		assert.equal(checks[0].id, "DR-01");
 		assert.equal(checks[0].severity, "fail");
 		assert.equal(checks[0].status, "pass");

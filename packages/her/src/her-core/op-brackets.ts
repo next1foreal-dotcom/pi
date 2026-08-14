@@ -49,7 +49,7 @@ export function completionMetaOf(model?: ModelLike): CompletionMeta | undefined 
 
 /**
  * Returns opIds whose start has no matching end and whose start timestamp is older than timeoutMs.
- * Malformed JSONL lines are skipped. Doctor/CLI wiring is out of scope for G-262.
+ * Malformed JSONL lines are skipped. `her doctor` DR-08 reads audit/ops.jsonl through this.
  */
 export function detectOrphanBrackets(lines: string[], nowMs: number, timeoutMs: number): string[] {
 	const open = new Map<string, number>();
