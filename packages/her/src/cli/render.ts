@@ -617,6 +617,7 @@ export function usage(): string {
   her capture --text <text> [--project <name>] [--session <id>] [--timestamp <ISO>] [--source <tag>] [--type <kind>] [--capture-scope <scope>] [--json]
   her choice-model [--json]
   her consolidate [--limit <n>] [--json]
+  her dream-scan [--limit <n>] [--dry-run] [--json]
   her cost [--now <ISO>] [--json]
   her decay [--older-than-days <days>] [--now <YYYY-MM-DD>] [--json]
   her dispatch <handoff.md> --executor pi:<model>|codex [--budget-usd <usd>] [--cwd <dir>] [--label <text>] [--timeout-min <n>] [--json]
