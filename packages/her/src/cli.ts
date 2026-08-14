@@ -90,6 +90,8 @@ import {
 	requireOptionValue,
 	UsageError,
 } from "./cli/utils.ts";
+import { applyDreamProposal, rejectDreamProposal } from "./her-core/evidence-apply.ts";
+import { runDreamScan } from "./her-core/evidence-scan.ts";
 import {
 	appendTasteIntakeLog,
 	assemblePrior,
@@ -143,8 +145,6 @@ import {
 	type WorldNoteData,
 	writeText,
 } from "./her-core/index.ts";
-import { applyDreamProposal, rejectDreamProposal } from "./her-core/evidence-apply.ts";
-import { runDreamScan } from "./her-core/evidence-scan.ts";
 import { redactSecrets } from "./her-core/store.ts";
 import { createSummaryModel } from "./summary-model.ts";
 
@@ -988,10 +988,7 @@ async function runDreamScanCommand(args: string[], env: NodeJS.ProcessEnv, cwd: 
 		}
 		if (options.dryRun) {
 			for (const candidate of result.candidates) {
-				writeLine(
-					io.stdout,
-					`${candidate.episodeId} ${candidate.signal} confidence=${candidate.confidence}`,
-				);
+				writeLine(io.stdout, `${candidate.episodeId} ${candidate.signal} confidence=${candidate.confidence}`);
 			}
 		}
 		writeLine(io.stdout, formatDreamScanSummary(result));

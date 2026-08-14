@@ -19,10 +19,7 @@ export interface CompletionResult extends CompletionMeta {
 
 export interface ModelLike {
 	complete(prompt: string, options?: { strong?: boolean }): Promise<string> | string;
-	completeWithMeta?(
-		prompt: string,
-		options?: { strong?: boolean },
-	): Promise<CompletionResult> | CompletionResult;
+	completeWithMeta?(prompt: string, options?: { strong?: boolean }): Promise<CompletionResult> | CompletionResult;
 	lastCompletion?: CompletionMeta;
 }
 
@@ -121,7 +118,8 @@ export class OpenAICompatibleModel implements ModelLike {
 		});
 		if (!response.ok) throw new Error(`model request failed: HTTP ${response.status}`);
 		const data = (await response.json()) as ChatCompletionResponse;
-		const finishReason = typeof data.choices?.[0]?.finish_reason === "string" ? data.choices[0].finish_reason : undefined;
+		const finishReason =
+			typeof data.choices?.[0]?.finish_reason === "string" ? data.choices[0].finish_reason : undefined;
 		const usage = sanitizeUsage(data.usage);
 		const provider = providerHost(this.config.llm.baseUrl);
 		const reportedModel = typeof data.model === "string" && data.model.trim() ? data.model : modelName;

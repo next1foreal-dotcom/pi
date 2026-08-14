@@ -873,10 +873,7 @@ export default function her(pi: ExtensionAPI): void {
 				kind: "mirror",
 				content: mirrored,
 				sources: [hit.path],
-				extraBlocks:
-					hit.kind === "world"
-						? [{ kind: "world", content: hit.text, sources: [hit.path] }]
-						: undefined,
+				extraBlocks: hit.kind === "world" ? [{ kind: "world", content: hit.text, sources: [hit.path] }] : undefined,
 			});
 			pi.sendMessage(
 				{

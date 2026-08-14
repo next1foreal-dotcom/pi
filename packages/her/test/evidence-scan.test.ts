@@ -7,8 +7,8 @@ import { PassThrough } from "node:stream";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { runHerCli } from "../src/cli.ts";
-import { frontmatter, initStore, parseFrontmatter, readText, writeText } from "../src/her-core/index.ts";
 import { runDreamScan } from "../src/her-core/evidence-scan.ts";
+import { frontmatter, initStore, parseFrontmatter, readText, writeText } from "../src/her-core/index.ts";
 
 async function withStore(fn: (root: string) => Promise<void>): Promise<void> {
 	const root = await mkdtemp(join(tmpdir(), "her-dream-scan-"));
@@ -237,11 +237,7 @@ test("CLI --dry-run prints candidates and writes no proposal files", async () =>
 
 test("user_query block is extracted as a remember-request", async () => {
 	await withStore(async (root) => {
-		await writeRawEpisode(
-			root,
-			"ep-query-1",
-			"<user_query>\n以后都记住:构建前先跑 lint\n</user_query>\n",
-		);
+		await writeRawEpisode(root, "ep-query-1", "<user_query>\n以后都记住:构建前先跑 lint\n</user_query>\n");
 		const result = await runDreamScan(root);
 		assert.equal(result.written, 1);
 		const files = dreamFiles(await readdir(join(root, "proposals")));

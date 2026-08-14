@@ -200,7 +200,12 @@ export async function scanEpisodes(rawDir: string, opts: ScanEpisodesOptions = {
 }
 
 function slugFromEpisodeId(episodeId: string): string {
-	return episodeId.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "episode";
+	return (
+		episodeId
+			.toLowerCase()
+			.replace(/[^a-z0-9]+/g, "-")
+			.replace(/^-+|-+$/g, "") || "episode"
+	);
 }
 
 function formatScanDate(now: Date): string {
@@ -215,9 +220,7 @@ function buildProposalBody(candidate: DreamCandidate): string {
 		candidate.signal === "remember-request"
 			? "User asked the agent to remember something."
 			: "User corrected the agent.";
-	const lines = candidate.evidence.map(
-		(item) => `- ${candidate.episodeId} ${EVIDENCE_DOT} ${item.snippet}`,
-	);
+	const lines = candidate.evidence.map((item) => `- ${candidate.episodeId} ${EVIDENCE_DOT} ${item.snippet}`);
 	return [`## ${HEADING_PROPOSAL}`, statement, "", `## ${HEADING_EVIDENCE}`, ...lines, ""].join("\n");
 }
 

@@ -71,10 +71,7 @@ async function snapshotTree(root: string, rel: string): Promise<Record<string, s
 	return out;
 }
 
-async function runCli(
-	root: string,
-	args: string[],
-): Promise<{ code: number; stdout: string; stderr: string }> {
+async function runCli(root: string, args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
 	const stdout = new PassThrough();
 	const stderr = new PassThrough();
 	const outChunks: Buffer[] = [];
@@ -135,7 +132,10 @@ test("non-dream proposal ids are rejected and CONTEXT is unchanged", async () =>
 		await assert.rejects(() => applyDreamProposal(root, "2026-08-13-narrative-update"), /not a dream proposal id/);
 		await assert.rejects(() => rejectDreamProposal(root, "2026-08-13-narrative-update"), /not a dream proposal id/);
 		assert.equal(await snapshotFile(join(root, "narrative", "CONTEXT.md")), contextBefore);
-		assert.equal(await readFile(collisionPath, "utf8"), "---\nid: 2026-08-13-narrative-update\n---\nkeep this body\n");
+		assert.equal(
+			await readFile(collisionPath, "utf8"),
+			"---\nid: 2026-08-13-narrative-update\n---\nkeep this body\n",
+		);
 	});
 });
 

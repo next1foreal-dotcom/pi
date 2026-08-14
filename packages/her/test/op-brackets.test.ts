@@ -90,13 +90,16 @@ test("synthesize finish_reason=length fails loud with zero writes", async () => 
 		},
 	});
 
-	await assert.rejects(() => memory.synthesize(), (error: unknown) => {
-		assert.ok(error instanceof FinishReasonLengthError);
-		assert.equal(error.finishReason, "length");
-		assert.match(error.message, /finish_reason=length/);
-		assert.match(error.message, /bytes/);
-		return true;
-	});
+	await assert.rejects(
+		() => memory.synthesize(),
+		(error: unknown) => {
+			assert.ok(error instanceof FinishReasonLengthError);
+			assert.equal(error.finishReason, "length");
+			assert.match(error.message, /finish_reason=length/);
+			assert.match(error.message, /bytes/);
+			return true;
+		},
+	);
 
 	assert.deepEqual(await readdir(join(store, "proposals")), proposalsBefore, "no proposal may be written");
 	const state = await readJson<{ last_synthesize?: string | null }>(join(store, ".her", "state.json"), {});
