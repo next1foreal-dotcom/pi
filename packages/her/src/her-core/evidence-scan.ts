@@ -163,11 +163,6 @@ function episodeIdFrom(data: Record<string, unknown>, filename: string): string 
 	return filename.replace(/\.md$/, "");
 }
 
-function episodeTimestamp(data: Record<string, unknown>, filename: string): string {
-	if (typeof data.timestamp === "string" && data.timestamp.trim()) return data.timestamp.trim();
-	return filename.split("--", 1)[0] ?? filename;
-}
-
 export async function scanEpisodes(rawDir: string, opts: ScanEpisodesOptions = {}): Promise<DreamCandidate[]> {
 	const names = await markdownEntries(rawDir);
 	const newestFirst = [...names].reverse();
@@ -274,7 +269,6 @@ export async function writeDreamProposals(
 			continue;
 		}
 		if (opts.dryRun) {
-			written += 1;
 			continue;
 		}
 		const path = await allocateDreamPath(proposalsDir, dateStamp, slugFromEpisodeId(candidate.episodeId));
