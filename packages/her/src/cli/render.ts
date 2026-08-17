@@ -652,6 +652,9 @@ export function usage(): string {
   her restore --semantic <key> [--now <YYYY-MM-DD>] [--json]
   her self-narrative [--json]
   her session <id> [--head <n> | --tail <n> | --slice <off,lim> | --grep <pat> [--context <n>]] [--json]
+  her snapshot-create [--same-volume-ok]
+  her snapshot-restore <snapshot> <target> [--external]
+  her snapshot-verify <snapshot>
   her synthesize [--if-due] [--json]
   her synthesize-due [--json]
   her sync --status [--json]
