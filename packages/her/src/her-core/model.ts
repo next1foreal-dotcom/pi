@@ -17,9 +17,14 @@ export interface CompletionResult extends CompletionMeta {
 	text: string;
 }
 
+export type CompletionOptions = {
+	strong?: boolean;
+	maxTokens?: number;
+};
+
 export interface ModelLike {
-	complete(prompt: string, options?: { strong?: boolean }): Promise<string> | string;
-	completeWithMeta?(prompt: string, options?: { strong?: boolean }): Promise<CompletionResult> | CompletionResult;
+	complete(prompt: string, options?: CompletionOptions): Promise<string> | string;
+	completeWithMeta?(prompt: string, options?: CompletionOptions): Promise<CompletionResult> | CompletionResult;
 	lastCompletion?: CompletionMeta;
 }
 
@@ -41,7 +46,7 @@ export class FinishReasonLengthError extends Error {
 }
 
 export class FakeModel implements ModelLike {
-	readonly calls: Array<{ prompt: string; strong: boolean }> = [];
+	readonly calls: Array<{ prompt: string; strong: boolean; maxTokens?: number }> = [];
 	lastCompletion?: CompletionMeta;
 	private readonly reply: string;
 	private readonly fail: boolean;
@@ -53,12 +58,16 @@ export class FakeModel implements ModelLike {
 		this.meta = meta;
 	}
 
-	complete(prompt: string, options: { strong?: boolean } = {}): string {
+	complete(prompt: string, options: CompletionOptions = {}): string {
 		return this.completeWithMeta(prompt, options).text;
 	}
 
-	completeWithMeta(prompt: string, options: { strong?: boolean } = {}): CompletionResult {
-		this.calls.push({ prompt, strong: options.strong === true });
+	completeWithMeta(prompt: string, options: CompletionOptions = {}): CompletionResult {
+		this.calls.push(
+			options.maxTokens === undefined
+				? { prompt, strong: options.strong === true }
+				: { prompt, strong: options.strong === true, maxTokens: options.maxTokens },
+		);
 		if (this.fail) throw new Error("model unavailable (FakeModel.fail=true)");
 		this.lastCompletion = { ...this.meta };
 		return { text: this.reply, ...this.lastCompletion };
@@ -96,11 +105,11 @@ export class OpenAICompatibleModel implements ModelLike {
 		this.fetcher = fetcher;
 	}
 
-	async complete(prompt: string, options: { strong?: boolean } = {}): Promise<string> {
+	async complete(prompt: string, options: CompletionOptions = {}): Promise<string> {
 		return (await this.completeWithMeta(prompt, options)).text;
 	}
 
-	async completeWithMeta(prompt: string, options: { strong?: boolean } = {}): Promise<CompletionResult> {
+	async completeWithMeta(prompt: string, options: CompletionOptions = {}): Promise<CompletionResult> {
 		const key = this.env[this.config.llm.apiKeyEnv];
 		if (!key) throw new Error(`Missing API key: set ${this.config.llm.apiKeyEnv}`);
 		const modelName = options.strong ? this.config.llm.modelStrong : this.config.llm.modelFast;
@@ -114,6 +123,9 @@ export class OpenAICompatibleModel implements ModelLike {
 			body: JSON.stringify({
 				model: modelName,
 				messages: [{ role: "user", content: prompt }],
+				...(typeof options.maxTokens === "number" && options.maxTokens > 0
+					? { max_tokens: options.maxTokens }
+					: {}),
 			}),
 		});
 		if (!response.ok) throw new Error(`model request failed: HTTP ${response.status}`);
@@ -138,7 +150,7 @@ export class OpenAICompatibleModel implements ModelLike {
 export async function invokeCompletion(
 	model: ModelLike,
 	prompt: string,
-	options: { strong?: boolean } = {},
+	options: CompletionOptions = {},
 ): Promise<CompletionResult> {
 	if (typeof model.completeWithMeta === "function") {
 		const result = await model.completeWithMeta(prompt, options);

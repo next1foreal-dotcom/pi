@@ -2,6 +2,7 @@ import { contentText } from "@earendil-works/pi-ai";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ModelLike } from "./her-core/index.ts";
+import { ANTI_NESTING_CLAUSE } from "./her-core/prompts.ts";
 
 /** Her pinned narrative that must survive every compaction. */
 export interface HerGrounding {
@@ -24,6 +25,7 @@ export interface CompactionPreparationLike {
  * Sized for the smallest model Her may fall back to (DeepSeek, 64k tokens): the
  * excerpts stay under ~56k characters, so even a 1 token/character worst case
  * (CJK) leaves room for the pinned narrative, the instructions, and the answer.
+ * dsh 80%/16%/pruner is not copied here — see docs/specs/2026-08-14-g263-compaction-ladder.md.
  */
 export const COMPACTION_TRANSCRIPT_BUDGET = 48_000;
 export const COMPACTION_PREFIX_BUDGET = 8_000;
@@ -110,6 +112,7 @@ export function sessionSummaryModel(ctx: ExtensionContext, signal?: AbortSignal)
 export function renderCompactionPrompt(input: HerGrounding & { preparation: CompactionPreparationLike }): string {
 	return [
 		"Create a compact continuation summary for Samantha. Preserve machine-truth grounding and do not invent facts.",
+		ANTI_NESTING_CLAUSE,
 		"",
 		"## Her pinned context to preserve",
 		`### FACTS.md\n${input.facts.trim() || "(empty)"}`,

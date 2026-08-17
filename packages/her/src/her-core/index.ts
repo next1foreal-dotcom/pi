@@ -268,7 +268,7 @@ export {
 	resolveTargetSource,
 	writeMessage,
 } from "./messages.ts";
-export type { CompletionMeta, CompletionResult, CompletionUsage, ModelLike } from "./model.ts";
+export type { CompletionMeta, CompletionOptions, CompletionResult, CompletionUsage, ModelLike } from "./model.ts";
 export { FakeModel, FinishReasonLengthError, invokeCompletion, OpenAICompatibleModel } from "./model.ts";
 export { detectOrphanBrackets, opsLedgerPath, withOpBracket } from "./op-brackets.ts";
 export {
@@ -325,6 +325,7 @@ export {
 	withRequirements,
 } from "./progress-state.ts";
 export {
+	ANTI_NESTING_CLAUSE,
 	choiceModelPrompt,
 	consolidatePrompt,
 	ideaEnginePrompt,
@@ -413,6 +414,17 @@ export {
 	writeJson,
 	writeText,
 } from "./store.ts";
+export type { PackedSynthesizeNotes, SemanticNoteRecord, SynthesizeSkip } from "./synthesize-budget.ts";
+export {
+	CHARS_PER_TOKEN,
+	DEFAULT_SYNTHESIZE_MAX_TOKENS,
+	DEFAULT_SYNTHESIZE_WINDOW_TOKENS,
+	listSemanticNotes,
+	packSynthesizeNotes,
+	SYNTHESIZE_PACK_RATIO,
+	synthesizeLimits,
+	synthesizeNoteBudgetChars,
+} from "./synthesize-budget.ts";
 export type {
 	CreateHerTaskOptions,
 	ExitCriterionResult,

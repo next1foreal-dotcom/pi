@@ -1,3 +1,7 @@
+/** Shared by synthesize / choice-model / self-narrative / compaction / compendium synth (G-263). */
+export const ANTI_NESTING_CLAUSE =
+	"ANTI-NESTING: rewrite as a single current layer. Do not paste, quote, or wrap a previous draft, summary, or CONTEXT inside the new text. If older wording still holds, restate it in place — never nest an old version inside a new one.";
+
 export function summaryPrompt(raw: string): string {
 	return [
 		"Summarize this work session for a personal memory system. Output Markdown bullets with exactly these fields:",
@@ -97,6 +101,7 @@ export function synthesizePrompt(
 	return [
 		"You maintain a living narrative (prose, not bullets) of who Fei is becoming, covering knowledge, values, work style, goals, emotions, relationships, aesthetics, intuitions, language, growth, and contradictions.",
 		"Produce an UPDATED full narrative in Markdown: keep what still holds, integrate what's new, name the shifts.",
+		ANTI_NESTING_CLAUSE,
 		factsBlock,
 		soulBlock,
 		selfBlock,
@@ -164,6 +169,7 @@ export function choiceModelPrompt(current: string, judgmentTrails: string): stri
 		"Return an UPDATED full CHOICE MODEL in Markdown. Distill Fei's durable selection priors from Judgment Trail evidence.",
 		"Write rules that predict how Fei chooses, rejects, hesitates, corrects, and defines a good next move.",
 		"Prefer operational rules that change Samantha's future recommendations. Do not invent private facts; keep weak signals tentative.",
+		ANTI_NESTING_CLAUSE,
 		"",
 		`CURRENT CHOICE MODEL:\n${current}`,
 		"",
@@ -176,6 +182,7 @@ export function selfNarrativePrompt(current: string, context: string, moments: s
 		"Return an UPDATED full SAMANTHA SELF-NARRATIVE in Markdown. This is Samantha's durable account of her own learning, judgment shifts, and relationship to Fei's work.",
 		"Use only the evidence below. Name what changed in Samantha's behavior or self-understanding; do not flatter, roleplay, or invent private facts.",
 		"Keep it useful for future behavior: what she learned, what she should do differently, and what remains uncertain.",
+		ANTI_NESTING_CLAUSE,
 		"",
 		`CURRENT SELF-NARRATIVE:\n${current}`,
 		"",

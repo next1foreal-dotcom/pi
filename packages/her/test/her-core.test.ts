@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { mock } from "node:test";
 import { promisify } from "node:util";
 import {
 	checkpointLongTask,
@@ -23,6 +23,8 @@ import {
 	SEED_SOUL,
 	type SearchBackend,
 	startLongTask,
+	synthesizeNoteBudgetChars,
+	synthesizePrompt,
 	writeJson,
 	writeText,
 } from "../src/her-core/index.ts";
@@ -1346,6 +1348,72 @@ test("synthesize writes CONTEXT with a trail commit and leaves FACTS unchanged",
 	assert.match((await readText(join(store, "narrative", "context-log.md"))) ?? "", /status: reverted/);
 	assert.equal((await memory.reviewContextUpdates()).length, 0);
 	assert.match((await git(store, "log", "--oneline", "-1")).stdout, /memory\(context\): revert/);
+});
+
+test("G-263 synthesize packs notes by budget, logs skips, and sends max_tokens", async () => {
+	const previous = {
+		HER_SYNTHESIZE_WINDOW_TOKENS: process.env.HER_SYNTHESIZE_WINDOW_TOKENS,
+		HER_SYNTHESIZE_MAX_TOKENS: process.env.HER_SYNTHESIZE_MAX_TOKENS,
+	};
+	const store = await tempStore();
+	const current = (await readText(join(store, "narrative", "CONTEXT.md"))) ?? "";
+	const moments = (await readText(join(store, "narrative", "becoming-moments.md"))) ?? "";
+	const soul = (await readText(join(store, "narrative", "SOUL.md"))) ?? "";
+	const self = (await readText(join(store, "narrative", "SAMANTHA.md"))) ?? "";
+	const choiceModel = (await readText(join(store, "narrative", "CHOICE-MODEL.md"))) ?? "";
+	const facts = "Fei prefers verification in every review.\n";
+	await writeText(join(store, "narrative", "FACTS.md"), facts);
+	const reservedChars = Buffer.byteLength(
+		synthesizePrompt(current, "", moments, facts, soul, self, choiceModel),
+		"utf8",
+	);
+	const noteBudget = 3500;
+	const availableChars = reservedChars + noteBudget;
+	const availableTokens = Math.ceil(availableChars / 4);
+	const maxTokens = 200;
+	const windowTokens = Math.ceil((availableTokens + maxTokens) / 0.8);
+	process.env.HER_SYNTHESIZE_WINDOW_TOKENS = String(windowTokens);
+	process.env.HER_SYNTHESIZE_MAX_TOKENS = String(maxTokens);
+	try {
+		assert.ok(synthesizeNoteBudgetChars({ reservedChars, windowTokens, maxTokens }) >= 3000);
+		await writeText(join(store, "semantic", "verification-habit.md"), `KEEP-MARKER ${"v".repeat(2000)}\n`);
+		await writeText(join(store, "semantic", "unrelated-alpha.md"), `DROP-ALPHA ${"a".repeat(2000)}\n`);
+		await writeText(join(store, "semantic", "unrelated-beta.md"), `DROP-BETA ${"b".repeat(2000)}\n`);
+		const prompts: Array<{ prompt: string; maxTokens?: number }> = [];
+		const memory = new Memory(store, {
+			complete(prompt, options) {
+				prompts.push({ prompt, maxTokens: options?.maxTokens });
+				return "# CONTEXT\n\nPacked by budget.\n";
+			},
+		});
+		await git(store, "init");
+		await git(store, "config", "user.name", "Her Test");
+		await git(store, "config", "user.email", "her-test@example.com");
+		await git(store, "add", "-A");
+		await git(store, "commit", "-m", "memory: g263 fixtures");
+		const warnings = mock.method(console, "warn");
+		try {
+			await memory.synthesize();
+		} finally {
+			warnings.mock.restore();
+		}
+		assert.equal(prompts.length, 1);
+		assert.equal(prompts[0]?.maxTokens, 200);
+		assert.match(prompts[0]?.prompt ?? "", /KEEP-MARKER/);
+		assert.doesNotMatch(prompts[0]?.prompt ?? "", /DROP-ALPHA/);
+		assert.doesNotMatch(prompts[0]?.prompt ?? "", /DROP-BETA/);
+		const skips = (await readText(join(store, "audit", "synthesize-skips.jsonl"))) ?? "";
+		assert.match(skips, /"reason":"budget"/);
+		assert.match(skips, /unrelated-alpha/);
+		assert.match(skips, /unrelated-beta/);
+		assert.doesNotMatch(skips, /verification-habit/);
+		assert.match((await readText(join(store, "narrative", "CONTEXT.md"))) ?? "", /Packed by budget/);
+	} finally {
+		if (previous.HER_SYNTHESIZE_WINDOW_TOKENS === undefined) delete process.env.HER_SYNTHESIZE_WINDOW_TOKENS;
+		else process.env.HER_SYNTHESIZE_WINDOW_TOKENS = previous.HER_SYNTHESIZE_WINDOW_TOKENS;
+		if (previous.HER_SYNTHESIZE_MAX_TOKENS === undefined) delete process.env.HER_SYNTHESIZE_MAX_TOKENS;
+		else process.env.HER_SYNTHESIZE_MAX_TOKENS = previous.HER_SYNTHESIZE_MAX_TOKENS;
+	}
 });
 
 test("proof-of-life loop accumulates context and Samantha self growth with traceable review", async () => {

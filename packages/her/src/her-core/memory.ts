@@ -77,7 +77,6 @@ import {
 	parseContextLog,
 	parseDate,
 	readChoiceModelRuleFiles,
-	readMarkdownDir,
 	renderChoiceRuleFile,
 	renderTasteRuleSummary,
 	safeStem,
@@ -130,6 +129,12 @@ import {
 	writeText,
 } from "./store.ts";
 import { storeLock } from "./store-lock.ts";
+import {
+	listSemanticNotes,
+	packSynthesizeNotes,
+	synthesizeLimits,
+	synthesizeNoteBudgetChars,
+} from "./synthesize-budget.ts";
 import { appendTriggerEvent } from "./trigger-log.ts";
 
 const DEFAULT_CONSOLIDATE_EPISODE_CHARS = 8000;
@@ -1359,17 +1364,29 @@ export class Memory {
 
 	private async synthesizeInner(ctx: OpBracketContext): Promise<string> {
 		if (!this.model) throw new Error("synthesize requires a model");
+		const limits = synthesizeLimits();
 		const prepared = await this.withStoreLock(async () => {
 			const current = (await readText(this.paths.contextFile)) ?? SEED_CONTEXT;
-			const notes = await readMarkdownDir(this.paths.semantic);
+			const noteRecords = await listSemanticNotes(this.paths.semantic);
 			const moments = (await readText(this.paths.becoming)) ?? "";
 			const facts = (await readText(this.paths.factsFile)) ?? "";
 			const soul = (await readText(this.paths.soulFile)) ?? SEED_SOUL;
 			const self = (await readText(this.paths.selfFile)) ?? SEED_SELF_NARRATIVE;
 			const choiceModel = (await readText(this.paths.choiceModelFile)) ?? SEED_CHOICE_MODEL;
+			const skeleton = synthesizePrompt(current, "", moments, facts, soul, self, choiceModel);
+			const budgetChars = synthesizeNoteBudgetChars({
+				reservedChars: Buffer.byteLength(skeleton, "utf8"),
+				windowTokens: limits.windowTokens,
+				maxTokens: limits.maxTokens,
+			});
+			const packed = packSynthesizeNotes(noteRecords, `${current}\n${moments}\n${facts}`, budgetChars);
 			return {
 				current,
-				notes,
+				notes: packed.packed,
+				omitted: packed.omitted,
+				selectedCount: packed.selected.length,
+				noteCount: noteRecords.length,
+				budgetChars,
 				moments,
 				facts,
 				soul,
@@ -1378,6 +1395,26 @@ export class Memory {
 				contextFingerprint: textFingerprint(current),
 			};
 		});
+		if (prepared.omitted.length > 0) {
+			const at = new Date().toISOString();
+			const lines = prepared.omitted
+				.map((item) =>
+					JSON.stringify({
+						at,
+						reason: "budget",
+						key: item.key,
+						chars: item.chars,
+						budgetChars: prepared.budgetChars,
+						windowTokens: limits.windowTokens,
+						maxTokens: limits.maxTokens,
+					}),
+				)
+				.join("\n");
+			await appendText(join(this.paths.root, "audit", "synthesize-skips.jsonl"), `${lines}\n`);
+			console.warn(
+				`[her] synthesize: notes ${prepared.noteCount} -> ${prepared.selectedCount} (budget ${prepared.budgetChars} chars, omitted ${prepared.omitted.length})`,
+			);
+		}
 		const completion = await invokeCompletion(
 			this.model,
 			synthesizePrompt(
@@ -1391,6 +1428,7 @@ export class Memory {
 			),
 			{
 				strong: true,
+				maxTokens: limits.maxTokens,
 			},
 		);
 		ctx.noteModel({

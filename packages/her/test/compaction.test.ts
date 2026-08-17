@@ -9,7 +9,7 @@ import {
 	sessionSummaryModel,
 	summarizeForCompaction,
 } from "../src/compaction.ts";
-import { FakeModel } from "../src/her-core/index.ts";
+import { ANTI_NESTING_CLAUSE, FakeModel } from "../src/her-core/index.ts";
 import { createSummaryModel } from "../src/summary-model.ts";
 
 const grounding = {
@@ -84,6 +84,7 @@ test("prompt budget drops the oldest messages and keeps the newest", () => {
 	assert.match(prompt, /NEWEST-MARKER/);
 	assert.doesNotMatch(prompt, /OLDEST-MARKER/);
 	assert.match(prompt, /older message\(s\) omitted: \d+ user/);
+	assert.ok(prompt.includes(ANTI_NESTING_CLAUSE));
 });
 
 test("describeMessages keeps every message when it fits the budget", () => {

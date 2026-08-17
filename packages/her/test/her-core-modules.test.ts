@@ -20,6 +20,7 @@ import {
 import { FakeModel, OpenAICompatibleModel } from "../src/her-core/model.ts";
 import { validateMemoryProvenance } from "../src/her-core/privacy.ts";
 import {
+	ANTI_NESTING_CLAUSE,
 	choiceModelPrompt,
 	consolidatePrompt,
 	selfNarrativePrompt,
@@ -131,6 +132,15 @@ test("prompts preserve Python memory operation contracts", () => {
 	);
 	assert.match(choiceModelPrompt("current choice", "correction: choose smaller reversible moves"), /JUDGMENT TRAILS/);
 	assert.match(choiceModelPrompt("current choice", "correction: choose smaller reversible moves"), /current choice/);
+	assert.ok(synthesizePrompt("current", "notes", "moments").includes(ANTI_NESTING_CLAUSE));
+	assert.ok(
+		choiceModelPrompt("current choice", "correction: choose smaller reversible moves").includes(ANTI_NESTING_CLAUSE),
+	);
+	assert.ok(
+		selfNarrativePrompt("current self", "context", "Samantha should report verified state", "recognition").includes(
+			ANTI_NESTING_CLAUSE,
+		),
+	);
 	assert.match(
 		selfNarrativePrompt("current self", "context", "Samantha should report verified state", "recognition"),
 		/SAMANTHA SELF-EVIDENCE/,
@@ -357,8 +367,11 @@ test("OpenAICompatibleModel uses fast or strong configured model", async () => {
 
 	assert.equal(await model.complete("prompt"), "model reply");
 	assert.equal(await model.complete("prompt", { strong: true }), "model reply");
+	assert.equal(await model.complete("prompt", { maxTokens: 512 }), "model reply");
 	assert.equal(requests[0].body.model, "fast-model");
 	assert.equal(requests[1].body.model, "strong-model");
+	assert.equal(requests[0].body.max_tokens, undefined);
+	assert.equal(requests[2].body.max_tokens, 512);
 	assert.equal(requests[0].authorization, "Bearer secret");
 });
 

@@ -165,6 +165,7 @@ test("synthesis prompt fences untrusted analysis text including embedded write i
 	assert.equal(trusted.includes(attack), false);
 	assert.equal(trusted.includes("her_publish"), false);
 	assert.match(prompt, /reference sources by ID/i);
+	assert.match(prompt, /ANTI-NESTING/);
 });
 
 test("synthesize drops unknown source ids and never copies a fabricated URL", async () => {
