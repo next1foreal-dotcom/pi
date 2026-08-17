@@ -9,6 +9,7 @@ export const ANCHOR_PATHS: readonly string[] = [
 	".githooks/",
 	"her-memory/.env",
 	"her-memory/audit/event-history.jsonl",
+	"her-memory/audit/event-history.state.json",
 ];
 
 // Source: Her-repo/docs/specs/her-rsi-contracts/selfmod.ts.
