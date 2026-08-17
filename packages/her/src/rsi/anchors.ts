@@ -8,6 +8,7 @@ export const ANCHOR_PATHS: readonly string[] = [
 	"pi-package/policies/",
 	".githooks/",
 	"her-memory/.env",
+	"her-memory/audit/event-history.jsonl",
 ];
 
 // Source: Her-repo/docs/specs/her-rsi-contracts/selfmod.ts.
