@@ -113,4 +113,4 @@ Defaults in config.yaml / DEFAULT_CONFIG remain `once`. This table is not applie
 
 ## 5) Commit
 
-Tree: `D:\@Her\wt-g269` branch `feat/g269-missed-fire`. Hash filled after commit. Not pushed.
+Tree: `D:\@Her\wt-g269` branch `feat/g269-missed-fire` hash `53497d446`. Not pushed.
