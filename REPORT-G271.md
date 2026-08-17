@@ -131,4 +131,4 @@ Not sure / residual:
 
 ## 5) Commit
 
-Branch `feat/g271-reversibility-base`, not pushed. Hash filled in the follow-up line after `git rev-parse HEAD`.
+Branch `feat/g271-reversibility-base`, not pushed. Hash `29ab3423a` (`29ab3423a0908882357bd5c295643a5b06e84b2f`).
