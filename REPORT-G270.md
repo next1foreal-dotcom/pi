@@ -96,7 +96,7 @@ Unsure items (must not hide): host-process actor attestation beyond sealed CLI; 
 
 ## 4) Commit status
 
-Recorded after commit in section 4b below. Branch `feat/g270-event-history`, not pushed.
+Tree: `D:\@Her\wt-g270` branch `feat/g270-event-history` hash `e05c44d07`. Not pushed.
 
 ## 5) heartbeat.ps1 diff (for human review)
 
