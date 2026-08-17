@@ -64,6 +64,7 @@ import {
 	writeLine,
 	writePayload,
 } from "./cli/render.ts";
+import { runSnapshotCreateCommand, runSnapshotRestoreCommand, runSnapshotVerifyCommand } from "./cli/snapshot.ts";
 import {
 	type CliBootstrapFeedPayload,
 	type CliCommand,
@@ -191,6 +192,18 @@ export async function runHerCli(
 
 	if (argv[0] === "events-verify") {
 		return runEventsVerifyCommand(getMemoryDir(env, cwd), io, env);
+	}
+
+	if (argv[0] === "snapshot-create") {
+		return runSnapshotCreateCommand(argv.slice(1), env, cwd, io);
+	}
+
+	if (argv[0] === "snapshot-restore") {
+		return runSnapshotRestoreCommand(argv.slice(1), env, cwd, io);
+	}
+
+	if (argv[0] === "snapshot-verify") {
+		return runSnapshotVerifyCommand(argv.slice(1), env, cwd, io);
 	}
 
 	let command: CliCommand;
