@@ -78,11 +78,12 @@ test("syncMemory fast-forwards when only the remote advanced", async () => {
 
 	const result = await syncMemory(new StorePaths(store), "memory(sync): nothing local");
 
-	assert.equal(result.status, "fast-forwarded");
-	assert.equal(result.behind, 1);
+	// organ.sync.start is local growth, so after the fast-forward we commit and push.
+	assert.equal(result.status, "pushed");
+	assert.ok(result.commit);
 	assert.equal(await git(store, "rev-parse", "HEAD"), await git(remote, "rev-parse", "HEAD"));
-	// Fast-forward, never a merge commit.
 	assert.equal(await git(store, "rev-list", "--count", "--merges", "HEAD"), "0");
+	assert.ok((await git(store, "log", "--oneline")).includes("other machine capture"));
 });
 
 test("syncMemory refuses to touch history when both sides diverged", async () => {
@@ -145,10 +146,12 @@ test("syncMemory never stages per-machine runtime state under .her/", async () =
 	assert.equal(await git(store, "rev-parse", "HEAD"), await git(remote, "rev-parse", "HEAD"));
 });
 
-test("syncMemory reports clean when nothing changed on either side", async () => {
-	const { store } = await gitBackedStore();
+test("syncMemory records organ.sync events and commits them when the tree was otherwise clean", async () => {
+	const { store, remote } = await gitBackedStore();
 
 	const result = await syncMemory(new StorePaths(store), "memory(sync): clean");
 
-	assert.equal(result.status, "clean");
+	assert.equal(result.status, "pushed");
+	assert.ok(result.commit);
+	assert.equal(await git(store, "rev-parse", "HEAD"), await git(remote, "rev-parse", "HEAD"));
 });

@@ -7,6 +7,7 @@ import { text as readStreamText } from "node:stream/consumers";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import { runEventsVerifyCommand, runHostEventCommand } from "./cli/event-history.ts";
 import { parseArgs } from "./cli/parse.ts";
 import {
 	renderApprove,
@@ -182,6 +183,14 @@ export async function runHerCli(
 
 	if (argv[0] === "dream-reject") {
 		return runDreamRejectCommand(argv.slice(1), env, cwd, io);
+	}
+
+	if (argv[0] === "host-event") {
+		return runHostEventCommand(argv.slice(1), getMemoryDir(env, cwd), io);
+	}
+
+	if (argv[0] === "events-verify") {
+		return runEventsVerifyCommand(getMemoryDir(env, cwd), io, env);
 	}
 
 	let command: CliCommand;

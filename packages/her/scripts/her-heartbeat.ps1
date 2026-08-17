@@ -27,6 +27,39 @@ function Invoke-HerCli {
     }
 }
 
+function Invoke-HerEventHistorySafe {
+    param([Alias("Args")][string[]]$CliArgs)
+    try {
+        $cli = Join-Path $script:RepoRoot "packages\her\bin\her.mjs"
+        & node $cli @CliArgs | Out-Null
+    } catch {
+        # Event history / probe failures must never block organ runs.
+    }
+}
+
+function Complete-HerHostEvent {
+    if ($script:HistoryRunEnded) {
+        return
+    }
+    $script:HistoryRunEnded = $true
+    if (-not $script:HistoryRunId) {
+        return
+    }
+    $ok = "true"
+    if (-not $script:HistoryRunOk) {
+        $ok = "false"
+    }
+    $endArgs = @("host-event", "run-end", "--runner", "heartbeat", "--run-id", $script:HistoryRunId, "--ok", $ok)
+    if ($script:HistoryDetail) {
+        $detail = [string]$script:HistoryDetail
+        if ($detail.Length -gt 200) {
+            $detail = $detail.Substring(0, 200)
+        }
+        $endArgs += @("--detail", $detail)
+    }
+    Invoke-HerEventHistorySafe -Args $endArgs
+}
+
 function Invoke-HerTelegramBridge {
     param([string]$RunFile)
     if (-not $env:HER_TELEGRAM_BOT_TOKEN -or -not $env:HER_TELEGRAM_CHAT_ID) {
@@ -248,11 +281,18 @@ if (Test-Path -LiteralPath $script:HeartbeatCircuitFile) {
     exit 1
 }
 
-Assert-HerDailyCostCap
+$script:HistoryRunId = [guid]::NewGuid().ToString()
+$script:HistoryRunOk = $true
+$script:HistoryRunEnded = $false
+$script:HistoryDetail = ""
+Invoke-HerEventHistorySafe -Args @("host-event", "run-start", "--runner", "heartbeat", "--run-id", $script:HistoryRunId)
+Invoke-HerEventHistorySafe -Args @("events-verify")
+
 $previousCedarProfile = $env:HER_CEDAR_PROFILE
 $env:HER_CEDAR_PROFILE = "heartbeat"
 
 try {
+Assert-HerDailyCostCap
 $heartbeatRunId = $null
 $stopFile = Join-Path $script:MemoryDir "STOP"
 if (Test-Path -LiteralPath $stopFile) {
@@ -325,6 +365,8 @@ Clear-HeartbeatFailures
 Write-HerRunEnvelope -RunId $heartbeatRunId -Status "done" -Title "Heartbeat $stamp"
 Write-Output "Her heartbeat complete: $runFile"
 } catch {
+    $script:HistoryRunOk = $false
+    $script:HistoryDetail = $_.Exception.Message
     if ($heartbeatRunId) {
         $failTitle = if ($stamp) { "Heartbeat failed $stamp" } else { "Heartbeat failed" }
         Write-HerRunEnvelope -RunId $heartbeatRunId -Status "failed" -Title $failTitle
@@ -332,6 +374,7 @@ Write-Output "Her heartbeat complete: $runFile"
     Register-HeartbeatFailure -Message $_.Exception.Message
     throw
 } finally {
+    Complete-HerHostEvent
     if ($null -eq $previousCedarProfile) {
         Remove-Item Env:\HER_CEDAR_PROFILE -ErrorAction SilentlyContinue
     } else {

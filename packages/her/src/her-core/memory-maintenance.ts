@@ -1,5 +1,7 @@
+import { randomUUID } from "node:crypto";
 import { unlink } from "node:fs/promises";
 import { basename, join } from "node:path";
+import { appendEventBestEffort } from "./event-history.ts";
 import type {
 	DecaySweepOptions,
 	DecaySweepResult,
@@ -106,6 +108,37 @@ function countRevs(result: { stdout: string }): number {
 // rejected by a concurrent remote advance also throws, so the caller retreats
 // and retries on the next round instead of racing for the lock.
 export async function syncMemory(paths: StorePaths, message: string): Promise<MemorySyncResult> {
+	const runId = randomUUID();
+	await appendEventBestEffort("organ.sync.start", "sync", { runId }, paths.root);
+	try {
+		const result = await syncMemoryOnce(paths, message);
+		await appendEventBestEffort("organ.sync.end", "sync", { runId, ok: true, status: result.status }, paths.root);
+		const flushed = await commitAndPushEventHistory(paths, message);
+		return flushed ?? result;
+	} catch (error) {
+		const head = error instanceof Error ? error.message.slice(0, 200) : String(error).slice(0, 200);
+		await appendEventBestEffort("organ.sync.end", "sync", { runId, ok: false, error: head }, paths.root);
+		throw error;
+	}
+}
+
+async function commitAndPushEventHistory(paths: StorePaths, message: string): Promise<MemorySyncResult | undefined> {
+	const names = ["audit/event-history.jsonl", "audit/event-history.state.json"];
+	const existing: string[] = [];
+	for (const name of names) {
+		if ((await readText(join(paths.root, name))) !== undefined) existing.push(name);
+	}
+	if (existing.length === 0) return undefined;
+	await git(paths.root, "add", "--", ...existing);
+	if (!(await git(paths.root, "diff", "--cached", "--name-only")).stdout.trim()) return undefined;
+	await git(paths.root, "commit", "-m", message);
+	const branch = (await git(paths.root, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim();
+	await git(paths.root, "push", "origin", branch);
+	const commit = (await git(paths.root, "rev-parse", "--short", "HEAD")).stdout.trim();
+	return { status: "pushed", commit };
+}
+
+async function syncMemoryOnce(paths: StorePaths, message: string): Promise<MemorySyncResult> {
 	const branch = (await git(paths.root, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim();
 	if (!branch || branch === "HEAD") {
 		throw new Error(`her-memory sync refused: detached HEAD (branch resolved to "${branch}")`);
@@ -134,7 +167,7 @@ export async function syncMemory(paths: StorePaths, message: string): Promise<Me
 	// Stage all memory content but never per-machine runtime state under .her/;
 	// it must not travel across machines even when a file there is not yet
 	// gitignored (see her-memory .her/ ignore rules).
-	await git(paths.root, "add", "-A", "--", ".", ":(exclude).her");
+	await git(paths.root, "add", "-A", "--", ".", ":(exclude).her", ":(exclude)audit/event-history.lock");
 	if ((await git(paths.root, "diff", "--cached", "--name-only")).stdout.trim()) {
 		await git(paths.root, "commit", "-m", message);
 		ahead += 1;

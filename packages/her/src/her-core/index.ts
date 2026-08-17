@@ -167,6 +167,33 @@ export type {
 	RunGoldenEvalOptions,
 } from "./evals.ts";
 export { goldenEvalCategories, runGoldenEvals } from "./evals.ts";
+export type {
+	CorruptMarker,
+	DerivedEvent,
+	EventKind,
+	HistoryEvent,
+	HostRunner,
+	ListedEvent,
+	ListHerEventsOptions,
+	ReadEventHistoryResult,
+} from "./event-history.ts";
+export {
+	appendEvent,
+	appendEventBestEffort,
+	appendSelfmodTransition,
+	detectPresumedCrashes,
+	EVENT_KINDS,
+	eventHistoryPath,
+	eventHistoryStatePath,
+	HOST_RUNNERS,
+	isEventKind,
+	isHostRunner,
+	listHerEvents,
+	readEventHistory,
+	uuidv7,
+} from "./event-history.ts";
+export type { VerifyAlertSender, VerifyResult } from "./event-history-verify.ts";
+export { eventHistoryAlertPath, verifyEventHistoryPrefix } from "./event-history-verify.ts";
 export {
 	ensurePublishServer,
 	herPublish,

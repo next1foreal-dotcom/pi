@@ -9,6 +9,7 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	find: { destructive: false },
 	ls: { destructive: false },
 	her_status: { destructive: false },
+	list_her_events: { destructive: false },
 	her_recall: { destructive: false },
 	her_session_list: { destructive: false },
 	her_session_read: { destructive: false },

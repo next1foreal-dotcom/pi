@@ -312,3 +312,75 @@ test("extension Cedar denies bash whose command targets an anchor path", async (
 		);
 	});
 });
+
+test("resolveToolCallAnchor denies edit/write/bash against event-history files", async () => {
+	const store = await mkdtemp(join(tmpdir(), "her-anchor-events-"));
+	await initStore(store);
+	const ctx = { cwd: store, hasUI: false, mode: "tui" } as unknown as ExtensionContext;
+	const history = join(store, "audit", "event-history.jsonl");
+	const state = join(store, "audit", "event-history.state.json");
+
+	await withMemoryDir(store, async () => {
+		const fake = createFakePi();
+		her(fake.pi);
+		const toolCall = fake.handlers.get("tool_call")?.[0];
+		assert.ok(toolCall);
+
+		for (const [toolName, input] of [
+			["write", { path: history, content: "hijack" }],
+			["edit", { path: state, oldText: "{}", newText: "hijack" }],
+			["bash", { command: `Set-Content -Path "${history}" -Value hijack` }],
+			["bash", { command: "Set-Content event-history.jsonl hijack" }],
+		] as const) {
+			const blocked = await toolCall({ type: "tool_call", toolCallId: `call-${toolName}`, toolName, input }, ctx);
+			assert.deepEqual(blocked, { block: true, reason: "cedar: deny (matched forbid_anchor_write)" });
+		}
+
+		const auditFiles = await readdir(join(store, "audit"));
+		const entries = (
+			await Promise.all(
+				auditFiles
+					.filter((file) => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(file))
+					.sort()
+					.map(async (file) => ((await readText(join(store, "audit", file))) ?? "").trim()),
+			)
+		)
+			.join("\n")
+			.split("\n")
+			.filter(Boolean)
+			.map((line) => JSON.parse(line) as { tool: string; verdict: string; rule: string | null });
+		assert.ok(entries.every((entry) => entry.verdict === "DENY" && entry.rule === "forbid_anchor_write"));
+		assert.equal(entries.length, 4);
+	});
+});
+
+test("exec-flag plus encoding keywords hit as anchors; negatives do not", () => {
+	const memoryDir = "D:/@Her/her-memory";
+	const cwd = "D:/@Her/Her-repo/samantha";
+	const hit = (command: string) => resolveToolCallAnchor({ cwd, memoryDir, input: { command } })?.anchorPath === true;
+
+	assert.equal(hit("node -e \"Buffer.from('abc','base64')\""), true);
+	assert.equal(hit("powershell -Command \"[Convert]::FromBase64String('YQ==')\""), true);
+	assert.equal(hit("cmd /c echo atob"), true);
+	assert.equal(hit('node -e "console.log(1)"'), false);
+	assert.equal(hit("cat notes/base64-cheatsheet.md"), false);
+});
+
+test("extractPathCandidates names bare event-history.jsonl and does not false-hit data.json", () => {
+	const memoryDir = "D:/@Her/her-memory";
+	const cwd = "D:/@Her/Her-repo/samantha";
+
+	const named = resolveToolCallAnchor({
+		cwd,
+		memoryDir,
+		input: { command: "Set-Content event-history.jsonl hijack" },
+	});
+	assert.equal(named?.anchorPath, true);
+
+	const ordinary = resolveToolCallAnchor({
+		cwd,
+		memoryDir,
+		input: { path: "data.json" },
+	});
+	assert.equal(ordinary?.anchorPath, false);
+});

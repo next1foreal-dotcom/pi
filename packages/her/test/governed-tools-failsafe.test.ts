@@ -28,6 +28,7 @@ test("resolveGovernedTool treats unregistered names as destructive", () => {
 	assert.deepEqual(resolveGovernedTool("powershell"), { destructive: true, registered: false });
 	assert.deepEqual(resolveGovernedTool("bash"), { destructive: true, registered: true });
 	assert.deepEqual(resolveGovernedTool("her_recall"), { destructive: false, registered: true });
+	assert.deepEqual(resolveGovernedTool("list_her_events"), { destructive: false, registered: true });
 });
 
 test("default Cedar still allows bash via permit_coding_destructive_tools", () => {

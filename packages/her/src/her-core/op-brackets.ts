@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
+import { appendEventBestEffort } from "./event-history.ts";
 import type { CompletionMeta, ModelLike } from "./model.ts";
 import { appendText } from "./store.ts";
 
@@ -97,6 +98,7 @@ export async function withOpBracket<T>(
 		},
 	};
 	await writeOpsLine(root, { op, opId, phase: "start", ts: new Date().toISOString() } satisfies OpStartRecord);
+	await appendEventBestEffort("organ.round.start", op, { runId: opId }, root);
 	try {
 		const result = await fn(ctx);
 		ok = true;
@@ -115,6 +117,12 @@ export async function withOpBracket<T>(
 			...(modelMeta ? { model: modelMeta } : {}),
 		};
 		await writeOpsLine(root, end);
+		await appendEventBestEffort(
+			"organ.round.end",
+			op,
+			{ runId: opId, ok, ...(captured ? { error: captured.messageHead } : {}) },
+			root,
+		);
 	}
 }
 

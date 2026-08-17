@@ -56,6 +56,7 @@ import {
 	type JudgmentFields,
 	type LongTaskRecord,
 	listBgTasks,
+	listHerEvents,
 	listHerProposals,
 	listHerTasks,
 	listLongTasks,
@@ -988,6 +989,23 @@ export default function her(pi: ExtensionAPI): void {
 				phase: "2",
 				memoryDir,
 			});
+		},
+	});
+
+	pi.registerTool({
+		name: "list_her_events",
+		label: "List Her Events",
+		description:
+			"Read the append-only event history, newest first. Set includeDerived to attach presumed-crash rows.",
+		parameters: Type.Object({
+			kind: Type.Optional(Type.String({ description: "Exact event kind filter" })),
+			since: Type.Optional(Type.String({ description: "ISO timestamp lower bound" })),
+			limit: Type.Optional(Type.Number({ description: "Maximum events to return" })),
+			includeDerived: Type.Optional(Type.Boolean({ description: "Include presumed-crash derived rows" })),
+		}),
+		async execute(_toolCallId, params) {
+			const events = await listHerEvents(memoryDir, params);
+			return textResult(`Her events: ${events.length}`, { phase: "g270", events, memoryDir });
 		},
 	});
 

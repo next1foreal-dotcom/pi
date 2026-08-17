@@ -226,7 +226,7 @@ function extractPathCandidates(command: string): string[] {
 	}
 	for (const token of command.split(/[\s;|&]+/)) {
 		const cleaned = token.replace(/^[<>]+/, "");
-		if (/[\\/]/.test(cleaned) || /\.(md|cedar|ts|env)$/i.test(cleaned)) push(cleaned);
+		if (/[\\/]/.test(cleaned) || /\.(md|cedar|ts|env|jsonl|json)$/i.test(cleaned)) push(cleaned);
 	}
 	return candidates;
 }
@@ -246,11 +246,16 @@ function mentionAnchorPath(command: string, memoryDir: string): string | undefin
 			return `her-memory/narrative/${leaf === "soul.md" ? "SOUL.md" : leaf === "facts.md" ? "FACTS.md" : "CONTEXT.md"}`;
 		}
 	}
+	const historyLeaf = mentionHistoryLeaf(haystack);
+	if (historyLeaf) return historyLeaf;
 	if (
 		/\b(python3?|py|node|nodejs|pwsh|powershell)\b[\s\S]*\s(?:-c|-e|-enc|-encodedcommand)\b/i.test(command) &&
 		haystack.includes("her-memory")
 	) {
 		return "her-memory/narrative/SOUL.md";
+	}
+	if (commandHasExecFlag(command) && commandHasEncodingKeyword(command)) {
+		return "her-memory/audit/event-history.jsonl";
 	}
 	const needles = [
 		...ANCHOR_PATHS,
@@ -339,4 +344,26 @@ function relativeWithin(basePath: string, targetPath: string): string | null {
 function selectedProfile(): CedarProfile {
 	const profile = process.env.HER_CEDAR_PROFILE;
 	return profile === "heartbeat" || profile === "selfmod" ? profile : "default";
+}
+
+function mentionHistoryLeaf(haystack: string): string | undefined {
+	for (const leaf of ["event-history.jsonl", "event-history.state.json"] as const) {
+		const escaped = leaf.replaceAll(".", "\\.");
+		if (new RegExp(`(?:^|[^a-z0-9_-])${escaped}(?:[^a-z0-9_-]|$)`, "i").test(haystack)) {
+			return `her-memory/audit/${leaf}`;
+		}
+	}
+	return undefined;
+}
+
+function commandHasExecFlag(command: string): boolean {
+	return (
+		/\b(python3?|py|node|nodejs|pwsh|powershell)\b[\s\S]*\s(?:-c|-e|-enc|-encodedcommand|-command)\b/i.test(
+			command,
+		) || /\bcmd(?:\.exe)?\b[\s\S]*\s\/c\b/i.test(command)
+	);
+}
+
+function commandHasEncodingKeyword(command: string): boolean {
+	return /Buffer\.from|\batob\b|\bbtoa\b|base64|--decode|frombase64string/i.test(command);
 }
