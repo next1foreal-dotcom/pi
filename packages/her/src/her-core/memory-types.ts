@@ -134,6 +134,9 @@ export interface ReflectResult {
 	ran: boolean;
 	/** Present only when ifDue was requested: whether the cadence considered this run due. */
 	due?: boolean;
+	missed?: number;
+	owed?: number;
+	policy?: "skip" | "once" | "all";
 	/** Present when the model surfaced a non-obvious recognition (absent on a NONE reply). */
 	id?: string;
 	text?: string;
@@ -244,6 +247,9 @@ export interface SynthesizeDueResult {
 	lastSynthesize?: string;
 	daysSinceLastSynthesize?: number;
 	reason?: SynthesizeDueReason;
+	missed?: number;
+	owed?: number;
+	policy?: "skip" | "once" | "all";
 }
 
 export interface DecaySweepOptions {
@@ -280,6 +286,9 @@ export interface ChoiceModelSynthesizeDueResult {
 	hasJudgmentTrails: boolean;
 	lastChoiceModel?: string;
 	daysSinceLastChoiceModel?: number;
+	missed?: number;
+	owed?: number;
+	policy?: "skip" | "once" | "all";
 }
 
 export interface SelfNarrativeUpdateResult {

@@ -295,6 +295,15 @@ export {
 	resolveTargetSource,
 	writeMessage,
 } from "./messages.ts";
+export type { CadenceOrgan, MissedFireInput, MissedFirePolicy, MissedFireResult } from "./missed-fire.ts";
+export {
+	computeMissedFire,
+	MISSED_FIRE_GRACE_MS,
+	MISSED_FIRE_MAX_CATCHUP,
+	nextCadenceAnchorIso,
+	parseCadenceTimestamp,
+	parseMissedFirePolicy,
+} from "./missed-fire.ts";
 export type { CompletionMeta, CompletionOptions, CompletionResult, CompletionUsage, ModelLike } from "./model.ts";
 export { FakeModel, FinishReasonLengthError, invokeCompletion, OpenAICompatibleModel } from "./model.ts";
 export { detectOrphanBrackets, opsLedgerPath, withOpBracket } from "./op-brackets.ts";

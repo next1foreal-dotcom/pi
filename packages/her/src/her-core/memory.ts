@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readdir, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { type HerConfig, loadConfig } from "./config.ts";
+import { appendEventBestEffort } from "./event-history.ts";
 import { type BackfillOptions, type BackfillRunResult, runBackfill } from "./memory-backfill.ts";
 import { buildArchiveCorpus, buildCorpus, recordAccess, staleBanner } from "./memory-corpus.ts";
 import {
@@ -100,6 +101,17 @@ import {
 	type TasteBoardApplyResult,
 	writeWorldNote,
 } from "./memory-world.ts";
+import {
+	type CadenceOrgan,
+	computeMissedFire,
+	lastDueCheckStateKey,
+	lastRunStateKey,
+	type MissedFirePolicy,
+	type MissedFireResult,
+	nextCadenceAnchorIso,
+	parseCadenceTimestamp,
+	parseMissedFirePolicy,
+} from "./missed-fire.ts";
 import { FinishReasonLengthError, invokeCompletion, type ModelLike } from "./model.ts";
 import { completionMetaOf, type OpBracketContext, withOpBracket } from "./op-brackets.ts";
 import { StorePaths } from "./paths.ts";
@@ -180,10 +192,12 @@ type IndexedConsolidateEpisode = ConsolidateEpisode & {
 };
 type OrganSkipEntry = {
 	ts: string;
-	organ: OrganKind;
-	reason: "truncated-at-floor" | "premise-moved";
+	organ: OrganKind | CadenceOrgan;
+	reason: "truncated-at-floor" | "premise-moved" | "missed-fire-skip";
 	units: number;
 	attempts: number;
+	voided?: number;
+	policy?: MissedFirePolicy;
 };
 
 export function selectRelevantKeys(
@@ -294,6 +308,11 @@ function envPositiveInt(name: string, fallback: number): number {
 function reflectCadenceDays(config: HerConfig): number {
 	const raw = (config.cadence as { reflectEveryDays?: unknown }).reflectEveryDays;
 	return typeof raw === "number" && Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 1;
+}
+
+function cadenceFields(cadence?: MissedFireResult): { missed?: number; owed?: number; policy?: MissedFirePolicy } {
+	if (!cadence) return {};
+	return { missed: cadence.missed, owed: cadence.owed, policy: cadence.policy };
 }
 
 function truncateEpisodeText(text: string, maxChars: number): string {
@@ -772,12 +791,24 @@ export class Memory {
 	// TS port is named "reflect" so it doesn't collide with the existing retrieval-only surface() here).
 	async reflect(opts: ReflectOptions = {}): Promise<ReflectResult> {
 		const prepared = await this.withStoreLock(async () => {
-			const state = await readJson<{ last_reflect?: string | null }>(this.paths.stateFile, {});
+			const state = await readJson<{ last_reflect?: string | null; last_due_check_reflect?: string | null }>(
+				this.paths.stateFile,
+				{},
+			);
 			const lastReflect = typeof state.last_reflect === "string" ? state.last_reflect : undefined;
 			const cadenceDays = reflectCadenceDays(this.config);
-			const daysSinceLastReflect = daysSince(parseDate(lastReflect));
-			const due = daysSinceLastReflect === undefined || daysSinceLastReflect >= cadenceDays;
-			if (opts.ifDue && !due) return { kind: "not-due" as const };
+			const policy = parseMissedFirePolicy(this.config.cadence.missedFireReflect, "reflect");
+			const cadence = opts.ifDue
+				? await this.applyCadenceCheck({
+						organ: "reflect",
+						lastRun: lastReflect,
+						lastDueCheck:
+							typeof state.last_due_check_reflect === "string" ? state.last_due_check_reflect : undefined,
+						intervalDays: cadenceDays,
+						policy,
+					})
+				: undefined;
+			if (cadence && !cadence.due) return { kind: "not-due" as const, cadence };
 
 			if (!this.model) throw new Error("reflect requires a model");
 
@@ -789,9 +820,27 @@ export class Memory {
 				if (body) existingTexts.push(body);
 			}
 			const existing = existingTexts.join("\n") || "(none)";
-			return { kind: "ready" as const, lastReflect, due, recent, recentText, existing };
+			return {
+				kind: "ready" as const,
+				lastReflect,
+				due: cadence?.due ?? true,
+				cadence,
+				policy,
+				cadenceDays,
+				recent,
+				recentText,
+				existing,
+			};
 		});
-		if (prepared.kind === "not-due") return { ran: false, due: false };
+		if (prepared.kind === "not-due") {
+			return {
+				ran: false,
+				due: false,
+				missed: prepared.cadence.missed,
+				owed: prepared.cadence.owed,
+				policy: prepared.cadence.policy,
+			};
+		}
 
 		if (!this.model) throw new Error("reflect requires a model");
 		const out = (
@@ -803,16 +852,31 @@ export class Memory {
 			const lastReflect = typeof state.last_reflect === "string" ? state.last_reflect : undefined;
 			if (lastReflect !== prepared.lastReflect) {
 				console.warn("[her] reflect: last_reflect moved during model call; discarding draft");
-				return { ran: false, ...(opts.ifDue ? { due: prepared.due } : {}) };
+				return { ran: false, ...(opts.ifDue ? { due: prepared.due, ...cadenceFields(prepared.cadence) } : {}) };
 			}
 
 			// A NONE reply is the model's built-in restraint (nothing non-obvious to surface), not a
 			// failure: it still counts as this cadence period's reflection, so last_reflect always
 			// advances on any real run — a deliberate deviation from the Python reference, which has no
 			// cadence tracking at all (Memory.surface there is called on-demand, never gated).
-			await writeJson(this.paths.stateFile, { ...state, last_reflect: today() });
+			const nowMs = Date.now();
+			const lastReflectIso = opts.ifDue
+				? nextCadenceAnchorIso({
+						lastRunMs: parseCadenceTimestamp(prepared.lastReflect),
+						nowMs,
+						intervalDays: prepared.cadenceDays,
+						policy: prepared.policy,
+					})
+				: new Date(nowMs).toISOString();
+			await writeJson(this.paths.stateFile, {
+				...state,
+				last_reflect: lastReflectIso,
+				...(opts.ifDue ? { last_due_check_reflect: new Date(nowMs).toISOString() } : {}),
+			});
 
-			if (!out || out.toUpperCase() === "NONE") return { ran: true, ...(opts.ifDue ? { due: prepared.due } : {}) };
+			if (!out || out.toUpperCase() === "NONE") {
+				return { ran: true, ...(opts.ifDue ? { due: prepared.due, ...cadenceFields(prepared.cadence) } : {}) };
+			}
 
 			const date = today();
 			const id = genId(date, out);
@@ -827,7 +891,12 @@ export class Memory {
 			await writeText(join(this.paths.recognitions, fileName), `${frontmatter(fm)}${out}\n`);
 			await git(this.paths.root, "add", "--", `recognitions/${fileName}`, ".her/state.json");
 			await git(this.paths.root, "commit", "-m", `memory: reflect recognition ${id}`);
-			return { ran: true, ...(opts.ifDue ? { due: prepared.due } : {}), id, text: out };
+			return {
+				ran: true,
+				...(opts.ifDue ? { due: prepared.due, ...cadenceFields(prepared.cadence) } : {}),
+				id,
+				text: out,
+			};
 		});
 	}
 
@@ -1458,7 +1527,20 @@ export class Memory {
 			const proposalId = `${today()}-narrative-update`;
 			await writeText(join(this.paths.proposals, `${proposalId}.md`), draft);
 			const state = await readJson<Record<string, unknown>>(this.paths.stateFile, {});
-			await writeJson(this.paths.stateFile, { ...state, last_synthesize: today() });
+			const nowMs = Date.now();
+			const policy = parseMissedFirePolicy(this.config.cadence.missedFireSynthesize, "synthesize");
+			await writeJson(this.paths.stateFile, {
+				...state,
+				last_synthesize: nextCadenceAnchorIso({
+					lastRunMs: parseCadenceTimestamp(
+						typeof state.last_synthesize === "string" ? state.last_synthesize : undefined,
+					),
+					nowMs,
+					intervalDays: this.config.cadence.synthesizeStaleAfterDays,
+					policy,
+				}),
+				last_due_check_synthesize: new Date(nowMs).toISOString(),
+			});
 			await this.writeContextUpdate({
 				content: draft,
 				change: "Synthesize narrative update",
@@ -1471,58 +1553,48 @@ export class Memory {
 	}
 
 	async synthesizeDue(): Promise<SynthesizeDueResult> {
-		const state = await readJson<{ last_synthesize?: string | null }>(this.paths.stateFile, {});
-		const lastSynthesize = typeof state.last_synthesize === "string" ? state.last_synthesize : undefined;
-		const lastTime = parseDate(lastSynthesize);
-		const threshold = this.config.cadence.synthesizeAfterNewNotes;
-		let newSemanticNotes = 0;
-		let hasConflict = false;
+		return this.withStoreLock(async () => {
+			const state = await readJson<{
+				last_synthesize?: string | null;
+				last_due_check_synthesize?: string | null;
+			}>(this.paths.stateFile, {});
+			const lastSynthesize = typeof state.last_synthesize === "string" ? state.last_synthesize : undefined;
+			const lastTime = parseDate(lastSynthesize);
+			const threshold = this.config.cadence.synthesizeAfterNewNotes;
+			let newSemanticNotes = 0;
+			let hasConflict = false;
 
-		for (const entry of await markdownEntries(this.paths.semantic)) {
-			const parsed = parseFrontmatter(await readText(join(this.paths.semantic, entry)));
-			if (!changedAfter(parsed.data, lastTime)) continue;
-			newSemanticNotes++;
-			hasConflict ||= hasConflictRelation(parsed.data.relations);
-		}
+			for (const entry of await markdownEntries(this.paths.semantic)) {
+				const parsed = parseFrontmatter(await readText(join(this.paths.semantic, entry)));
+				if (!changedAfter(parsed.data, lastTime)) continue;
+				newSemanticNotes++;
+				hasConflict ||= hasConflictRelation(parsed.data.relations);
+			}
 
-		const daysSinceLastSynthesize = daysSince(lastTime);
-		if (hasConflict) {
+			const daysSinceLastSynthesize = daysSince(lastTime);
+			const shared = { threshold, newSemanticNotes, hasConflict, lastSynthesize, daysSinceLastSynthesize };
+			if (hasConflict) {
+				return { due: true, reason: "conflict" as const, ...shared };
+			}
+			if (newSemanticNotes >= threshold) {
+				return { due: true, reason: "new_notes" as const, ...shared };
+			}
+			const policy = parseMissedFirePolicy(this.config.cadence.missedFireSynthesize, "synthesize");
+			const cadence = await this.applyCadenceCheck({
+				organ: "synthesize",
+				lastRun: lastSynthesize,
+				lastDueCheck:
+					typeof state.last_due_check_synthesize === "string" ? state.last_due_check_synthesize : undefined,
+				intervalDays: this.config.cadence.synthesizeStaleAfterDays,
+				policy,
+			});
 			return {
-				due: true,
-				reason: "conflict",
-				threshold,
-				newSemanticNotes,
-				hasConflict,
-				lastSynthesize,
-				daysSinceLastSynthesize,
+				due: cadence.due,
+				...(cadence.due ? { reason: "stale" as const } : {}),
+				...shared,
+				...cadenceFields(cadence),
 			};
-		}
-		if (newSemanticNotes >= threshold) {
-			return {
-				due: true,
-				reason: "new_notes",
-				threshold,
-				newSemanticNotes,
-				hasConflict,
-				lastSynthesize,
-				daysSinceLastSynthesize,
-			};
-		}
-		if (
-			daysSinceLastSynthesize !== undefined &&
-			daysSinceLastSynthesize > this.config.cadence.synthesizeStaleAfterDays
-		) {
-			return {
-				due: true,
-				reason: "stale",
-				threshold,
-				newSemanticNotes,
-				hasConflict,
-				lastSynthesize,
-				daysSinceLastSynthesize,
-			};
-		}
-		return { due: false, threshold, newSemanticNotes, hasConflict, lastSynthesize, daysSinceLastSynthesize };
+		});
 	}
 
 	async decaySweep(opts: DecaySweepOptions = {}): Promise<DecaySweepResult> {
@@ -1582,6 +1654,74 @@ export class Memory {
 
 	private async appendOrganSkip(entry: OrganSkipEntry): Promise<void> {
 		await appendText(join(this.paths.root, "audit", "organ-skips.jsonl"), `${JSON.stringify(entry)}\n`);
+	}
+
+	private async applyCadenceCheck(req: {
+		organ: CadenceOrgan;
+		lastRun?: string;
+		lastDueCheck?: string;
+		intervalDays: number;
+		policy: MissedFirePolicy;
+	}): Promise<MissedFireResult> {
+		const nowMs = Date.now();
+		const lastRunMs = parseCadenceTimestamp(req.lastRun);
+		if (lastRunMs === undefined) {
+			const neverRan: MissedFireResult =
+				req.organ === "synthesize"
+					? { due: false, owed: 0, missed: 0, policy: req.policy }
+					: { due: true, owed: 1, missed: 0, policy: req.policy };
+			if (!neverRan.due) await this.patchCadenceState(req.organ, nowMs);
+			return neverRan;
+		}
+		const result = computeMissedFire({
+			lastRunMs,
+			lastDueCheckMs: parseCadenceTimestamp(req.lastDueCheck),
+			nowMs,
+			intervalDays: req.intervalDays,
+			policy: req.policy,
+		});
+		if (result.missed > 0) {
+			await appendEventBestEffort(
+				"organ.cadence.missed",
+				req.organ,
+				{ missed: result.missed, owed: result.owed, policy: result.policy },
+				this.paths.root,
+			);
+		}
+		if (result.advanceAnchorTo) {
+			await this.persistSkipVoid(req.organ, nowMs, result);
+			return result;
+		}
+		if (!result.due) await this.patchCadenceState(req.organ, nowMs);
+		return result;
+	}
+
+	private async persistSkipVoid(organ: CadenceOrgan, nowMs: number, result: MissedFireResult): Promise<void> {
+		await this.appendOrganSkip({
+			ts: new Date(nowMs).toISOString(),
+			organ,
+			reason: "missed-fire-skip",
+			units: result.missed,
+			attempts: 0,
+			voided: result.missed,
+			policy: result.policy,
+		});
+		await this.patchCadenceState(organ, nowMs, result.advanceAnchorTo);
+		await appendEventBestEffort(
+			"organ.cadence.voided",
+			organ,
+			{ missed: result.missed, owed: result.owed, policy: result.policy },
+			this.paths.root,
+		);
+	}
+
+	private async patchCadenceState(organ: CadenceOrgan, nowMs: number, lastRunIso?: string): Promise<void> {
+		const state = await readJson<Record<string, unknown>>(this.paths.stateFile, {});
+		await writeJson(this.paths.stateFile, {
+			...state,
+			[lastDueCheckStateKey(organ)]: new Date(nowMs).toISOString(),
+			...(lastRunIso ? { [lastRunStateKey(organ)]: lastRunIso } : {}),
+		});
 	}
 
 	async buildTopicMaps(): Promise<string[]> {
@@ -1733,23 +1873,33 @@ export class Memory {
 	// same choiceModelJudgmentTrails() precondition synthesizeChoiceModel() itself throws without, so a
 	// `due: true` result can always be safely followed by calling synthesizeChoiceModel().
 	async choiceModelSynthesizeDue(): Promise<ChoiceModelSynthesizeDueResult> {
-		const state = await readJson<{ last_choice_model?: string | null }>(this.paths.stateFile, {});
-		const lastChoiceModel = typeof state.last_choice_model === "string" ? state.last_choice_model : undefined;
-		const lastTime = parseDate(lastChoiceModel);
-		const daysSinceLastChoiceModel = daysSince(lastTime);
-		const rhythmDue =
-			lastTime === undefined ||
-			(daysSinceLastChoiceModel ?? Number.POSITIVE_INFINITY) >= CHOICE_MODEL_SYNTHESIZE_AFTER_DAYS;
-
-		const hasJudgmentTrails = (await this.choiceModelJudgmentTrails()).length > 0;
-
-		return {
-			due: rhythmDue && hasJudgmentTrails,
-			thresholdDays: CHOICE_MODEL_SYNTHESIZE_AFTER_DAYS,
-			hasJudgmentTrails,
-			lastChoiceModel,
-			daysSinceLastChoiceModel,
-		};
+		return this.withStoreLock(async () => {
+			const state = await readJson<{
+				last_choice_model?: string | null;
+				last_due_check_choice_model?: string | null;
+			}>(this.paths.stateFile, {});
+			const lastChoiceModel = typeof state.last_choice_model === "string" ? state.last_choice_model : undefined;
+			const lastTime = parseDate(lastChoiceModel);
+			const daysSinceLastChoiceModel = daysSince(lastTime);
+			const policy = parseMissedFirePolicy(this.config.cadence.missedFireChoiceModel, "choice-model");
+			const cadence = await this.applyCadenceCheck({
+				organ: "choice-model",
+				lastRun: lastChoiceModel,
+				lastDueCheck:
+					typeof state.last_due_check_choice_model === "string" ? state.last_due_check_choice_model : undefined,
+				intervalDays: CHOICE_MODEL_SYNTHESIZE_AFTER_DAYS,
+				policy,
+			});
+			const hasJudgmentTrails = (await this.choiceModelJudgmentTrails()).length > 0;
+			return {
+				due: cadence.due && hasJudgmentTrails,
+				thresholdDays: CHOICE_MODEL_SYNTHESIZE_AFTER_DAYS,
+				hasJudgmentTrails,
+				lastChoiceModel,
+				daysSinceLastChoiceModel,
+				...cadenceFields(cadence),
+			};
+		});
 	}
 
 	async synthesizeChoiceModel(): Promise<ChoiceModelUpdateResult> {
@@ -1781,7 +1931,20 @@ export class Memory {
 				),
 			);
 			const state = await readJson<Record<string, unknown>>(this.paths.stateFile, {});
-			await writeJson(this.paths.stateFile, { ...state, last_choice_model: timestamp.slice(0, 10) });
+			const nowMs = Date.parse(timestamp);
+			const policy = parseMissedFirePolicy(this.config.cadence.missedFireChoiceModel, "choice-model");
+			await writeJson(this.paths.stateFile, {
+				...state,
+				last_choice_model: nextCadenceAnchorIso({
+					lastRunMs: parseCadenceTimestamp(
+						typeof state.last_choice_model === "string" ? state.last_choice_model : undefined,
+					),
+					nowMs,
+					intervalDays: CHOICE_MODEL_SYNTHESIZE_AFTER_DAYS,
+					policy,
+				}),
+				last_due_check_choice_model: timestamp,
+			});
 			await git(
 				this.paths.root,
 				"add",

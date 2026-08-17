@@ -13,6 +13,8 @@ export const EVENT_KINDS = [
 	"organ.round.end",
 	"organ.sync.start",
 	"organ.sync.end",
+	"organ.cadence.missed",
+	"organ.cadence.voided",
 	"selfmod.transition",
 ] as const;
 

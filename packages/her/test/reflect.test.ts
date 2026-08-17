@@ -83,7 +83,8 @@ test("reflect writes a pending recognition with correct frontmatter and returns 
 	assert.match(parsed.body, /inevitable/);
 
 	const state = await readJson<{ last_reflect?: string }>(join(store, ".her", "state.json"), {});
-	assert.equal(state.last_reflect, today);
+	assert.ok(state.last_reflect?.startsWith(today));
+	assert.ok(!Number.isNaN(Date.parse(state.last_reflect ?? "")));
 	assert.match((await git(store, "log", "--oneline", "-1")).stdout, /memory: reflect recognition/);
 });
 
@@ -102,7 +103,8 @@ test("reflect does nothing when the model replies NONE, but still advances last_
 
 	const today = new Date().toISOString().slice(0, 10);
 	const state = await readJson<{ last_reflect?: string }>(join(store, ".her", "state.json"), {});
-	assert.equal(state.last_reflect, today);
+	assert.ok(state.last_reflect?.startsWith(today));
+	assert.ok(!Number.isNaN(Date.parse(state.last_reflect ?? "")));
 });
 
 test("ifDue gating skips a same-day rerun and respects a cadence override", async () => {

@@ -13,6 +13,9 @@ export interface HerConfig {
 		synthesizeStaleAfterDays: number;
 		synthesizeAfterNewNotes: number;
 		digestAfterUnreviewed: number;
+		missedFireReflect?: string;
+		missedFireChoiceModel?: string;
+		missedFireSynthesize?: string;
 	};
 	hands: {
 		enabled: boolean;
@@ -39,6 +42,9 @@ export const DEFAULT_CONFIG: HerConfig = {
 		synthesizeStaleAfterDays: 10,
 		synthesizeAfterNewNotes: 8,
 		digestAfterUnreviewed: 3,
+		missedFireReflect: "once",
+		missedFireChoiceModel: "once",
+		missedFireSynthesize: "once",
 	},
 	hands: {
 		enabled: false,
@@ -78,6 +84,9 @@ export function renderConfig(config: HerConfig = DEFAULT_CONFIG): string {
 		`  synthesize_stale_after_days: ${config.cadence.synthesizeStaleAfterDays}`,
 		`  synthesize_after_new_notes: ${config.cadence.synthesizeAfterNewNotes}`,
 		`  digest_after_unreviewed: ${config.cadence.digestAfterUnreviewed}`,
+		`  missed_fire_reflect: ${config.cadence.missedFireReflect ?? "once"}`,
+		`  missed_fire_choice_model: ${config.cadence.missedFireChoiceModel ?? "once"}`,
+		`  missed_fire_synthesize: ${config.cadence.missedFireSynthesize ?? "once"}`,
 		"hands:",
 		`  enabled: ${config.hands.enabled}`,
 		`  desktop_enabled: ${config.hands.desktopEnabled}`,
