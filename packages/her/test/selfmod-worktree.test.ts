@@ -4,7 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { runSelfMod } from "../src/her-core/selfmod.ts";
-import { acquireSelfmodLock, selfmodLockPath } from "../src/her-core/selfmod-lock.ts";
+import {
+	acquireSelfmodLock,
+	readSelfmodLock,
+	selfmodLockPath,
+	selfmodLockTestSeam,
+} from "../src/her-core/selfmod-lock.ts";
 import { createSelfmodWorktree, removeSelfmodWorktree } from "../src/her-core/selfmod-worktree.ts";
 import { writeJson } from "../src/her-core/store.ts";
 import { applySkillLine, destroyFixture, git, greenHooks, makeFixture, proposalFor } from "./selfmod-harness.ts";
@@ -137,4 +142,46 @@ test("acquireSelfmodLock reports held when a valid lock is present", async () =>
 	});
 	const first = await acquireSelfmodLock({ memoryDir, now, by: "challenger" });
 	assert.equal(first.acquired, false);
+});
+
+test("a corrupt truncated lock is treated as held, not absent", async () => {
+	const memoryDir = await mkdtemp(join(tmpdir(), "her-g281-lock-bad-"));
+	await mkdir(join(memoryDir, ".her"), { recursive: true });
+	await writeFile(selfmodLockPath(memoryDir), '{"by":"x","startedAt":"2026-', "utf8");
+	const now = new Date("2026-08-18T12:00:00.000Z");
+	const state = await readSelfmodLock(memoryDir, now);
+	assert.equal(state.held, true);
+	const acquired = await acquireSelfmodLock({ memoryDir, now, by: "challenger" });
+	assert.equal(acquired.acquired, false);
+});
+
+test("an expired lock is reclaimed by exactly one of two concurrent reclaimers", async () => {
+	const memoryDir = await mkdtemp(join(tmpdir(), "her-g281-lock-reclaim-"));
+	await mkdir(join(memoryDir, ".her"), { recursive: true });
+	const now = new Date("2026-08-18T12:00:00.000Z");
+	await writeJson(selfmodLockPath(memoryDir), {
+		by: "stale",
+		startedAt: "2026-08-18T08:00:00.000Z",
+		expiresAt: "2026-08-18T09:00:00.000Z",
+		reason: "old",
+	});
+	selfmodLockTestSeam.afterCheck = () => new Promise((resolve) => setTimeout(resolve, 15));
+	try {
+		for (let round = 0; round < 20; round++) {
+			await writeJson(selfmodLockPath(memoryDir), {
+				by: "stale",
+				startedAt: "2026-08-18T08:00:00.000Z",
+				expiresAt: "2026-08-18T09:00:00.000Z",
+				reason: "old",
+			});
+			const [a, b] = await Promise.all([
+				acquireSelfmodLock({ by: "a", memoryDir, now }),
+				acquireSelfmodLock({ by: "b", memoryDir, now }),
+			]);
+			const wins = [a, b].filter((row) => row.acquired);
+			assert.equal(wins.length, 1, `reclaim round ${round} winners=${wins.length}`);
+		}
+	} finally {
+		selfmodLockTestSeam.afterCheck = undefined;
+	}
 });

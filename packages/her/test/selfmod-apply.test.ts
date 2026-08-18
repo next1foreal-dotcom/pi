@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { listHerEvents } from "../src/her-core/event-history.ts";
 import { readSelfmodRecords, runSelfMod } from "../src/her-core/selfmod.ts";
-import { acquireSelfmodLock } from "../src/her-core/selfmod-lock.ts";
+import { acquireSelfmodLock, releaseSelfmodLock, selfmodLockTestSeam } from "../src/her-core/selfmod-lock.ts";
 import { runSelfmodPickup } from "../src/her-core/selfmod-pickup.ts";
 import {
 	applySkillLine,
@@ -313,18 +314,23 @@ test("pre-existing selfmod branch at worktree rejects id already used", { timeou
 	}
 });
 
-test("two overlapping lock acquisitions: exactly one wins", async () => {
-	const fx = await makeFixture("ap-lock");
+test("two overlapping lock acquisitions: exactly one wins", { timeout: 30_000 }, async () => {
+	selfmodLockTestSeam.afterCheck = () => new Promise((resolve) => setTimeout(resolve, 15));
 	try {
-		const now = new Date("2026-08-18T12:00:00.000Z");
-		const [a, b] = await Promise.all([
-			acquireSelfmodLock({ by: "a", memoryDir: fx.memoryDir, now }),
-			acquireSelfmodLock({ by: "b", memoryDir: fx.memoryDir, now }),
-		]);
-		const wins = [a, b].filter((row) => row.acquired);
-		assert.equal(wins.length, 1);
-		assert.equal([a, b].filter((row) => !row.acquired).length, 1);
+		for (let round = 0; round < 20; round++) {
+			const memoryDir = await mkdtemp(join(tmpdir(), `her-g281-lock-race-${round}-`));
+			await mkdir(join(memoryDir, ".her"), { recursive: true });
+			const now = new Date("2026-08-18T12:00:00.000Z");
+			const results = await Promise.all(
+				Array.from({ length: 8 }, (_, index) => acquireSelfmodLock({ by: `p${index}`, memoryDir, now })),
+			);
+			const wins = results.filter((row) => row.acquired);
+			assert.equal(wins.length, 1, `round ${round} winners=${wins.length}`);
+			assert.equal(results.filter((row) => !row.acquired).length, 7);
+			await releaseSelfmodLock(memoryDir);
+			await rm(memoryDir, { force: true, recursive: true });
+		}
 	} finally {
-		await destroyFixture(fx);
+		selfmodLockTestSeam.afterCheck = undefined;
 	}
 });
