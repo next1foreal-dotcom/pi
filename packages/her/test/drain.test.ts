@@ -249,6 +249,50 @@ test("notify failure warns and does not change exit code", async () => {
 	assert.equal(stop.existed, true);
 });
 
+test("forged far-future expiresAt is inactive and warns exceeds max ttl", async () => {
+	const root = await tempMemory();
+	const startedAt = new Date().toISOString();
+	const expiresAt = new Date(Date.now() + 10 * 365 * 24 * 60 * 60_000).toISOString();
+	await mkdir(join(root, ".her"), { recursive: true });
+	await writeFile(
+		drainFlagPath(root),
+		`${JSON.stringify({ reason: "forged", by: "attacker", startedAt, expiresAt })}\n`,
+	);
+	const state = await readDrainState(root);
+	assert.equal(state.active, false);
+	assert.match(state.warning ?? "", /exceeds max ttl/i);
+	const status = await runDrain(["drain-status", "--json"], root);
+	assert.equal(status.code, 0, status.stderr);
+	assert.equal(parseJson(status.stdout).active, false);
+	assert.match(status.stderr, /exceeds max ttl/i);
+});
+
+test("unparsable startedAt is an invalid drain flag", async () => {
+	const root = await tempMemory();
+	await mkdir(join(root, ".her"), { recursive: true });
+	await writeFile(
+		drainFlagPath(root),
+		`${JSON.stringify({
+			reason: "x",
+			by: "ops",
+			startedAt: "not-a-date",
+			expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(),
+		})}\n`,
+	);
+	const state = await readDrainState(root);
+	assert.equal(state.active, false);
+	assert.match(state.warning ?? "", /invalid drain flag/i);
+});
+
+test("startDrain flag still reads as active after read-side ttl check", async () => {
+	const root = await tempMemory();
+	await startDrain({ memoryDir: root, reason: "deploy gateway", by: "fei", ttlMinutes: 30 });
+	const state = await readDrainState(root);
+	assert.equal(state.active, true);
+	assert.equal(state.reason, "deploy gateway");
+	assert.equal(state.warning, undefined);
+});
+
 test("EVENT_KINDS is unchanged: drain reuses host.restart_planned", async () => {
 	const root = await tempMemory();
 	await startDrain({ memoryDir: root, reason: "x", by: "t" });

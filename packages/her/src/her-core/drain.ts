@@ -114,9 +114,13 @@ export async function readDrainState(memoryDir: string, now = new Date()): Promi
 	if (!reason || !by || !startedAt || !expiresAt) {
 		return { active: false, remainingSeconds: 0, warning: "invalid drain flag" };
 	}
+	const startedMs = Date.parse(startedAt);
 	const expiresMs = Date.parse(expiresAt);
-	if (Number.isNaN(expiresMs)) {
+	if (Number.isNaN(startedMs) || Number.isNaN(expiresMs)) {
 		return { active: false, remainingSeconds: 0, warning: "invalid drain flag" };
+	}
+	if (expiresMs - startedMs > MAX_DRAIN_TTL_MINUTES * 60_000) {
+		return { active: false, remainingSeconds: 0, warning: "drain flag exceeds max ttl" };
 	}
 	if (now.getTime() >= expiresMs) {
 		return {
