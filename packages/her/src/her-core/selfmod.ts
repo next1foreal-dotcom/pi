@@ -1,8 +1,15 @@
 import { meetsMergeCriteria, runSelfmodGate, type SelfModGateHooks, type SelfModRetry } from "./selfmod-gate.ts";
 import { appendSelfmodSnapshot } from "./selfmod-ledger.ts";
+import { acquireSelfmodLock, releaseSelfmodLock } from "./selfmod-lock.ts";
 import { disallowedTargetPaths } from "./selfmod-paths.ts";
 import type { SelfModProposal, SelfModRunRecord, SelfModStage } from "./selfmod-types.ts";
-import { createSelfmodWorktree, mergeSelfmodBranch, readHead, type SelfmodGit } from "./selfmod-worktree.ts";
+import {
+	createSelfmodWorktree,
+	mergeSelfmodBranch,
+	readHead,
+	removeSelfmodWorktree,
+	type SelfmodGit,
+} from "./selfmod-worktree.ts";
 
 export { latestSelfmodRecord, readSelfmodRecords, selfmodLedgerPath } from "./selfmod-ledger.ts";
 export type { CheckRollbackOptions, SelfModRollbackResult } from "./selfmod-rollback.ts";
@@ -68,31 +75,55 @@ async function continueAfterPropose(
 	proposed: SelfModRunRecord,
 	now: () => string,
 ): Promise<SelfModRunResult> {
-	const tree = await createSelfmodWorktree({
-		git: opts.git,
-		id: opts.proposal.id,
-		repoRoot: opts.repoRoot,
-		worktreeRoot: opts.worktreeRoot,
+	const lock = await acquireSelfmodLock({
+		by: "selfmod",
+		memoryDir: opts.memoryDir,
+		now: opts.now,
+		reason: opts.proposal.id,
 	});
-	const withTree: SelfModRunRecord = {
-		...proposed,
-		stage: "worktree",
-		worktreePath: tree.worktreePath,
-		branch: tree.branch,
-		anchorCommit: tree.anchorCommit,
-		updatedAt: now(),
-	};
-	await appendSelfmodSnapshot(opts.memoryDir, withTree, "propose");
-	if (opts.hooks?.apply) {
-		await opts.hooks.apply({
-			branch: tree.branch,
+	if (!lock.acquired) return { outcome: "not-run", record: proposed };
+	let worktreePath: string | undefined;
+	try {
+		const tree = await createSelfmodWorktree({
+			git: opts.git,
+			id: opts.proposal.id,
 			repoRoot: opts.repoRoot,
-			worktreePath: tree.worktreePath,
+			worktreeRoot: opts.worktreeRoot,
 		});
+		worktreePath = tree.worktreePath;
+		const withTree: SelfModRunRecord = {
+			...proposed,
+			stage: "worktree",
+			worktreePath: tree.worktreePath,
+			branch: tree.branch,
+			anchorCommit: tree.anchorCommit,
+			updatedAt: now(),
+		};
+		await appendSelfmodSnapshot(opts.memoryDir, withTree, "propose");
+		if (opts.hooks?.apply) {
+			await opts.hooks.apply({
+				branch: tree.branch,
+				repoRoot: opts.repoRoot,
+				worktreePath: tree.worktreePath,
+			});
+		}
+		const applied: SelfModRunRecord = { ...withTree, stage: "apply", updatedAt: now() };
+		await appendSelfmodSnapshot(opts.memoryDir, applied, "worktree");
+		const result = await finishGateAndMerge(opts, applied, now);
+		await teardownTerminal(opts, result.record);
+		return result;
+	} catch (error) {
+		if (worktreePath) {
+			await removeSelfmodWorktree({
+				git: opts.git,
+				repoRoot: opts.repoRoot,
+				worktreePath,
+			});
+		}
+		throw error;
+	} finally {
+		await releaseSelfmodLock(opts.memoryDir);
 	}
-	const applied: SelfModRunRecord = { ...withTree, stage: "apply", updatedAt: now() };
-	await appendSelfmodSnapshot(opts.memoryDir, applied, "worktree");
-	return finishGateAndMerge(opts, applied, now);
 }
 
 async function finishGateAndMerge(
@@ -108,6 +139,8 @@ async function finishGateAndMerge(
 		anchorCommit: applied.anchorCommit,
 		git: opts.git,
 		hooks: opts.hooks,
+		memoryDir: opts.memoryDir,
+		proposal: opts.proposal,
 		retry: opts.retry,
 		targetPaths: opts.proposal.targetPaths,
 		worktreePath,
@@ -155,4 +188,19 @@ async function snapshot(
 
 function baseRecord(proposal: SelfModProposal, anchorCommit: string, updatedAt: string): SelfModRunRecord {
 	return { proposal, stage: "propose", anchorCommit, updatedAt };
+}
+
+async function teardownTerminal(opts: RunSelfModOptions, record: SelfModRunRecord): Promise<void> {
+	if (!record.worktreePath) return;
+	if (record.stage !== "merge" && record.stage !== "rejected" && record.stage !== "rolledback") return;
+	const result = await removeSelfmodWorktree({
+		git: opts.git,
+		repoRoot: opts.repoRoot,
+		worktreePath: record.worktreePath,
+	});
+	if (result.warning) {
+		await appendSelfmodSnapshot(opts.memoryDir, record, record.stage, {
+			error: `teardown failed: ${result.warning}`,
+		});
+	}
 }

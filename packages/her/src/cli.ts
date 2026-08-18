@@ -65,7 +65,12 @@ import {
 	writeLine,
 	writePayload,
 } from "./cli/render.ts";
-import { runSelfmodCheckRollbackCommand, runSelfmodRunCommand, runSelfmodStatusCommand } from "./cli/selfmod.ts";
+import {
+	runSelfmodCheckRollbackCommand,
+	runSelfmodPickupCommand,
+	runSelfmodRunCommand,
+	runSelfmodStatusCommand,
+} from "./cli/selfmod.ts";
 import { runSnapshotCreateCommand, runSnapshotRestoreCommand, runSnapshotVerifyCommand } from "./cli/snapshot.ts";
 import {
 	type CliBootstrapFeedPayload,
@@ -222,6 +227,10 @@ export async function runHerCli(
 
 	if (argv[0] === "selfmod-check-rollback") {
 		return runSelfmodCheckRollbackCommand(argv.slice(1), getMemoryDir(env, cwd), cwd, io);
+	}
+
+	if (argv[0] === "selfmod-pickup") {
+		return runSelfmodPickupCommand(argv.slice(1), getMemoryDir(env, cwd), cwd, io, env);
 	}
 
 	if (argv[0] === "snapshot-create") {

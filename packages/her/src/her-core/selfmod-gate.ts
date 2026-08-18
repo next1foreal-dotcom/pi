@@ -2,7 +2,8 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { errorMessage } from "./memory-utils.ts";
 import { classifyDiffPaths } from "./selfmod-paths.ts";
-import { MERGE_CRITERIA, type SelfModGateResult } from "./selfmod-types.ts";
+import type { SelfModEvalContext } from "./selfmod-runners.ts";
+import { MERGE_CRITERIA, type SelfModGateResult, type SelfModProposal } from "./selfmod-types.ts";
 import { listDiffNames, readPathDiff, type SelfmodGit } from "./selfmod-worktree.ts";
 import { isTransientFsContention, retryOnFsContention } from "./store.ts";
 
@@ -17,7 +18,7 @@ export interface SelfModRetry {
 
 export interface SelfModGateHooks {
 	readDiff?: (path: string) => Promise<string>;
-	runEvalFixtures?: (worktreePath: string) => Promise<boolean>;
+	runEvalFixtures?: (worktreePath: string, ctx?: SelfModEvalContext) => Promise<boolean>;
 	runTests?: (worktreePath: string, targetPaths: string[]) => Promise<{ failed: number; passed: number }>;
 	runTypecheck?: (worktreePath: string) => Promise<number>;
 }
@@ -44,6 +45,8 @@ export async function runSelfmodGate(opts: {
 	anchorCommit: string;
 	git?: SelfmodGit;
 	hooks?: SelfModGateHooks;
+	memoryDir?: string;
+	proposal?: SelfModProposal;
 	retry?: SelfModRetry;
 	targetPaths: string[];
 	worktreePath: string;
@@ -51,7 +54,7 @@ export async function runSelfmodGate(opts: {
 	const errors: string[] = [];
 	const typecheck = await runTypecheckStep(opts.worktreePath, opts.hooks, errors);
 	const tests = await runTestsStep(opts.worktreePath, opts.targetPaths, opts.hooks, errors);
-	const evalOk = await runEvalStep(opts.worktreePath, opts.hooks, errors);
+	const evalOk = await runEvalStep(opts, errors);
 	const scan = await scanDiffAndEncoding(opts, errors);
 	const gate: SelfModGateResult = {
 		typecheckExit: typecheck,
@@ -102,16 +105,28 @@ async function runTestsStep(
 }
 
 async function runEvalStep(
-	worktreePath: string,
-	hooks: SelfModGateHooks | undefined,
+	opts: {
+		anchorCommit: string;
+		git?: SelfmodGit;
+		hooks?: SelfModGateHooks;
+		memoryDir?: string;
+		proposal?: SelfModProposal;
+		worktreePath: string;
+	},
 	errors: string[],
 ): Promise<boolean> {
-	if (!hooks?.runEvalFixtures) {
+	if (!opts.hooks?.runEvalFixtures) {
 		errors.push("no selfmod-gate eval fixtures wired");
 		return false;
 	}
 	try {
-		return await hooks.runEvalFixtures(worktreePath);
+		return await opts.hooks.runEvalFixtures(opts.worktreePath, {
+			anchorCommit: opts.anchorCommit,
+			git: opts.git,
+			memoryDir: opts.memoryDir,
+			proposal: opts.proposal,
+			worktreePath: opts.worktreePath,
+		});
 	} catch (error) {
 		errors.push(errorMessage(error));
 		return false;

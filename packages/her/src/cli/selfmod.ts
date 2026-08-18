@@ -2,7 +2,10 @@ import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { checkRollback, latestSelfmodRecord, readSelfmodRecords, runSelfMod } from "../her-core/selfmod.ts";
+import { runSelfmodPickup } from "../her-core/selfmod-pickup.ts";
+import { defaultRunEvalFixtures, defaultRunTests } from "../her-core/selfmod-runners.ts";
 import type { SelfModProposal } from "../her-core/selfmod-types.ts";
+import { sendTelegramMessage } from "../her-core/telegram.ts";
 import { writeLine } from "./render.ts";
 import type { CliIo } from "./types.ts";
 import { errorMessage, requireOptionValue, UsageError } from "./utils.ts";
@@ -12,6 +15,17 @@ export async function runSelfmodRunCommand(args: string[], memoryDir: string, cw
 		const parsed = parseRunArgs(args);
 		const proposal = await loadProposal(resolve(cwd, parsed.proposalPath));
 		const result = await runSelfMod({
+			hooks: {
+				runTests: defaultRunTests,
+				runEvalFixtures: (worktreePath, ctx) =>
+					defaultRunEvalFixtures({
+						anchorCommit: ctx?.anchorCommit,
+						git: ctx?.git,
+						memoryDir,
+						proposal,
+						worktreePath,
+					}),
+			},
 			memoryDir,
 			proposal,
 			repoRoot: cwd,
@@ -57,6 +71,59 @@ export async function runSelfmodCheckRollbackCommand(
 	} catch (error) {
 		return fail(io, error);
 	}
+}
+
+export async function runSelfmodPickupCommand(
+	args: string[],
+	memoryDir: string,
+	cwd: string,
+	io: CliIo,
+	env: NodeJS.ProcessEnv,
+): Promise<number> {
+	try {
+		const parsed = parsePickupArgs(args);
+		const result = await runSelfmodPickup({
+			memoryDir,
+			repoRoot: cwd,
+			sendNotify: (text) => maybeTelegram(env, text),
+			worktreeRoot: parsed.worktreeRoot ? resolve(cwd, parsed.worktreeRoot) : defaultWorktreeRoot(),
+		});
+		if (parsed.json) writeLine(io.stdout, JSON.stringify(result));
+		else writeLine(io.stdout, `selfmod-pickup: ${result.action}`);
+		return 0;
+	} catch (error) {
+		return fail(io, error);
+	}
+}
+
+function parsePickupArgs(args: string[]): { json: boolean; worktreeRoot?: string } {
+	let json = false;
+	let worktreeRoot: string | undefined;
+	for (let i = 0; i < args.length; i++) {
+		const arg = args[i];
+		if (arg === "--worktree-root") {
+			worktreeRoot = requireOptionValue(args[++i], arg);
+			continue;
+		}
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		throw new UsageError(`unknown selfmod-pickup option: ${arg}`);
+	}
+	return { json, worktreeRoot };
+}
+
+async function maybeTelegram(env: NodeJS.ProcessEnv, text: string): Promise<void> {
+	const token = env.HER_TELEGRAM_BOT_TOKEN?.trim() ?? "";
+	const chatId = env.HER_TELEGRAM_CHAT_ID?.trim() ?? "";
+	if (!token || !chatId) return;
+	await sendTelegramMessage({
+		baseUrl: env.HER_TELEGRAM_BASE_URL,
+		chatId,
+		text,
+		token,
+	});
 }
 
 function parseRunArgs(args: string[]): { json: boolean; proposalPath: string; worktreeRoot?: string } {

@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, rm, rmdir, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -49,6 +49,7 @@ export async function destroyFixture(fx: SelfmodFixture): Promise<void> {
 		}
 		for (const path of paths) {
 			if (samePath(path, fx.repoRoot)) continue;
+			await unlinkJunction(join(path, "node_modules"));
 			await git(fx.repoRoot, "worktree", "remove", path, "--force").catch(() => undefined);
 		}
 		await git(fx.repoRoot, "worktree", "prune").catch(() => undefined);
@@ -92,6 +93,16 @@ export async function writeRel(root: string, rel: string, text: string): Promise
 	const abs = join(root, ...rel.split("/"));
 	await mkdir(dirname(abs), { recursive: true });
 	await writeFile(abs, text, "utf8");
+}
+
+async function unlinkJunction(path: string): Promise<void> {
+	try {
+		const info = await lstat(path);
+		if (!info.isSymbolicLink() && !info.isDirectory()) return;
+		await rmdir(path).catch(async () => unlink(path));
+	} catch {
+		/* missing or not a junction */
+	}
 }
 
 function samePath(a: string, b: string): boolean {
