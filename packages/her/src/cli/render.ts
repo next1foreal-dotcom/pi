@@ -23,6 +23,7 @@ import type {
 	CliJudgmentPayload,
 	CliLintPayload,
 	CliMemoryStatusPayload,
+	CliPersonaScanPayload,
 	CliPriorPayload,
 	CliPrivacyAuditPayload,
 	CliPrivacyCheckPayload,
@@ -378,6 +379,13 @@ export function renderMemoryStatus(payload: CliMemoryStatusPayload): string {
 	].join("\n");
 }
 
+export function renderPersonaScan(payload: CliPersonaScanPayload): string {
+	if (payload.error) return `persona-scan failed: ${payload.error}`;
+	if (!payload.ran) return "persona-scan: not due, skipping";
+	if (payload.proposals.length === 0) return "persona-scan: no proposal";
+	return payload.proposals.map((item) => `persona-scan proposal ${item.kind}: ${item.path}`).join("\n");
+}
+
 export function renderPrivacyAudit(payload: CliPrivacyAuditPayload): string {
 	return [
 		`Her privacy classification updated: ${payload.result.total} file(s).`,
@@ -650,6 +658,7 @@ export function usage(): string {
   her journal --kind daily|weekly --text <text> [--title <text>] [--source <text>] [--timestamp <ISO>] [--run <memory-path>] [--json]
   her lint [--json]
   her memory-status --note <id> --status active|archive_only|needs_deep_read --reason <text> [--json]
+  her persona-scan [--if-due] [--json]
   her privacy-audit [--json]
   her privacy-check --ref <memory-path> [--ref <memory-path>] [--json]
   her prior [--task <text>] [--off|--her-only] [--budget <tokens>] [--json]

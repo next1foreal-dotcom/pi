@@ -71,6 +71,14 @@ export class StorePaths {
 		return join(this.proposals, "scan");
 	}
 
+	get personaProposals(): string {
+		return join(this.proposals, "persona");
+	}
+
+	get soulSeedFile(): string {
+		return join(this.samantha, "SOUL.seed.md");
+	}
+
 	get world(): string {
 		return join(this.root, "world");
 	}

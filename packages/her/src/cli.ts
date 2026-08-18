@@ -35,6 +35,7 @@ import {
 	renderJudgment,
 	renderLint,
 	renderMemoryStatus,
+	renderPersonaScan,
 	renderPrior,
 	renderPrivacyAudit,
 	renderPrivacyCheck,
@@ -141,6 +142,7 @@ import {
 	runEvalTrend,
 	runGoldenEvals,
 	runMemoryLint,
+	runPersonaOrgan,
 	runReingest,
 	runTasteWeekly,
 	StorePaths,
@@ -881,6 +883,17 @@ export async function runHerCli(
 		return payload.status.status === "unknown" ? 1 : 0;
 	}
 
+	if (command.kind === "persona-scan") {
+		const result = await runPersonaOrgan(memoryDir, {
+			ifDue: command.ifDue,
+			log: (line) => writeLine(io.stderr, line),
+			model: io.model ?? createCliModel(memoryDir, env),
+			sendTelegram: (text) => sendPersonaTelegram(env, text),
+		});
+		writePayload(io.stdout, result, command.json, renderPersonaScan);
+		return result.error ? 1 : 0;
+	}
+
 	if (command.kind === "privacy-audit") {
 		const result = await classifyMemoryCorpus(memoryDir);
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
@@ -939,6 +952,13 @@ export async function runHerCli(
 
 export function getMemoryDir(env: NodeJS.ProcessEnv = process.env, cwd = process.cwd()): string {
 	return resolve(env.HER_MEMORY_DIR ?? resolve(cwd, "..", "her-memory"));
+}
+
+async function sendPersonaTelegram(env: NodeJS.ProcessEnv, text: string): Promise<void> {
+	const token = env.HER_TELEGRAM_BOT_TOKEN?.trim();
+	const chatId = env.HER_TELEGRAM_CHAT_ID?.trim();
+	if (!token || !chatId) return;
+	await sendTelegramMessage({ token, chatId, baseUrl: env.HER_TELEGRAM_BASE_URL, text });
 }
 
 // ---------------------------------------------------------------------------
