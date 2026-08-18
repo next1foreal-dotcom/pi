@@ -67,13 +67,13 @@ export async function runPersonaOrgan(root: string, opts: RunPersonaOrganOptions
 		return { due, last, state };
 	});
 	if (opts.ifDue && !prepared.due) {
-		log("persona: not due, skipping");
+		log("persona-scan: not due, skipping");
 		return { ran: false, due: false, proposals: [], skippedReason: "not-due" };
 	}
-	if (!opts.model) throw new Error("persona requires a model");
+	if (!opts.model) throw new Error("persona-scan requires a model");
 	const model = opts.model;
 	const prompt = await assemblePrompt(root, paths, now);
-	return withOpBracket(root, "persona", async (ctx) => {
+	return withOpBracket(root, "persona-scan", async (ctx) => {
 		const completion = await invokeCompletion(model, prompt, { strong: true });
 		ctx.noteModel(completionMetaOf(model));
 		const parsed = parseProposalDocs(completion.text);
@@ -85,13 +85,13 @@ export async function runPersonaOrgan(root: string, opts: RunPersonaOrganOptions
 			const seen = new Set<PersonaKind>();
 			for (const proposal of parsed) {
 				if (seen.has(proposal.kind)) {
-					log(`persona: discarding extra ${proposal.kind} (at most one per kind)`);
+					log(`persona-scan: discarding extra ${proposal.kind} (at most one per kind)`);
 					continue;
 				}
 				seen.add(proposal.kind);
 				const invalid = await invalidEvidence(root, proposal.evidenceRefs);
 				if (invalid) {
-					log(`persona: discarding ${proposal.kind}: ${invalid}`);
+					log(`persona-scan: discarding ${proposal.kind}: ${invalid}`);
 					continue;
 				}
 				const rel = proposalRelPath(now, proposal.kind);
@@ -100,7 +100,7 @@ export async function runPersonaOrgan(root: string, opts: RunPersonaOrganOptions
 				messages.push(renderTelegram(proposal, rel));
 			}
 		});
-		if (accepted.length === 0 && parsed.length === 0) log("persona: no proposal");
+		if (accepted.length === 0 && parsed.length === 0) log("persona-scan: no proposal");
 		const sender = opts.sendTelegram;
 		if (sender) {
 			for (const text of messages) await sender(text);

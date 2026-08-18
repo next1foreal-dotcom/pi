@@ -5,7 +5,7 @@ import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname, extname, join, resolve } from "node:path";
 import { text as readStreamText } from "node:stream/consumers";
 import { setTimeout as sleep } from "node:timers/promises";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { runDrainStartCommand, runDrainStatusCommand, runDrainStopCommand, runDrainWaitCommand } from "./cli/drain.ts";
 import { runEventsVerifyCommand, runHostEventCommand } from "./cli/event-history.ts";
@@ -35,7 +35,7 @@ import {
 	renderJudgment,
 	renderLint,
 	renderMemoryStatus,
-	renderPersona,
+	renderPersonaScan,
 	renderPrior,
 	renderPrivacyAudit,
 	renderPrivacyCheck,
@@ -120,6 +120,7 @@ import {
 	listLongTasks,
 	loadConfig,
 	Memory,
+	type MemoryContext,
 	type ModelLike,
 	markTasteProposalsAppliedForBoard,
 	OpenAICompatibleModel,
@@ -163,6 +164,16 @@ export async function runHerCli(
 	cwd = process.cwd(),
 	io: CliIo = { stdout: process.stdout, stderr: process.stderr },
 ): Promise<number> {
+	// A1-CLI-seam (persona layer): a read-only subcommand exposing the SAME
+	// personality the resident voice agent gets — Memory.getContext() (CONTEXT +
+	// FACTS + SOUL + SAMANTHA + CHOICE-MODEL) plus her.md — composed exactly like
+	// the voice hook's composeSystemPrompt (extension.ts). Handled before parseArgs
+	// so it needs no change to the shared arg parser. Pure read; never writes
+	// CONTEXT.md (the approve-only invariant stays intact).
+	if (argv[0] === "persona") {
+		return runPersonaCommand(argv.slice(1), env, cwd, io);
+	}
+
 	if (argv[0] === "doctor") {
 		return runDoctorCommand(argv.slice(1), env, cwd, io);
 	}
@@ -863,14 +874,14 @@ export async function runHerCli(
 		return payload.status.status === "unknown" ? 1 : 0;
 	}
 
-	if (command.kind === "persona") {
+	if (command.kind === "persona-scan") {
 		const result = await runPersonaOrgan(memoryDir, {
 			ifDue: command.ifDue,
 			log: (line) => writeLine(io.stderr, line),
 			model: createCliModel(memoryDir, env),
 			sendTelegram: (text) => sendPersonaTelegram(env, text),
 		});
-		writePayload(io.stdout, result, command.json, renderPersona);
+		writePayload(io.stdout, result, command.json, renderPersonaScan);
 		return 0;
 	}
 
@@ -939,6 +950,55 @@ async function sendPersonaTelegram(env: NodeJS.ProcessEnv, text: string): Promis
 	const chatId = env.HER_TELEGRAM_CHAT_ID?.trim();
 	if (!token || !chatId) return;
 	await sendTelegramMessage({ token, chatId, baseUrl: env.HER_TELEGRAM_BASE_URL, text });
+}
+
+// ---------------------------------------------------------------------------
+// persona (READ-ONLY) — A1-CLI-seam. Exposes the resident voice agent's exact
+// personality to callers (samantha-ui's build path) WITHOUT loading the her
+// extension or registering its her_* tools. Composition mirrors the voice hook's
+// composeSystemPrompt (extension.ts): her.md first, then CONTEXT / FACTS / SOUL /
+// SAMANTHA / CHOICE-MODEL from Memory.getContext() — the same source functions the
+// voice path uses, so the personality text is identical (zero drift). Never writes.
+// ---------------------------------------------------------------------------
+
+// her.md ships next to this package (pi-package/prompts/her.md); resolve it the
+// same way extension.ts's herPromptPath does so both paths read the one file.
+const personaHerPromptPath = resolve(dirname(fileURLToPath(import.meta.url)), "..", "pi-package", "prompts", "her.md");
+
+async function readPersonaHerPrompt(): Promise<string> {
+	return (await readFile(personaHerPromptPath, "utf8")).trim();
+}
+
+/**
+ * Compose the personality block from her.md + Memory.getContext(). Section layout
+ * is kept identical to the voice hook's composeSystemPrompt — minus the build-agent
+ * `base`, which route.ts appends AFTER this block so "build directly" stays terminal —
+ * so the build path sees the same personality the voice path does.
+ */
+function composePersonaBlock(herPrompt: string, context: MemoryContext): string {
+	const sections = [herPrompt.trim(), `## Her CONTEXT.md\n\n${context.context.trim()}`];
+	if (context.facts.trim()) sections.push(`## Her FACTS.md\n\n${context.facts.trim()}`);
+	if (context.soul.trim()) sections.push(`## Her SOUL.md\n\n${context.soul.trim()}`);
+	if (context.self.trim()) sections.push(`## Her SAMANTHA.md\n\n${context.self.trim()}`);
+	if (context.choiceModel.trim()) sections.push(`## Her CHOICE-MODEL.md\n\n${context.choiceModel.trim()}`);
+	return sections.join("\n\n");
+}
+
+interface CliPersonaPayload {
+	memoryDir: string;
+	result: {
+		persona: string;
+		herPrompt: string;
+		context: string;
+		facts: string;
+		soul: string;
+		self: string;
+		choiceModel: string;
+	};
+}
+
+function renderPersona(payload: CliPersonaPayload): string {
+	return payload.result.persona;
 }
 
 function formatDoctorReport(report: Awaited<ReturnType<typeof runDoctor>>, options: { json?: boolean } = {}): string {
@@ -1119,6 +1179,29 @@ async function runDoctorCommand(args: string[], env: NodeJS.ProcessEnv, cwd: str
 		writeLine(io.stderr, `her doctor: ${errorMessage(error)}`);
 		return 2;
 	}
+}
+async function runPersonaCommand(args: string[], env: NodeJS.ProcessEnv, cwd: string, io: CliIo): Promise<number> {
+	const json = args.includes("--json");
+	const memoryDir = getMemoryDir(env, cwd);
+	const memory = createCliMemory(memoryDir, env);
+	// getContext() is pure read (no prior opts → no model call); returns
+	// { context, facts, soul, self, choiceModel } — the same struct the voice hook consumes.
+	const context = await memory.getContext();
+	const herPrompt = await readPersonaHerPrompt();
+	const payload: CliPersonaPayload = {
+		memoryDir,
+		result: {
+			persona: composePersonaBlock(herPrompt, context),
+			herPrompt,
+			context: context.context,
+			facts: context.facts,
+			soul: context.soul,
+			self: context.self,
+			choiceModel: context.choiceModel,
+		},
+	};
+	writePayload(io.stdout, payload, json, renderPersona);
+	return 0;
 }
 
 interface TasteIntakeBase {

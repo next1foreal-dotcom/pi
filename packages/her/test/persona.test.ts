@@ -361,17 +361,21 @@ test("escaping evidence refs discard the whole proposal", async () => {
 	assert.equal(await readText(join(store, "proposals", "persona", "persona-20260818-voice-revision.md")), undefined);
 });
 
-test("persona organ does not import missed-fire", async () => {
+test("persona-scan organ does not import missed-fire", async () => {
 	const src = await readFile(new URL("../src/her-core/persona.ts", import.meta.url), "utf8");
 	assert.equal(/missed-fire/.test(src), false);
 });
 
-test("parseArgs persona [--if-due] [--json]", () => {
-	assert.deepEqual(parseArgs(["persona"]), { kind: "persona", json: false, ifDue: false });
-	assert.deepEqual(parseArgs(["persona", "--if-due", "--json"]), { kind: "persona", json: true, ifDue: true });
+test("parseArgs persona-scan [--if-due] [--json]", () => {
+	assert.deepEqual(parseArgs(["persona-scan"]), { kind: "persona-scan", json: false, ifDue: false });
+	assert.deepEqual(parseArgs(["persona-scan", "--if-due", "--json"]), {
+		kind: "persona-scan",
+		json: true,
+		ifDue: true,
+	});
 });
 
-test("CLI --if-due --json skips with not-due when last_persona is fresh", async () => {
+test("CLI persona-scan --if-due --json skips with not-due when last_persona is fresh", async () => {
 	const store = await tempStore();
 	await writeJson(join(store, ".her", "state.json"), {
 		cursor: null,
@@ -379,11 +383,54 @@ test("CLI --if-due --json skips with not-due when last_persona is fresh", async 
 		last_synthesize: null,
 		last_persona: NOW.toISOString(),
 	});
-	const { code, stdout } = await runCli(store, ["persona", "--if-due", "--json"]);
+	const { code, stdout } = await runCli(store, ["persona-scan", "--if-due", "--json"]);
 	assert.equal(code, 0);
 	const payload = JSON.parse(stdout) as { ran: boolean; due: boolean; proposals: unknown[]; skippedReason?: string };
 	assert.equal(payload.ran, false);
 	assert.equal(payload.due, false);
 	assert.deepEqual(payload.proposals, []);
 	assert.equal(payload.skippedReason, "not-due");
+});
+
+// Restored A1-CLI-seam coverage from 70e3a8fc2.
+test("persona --json emits her.md identity + SOUL + CONTEXT and stays parseable", async () => {
+	const store = await mkdtemp(join(tmpdir(), "her-persona-"));
+	await initStore(store);
+	const { code, stdout } = await runCli(store, ["persona", "--json"]);
+	assert.equal(code, 0);
+	const payload = JSON.parse(stdout) as {
+		result?: { persona?: string; context?: string; soul?: string };
+	};
+	const persona = payload.result?.persona ?? "";
+	assert.match(persona, /#\s+Samantha/);
+	assert.match(persona, /## Her CONTEXT\.md/);
+	assert.match(persona, /## Her SOUL\.md/);
+	assert.equal((persona.match(/## Her CONTEXT\.md/g) ?? []).length, 1);
+	assert.ok((payload.result?.context ?? "").length > 0);
+	assert.ok((payload.result?.soul ?? "").length > 0);
+});
+
+test("persona --json is a pure read (stable across repeated runs)", async () => {
+	const store = await mkdtemp(join(tmpdir(), "her-persona-"));
+	await initStore(store);
+	const first = await runCli(store, ["persona", "--json"]);
+	const second = await runCli(store, ["persona", "--json"]);
+	assert.equal(first.code, 0);
+	assert.equal(second.code, 0);
+	assert.equal(first.stdout, second.stdout);
+});
+
+// Regression lock: samantha-ui readPersona() runs `her persona --json` and reads
+// payload.result.persona. Taking this name for another command silently drops
+// the Studio personality layer. Fail if anyone steals the name again.
+test("her persona --json keeps readPersona() payload shape (regression lock)", async () => {
+	const store = await mkdtemp(join(tmpdir(), "her-persona-lock-"));
+	await initStore(store);
+	const { code, stdout } = await runCli(store, ["persona", "--json"]);
+	assert.equal(code, 0);
+	const payload = JSON.parse(stdout) as { result?: { persona?: unknown } };
+	assert.equal(typeof payload.result?.persona, "string");
+	const persona = payload.result?.persona as string;
+	assert.ok(persona.length > 0, "result.persona must be a non-empty string");
+	assert.match(persona, /You are Samantha\. You grew from Fei's memory/);
 });

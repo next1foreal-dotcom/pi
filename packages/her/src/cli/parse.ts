@@ -49,7 +49,7 @@ export function parseArgs(argv: string[]): CliCommand {
 	if (command === "journal") return parseJournal(rest);
 	if (command === "lint") return parseJsonOnly("lint", rest);
 	if (command === "memory-status") return parseMemoryStatusCommand(rest);
-	if (command === "persona") return parsePersona(rest);
+	if (command === "persona-scan") return parsePersonaScan(rest);
 	if (command === "privacy-audit") return parseJsonOnly("privacy-audit", rest);
 	if (command === "privacy-check") return parsePrivacyCheck(rest);
 	if (command === "prior") return parsePrior(rest);
@@ -328,7 +328,7 @@ function parseReflect(argv: string[]): CliCommand {
 	return { kind: "reflect", json, ifDue };
 }
 
-function parsePersona(argv: string[]): CliCommand {
+function parsePersonaScan(argv: string[]): CliCommand {
 	let json = false;
 	let ifDue = false;
 	for (const arg of argv) {
@@ -340,9 +340,9 @@ function parsePersona(argv: string[]): CliCommand {
 			ifDue = true;
 			continue;
 		}
-		throw new UsageError(`unknown persona option: ${arg}`);
+		throw new UsageError(`unknown persona-scan option: ${arg}`);
 	}
-	return { kind: "persona", json, ifDue };
+	return { kind: "persona-scan", json, ifDue };
 }
 
 function parseReviewNarrative(argv: string[]): CliCommand {

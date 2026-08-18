@@ -127,7 +127,7 @@ export type CliCommand =
 			title?: string;
 	  }
 	| { kind: "memory-status"; json: boolean; noteId: string; reason: string; status: WorldNoteData["memoryStatus"] }
-	| { kind: "persona"; ifDue: boolean; json: boolean }
+	| { kind: "persona-scan"; ifDue: boolean; json: boolean }
 	| { kind: "privacy-audit"; json: boolean }
 	| { kind: "privacy-check"; json: boolean; refs: string[] }
 	| { budget?: number; json: boolean; kind: "prior"; mode: PriorMode; task?: string }
@@ -392,7 +392,7 @@ export interface CliMemoryStatusPayload extends CliStatusPayload {
 	};
 }
 
-export type CliPersonaPayload = PersonaOrganResult;
+export type CliPersonaScanPayload = PersonaOrganResult;
 
 export interface CliPrivacyAuditPayload extends CliStatusPayload {
 	result: MemoryClassificationResult;
