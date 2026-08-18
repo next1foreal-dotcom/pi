@@ -627,6 +627,9 @@ export function usage(): string {
   her drain-stop [--notify] [--json]
   her drain-status [--json]
   her drain-wait [--timeout-seconds <n>] [--json]
+  her selfmod-run --proposal <file> [--worktree-root <dir>] [--json]
+  her selfmod-status <id> [--json]
+  her selfmod-check-rollback <id> [--json]
   her eval-golden [--write-baseline] [--now <ISO>] [--json]
   her eval-trend [--json]
   her events-verify
