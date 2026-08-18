@@ -431,6 +431,30 @@ export type { SearchBackend } from "./retrieval.ts";
 export type { HerRunEvent, HerRunKind, HerRunSnapshot, HerRunStatus } from "./runs.ts";
 export { appendHerRunEvent, herRunKinds, herRunStatuses, listHerRunSnapshots, runsEventsPath } from "./runs.ts";
 export type {
+	CheckRollbackOptions,
+	RunSelfModOptions,
+	SelfModGateResult,
+	SelfModHooks,
+	SelfModMotivation,
+	SelfModProposal,
+	SelfModRollbackResult,
+	SelfModRunRecord,
+	SelfModRunResult,
+	SelfModStage,
+} from "./selfmod.ts";
+export {
+	ANCHOR_PATHS,
+	checkRollback,
+	latestSelfmodRecord,
+	MERGE_CRITERIA,
+	ROLLBACK_WATCH_HOURS,
+	readSelfmodRecords,
+	runSelfMod,
+	SELFMOD_ALLOWED_PATHS_V1,
+	SELFMOD_LEDGER_PATH,
+	selfmodLedgerPath,
+} from "./selfmod.ts";
+export type {
 	SessionAmbiguousResult,
 	SessionCandidate,
 	SessionMetaResult,
