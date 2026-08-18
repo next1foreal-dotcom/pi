@@ -57,14 +57,17 @@ test(
 				worktreeRoot: fx.worktreeRoot,
 			});
 			const result = await removeSelfmodWorktree({
+				branch: tree.branch,
 				git,
 				repoRoot: fx.repoRoot,
 				worktreePath: tree.worktreePath,
 			});
 			assert.ok(result.steps.indexOf("unlink-junction") < result.steps.indexOf("remove-tree"));
 			assert.ok(result.steps.indexOf("remove-tree") < result.steps.indexOf("prune"));
+			assert.ok(result.steps.indexOf("prune") < result.steps.indexOf("delete-branch"));
 			assert.ok(result.steps.includes("scan-junctions"));
 			await assert.rejects(stat(tree.worktreePath));
+			assert.equal((await git(fx.repoRoot, "branch", "--list", tree.branch)).stdout.trim(), "");
 			assert.equal((await readFile(join(fx.repoRoot, "node_modules", ".bin", "dummy"), "utf8")).trim(), "host");
 		} finally {
 			await destroyFixture(fx);

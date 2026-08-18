@@ -6,7 +6,16 @@ import { listHerEvents } from "../src/her-core/event-history.ts";
 import { readSelfmodRecords, runSelfMod } from "../src/her-core/selfmod.ts";
 import { acquireSelfmodLock } from "../src/her-core/selfmod-lock.ts";
 import { runSelfmodPickup } from "../src/her-core/selfmod-pickup.ts";
-import { destroyFixture, git, greenHooks, makeFixture, proposalFor, SKILL_REL, writeRel } from "./selfmod-harness.ts";
+import {
+	applySkillLine,
+	destroyFixture,
+	git,
+	greenHooks,
+	makeFixture,
+	proposalFor,
+	SKILL_REL,
+	writeRel,
+} from "./selfmod-harness.ts";
 
 function skillTouchPatch(rel = SKILL_REL): string {
 	return [
@@ -197,6 +206,108 @@ test("empty diff is rejected and never tagged", { timeout: 60_000 }, async () =>
 		assert.match(String(rejected?.data?.error ?? ""), /empty diff/);
 		const tags = (await git(fx.repoRoot, "tag", "-l", `selfmod/${fx.id}`)).stdout.trim();
 		assert.equal(tags, "");
+	} finally {
+		await destroyFixture(fx);
+	}
+});
+
+async function listedSelfmodBranch(repoRoot: string, id: string): Promise<string> {
+	return (await git(repoRoot, "branch", "--list", `selfmod/${id}`)).stdout.trim();
+}
+
+async function listedSelfmodTag(repoRoot: string, id: string): Promise<string> {
+	return (await git(repoRoot, "tag", "--list", `selfmod/${id}`)).stdout.trim();
+}
+
+test(
+	"same id twice: first rejected then retry is id already used and branch is gone",
+	{ timeout: 60_000 },
+	async () => {
+		const fx = await makeFixture("id-rej");
+		try {
+			const first = await runSelfMod({
+				hooks: greenHooks,
+				memoryDir: fx.memoryDir,
+				proposal: proposalFor(fx),
+				repoRoot: fx.repoRoot,
+				worktreeRoot: fx.worktreeRoot,
+			});
+			assert.equal(first.outcome, "rejected");
+			assert.equal(first.record.stage, "rejected");
+			assert.equal(await listedSelfmodBranch(fx.repoRoot, fx.id), "");
+			const second = await runSelfMod({
+				hooks: greenHooks,
+				memoryDir: fx.memoryDir,
+				proposal: proposalFor(fx),
+				repoRoot: fx.repoRoot,
+				worktreeRoot: fx.worktreeRoot,
+			});
+			assert.equal(second.outcome, "rejected");
+			assert.equal(second.record.stage, "rejected");
+			const events = await listHerEvents(fx.memoryDir, { kind: "selfmod.transition" });
+			const reused = events.filter((event) => event.data?.stage === "rejected");
+			assert.ok(reused.some((event) => /id already used/.test(String(event.data?.error ?? ""))));
+			assert.equal(await listedSelfmodBranch(fx.repoRoot, fx.id), "");
+		} finally {
+			await destroyFixture(fx);
+		}
+	},
+);
+
+test(
+	"same id twice: first merged then retry is id already used, branch gone, tag kept",
+	{ timeout: 60_000 },
+	async () => {
+		const fx = await makeFixture("id-mrg");
+		try {
+			const first = await runSelfMod({
+				hooks: { ...greenHooks, apply: async ({ worktreePath }) => applySkillLine(worktreePath) },
+				memoryDir: fx.memoryDir,
+				proposal: proposalFor(fx),
+				repoRoot: fx.repoRoot,
+				worktreeRoot: fx.worktreeRoot,
+			});
+			assert.equal(first.outcome, "merged");
+			assert.equal(first.record.stage, "merge");
+			assert.equal(await listedSelfmodBranch(fx.repoRoot, fx.id), "");
+			assert.notEqual(await listedSelfmodTag(fx.repoRoot, fx.id), "");
+			const second = await runSelfMod({
+				hooks: { ...greenHooks, apply: async ({ worktreePath }) => applySkillLine(worktreePath, "# again") },
+				memoryDir: fx.memoryDir,
+				proposal: proposalFor(fx),
+				repoRoot: fx.repoRoot,
+				worktreeRoot: fx.worktreeRoot,
+			});
+			assert.equal(second.outcome, "rejected");
+			assert.equal(second.record.stage, "rejected");
+			const events = await listHerEvents(fx.memoryDir, { kind: "selfmod.transition" });
+			assert.ok(events.some((event) => /id already used/.test(String(event.data?.error ?? ""))));
+			assert.equal(await listedSelfmodBranch(fx.repoRoot, fx.id), "");
+			assert.notEqual(await listedSelfmodTag(fx.repoRoot, fx.id), "");
+		} finally {
+			await destroyFixture(fx);
+		}
+	},
+);
+
+test("pre-existing selfmod branch at worktree rejects id already used", { timeout: 60_000 }, async () => {
+	const fx = await makeFixture("id-br");
+	try {
+		await git(fx.repoRoot, "branch", `selfmod/${fx.id}`);
+		const result = await runSelfMod({
+			hooks: { ...greenHooks, apply: async ({ worktreePath }) => applySkillLine(worktreePath) },
+			memoryDir: fx.memoryDir,
+			proposal: proposalFor(fx),
+			repoRoot: fx.repoRoot,
+			worktreeRoot: fx.worktreeRoot,
+		});
+		assert.equal(result.outcome, "rejected");
+		assert.equal(result.record.stage, "rejected");
+		const events = await listHerEvents(fx.memoryDir, { kind: "selfmod.transition" });
+		const rejected = events.find((event) => event.data?.stage === "rejected");
+		assert.ok(rejected);
+		assert.match(String(rejected?.data?.error ?? ""), /id already used/);
+		assert.equal(await listedSelfmodBranch(fx.repoRoot, fx.id), "");
 	} finally {
 		await destroyFixture(fx);
 	}

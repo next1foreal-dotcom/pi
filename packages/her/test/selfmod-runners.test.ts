@@ -184,6 +184,23 @@ test("evidence-exists green on an in-memory file and red on missing or escaped r
 	assert.equal(escaped, false);
 });
 
+test("misspelled fixture param key is fail-closed", async () => {
+	const memoryDir = await tempDir("typo-param");
+	const fixtureDir = join(memoryDir, "evals", "selfmod-gate");
+	await mkdir(fixtureDir, { recursive: true });
+	await writeFile(join(fixtureDir, "shape.json"), `${JSON.stringify({ kind: "skill-shape", maxBytesX: 200 })}\n`);
+	const ok = await defaultRunEvalFixtures({
+		memoryDir,
+		proposal: proposal(),
+		worktreePath: memoryDir,
+		listDiff: async () => [SKILL_REL],
+		readWorktreeFile: async () => "---\nname: fixture\nhello\n",
+		statWorktreeFile: async () => ({ bytes: 24 }),
+		diffNumstat: async () => ({ added: 1, deleted: 0 }),
+	});
+	assert.equal(ok, false);
+});
+
 test("unknown fixture kind is fail-closed", async () => {
 	const memoryDir = await tempDir("unknown");
 	const fixtureDir = join(memoryDir, "evals", "selfmod-gate");

@@ -1,6 +1,7 @@
+import { resolve } from "node:path";
 import { applyErrorMessage, applySelfmodPatch } from "./selfmod-apply.ts";
 import { meetsMergeCriteria, runSelfmodGate, type SelfModGateHooks, type SelfModRetry } from "./selfmod-gate.ts";
-import { appendSelfmodSnapshot } from "./selfmod-ledger.ts";
+import { appendSelfmodSnapshot, readSelfmodRecords } from "./selfmod-ledger.ts";
 import { acquireSelfmodLock, releaseSelfmodLock } from "./selfmod-lock.ts";
 import { disallowedTargetPaths } from "./selfmod-paths.ts";
 import type { SelfModProposal, SelfModRunRecord, SelfModStage } from "./selfmod-types.ts";
@@ -10,7 +11,10 @@ import {
 	mergeSelfmodBranch,
 	readHead,
 	removeSelfmodWorktree,
+	SELFMOD_ID_USED,
 	type SelfmodGit,
+	selfmodGitIdInUse,
+	selfmodRefName,
 } from "./selfmod-worktree.ts";
 
 export { latestSelfmodRecord, readSelfmodRecords, selfmodLedgerPath } from "./selfmod-ledger.ts";
@@ -87,6 +91,9 @@ async function continueAfterPropose(
 	if (!lock.acquired) return { outcome: "not-run", record: proposed };
 	let worktreePath: string | undefined;
 	try {
+		if (await selfmodIdAlreadyUsed(opts)) {
+			return rejectIdAlreadyUsed(opts, proposed, now);
+		}
 		const tree = await createSelfmodWorktree({
 			git: opts.git,
 			id: opts.proposal.id,
@@ -132,8 +139,12 @@ async function continueAfterPropose(
 		await teardownTerminal(opts, result.record);
 		return result;
 	} catch (error) {
+		if (isIdAlreadyUsedError(error)) {
+			return rejectIdAlreadyUsed(opts, proposed, now);
+		}
 		if (worktreePath) {
 			await removeSelfmodWorktree({
+				branch: selfmodRefName(opts.proposal.id),
 				git: opts.git,
 				repoRoot: opts.repoRoot,
 				worktreePath,
@@ -222,6 +233,7 @@ async function teardownTerminal(opts: RunSelfModOptions, record: SelfModRunRecor
 	if (!record.worktreePath) return;
 	if (record.stage !== "merge" && record.stage !== "rejected" && record.stage !== "rolledback") return;
 	const result = await removeSelfmodWorktree({
+		branch: record.branch ?? selfmodRefName(record.proposal.id),
 		git: opts.git,
 		repoRoot: opts.repoRoot,
 		worktreePath: record.worktreePath,
@@ -231,4 +243,49 @@ async function teardownTerminal(opts: RunSelfModOptions, record: SelfModRunRecor
 			error: `teardown failed: ${result.warning}`,
 		});
 	}
+}
+
+async function selfmodIdAlreadyUsed(opts: RunSelfModOptions): Promise<boolean> {
+	if (await selfmodGitIdInUse({ git: opts.git, id: opts.proposal.id, repoRoot: opts.repoRoot })) {
+		return true;
+	}
+	const rows = await readSelfmodRecords(opts.memoryDir);
+	return rows.some((row) => row.proposal.id === opts.proposal.id && isPriorSelfmodUse(row.stage));
+}
+
+function isPriorSelfmodUse(stage: SelfModStage): boolean {
+	return (
+		stage === "worktree" ||
+		stage === "apply" ||
+		stage === "gate" ||
+		stage === "merge" ||
+		stage === "rejected" ||
+		stage === "rolledback"
+	);
+}
+
+async function rejectIdAlreadyUsed(
+	opts: RunSelfModOptions,
+	proposed: SelfModRunRecord,
+	now: () => string,
+): Promise<SelfModRunResult> {
+	const rejected: SelfModRunRecord = { ...proposed, stage: "rejected", updatedAt: now() };
+	const result = await snapshot(opts.memoryDir, rejected, "propose", "rejected", { error: SELFMOD_ID_USED });
+	const leftover = await removeSelfmodWorktree({
+		branch: selfmodRefName(opts.proposal.id),
+		git: opts.git,
+		repoRoot: opts.repoRoot,
+		worktreePath: resolve(opts.worktreeRoot, opts.proposal.id),
+	});
+	if (leftover.warning) {
+		await appendSelfmodSnapshot(opts.memoryDir, result.record, "rejected", {
+			error: `teardown failed: ${leftover.warning}`,
+		});
+	}
+	return result;
+}
+
+function isIdAlreadyUsedError(error: unknown): boolean {
+	const message = error instanceof Error ? error.message : String(error);
+	return /id already used|a branch named .+ already exists|tag .+ already exists/i.test(message);
 }

@@ -49,6 +49,8 @@ test("V2: merge a harmless skill edit then rollback on red organ ledger", { time
 		assert.ok(stages.includes("propose"));
 		assert.ok(stages.includes("merge"));
 		assert.ok(stages.includes("rolledback"));
+		assert.equal((await git(fx.repoRoot, "branch", "--list", `selfmod/${fx.id}`)).stdout.trim(), "");
+		assert.equal((await git(fx.repoRoot, "rev-parse", `refs/tags/selfmod/${fx.id}`)).stdout.trim(), tag);
 	} finally {
 		await destroyFixture(fx);
 	}

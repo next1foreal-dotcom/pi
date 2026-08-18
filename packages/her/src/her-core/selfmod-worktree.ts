@@ -10,7 +10,10 @@ export interface SelfmodWorktree {
 	worktreePath: string;
 }
 
+export const SELFMOD_ID_USED = "id already used";
+
 export interface RemoveSelfmodWorktreeOptions {
+	branch?: string;
 	git?: SelfmodGit;
 	repoRoot: string;
 	worktreePath: string;
@@ -36,7 +39,10 @@ export async function createSelfmodWorktree(opts: {
 }): Promise<SelfmodWorktree> {
 	const git = opts.git ?? defaultGit;
 	const anchorCommit = await readHead(opts.repoRoot, git);
-	const branch = `selfmod/${opts.id}`;
+	const branch = selfmodRefName(opts.id);
+	if (await selfmodGitIdInUse({ git, id: opts.id, repoRoot: opts.repoRoot })) {
+		throw new Error(SELFMOD_ID_USED);
+	}
 	const worktreePath = resolve(opts.worktreeRoot, opts.id);
 	await mkdir(dirname(worktreePath), { recursive: true });
 	await git(opts.repoRoot, "worktree", "add", worktreePath, "-b", branch, "HEAD");
@@ -84,6 +90,15 @@ export async function removeSelfmodWorktree(opts: RemoveSelfmodWorktreeOptions):
 	} catch (error) {
 		warnings.push(`prune: ${errorMessage(error)}`);
 	}
+	if (opts.branch) {
+		steps.push("delete-branch");
+		try {
+			await git(opts.repoRoot, "branch", "-D", opts.branch);
+		} catch (error) {
+			const message = errorMessage(error);
+			if (!isMissingBranchError(message)) warnings.push(`delete-branch: ${message}`);
+		}
+	}
 	const warning = warnings.length > 0 ? warnings.join("; ") : undefined;
 	if (warning) console.error(`[her] selfmod worktree teardown failed: ${warning}`);
 	return { ok: warning === undefined, steps, warning };
@@ -103,8 +118,21 @@ export async function mergeSelfmodBranch(opts: {
 		await git(opts.repoRoot, "commit", "-q", "-m", `selfmod ${opts.id}`);
 	}
 	const mergeCommit = await readHead(opts.repoRoot, git);
-	await git(opts.repoRoot, "tag", `selfmod/${opts.id}`, mergeCommit);
+	await git(opts.repoRoot, "tag", selfmodRefName(opts.id), mergeCommit);
 	return mergeCommit;
+}
+
+export function selfmodRefName(id: string): string {
+	return `selfmod/${id}`;
+}
+
+export async function selfmodGitIdInUse(opts: { git?: SelfmodGit; id: string; repoRoot: string }): Promise<boolean> {
+	const git = opts.git ?? defaultGit;
+	const ref = selfmodRefName(opts.id);
+	const branch = (await git(opts.repoRoot, "branch", "--list", ref)).stdout.trim();
+	if (branch) return true;
+	const tag = (await git(opts.repoRoot, "tag", "--list", ref)).stdout.trim();
+	return tag.length > 0;
 }
 
 export async function revertSelfmodMerge(opts: {
@@ -217,4 +245,8 @@ function isMissing(error: unknown): boolean {
 
 function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
+}
+
+function isMissingBranchError(message: string): boolean {
+	return /not found|unknown branch|doesn't exist/i.test(message);
 }

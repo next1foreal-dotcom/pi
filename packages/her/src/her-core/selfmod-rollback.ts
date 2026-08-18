@@ -3,7 +3,7 @@ import { detectPresumedCrashes, eventHistoryPath, type HistoryEvent } from "./ev
 import { appendSelfmodSnapshot, latestSelfmodRecord, readSelfmodRecords } from "./selfmod-ledger.ts";
 import type { SelfModRunRecord } from "./selfmod-types.ts";
 import { ROLLBACK_WATCH_HOURS } from "./selfmod-types.ts";
-import { removeSelfmodWorktree, revertSelfmodMerge, type SelfmodGit } from "./selfmod-worktree.ts";
+import { removeSelfmodWorktree, revertSelfmodMerge, type SelfmodGit, selfmodRefName } from "./selfmod-worktree.ts";
 import { readText } from "./store.ts";
 
 export interface CheckRollbackOptions {
@@ -46,6 +46,7 @@ export async function checkRollback(opts: CheckRollbackOptions): Promise<SelfMod
 	await appendSelfmodSnapshot(opts.memoryDir, record, "merge", { pulseEvidence, revertCommit });
 	if (record.worktreePath) {
 		const teardown = await removeSelfmodWorktree({
+			branch: record.branch ?? selfmodRefName(opts.id),
 			git: opts.git,
 			repoRoot: opts.repoRoot,
 			worktreePath: record.worktreePath,
