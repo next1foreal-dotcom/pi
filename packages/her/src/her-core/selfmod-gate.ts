@@ -1,14 +1,14 @@
 import { execFile } from "node:child_process";
-import { readFile as fsReadFile } from "node:fs/promises";
-import { join } from "node:path";
 import { promisify } from "node:util";
 import { errorMessage } from "./memory-utils.ts";
 import { classifyDiffPaths } from "./selfmod-paths.ts";
 import { MERGE_CRITERIA, type SelfModGateResult } from "./selfmod-types.ts";
-import { listDiffNames, type SelfmodGit } from "./selfmod-worktree.ts";
+import { listDiffNames, readPathDiff, type SelfmodGit } from "./selfmod-worktree.ts";
 import { isTransientFsContention, retryOnFsContention } from "./store.ts";
 
 const execFileAsync = promisify(execFile);
+
+const CODE_EXTS = new Set([".ts", ".mts", ".cts", ".mjs", ".cjs", ".js", ".ps1", ".psm1", ".cedar", ".json"]);
 
 export interface SelfModRetry {
 	attempts?: number;
@@ -16,7 +16,7 @@ export interface SelfModRetry {
 }
 
 export interface SelfModGateHooks {
-	readFile?: (path: string) => Promise<string>;
+	readDiff?: (path: string) => Promise<string>;
 	runEvalFixtures?: (worktreePath: string) => Promise<boolean>;
 	runTests?: (worktreePath: string, targetPaths: string[]) => Promise<{ failed: number; passed: number }>;
 	runTypecheck?: (worktreePath: string) => Promise<number>;
@@ -26,6 +26,7 @@ export interface SelfModGateReport {
 	allowlistViolations: string[];
 	anchorHits: string[];
 	error?: string;
+	errors: string[];
 	gate: SelfModGateResult;
 }
 
@@ -64,6 +65,7 @@ export async function runSelfmodGate(opts: {
 		allowlistViolations: scan.allowlistViolations,
 		anchorHits: scan.anchorHits,
 		error: errors[0],
+		errors,
 		gate,
 	};
 }
@@ -87,8 +89,12 @@ async function runTestsStep(
 	hooks: SelfModGateHooks | undefined,
 	errors: string[],
 ): Promise<{ failed: number; passed: number }> {
+	if (!hooks?.runTests) {
+		errors.push("no test runner wired");
+		return { failed: 1, passed: 0 };
+	}
 	try {
-		return await (hooks?.runTests ?? defaultTests)(worktreePath, targetPaths);
+		return await hooks.runTests(worktreePath, targetPaths);
 	} catch (error) {
 		errors.push(errorMessage(error));
 		return { failed: 1, passed: 0 };
@@ -100,8 +106,12 @@ async function runEvalStep(
 	hooks: SelfModGateHooks | undefined,
 	errors: string[],
 ): Promise<boolean> {
+	if (!hooks?.runEvalFixtures) {
+		errors.push("no selfmod-gate eval fixtures wired");
+		return false;
+	}
 	try {
-		return await (hooks?.runEvalFixtures ?? defaultEval)(worktreePath);
+		return await hooks.runEvalFixtures(worktreePath);
 	} catch (error) {
 		errors.push(errorMessage(error));
 		return false;
@@ -126,27 +136,38 @@ async function scanDiffAndEncoding(
 		return { allowlistViolations: [], anchorHits: [], encodingScanClean: false };
 	}
 	const classified = classifyDiffPaths(paths);
-	const encodingScanClean = await encodingCleanFor(opts.worktreePath, paths, opts.hooks, opts.retry, errors);
+	const encodingScanClean = await encodingCleanFor(opts, paths, errors);
 	return { ...classified, encodingScanClean };
 }
 
 async function encodingCleanFor(
-	worktreePath: string,
+	opts: {
+		anchorCommit: string;
+		git?: SelfmodGit;
+		hooks?: SelfModGateHooks;
+		retry?: SelfModRetry;
+		worktreePath: string;
+	},
 	paths: string[],
-	hooks: SelfModGateHooks | undefined,
-	retry: SelfModRetry | undefined,
 	errors: string[],
 ): Promise<boolean> {
-	const read = hooks?.readFile ?? ((path: string) => fsReadFile(path, "utf8"));
+	const read =
+		opts.hooks?.readDiff ??
+		((rel: string) =>
+			readPathDiff({
+				from: opts.anchorCommit,
+				git: opts.git,
+				path: rel,
+				worktreePath: opts.worktreePath,
+			}));
 	for (const rel of paths) {
-		const abs = join(worktreePath, rel);
 		try {
-			const text = await retryOnFsContention(() => read(abs), {
-				attempts: retry?.attempts ?? 8,
-				baseDelayMs: retry?.baseDelayMs ?? 25,
+			const diff = await retryOnFsContention(() => read(rel), {
+				attempts: opts.retry?.attempts ?? 8,
+				baseDelayMs: opts.retry?.baseDelayMs ?? 25,
 				label: "selfmod-gate-read",
 			});
-			if (hasNonAscii(text)) return false;
+			if (addedLinesAreDirty(rel, diff)) return false;
 		} catch (error) {
 			errors.push(errorMessage(error));
 			if (isTransientFsContention(error)) return false;
@@ -156,11 +177,52 @@ async function encodingCleanFor(
 	return true;
 }
 
+function addedLinesAreDirty(rel: string, diff: string): boolean {
+	const code = isCodePath(rel);
+	for (const line of diff.split(/\r?\n/)) {
+		if (!line.startsWith("+") || line.startsWith("+++")) continue;
+		const added = line.slice(1);
+		if (code) {
+			if (hasNonAscii(added)) return true;
+		} else if (proseAddedLineIsDirty(added)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+function proseAddedLineIsDirty(text: string): boolean {
+	for (let i = 0; i < text.length; i++) {
+		const code = text.charCodeAt(i);
+		if (code === 0xfffd) return true;
+		if (isCyrillicOrKana(code)) return true;
+	}
+	return false;
+}
+
+function isCodePath(rel: string): boolean {
+	const base = rel.replace(/\\/g, "/").split("/").pop() ?? rel;
+	const dot = base.lastIndexOf(".");
+	if (dot < 0) return false;
+	return CODE_EXTS.has(base.slice(dot).toLowerCase());
+}
+
 function hasNonAscii(text: string): boolean {
 	for (let i = 0; i < text.length; i++) {
 		if (text.charCodeAt(i) > 127) return true;
 	}
 	return false;
+}
+
+function isCyrillicOrKana(code: number): boolean {
+	return (
+		(code >= 0x0400 && code <= 0x04ff) ||
+		(code >= 0x0500 && code <= 0x052f) ||
+		(code >= 0x3040 && code <= 0x309f) ||
+		(code >= 0x30a0 && code <= 0x30ff) ||
+		(code >= 0x31f0 && code <= 0x31ff) ||
+		(code >= 0xff66 && code <= 0xff9d)
+	);
 }
 
 function typecheckExitOf(error: unknown): number {
@@ -180,15 +242,4 @@ async function defaultTypecheck(worktreePath: string): Promise<number> {
 		shell: process.platform === "win32",
 	});
 	return 0;
-}
-
-async function defaultTests(
-	_worktreePath: string,
-	_targetPaths: string[],
-): Promise<{ failed: number; passed: number }> {
-	return { failed: 0, passed: 0 };
-}
-
-async function defaultEval(_worktreePath: string): Promise<boolean> {
-	return true;
 }

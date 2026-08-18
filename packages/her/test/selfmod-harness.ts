@@ -9,6 +9,7 @@ import type { SelfModProposal } from "../src/her-core/selfmod-types.ts";
 const execFileAsync = promisify(execFile);
 
 export const SKILL_REL = "packages/her/pi-package/skills/fixture/SKILL.md";
+export const SKILL_TS_REL = "packages/her/pi-package/skills/fixture/note.ts";
 export const PROMPT_REL = "prompts/her.md";
 
 export interface SelfmodFixture {
@@ -75,10 +76,16 @@ export const greenHooks = {
 	runEvalFixtures: async (): Promise<boolean> => true,
 };
 
-export async function applySkillLine(worktreePath: string): Promise<void> {
-	await writeRel(worktreePath, SKILL_REL, "# fixture\nhello\n# touch\n");
+export async function applySkillLine(worktreePath: string, extraLine = "# touch"): Promise<void> {
+	await writeRel(worktreePath, SKILL_REL, `# fixture\nhello\n${extraLine}\n`);
 	await git(worktreePath, "add", SKILL_REL);
 	await git(worktreePath, "commit", "-q", "-m", "selfmod apply");
+}
+
+export async function applySkillTs(worktreePath: string, body: string): Promise<void> {
+	await writeRel(worktreePath, SKILL_TS_REL, body);
+	await git(worktreePath, "add", SKILL_TS_REL);
+	await git(worktreePath, "commit", "-q", "-m", "selfmod apply ts");
 }
 
 export async function writeRel(root: string, rel: string, text: string): Promise<void> {

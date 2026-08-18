@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { runSelfMod } from "../src/her-core/selfmod.ts";
 import { applySkillLine, destroyFixture, greenHooks, makeFixture, proposalFor } from "./selfmod-harness.ts";
@@ -8,7 +7,7 @@ function contention(code: "EPERM" | "EACCES" | "EBUSY"): Error & { code: string 
 	return Object.assign(new Error(code), { code });
 }
 
-test("V4: transient EPERM during gate file read retries, warns, and does not fail the gate", async () => {
+test("V4: transient EPERM during gate diff read retries, warns, and does not fail the gate", async () => {
 	const fx = await makeFixture("v4t");
 	const warnings: string[] = [];
 	const origWarn = console.warn;
@@ -21,10 +20,10 @@ test("V4: transient EPERM during gate file read retries, warns, and does not fai
 			hooks: {
 				...greenHooks,
 				apply: async ({ worktreePath }) => applySkillLine(worktreePath),
-				readFile: async (path) => {
+				readDiff: async () => {
 					reads += 1;
 					if (reads <= 2) throw contention("EPERM");
-					return readFile(path, "utf8");
+					return "+# touch\n";
 				},
 			},
 			memoryDir: fx.memoryDir,
@@ -45,14 +44,14 @@ test("V4: transient EPERM during gate file read retries, warns, and does not fai
 	}
 });
 
-test("V4: persistent EACCES during gate file read is an honest gate failure", async () => {
+test("V4: persistent EACCES during gate diff read is an honest gate failure", async () => {
 	const fx = await makeFixture("v4p");
 	try {
 		const result = await runSelfMod({
 			hooks: {
 				...greenHooks,
 				apply: async ({ worktreePath }) => applySkillLine(worktreePath),
-				readFile: async () => {
+				readDiff: async () => {
 					throw contention("EACCES");
 				},
 			},

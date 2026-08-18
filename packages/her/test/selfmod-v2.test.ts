@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import test from "node:test";
+import { appendEvent } from "../src/her-core/event-history.ts";
 import { readSelfmodRecords, runSelfMod } from "../src/her-core/selfmod.ts";
 import { checkRollback } from "../src/her-core/selfmod-rollback.ts";
 import { applySkillLine, destroyFixture, git, greenHooks, makeFixture, proposalFor } from "./selfmod-harness.ts";
@@ -22,11 +21,12 @@ test("V2: merge a harmless skill edit then rollback on red organ ledger", { time
 		const tag = (await git(fx.repoRoot, "rev-parse", `refs/tags/selfmod/${fx.id}`)).stdout.trim();
 		assert.equal(tag, merged.record.mergeCommit);
 
-		await mkdir(join(fx.memoryDir, "organs"), { recursive: true });
-		await writeFile(
-			join(fx.memoryDir, "organs", "growth.jsonl"),
-			`${JSON.stringify({ ok: false, status: "red", selfmod: fx.id })}\n`,
-			"utf8",
+		await appendEvent(
+			"organ.round.end",
+			"synthesize",
+			{ runId: "g280-rollback-pulse", ok: false, error: `organ failed for ${fx.id}` },
+			undefined,
+			fx.memoryDir,
 		);
 
 		const rolled = await checkRollback({

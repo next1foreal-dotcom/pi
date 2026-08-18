@@ -1,5 +1,5 @@
-import { readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { basename } from "node:path";
+import { detectPresumedCrashes, eventHistoryPath, type HistoryEvent } from "./event-history.ts";
 import { appendSelfmodSnapshot, latestSelfmodRecord, readSelfmodRecords } from "./selfmod-ledger.ts";
 import type { SelfModRunRecord } from "./selfmod-types.ts";
 import { ROLLBACK_WATCH_HOURS } from "./selfmod-types.ts";
@@ -11,6 +11,7 @@ export interface CheckRollbackOptions {
 	id: string;
 	memoryDir: string;
 	now?: Date;
+	readHistoryText?: (memoryDir: string) => Promise<string>;
 	repoRoot: string;
 }
 
@@ -29,7 +30,7 @@ export async function checkRollback(opts: CheckRollbackOptions): Promise<SelfMod
 	if (windowClosed(current.updatedAt, now)) {
 		return { action: "window-closed", record: current };
 	}
-	const pulseEvidence = await findPulseEvidence(opts.memoryDir, current);
+	const pulseEvidence = await findPulseEvidence(opts.memoryDir, current, opts.readHistoryText);
 	if (!pulseEvidence) return { action: "watching", record: current };
 	const revertCommit = await revertSelfmodMerge({
 		git: opts.git,
@@ -52,42 +53,73 @@ function windowClosed(mergedAt: string, now: Date): boolean {
 	return now.getTime() - start > ROLLBACK_WATCH_HOURS * 60 * 60 * 1000;
 }
 
-async function findPulseEvidence(memoryDir: string, record: SelfModRunRecord): Promise<string | undefined> {
-	const dir = join(memoryDir, "organs");
-	let names: string[] = [];
-	try {
-		names = await readdir(dir);
-	} catch {
-		return undefined;
-	}
-	const needles = [record.proposal.id, ...record.proposal.targetPaths];
-	for (const name of names) {
-		if (!name.endsWith(".jsonl")) continue;
-		const text = await readText(join(dir, name));
-		if (!text) continue;
-		const hit = scanOrganText(text, needles);
-		if (hit) return hit;
-	}
-	return undefined;
+async function findPulseEvidence(
+	memoryDir: string,
+	record: SelfModRunRecord,
+	readHistoryText?: (memoryDir: string) => Promise<string>,
+): Promise<string | undefined> {
+	const text = readHistoryText
+		? await readHistoryText(memoryDir)
+		: ((await readText(eventHistoryPath(memoryDir))) ?? "");
+	return scanHistoryText(text, record);
 }
 
-function scanOrganText(text: string, needles: string[]): string | undefined {
+function scanHistoryText(text: string, record: SelfModRunRecord): string | undefined {
+	const needles = pulseNeedles(record);
+	const events: HistoryEvent[] = [];
 	for (const line of text.split(/\n/)) {
 		if (line.trim() === "") continue;
-		if (!lineIsRed(line)) continue;
-		if (needles.some((needle) => line.includes(needle))) return line;
+		const event = parseHistoryLineLoose(line);
+		if (event) events.push(event);
+		if (event?.kind === "organ.round.end" && organEndIsRed(event.data) && lineMatches(line, needles)) {
+			return line;
+		}
+	}
+	for (const derived of detectPresumedCrashes(events)) {
+		if (derived.kind !== "organ.presumed_crash") continue;
+		const blob = JSON.stringify(derived);
+		if (lineMatches(blob, needles)) return blob;
 	}
 	return undefined;
 }
 
-function lineIsRed(line: string): boolean {
+function organEndIsRed(data?: Record<string, unknown>): boolean {
+	if (!data) return false;
+	if (data.ok === false) return true;
+	if (data.error !== undefined && data.error !== null && data.error !== "") return true;
+	return false;
+}
+
+function pulseNeedles(record: SelfModRunRecord): string[] {
+	const paths = record.proposal.targetPaths;
+	const names = paths.map((path) => basename(path.replace(/\\/g, "/")));
+	return [record.proposal.id, ...paths, ...names].filter((needle) => needle.length > 0);
+}
+
+function lineMatches(line: string, needles: string[]): boolean {
+	return needles.some((needle) => line.includes(needle));
+}
+
+function parseHistoryLineLoose(line: string): HistoryEvent | undefined {
 	try {
 		const value: unknown = JSON.parse(line);
-		if (!value || typeof value !== "object") return false;
+		if (!value || typeof value !== "object") return undefined;
 		const rec = value as Record<string, unknown>;
-		return rec.ok === false || rec.status === "red" || rec.pulse === "red";
+		if (typeof rec.id !== "string" || typeof rec.ts !== "string" || typeof rec.actor !== "string") return undefined;
+		if (typeof rec.kind !== "string") return undefined;
+		const event: HistoryEvent = {
+			id: rec.id,
+			ts: rec.ts,
+			kind: rec.kind as HistoryEvent["kind"],
+			actor: rec.actor,
+		};
+		if (rec.data !== undefined) {
+			if (!rec.data || typeof rec.data !== "object" || Array.isArray(rec.data)) return undefined;
+			event.data = rec.data as Record<string, unknown>;
+		}
+		return event;
 	} catch {
-		return false;
+		return undefined;
 	}
 }
 

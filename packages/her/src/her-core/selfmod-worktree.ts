@@ -71,3 +71,13 @@ export async function listDiffNames(opts: {
 		.map((line) => line.trim())
 		.filter(Boolean);
 }
+
+export async function readPathDiff(opts: {
+	from: string;
+	git?: SelfmodGit;
+	path: string;
+	worktreePath: string;
+}): Promise<string> {
+	const git = opts.git ?? defaultGit;
+	return (await git(opts.worktreePath, "diff", `${opts.from}..HEAD`, "--", opts.path)).stdout;
+}

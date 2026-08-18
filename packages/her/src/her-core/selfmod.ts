@@ -132,11 +132,13 @@ function extraOf(report: {
 	allowlistViolations: string[];
 	anchorHits: string[];
 	error?: string;
+	errors: string[];
 }): Record<string, unknown> {
+	const errors = report.errors;
 	return {
 		allowlistViolations: report.allowlistViolations,
 		anchorHits: report.anchorHits,
-		...(report.error ? { error: report.error } : {}),
+		...(errors.length > 0 ? { error: errors.join("; "), errors } : {}),
 	};
 }
 
