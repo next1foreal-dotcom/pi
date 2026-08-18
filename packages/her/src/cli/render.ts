@@ -380,6 +380,7 @@ export function renderMemoryStatus(payload: CliMemoryStatusPayload): string {
 }
 
 export function renderPersonaScan(payload: CliPersonaScanPayload): string {
+	if (payload.error) return `persona-scan failed: ${payload.error}`;
 	if (!payload.ran) return "persona-scan: not due, skipping";
 	if (payload.proposals.length === 0) return "persona-scan: no proposal";
 	return payload.proposals.map((item) => `persona-scan proposal ${item.kind}: ${item.path}`).join("\n");

@@ -11,6 +11,7 @@ import { runHerCli } from "../src/cli.ts";
 import {
 	FakeModel,
 	initStore,
+	type ModelLike,
 	parseFrontmatter,
 	readJson,
 	readText,
@@ -146,14 +147,48 @@ function isAllowedWrite(rel: string): boolean {
 	return rel.startsWith("proposals/persona/") || rel === ".her/state.json" || rel.startsWith("audit/");
 }
 
-async function runCli(store: string, args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
+async function seedLastPersona(store: string, last: string): Promise<void> {
+	await writeJson(join(store, ".her", "state.json"), {
+		cursor: null,
+		last_consolidate: null,
+		last_synthesize: null,
+		last_persona: last,
+	});
+}
+
+async function runCli(
+	store: string,
+	args: string[],
+	opts: { model?: ModelLike } = {},
+): Promise<{ code: number; stdout: string; stderr: string }> {
 	const stdout = new PassThrough();
 	const stderr = new PassThrough();
 	const outChunks: Buffer[] = [];
 	const errChunks: Buffer[] = [];
 	stdout.on("data", (chunk) => outChunks.push(Buffer.from(chunk)));
 	stderr.on("data", (chunk) => errChunks.push(Buffer.from(chunk)));
-	const code = await runHerCli(args, { ...process.env, HER_MEMORY_DIR: store }, repoRoot, { stdout, stderr });
+	const env: NodeJS.ProcessEnv = { ...process.env, HER_MEMORY_DIR: store };
+	if (opts.model) {
+		env.HER_LLM_API_KEY = "";
+		env.HER_SUMMARY_API_KEY = "";
+		env.HER_SUMMARY_BASE_URL = "";
+		env.HER_SUMMARY_MODEL = "";
+		env.HER_RELAY_URL = "";
+		env.HER_RELAY_KEY = "";
+		env.HER_RELAY_MODEL = "";
+		env.HER_DEEPSEEK_KEY = "";
+		env.DEEPSEEK_API_KEY = "";
+		env.HER_DEEPSEEK_BASE_URL = "";
+		env.HER_DEEPSEEK_MODEL = "";
+		env.HER_LOCAL_OPENAI_URL = "";
+		env.HER_LOCAL_OPENAI_KEY = "";
+		env.HER_LOCAL_OPENAI_MODEL = "";
+	}
+	const code = await runHerCli(args, env, repoRoot, {
+		stdout,
+		stderr,
+		...(opts.model ? { model: opts.model } : {}),
+	});
 	return {
 		code,
 		stdout: Buffer.concat(outChunks).toString("utf8"),
@@ -304,6 +339,8 @@ test("NO_PROPOSAL writes no files, sends no TG, logs one line", async () => {
 		},
 	});
 	assert.equal(result.ran, true);
+	assert.equal(result.error, undefined);
+	assert.equal(result.skippedReason, undefined);
 	assert.deepEqual(result.proposals, []);
 	assert.deepEqual(tg, []);
 	assert.equal(logs.length, 1);
@@ -312,6 +349,130 @@ test("NO_PROPOSAL writes no files, sends no TG, logs one line", async () => {
 	assert.deepEqual(extraWrites(before, after), []);
 	const entries = (await readdir(join(store, "proposals")).catch(() => [])).filter((name) => name !== "scan");
 	assert.ok(!entries.includes("persona") || (await readdir(join(store, "proposals", "persona"))).length === 0);
+	const state = await readJson<{ last_persona?: string }>(join(store, ".her", "state.json"), {});
+	assert.equal(state.last_persona, NOW.toISOString());
+});
+
+test("FakeModel that throws is loud: ran false, error set, TG once, last_persona unchanged", async () => {
+	const store = await tempStore();
+	const last = new Date(NOW.getTime() - 8 * DAY_MS).toISOString();
+	await seedLastPersona(store, last);
+	const tg: string[] = [];
+	const logs: string[] = [];
+	const result = await runPersonaOrgan(store, {
+		ifDue: true,
+		model: new FakeModel(undefined, true),
+		now: NOW,
+		log: (line) => logs.push(line),
+		sendTelegram: async (text) => {
+			tg.push(text);
+		},
+	});
+	assert.equal(result.ran, false);
+	assert.equal(result.due, true);
+	assert.equal(result.skippedReason, undefined);
+	assert.ok(result.error && result.error.length > 0);
+	assert.match(result.error, /model unavailable/i);
+	assert.equal(tg.length, 1);
+	assert.match(tg[0] ?? "", /persona-scan failed/i);
+	assert.match(tg[0] ?? "", /model unavailable/i);
+	assert.equal(
+		logs.some((line) => /persona-scan failed/i.test(line)),
+		true,
+	);
+	const state = await readJson<{ last_persona?: string }>(join(store, ".her", "state.json"), {});
+	assert.equal(state.last_persona, last);
+});
+
+test("FakeModel garbage is loud: ran false, error set, TG once, last_persona unchanged", async () => {
+	const store = await tempStore();
+	const last = new Date(NOW.getTime() - 8 * DAY_MS).toISOString();
+	await seedLastPersona(store, last);
+	const garbage = "I am a chatty model with no frontmatter and this is not NO_PROPOSAL.";
+	const tg: string[] = [];
+	const logs: string[] = [];
+	const result = await runPersonaOrgan(store, {
+		ifDue: true,
+		model: new FakeModel(garbage),
+		now: NOW,
+		log: (line) => logs.push(line),
+		sendTelegram: async (text) => {
+			tg.push(text);
+		},
+	});
+	assert.equal(result.ran, false);
+	assert.equal(result.due, true);
+	assert.equal(result.skippedReason, undefined);
+	assert.ok(result.error && result.error.length > 0);
+	assert.match(result.error, /unusable|empty/i);
+	assert.equal(tg.length, 1);
+	assert.match(tg[0] ?? "", /persona-scan failed/i);
+	assert.equal((tg[0] ?? "").includes(garbage), false);
+	assert.equal(
+		logs.some((line) => /persona-scan failed/i.test(line)),
+		true,
+	);
+	const state = await readJson<{ last_persona?: string }>(join(store, ".her", "state.json"), {});
+	assert.equal(state.last_persona, last);
+});
+
+test("empty model response is loud, not a silent NO_PROPOSAL", async () => {
+	const store = await tempStore();
+	const last = new Date(NOW.getTime() - 8 * DAY_MS).toISOString();
+	await seedLastPersona(store, last);
+	const tg: string[] = [];
+	const result = await runPersonaOrgan(store, {
+		ifDue: true,
+		model: new FakeModel(""),
+		now: NOW,
+		log: () => {},
+		sendTelegram: async (text) => {
+			tg.push(text);
+		},
+	});
+	assert.equal(result.ran, false);
+	assert.ok(result.error);
+	assert.equal(tg.length, 1);
+	const state = await readJson<{ last_persona?: string }>(join(store, ".her", "state.json"), {});
+	assert.equal(state.last_persona, last);
+});
+
+test("CLI persona-scan FakeModel throw exits non-zero with error, not skippedReason", async () => {
+	const store = await tempStore();
+	const last = new Date(NOW.getTime() - 8 * DAY_MS).toISOString();
+	await seedLastPersona(store, last);
+	const { code, stdout } = await runCli(store, ["persona-scan", "--if-due", "--json"], {
+		model: new FakeModel(undefined, true),
+	});
+	assert.notEqual(code, 0);
+	const payload = JSON.parse(stdout) as {
+		ran: boolean;
+		due: boolean;
+		proposals: unknown[];
+		error?: string;
+		skippedReason?: string;
+	};
+	assert.equal(payload.ran, false);
+	assert.ok(payload.error);
+	assert.equal(payload.skippedReason, undefined);
+	const state = await readJson<{ last_persona?: string }>(join(store, ".her", "state.json"), {});
+	assert.equal(state.last_persona, last);
+});
+
+test("CLI persona-scan FakeModel garbage exits non-zero with error", async () => {
+	const store = await tempStore();
+	const last = new Date(NOW.getTime() - 8 * DAY_MS).toISOString();
+	await seedLastPersona(store, last);
+	const { code, stdout } = await runCli(store, ["persona-scan", "--json"], {
+		model: new FakeModel("garbage with no valid frontmatter docs"),
+	});
+	assert.notEqual(code, 0);
+	const payload = JSON.parse(stdout) as { ran: boolean; error?: string; skippedReason?: string };
+	assert.equal(payload.ran, false);
+	assert.ok(payload.error);
+	assert.equal(payload.skippedReason, undefined);
+	const state = await readJson<{ last_persona?: string }>(join(store, ".her", "state.json"), {});
+	assert.equal(state.last_persona, last);
 });
 
 test("missing evidence ref discards the whole proposal", async () => {

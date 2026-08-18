@@ -2,11 +2,20 @@ import { stat } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { loadConfig } from "./config.ts";
 import { markdownEntries } from "./memory-utils.ts";
-import { invokeCompletion, type ModelLike } from "./model.ts";
+import { type CompletionResult, invokeCompletion, type ModelLike } from "./model.ts";
 import { completionMetaOf, withOpBracket } from "./op-brackets.ts";
 import { StorePaths } from "./paths.ts";
 import { PERSONA_ORGAN_SYSTEM_PROMPT } from "./persona-prompt.ts";
-import { fenceUntrusted, frontmatter, parseFrontmatter, readJson, readText, writeJson, writeText } from "./store.ts";
+import {
+	fenceUntrusted,
+	frontmatter,
+	parseFrontmatter,
+	readJson,
+	readText,
+	redactSecrets,
+	writeJson,
+	writeText,
+} from "./store.ts";
 import { storeLock } from "./store-lock.ts";
 
 export { PERSONA_ORGAN_SYSTEM_PROMPT };
@@ -35,6 +44,7 @@ export interface PersonaProposalRef {
 
 export interface PersonaOrganResult {
 	due: boolean;
+	error?: string;
 	proposals: PersonaProposalRef[];
 	ran: boolean;
 	skippedReason?: string;
@@ -74,9 +84,44 @@ export async function runPersonaOrgan(root: string, opts: RunPersonaOrganOptions
 	const model = opts.model;
 	const prompt = await assemblePrompt(root, paths, now);
 	return withOpBracket(root, "persona-scan", async (ctx) => {
-		const completion = await invokeCompletion(model, prompt, { strong: true });
+		let completion: CompletionResult;
+		try {
+			completion = await invokeCompletion(model, prompt, { strong: true });
+		} catch (error) {
+			return failPersonaScan({
+				due: prepared.due,
+				error: error instanceof Error ? error.message : String(error),
+				log,
+				sendTelegram: opts.sendTelegram,
+			});
+		}
 		ctx.noteModel(completionMetaOf(model));
+		const trimmed = completion.text.trim();
+		if (!trimmed) {
+			return failPersonaScan({
+				due: prepared.due,
+				error: "empty model response",
+				log,
+				sendTelegram: opts.sendTelegram,
+			});
+		}
+		if (trimmed.toUpperCase() === "NO_PROPOSAL") {
+			await storeLock(root, async () => {
+				const latest = await readJson<Record<string, unknown>>(paths.stateFile, {});
+				await writeJson(paths.stateFile, { ...latest, last_persona: now.toISOString() });
+			});
+			log("persona-scan: no proposal");
+			return { ran: true, due: true, proposals: [] };
+		}
 		const parsed = parseProposalDocs(completion.text);
+		if (parsed.length === 0) {
+			return failPersonaScan({
+				due: prepared.due,
+				error: "unusable model response",
+				log,
+				sendTelegram: opts.sendTelegram,
+			});
+		}
 		const accepted: PersonaProposalRef[] = [];
 		const messages: string[] = [];
 		await storeLock(root, async () => {
@@ -100,7 +145,6 @@ export async function runPersonaOrgan(root: string, opts: RunPersonaOrganOptions
 				messages.push(renderTelegram(proposal, rel));
 			}
 		});
-		if (accepted.length === 0 && parsed.length === 0) log("persona-scan: no proposal");
 		const sender = opts.sendTelegram;
 		if (sender) {
 			for (const text of messages) await sender(text);
@@ -119,6 +163,25 @@ function isDue(lastRun: string | undefined, intervalDays: number, nowMs: number)
 	const lastMs = Date.parse(lastRun);
 	if (!Number.isFinite(lastMs)) return true;
 	return nowMs - lastMs >= intervalDays * DAY_MS;
+}
+
+async function failPersonaScan(opts: {
+	due: boolean;
+	error: string;
+	log: (line: string) => void;
+	sendTelegram?: (text: string) => Promise<void>;
+}): Promise<PersonaOrganResult> {
+	const error = sanitizePersonaFailure(opts.error);
+	const line = `persona-scan failed: ${error}`;
+	opts.log(line);
+	if (opts.sendTelegram) await opts.sendTelegram(line);
+	return { ran: false, due: opts.due, proposals: [], error };
+}
+
+function sanitizePersonaFailure(raw: string): string {
+	const redacted = redactSecrets(raw).replace(/https?:\/\/\S+/gi, "<redacted-url>");
+	const collapsed = redacted.replace(/\s+/g, " ").trim() || "model call failed";
+	return collapsed.slice(0, 200);
 }
 
 async function assemblePrompt(root: string, paths: StorePaths, now: Date): Promise<string> {

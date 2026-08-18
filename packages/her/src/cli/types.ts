@@ -15,6 +15,7 @@ import type {
 	MemoryExportCheckResult,
 	MemoryLintReport,
 	MemorySyncStatus,
+	ModelLike,
 	PersonaOrganResult,
 	PriorMode,
 	PriorResult,
@@ -495,4 +496,6 @@ export interface CliIo {
 	stderr: NodeJS.WritableStream;
 	/** intake-taste `-` reads pasted text from here; defaults to process.stdin. */
 	stdin?: NodeJS.ReadableStream;
+	/** Test seam: persona-scan uses this instead of the live CLI model. */
+	model?: ModelLike;
 }

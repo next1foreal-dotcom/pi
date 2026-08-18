@@ -878,11 +878,11 @@ export async function runHerCli(
 		const result = await runPersonaOrgan(memoryDir, {
 			ifDue: command.ifDue,
 			log: (line) => writeLine(io.stderr, line),
-			model: createCliModel(memoryDir, env),
+			model: io.model ?? createCliModel(memoryDir, env),
 			sendTelegram: (text) => sendPersonaTelegram(env, text),
 		});
 		writePayload(io.stdout, result, command.json, renderPersonaScan);
-		return 0;
+		return result.error ? 1 : 0;
 	}
 
 	if (command.kind === "privacy-audit") {
