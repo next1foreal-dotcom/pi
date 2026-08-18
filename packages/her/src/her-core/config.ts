@@ -16,6 +16,7 @@ export interface HerConfig {
 		missedFireReflect?: string;
 		missedFireChoiceModel?: string;
 		missedFireSynthesize?: string;
+		personaIntervalDays?: number;
 	};
 	hands: {
 		enabled: boolean;
@@ -45,6 +46,7 @@ export const DEFAULT_CONFIG: HerConfig = {
 		missedFireReflect: "once",
 		missedFireChoiceModel: "once",
 		missedFireSynthesize: "once",
+		personaIntervalDays: 7,
 	},
 	hands: {
 		enabled: false,
@@ -87,6 +89,7 @@ export function renderConfig(config: HerConfig = DEFAULT_CONFIG): string {
 		`  missed_fire_reflect: ${config.cadence.missedFireReflect ?? "once"}`,
 		`  missed_fire_choice_model: ${config.cadence.missedFireChoiceModel ?? "once"}`,
 		`  missed_fire_synthesize: ${config.cadence.missedFireSynthesize ?? "once"}`,
+		`  persona_interval_days: ${config.cadence.personaIntervalDays ?? 7}`,
 		"hands:",
 		`  enabled: ${config.hands.enabled}`,
 		`  desktop_enabled: ${config.hands.desktopEnabled}`,

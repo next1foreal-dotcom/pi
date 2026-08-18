@@ -49,6 +49,7 @@ export function parseArgs(argv: string[]): CliCommand {
 	if (command === "journal") return parseJournal(rest);
 	if (command === "lint") return parseJsonOnly("lint", rest);
 	if (command === "memory-status") return parseMemoryStatusCommand(rest);
+	if (command === "persona") return parsePersona(rest);
 	if (command === "privacy-audit") return parseJsonOnly("privacy-audit", rest);
 	if (command === "privacy-check") return parsePrivacyCheck(rest);
 	if (command === "prior") return parsePrior(rest);
@@ -325,6 +326,23 @@ function parseReflect(argv: string[]): CliCommand {
 		throw new UsageError(`unknown reflect option: ${arg}`);
 	}
 	return { kind: "reflect", json, ifDue };
+}
+
+function parsePersona(argv: string[]): CliCommand {
+	let json = false;
+	let ifDue = false;
+	for (const arg of argv) {
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--if-due") {
+			ifDue = true;
+			continue;
+		}
+		throw new UsageError(`unknown persona option: ${arg}`);
+	}
+	return { kind: "persona", json, ifDue };
 }
 
 function parseReviewNarrative(argv: string[]): CliCommand {

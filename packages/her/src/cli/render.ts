@@ -23,6 +23,7 @@ import type {
 	CliJudgmentPayload,
 	CliLintPayload,
 	CliMemoryStatusPayload,
+	CliPersonaPayload,
 	CliPriorPayload,
 	CliPrivacyAuditPayload,
 	CliPrivacyCheckPayload,
@@ -378,6 +379,12 @@ export function renderMemoryStatus(payload: CliMemoryStatusPayload): string {
 	].join("\n");
 }
 
+export function renderPersona(payload: CliPersonaPayload): string {
+	if (!payload.ran) return "persona: not due, skipping";
+	if (payload.proposals.length === 0) return "persona: no proposal";
+	return payload.proposals.map((item) => `persona proposal ${item.kind}: ${item.path}`).join("\n");
+}
+
 export function renderPrivacyAudit(payload: CliPrivacyAuditPayload): string {
 	return [
 		`Her privacy classification updated: ${payload.result.total} file(s).`,
@@ -649,6 +656,7 @@ export function usage(): string {
   her journal --kind daily|weekly --text <text> [--title <text>] [--source <text>] [--timestamp <ISO>] [--run <memory-path>] [--json]
   her lint [--json]
   her memory-status --note <id> --status active|archive_only|needs_deep_read --reason <text> [--json]
+  her persona [--if-due] [--json]
   her privacy-audit [--json]
   her privacy-check --ref <memory-path> [--ref <memory-path>] [--json]
   her prior [--task <text>] [--off|--her-only] [--budget <tokens>] [--json]

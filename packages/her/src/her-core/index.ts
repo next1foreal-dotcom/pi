@@ -336,6 +336,17 @@ export {
 	type PanelChairBriefParams,
 } from "./panel-chair-brief.ts";
 export { StorePaths } from "./paths.ts";
+export type { PersonaKind, PersonaOrganResult, PersonaProposalRef, RunPersonaOrganOptions } from "./persona.ts";
+export {
+	DEFAULT_PERSONA_INTERVAL_DAYS,
+	PERSONA_INPUT_BUDGET_CHARS,
+	PERSONA_KINDS,
+	PERSONA_LOOKBACK_DAYS,
+	PERSONA_ORGAN_SYSTEM_PROMPT,
+	PERSONA_PROPOSAL_BEGIN,
+	PERSONA_PROPOSAL_END,
+	runPersonaOrgan,
+} from "./persona.ts";
 export type {
 	AssemblePriorOptions,
 	PriorAuditEntry,
