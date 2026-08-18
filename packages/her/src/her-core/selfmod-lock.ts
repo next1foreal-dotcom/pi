@@ -1,6 +1,6 @@
-import { rm } from "node:fs/promises";
-import { join } from "node:path";
-import { readText, writeJson } from "./store.ts";
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { readText } from "./store.ts";
 
 export const DEFAULT_SELFMOD_LOCK_TTL_MINUTES = 60;
 export const MAX_SELFMOD_LOCK_TTL_MINUTES = 240;
@@ -67,6 +67,8 @@ export async function acquireSelfmodLock(opts: AcquireSelfmodLockOptions): Promi
 	const now = opts.now ?? new Date();
 	const current = await readSelfmodLock(opts.memoryDir, now);
 	if (current.held) return { acquired: false, flag: current.flag };
+	const path = selfmodLockPath(opts.memoryDir);
+	await mkdir(dirname(path), { recursive: true });
 	const ttl = clampLockTtl(opts.ttlMinutes);
 	const startedAt = now.toISOString();
 	const expiresAt = new Date(now.getTime() + ttl * 60_000).toISOString();
@@ -76,8 +78,29 @@ export async function acquireSelfmodLock(opts: AcquireSelfmodLockOptions): Promi
 		reason: (opts.reason ?? "selfmod").trim() || "selfmod",
 		startedAt,
 	};
-	await writeJson(selfmodLockPath(opts.memoryDir), flag);
-	return { acquired: true, flag };
+	const payload = `${JSON.stringify(flag, null, 2)}\n`;
+	try {
+		await writeFile(path, payload, { encoding: "utf8", flag: "wx" });
+		return { acquired: true, flag };
+	} catch (error) {
+		if (!isExist(error)) throw error;
+		const again = await readSelfmodLock(opts.memoryDir, now);
+		if (again.held) return { acquired: false, flag: again.flag };
+		await rm(path, { force: true });
+		try {
+			await writeFile(path, payload, { encoding: "utf8", flag: "wx" });
+			return { acquired: true, flag };
+		} catch (retryError) {
+			if (isExist(retryError)) return { acquired: false };
+			throw retryError;
+		}
+	}
+}
+
+function isExist(error: unknown): boolean {
+	return Boolean(
+		error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === "EEXIST",
+	);
 }
 
 export async function releaseSelfmodLock(memoryDir: string): Promise<void> {

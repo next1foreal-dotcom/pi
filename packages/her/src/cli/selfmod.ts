@@ -182,13 +182,28 @@ async function loadProposal(path: string): Promise<SelfModProposal> {
 	if (!Array.isArray(rec.targetPaths) || rec.targetPaths.some((item) => typeof item !== "string")) {
 		throw new UsageError("proposal.targetPaths must be a string array");
 	}
+	const fieldPatch = typeof rec.patch === "string" ? rec.patch : undefined;
+	const sibling = await readSiblingPatch(path);
+	if (fieldPatch !== undefined && sibling !== undefined) {
+		console.log("selfmod-run: patch field wins over sibling .patch");
+	}
+	const patch = fieldPatch !== undefined ? fieldPatch : sibling;
 	return {
 		id: rec.id,
 		createdAt: rec.createdAt,
 		motivation: { kind: motivation.kind, evidenceRef: motivation.evidenceRef },
 		targetPaths: rec.targetPaths as string[],
 		planSummary: rec.planSummary,
+		...(patch ? { patch } : {}),
 	};
+}
+
+async function readSiblingPatch(proposalPath: string): Promise<string | undefined> {
+	try {
+		return await readFile(proposalPath.replace(/\.json$/i, ".patch"), "utf8");
+	} catch {
+		return undefined;
+	}
 }
 
 function defaultWorktreeRoot(): string {

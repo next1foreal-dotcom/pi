@@ -8,6 +8,7 @@ import { listDiffNames, type SelfmodGit } from "./selfmod-worktree.ts";
 const execFileAsync = promisify(execFile);
 
 export const SELFMOD_GATE_TEST_FILES = [
+	"packages/her/test/selfmod-apply.test.ts",
 	"packages/her/test/selfmod-c.test.ts",
 	"packages/her/test/selfmod-cli.test.ts",
 	"packages/her/test/selfmod-encoding.test.ts",

@@ -8,7 +8,7 @@ import { runSelfMod } from "../src/her-core/selfmod.ts";
 import { appendSelfmodSnapshot } from "../src/her-core/selfmod-ledger.ts";
 import { runSelfmodPickup, SELFMOD_PROPOSAL_BEGIN, SELFMOD_PROPOSAL_END } from "../src/her-core/selfmod-pickup.ts";
 import { FENCE_MARKER_REMOVED } from "../src/her-core/store.ts";
-import { applySkillLine, destroyFixture, greenHooks, makeFixture, proposalFor } from "./selfmod-harness.ts";
+import { applySkillLine, destroyFixture, greenHooks, makeFixture, proposalFor, SKILL_REL } from "./selfmod-harness.ts";
 
 interface CliResult {
 	code: number;
@@ -61,7 +61,19 @@ test("valid failure-anchored proposal enters the pipeline and is filed under don
 		await writeProposal(
 			fx.memoryDir,
 			"alpha.json",
-			proposalFor(fx, { motivation: { kind: "failure-anchored", evidenceRef: "evals/fail.md" } }),
+			proposalFor(fx, {
+				motivation: { kind: "failure-anchored", evidenceRef: "evals/fail.md" },
+				patch: [
+					`diff --git a/${SKILL_REL} b/${SKILL_REL}`,
+					`--- a/${SKILL_REL}`,
+					`+++ b/${SKILL_REL}`,
+					"@@ -1,2 +1,3 @@",
+					" # fixture",
+					" hello",
+					"+# touch",
+					"",
+				].join("\n"),
+			}),
 		);
 		const notices: string[] = [];
 		const result = await runSelfmodPickup({

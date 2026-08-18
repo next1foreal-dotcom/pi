@@ -2,6 +2,20 @@ import { ANCHOR_PATHS, SELFMOD_ALLOWED_PATHS_V1 } from "../rsi/anchors.ts";
 
 export { ANCHOR_PATHS, SELFMOD_ALLOWED_PATHS_V1 };
 
+// Source: Her-repo/docs/specs/her-rsi-contracts/selfmod.ts.
+// Lives outside the selfmod allowlist (and outside the hook-protected anchors.ts)
+// so she cannot expand her own fence. Updating this list is an our-side commit.
+export const SELFMOD_OWNED_SKILLS: readonly string[] = [
+	"her-batch-intake",
+	"her-hands-desktop",
+	"her-intake",
+	"her-jina-read",
+	"her-scan",
+	"her-skill-sharpen",
+	"her-status-brief",
+	"her-telegram-bridge-smoke",
+];
+
 export type SelfModStage = "propose" | "worktree" | "apply" | "gate" | "merge" | "rolledback" | "rejected";
 
 export interface SelfModMotivation {
@@ -15,6 +29,7 @@ export interface SelfModProposal {
 	motivation: SelfModMotivation;
 	targetPaths: string[];
 	planSummary: string;
+	patch?: string;
 }
 
 export interface SelfModGateResult {
@@ -49,3 +64,5 @@ export const MERGE_CRITERIA = {
 } as const;
 
 export const ROLLBACK_WATCH_HOURS = 24;
+
+export const SELFMOD_PATCH_MAX_BYTES = 64 * 1024;

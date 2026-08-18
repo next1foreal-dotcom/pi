@@ -8,8 +8,8 @@ import type { SelfModProposal } from "../src/her-core/selfmod-types.ts";
 
 const execFileAsync = promisify(execFile);
 
-export const SKILL_REL = "packages/her/pi-package/skills/fixture/SKILL.md";
-export const SKILL_TS_REL = "packages/her/pi-package/skills/fixture/note.ts";
+export const SKILL_REL = "packages/her/pi-package/skills/her-intake/SKILL.md";
+export const SKILL_TS_REL = "packages/her/pi-package/skills/her-intake/note.ts";
 export const PROMPT_REL = "prompts/her.md";
 
 export interface SelfmodFixture {

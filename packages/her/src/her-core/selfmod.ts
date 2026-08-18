@@ -1,3 +1,4 @@
+import { applyErrorMessage, applySelfmodPatch } from "./selfmod-apply.ts";
 import { meetsMergeCriteria, runSelfmodGate, type SelfModGateHooks, type SelfModRetry } from "./selfmod-gate.ts";
 import { appendSelfmodSnapshot } from "./selfmod-ledger.ts";
 import { acquireSelfmodLock, releaseSelfmodLock } from "./selfmod-lock.ts";
@@ -5,6 +6,7 @@ import { disallowedTargetPaths } from "./selfmod-paths.ts";
 import type { SelfModProposal, SelfModRunRecord, SelfModStage } from "./selfmod-types.ts";
 import {
 	createSelfmodWorktree,
+	listDiffNames,
 	mergeSelfmodBranch,
 	readHead,
 	removeSelfmodWorktree,
@@ -27,6 +29,7 @@ export {
 	ROLLBACK_WATCH_HOURS,
 	SELFMOD_ALLOWED_PATHS_V1,
 	SELFMOD_LEDGER_PATH,
+	SELFMOD_OWNED_SKILLS,
 } from "./selfmod-types.ts";
 
 export interface SelfModHooks extends SelfModGateHooks {
@@ -100,12 +103,28 @@ async function continueAfterPropose(
 			updatedAt: now(),
 		};
 		await appendSelfmodSnapshot(opts.memoryDir, withTree, "propose");
-		if (opts.hooks?.apply) {
-			await opts.hooks.apply({
-				branch: tree.branch,
-				repoRoot: opts.repoRoot,
-				worktreePath: tree.worktreePath,
+		try {
+			if (opts.hooks?.apply) {
+				await opts.hooks.apply({
+					branch: tree.branch,
+					repoRoot: opts.repoRoot,
+					worktreePath: tree.worktreePath,
+				});
+			} else if (opts.proposal.patch) {
+				await applySelfmodPatch({
+					git: opts.git,
+					id: opts.proposal.id,
+					patch: opts.proposal.patch,
+					worktreePath: tree.worktreePath,
+				});
+			}
+		} catch (error) {
+			const rejected: SelfModRunRecord = { ...withTree, stage: "rejected", updatedAt: now() };
+			const result = await snapshot(opts.memoryDir, rejected, "worktree", "rejected", {
+				error: applyErrorMessage(error),
 			});
+			await teardownTerminal(opts, result.record);
+			return result;
 		}
 		const applied: SelfModRunRecord = { ...withTree, stage: "apply", updatedAt: now() };
 		await appendSelfmodSnapshot(opts.memoryDir, applied, "worktree");
@@ -150,6 +169,15 @@ async function finishGateAndMerge(
 	if (!meetsMergeCriteria(report.gate)) {
 		const rejected: SelfModRunRecord = { ...gated, stage: "rejected", updatedAt: now() };
 		return snapshot(opts.memoryDir, rejected, "gate", "rejected", extraOf(report));
+	}
+	const changed = await listDiffNames({
+		from: applied.anchorCommit,
+		git: opts.git,
+		worktreePath,
+	});
+	if (changed.length === 0) {
+		const rejected: SelfModRunRecord = { ...gated, stage: "rejected", updatedAt: now() };
+		return snapshot(opts.memoryDir, rejected, "gate", "rejected", { error: "empty diff", ...extraOf(report) });
 	}
 	const mergeCommit = await mergeSelfmodBranch({
 		branch: applied.branch,

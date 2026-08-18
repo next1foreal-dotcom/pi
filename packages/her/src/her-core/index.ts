@@ -452,6 +452,7 @@ export {
 	runSelfMod,
 	SELFMOD_ALLOWED_PATHS_V1,
 	SELFMOD_LEDGER_PATH,
+	SELFMOD_OWNED_SKILLS,
 	selfmodLedgerPath,
 } from "./selfmod.ts";
 export type {
