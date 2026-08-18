@@ -7,6 +7,7 @@ import { text as readStreamText } from "node:stream/consumers";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import { runDrainStartCommand, runDrainStatusCommand, runDrainStopCommand, runDrainWaitCommand } from "./cli/drain.ts";
 import { runEventsVerifyCommand, runHostEventCommand } from "./cli/event-history.ts";
 import { parseArgs } from "./cli/parse.ts";
 import {
@@ -192,6 +193,22 @@ export async function runHerCli(
 
 	if (argv[0] === "events-verify") {
 		return runEventsVerifyCommand(getMemoryDir(env, cwd), io, env);
+	}
+
+	if (argv[0] === "drain-start") {
+		return runDrainStartCommand(argv.slice(1), getMemoryDir(env, cwd), io, env);
+	}
+
+	if (argv[0] === "drain-stop") {
+		return runDrainStopCommand(argv.slice(1), getMemoryDir(env, cwd), io, env);
+	}
+
+	if (argv[0] === "drain-status") {
+		return runDrainStatusCommand(argv.slice(1), getMemoryDir(env, cwd), io);
+	}
+
+	if (argv[0] === "drain-wait") {
+		return runDrainWaitCommand(argv.slice(1), getMemoryDir(env, cwd), io);
 	}
 
 	if (argv[0] === "snapshot-create") {

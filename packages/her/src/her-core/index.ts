@@ -153,6 +153,30 @@ export {
 } from "./dispatch.ts";
 export type { CheckResult, CheckStatus, DoctorOptions, DoctorReport, Severity } from "./doctor.ts";
 export { runDoctor } from "./doctor.ts";
+export type {
+	ClampTtlResult,
+	DrainBgTask,
+	DrainFlag,
+	DrainState,
+	StartDrainOptions,
+	StartDrainResult,
+	StopDrainOptions,
+	StopDrainResult,
+	WaitForQuietOptions,
+	WaitQuietResult,
+} from "./drain.ts";
+export {
+	clampDrainTtlMinutes,
+	DEFAULT_DRAIN_TTL_MINUTES,
+	DRAIN_WAIT_POLL_MS,
+	drainFlagPath,
+	formatStartMessage,
+	MAX_DRAIN_TTL_MINUTES,
+	readDrainState,
+	startDrain,
+	stopDrain,
+	waitForQuiet,
+} from "./drain.ts";
 export { createEmbeddingSearch } from "./embedding-search.ts";
 export type { EvalTrendPoint, EvalTrendReport, TrendDirection } from "./eval-trend.ts";
 export { computeEvalTrend, renderEvalTrendReport, runEvalTrend } from "./eval-trend.ts";

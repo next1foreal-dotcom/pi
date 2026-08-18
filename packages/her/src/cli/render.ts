@@ -623,6 +623,10 @@ export function usage(): string {
   her cost [--now <ISO>] [--json]
   her decay [--older-than-days <days>] [--now <YYYY-MM-DD>] [--json]
   her dispatch <handoff.md> --executor pi:<model>|codex [--budget-usd <usd>] [--cwd <dir>] [--label <text>] [--timeout-min <n>] [--json]
+  her drain-start --reason <text> [--ttl-minutes <n>] [--by <name>] [--notify] [--json]
+  her drain-stop [--notify] [--json]
+  her drain-status [--json]
+  her drain-wait [--timeout-seconds <n>] [--json]
   her eval-golden [--write-baseline] [--now <ISO>] [--json]
   her eval-trend [--json]
   her events-verify
