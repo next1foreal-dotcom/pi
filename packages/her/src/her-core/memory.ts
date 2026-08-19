@@ -114,6 +114,7 @@ import {
 } from "./missed-fire.ts";
 import { FinishReasonLengthError, invokeCompletion, type ModelLike } from "./model.ts";
 import { completionMetaOf, type OpBracketContext, withOpBracket } from "./op-brackets.ts";
+import { ORGAN_MODEL_TIMEOUT_MS, type OrganModelTimeoutName, withModelTimeout } from "./organ-timeouts.ts";
 import { StorePaths } from "./paths.ts";
 import type { PriorMode, PriorResult } from "./prior.ts";
 import { classifyCapturePrivacy, validateMemoryProvenance } from "./privacy.ts";
@@ -507,6 +508,7 @@ export class Memory {
 	private readonly model?: ModelLike;
 	private readonly config: HerConfig;
 	private readonly semanticSearch?: SearchBackend;
+	private readonly modelTimeouts: Partial<Record<OrganModelTimeoutName, number>>;
 
 	constructor(root: string, modelOrOptions?: ModelLike | MemoryOptions, config?: HerConfig) {
 		this.paths = new StorePaths(root);
@@ -514,10 +516,18 @@ export class Memory {
 			this.model = modelOrOptions.model;
 			this.config = modelOrOptions.config ?? loadConfig(this.paths.configFile);
 			this.semanticSearch = modelOrOptions.semanticSearch;
+			this.modelTimeouts = modelOrOptions.modelTimeouts ?? {};
 		} else {
 			this.model = modelOrOptions;
 			this.config = config ?? loadConfig(this.paths.configFile);
+			this.modelTimeouts = {};
 		}
+	}
+
+	private organTimeoutMs(organ: OrganModelTimeoutName): number {
+		const override = this.modelTimeouts[organ];
+		if (typeof override === "number" && Number.isFinite(override) && override > 0) return override;
+		return ORGAN_MODEL_TIMEOUT_MS[organ];
 	}
 
 	private async withStoreLock<T>(fn: () => Promise<T>): Promise<T> {
@@ -843,8 +853,16 @@ export class Memory {
 		}
 
 		if (!this.model) throw new Error("reflect requires a model");
+		const reflectModel = this.model;
 		const out = (
-			(await this.model.complete(surfacePrompt(prepared.recentText, prepared.existing), { strong: true })) ?? ""
+			(
+				await withModelTimeout("reflect", this.organTimeoutMs("reflect"), (signal) =>
+					invokeCompletion(reflectModel, surfacePrompt(prepared.recentText, prepared.existing), {
+						strong: true,
+						signal,
+					}),
+				)
+			).text ?? ""
 		).trim();
 
 		return this.withStoreLock(async () => {
@@ -1169,10 +1187,12 @@ export class Memory {
 				moments?: Array<{ trigger?: string; shift?: string }>;
 			};
 			try {
-				result = await completeJson<{
-					notes?: Array<Record<string, unknown>>;
-					moments?: Array<{ trigger?: string; shift?: string }>;
-				}>(() => invokeCompletion(model, consolidatePrompt(joined, selectedKeys)));
+				result = await withModelTimeout("consolidate", this.organTimeoutMs("consolidate"), (signal) =>
+					completeJson<{
+						notes?: Array<Record<string, unknown>>;
+						moments?: Array<{ trigger?: string; shift?: string }>;
+					}>(() => invokeCompletion(model, consolidatePrompt(joined, selectedKeys), { signal })),
+				);
 			} catch (error) {
 				if ((error instanceof JsonTruncatedError || error instanceof JsonMalformedError) && episodes.length > 1) {
 					const fromBatchLimit = batchLimit;
@@ -1303,6 +1323,7 @@ export class Memory {
 	}> {
 		if (!this.model) throw new Error("consolidate requires a model");
 		const model = this.model;
+		const consolidateTimeoutMs = this.organTimeoutMs("consolidate");
 		const ceil = envPositiveInt("HER_CONSOLIDATE_EPISODE_CHARS", DEFAULT_CONSOLIDATE_EPISODE_CHARS);
 		const floor = envPositiveInt("HER_CONSOLIDATE_CHUNK_FLOOR_CHARS", DEFAULT_CONSOLIDATE_CHUNK_FLOOR_CHARS);
 		const grain = consolidateGrain(episode.project);
@@ -1381,7 +1402,9 @@ export class Memory {
 						envPositiveInt("HER_CONSOLIDATE_KEY_BUDGET", DEFAULT_CONSOLIDATE_KEY_BUDGET) +
 						")",
 				);
-				result = await completeJson(() => invokeCompletion(model, consolidatePrompt(promptText, selectedKeys)));
+				result = await withModelTimeout("consolidate", consolidateTimeoutMs, (signal) =>
+					completeJson(() => invokeCompletion(model, consolidatePrompt(promptText, selectedKeys), { signal })),
+				);
 			} catch (error) {
 				if (error instanceof JsonTruncatedError) {
 					await splitOrQuarantine(text, part, error.responseHead);
@@ -1433,6 +1456,7 @@ export class Memory {
 
 	private async synthesizeInner(ctx: OpBracketContext): Promise<string> {
 		if (!this.model) throw new Error("synthesize requires a model");
+		const model = this.model;
 		const limits = synthesizeLimits();
 		const prepared = await this.withStoreLock(async () => {
 			const current = (await readText(this.paths.contextFile)) ?? SEED_CONTEXT;
@@ -1484,21 +1508,24 @@ export class Memory {
 				`[her] synthesize: notes ${prepared.noteCount} -> ${prepared.selectedCount} (budget ${prepared.budgetChars} chars, omitted ${prepared.omitted.length})`,
 			);
 		}
-		const completion = await invokeCompletion(
-			this.model,
-			synthesizePrompt(
-				prepared.current,
-				prepared.notes,
-				prepared.moments,
-				prepared.facts,
-				prepared.soul,
-				prepared.self,
-				prepared.choiceModel,
+		const completion = await withModelTimeout("synthesize", this.organTimeoutMs("synthesize"), (signal) =>
+			invokeCompletion(
+				model,
+				synthesizePrompt(
+					prepared.current,
+					prepared.notes,
+					prepared.moments,
+					prepared.facts,
+					prepared.soul,
+					prepared.self,
+					prepared.choiceModel,
+				),
+				{
+					strong: true,
+					maxTokens: limits.maxTokens,
+					signal,
+				},
 			),
-			{
-				strong: true,
-				maxTokens: limits.maxTokens,
-			},
 		);
 		ctx.noteModel({
 			...(completion.finishReason ? { finishReason: completion.finishReason } : {}),
@@ -1742,8 +1769,10 @@ export class Memory {
 				batch,
 				async (current) => {
 					const lines = current.map((unit) => `- ${unit.key} (${unit.type}): ${unit.title}`).join("\n");
-					return completeJson<{ maps?: Array<{ theme?: string; summary?: string; members?: string[] }> }>(() =>
-						invokeCompletion(model, topicMapPrompt(lines), { strong: true }),
+					return withModelTimeout("topic-maps", this.organTimeoutMs("topic-maps"), (signal) =>
+						completeJson<{ maps?: Array<{ theme?: string; summary?: string; members?: string[] }> }>(() =>
+							invokeCompletion(model, topicMapPrompt(lines), { strong: true, signal }),
+						),
 					);
 				},
 				floor,
@@ -1817,18 +1846,21 @@ export class Memory {
 				const unitLines = current
 					.map((unit) => `- ${unit.key} (${unit.kind}/${unit.type}): ${unit.title}`)
 					.join("\n");
-				return completeJson<{
-					ideas?: Array<{
-						title?: string;
-						connects?: string[];
-						insight?: string;
-						spark?: string;
-						kind?: string;
-					}>;
-				}>(() =>
-					invokeCompletion(model, ideaEnginePrompt(unitLines, prepared.topicLines, prepared.existing), {
-						strong: true,
-					}),
+				return withModelTimeout("ideas", this.organTimeoutMs("ideas"), (signal) =>
+					completeJson<{
+						ideas?: Array<{
+							title?: string;
+							connects?: string[];
+							insight?: string;
+							spark?: string;
+							kind?: string;
+						}>;
+					}>(() =>
+						invokeCompletion(model, ideaEnginePrompt(unitLines, prepared.topicLines, prepared.existing), {
+							strong: true,
+							signal,
+						}),
+					),
 				);
 			},
 			floor,
@@ -2523,6 +2555,6 @@ function isMemoryOptions(value: ModelLike | MemoryOptions | undefined): value is
 		value &&
 			typeof value === "object" &&
 			!("complete" in value) &&
-			("model" in value || "config" in value || "semanticSearch" in value),
+			("model" in value || "config" in value || "semanticSearch" in value || "modelTimeouts" in value),
 	);
 }

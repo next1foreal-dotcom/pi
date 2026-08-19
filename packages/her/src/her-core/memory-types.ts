@@ -1,5 +1,6 @@
 import type { HerConfig } from "./config.ts";
 import type { ModelLike } from "./model.ts";
+import type { OrganModelTimeoutName } from "./organ-timeouts.ts";
 import type { MemoryPrivacy, MemoryProvenance } from "./privacy.ts";
 import type { SearchBackend } from "./retrieval.ts";
 
@@ -209,6 +210,8 @@ export interface MemorySyncStatus {
 export interface MemoryOptions {
 	config?: HerConfig;
 	model?: ModelLike;
+	/** Per-organ model wall-clock overrides (tests). */
+	modelTimeouts?: Partial<Record<OrganModelTimeoutName, number>>;
 	semanticSearch?: SearchBackend;
 }
 

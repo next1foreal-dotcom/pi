@@ -331,6 +331,8 @@ export {
 export type { CompletionMeta, CompletionOptions, CompletionResult, CompletionUsage, ModelLike } from "./model.ts";
 export { FakeModel, FinishReasonLengthError, invokeCompletion, OpenAICompatibleModel } from "./model.ts";
 export { detectOrphanBrackets, opsLedgerPath, withOpBracket } from "./op-brackets.ts";
+export type { OrganModelTimeoutName } from "./organ-timeouts.ts";
+export { ORGAN_MODEL_TIMEOUT_MS } from "./organ-timeouts.ts";
 export {
 	buildPanelChairBrief,
 	type PanelChairBriefParams,
