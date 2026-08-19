@@ -34,6 +34,7 @@ import type {
 	CliReviewNarrativePayload,
 	CliSelfNarrativePayload,
 	CliSessionPayload,
+	CliSkillScanPayload,
 	CliStatusPayload,
 	CliSurfaceUpdateResult,
 	CliSyncPayload,
@@ -386,6 +387,16 @@ export function renderPersonaScan(payload: CliPersonaScanPayload): string {
 	return payload.proposals.map((item) => `persona-scan proposal ${item.kind}: ${item.path}`).join("\n");
 }
 
+export function renderSkillScan(payload: CliSkillScanPayload): string {
+	if (payload.error) return `skill-scan failed: ${payload.error}`;
+	if (!payload.ran && payload.skippedReason === "draft-open") return "skill-scan: draft already open, skipping";
+	if (!payload.ran) return "skill-scan: not due, skipping";
+	if (payload.candidates.length === 0) return "skill-scan: no candidate";
+	return payload.candidates
+		.map((item) => `skill-scan candidate ${item.skill}: ${item.findingPath}, ${item.proposalPath}`)
+		.join("\n");
+}
+
 export function renderPrivacyAudit(payload: CliPrivacyAuditPayload): string {
 	return [
 		`Her privacy classification updated: ${payload.result.total} file(s).`,
@@ -661,6 +672,7 @@ export function usage(): string {
   her lint [--json]
   her memory-status --note <id> --status active|archive_only|needs_deep_read --reason <text> [--json]
   her persona-scan [--if-due] [--json]
+  her skill-scan [--if-due] [--json]
   her privacy-audit [--json]
   her privacy-check --ref <memory-path> [--ref <memory-path>] [--json]
   her prior [--task <text>] [--off|--her-only] [--budget <tokens>] [--json]

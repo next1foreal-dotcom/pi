@@ -520,6 +520,14 @@ export {
 	SESSION_SEARCH_MAX_SNIPPETS_PER_FILE,
 	searchSessions,
 } from "./session-roster.ts";
+export type { RunSkillScanOrganOptions, SkillScanCandidateRef, SkillScanOrganResult } from "./skill-scan.ts";
+export {
+	DEFAULT_SKILL_SCAN_INTERVAL_DAYS,
+	runSkillScanOrgan,
+	SKILL_SCAN_INPUT_BUDGET_CHARS,
+	SKILL_SCAN_MODEL_TIMEOUT_MS,
+	SKILL_SCAN_ORGAN_SYSTEM_PROMPT,
+} from "./skill-scan.ts";
 export {
 	FENCE_MARKER_REMOVED,
 	fenceUntrusted,
