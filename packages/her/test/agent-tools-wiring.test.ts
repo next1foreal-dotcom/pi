@@ -6,7 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import type { Provider } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, ProviderConfig, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import her, { governedTools } from "../src/extension.ts";
+import her, { governedTools, setResolveShellConfigForTest } from "../src/extension.ts";
 import { getSessionAgentToolRegistry, resetSessionAgentToolRegistryForTest } from "../src/her-core/agent-tools.ts";
 import { initStore } from "../src/her-core/index.ts";
 
@@ -20,6 +20,7 @@ interface FakePi {
 const SENTINEL = "g284-must-not-run.txt";
 const IN_SCOPE_COMMAND = "node -p 1";
 const OUT_OF_SCOPE_COMMAND = "echo executed> g284-must-not-run.txt";
+const PATH_SENTINEL_COMMAND = `node -e "require('fs').writeFileSync(${JSON.stringify(SENTINEL)}, 'x')"`;
 
 function legalDecl(overrides: Record<string, unknown> = {}) {
 	const { scope, ...rest } = overrides;
@@ -161,6 +162,7 @@ async function withSession<T>(
 		her(fake.pi);
 		return await fn({ tools: fake.tools, ctx: createContext(cwd), cwd });
 	} finally {
+		setResolveShellConfigForTest();
 		resetSessionAgentToolRegistryForTest();
 		if (previous === undefined) {
 			delete process.env.HER_MEMORY_DIR;
@@ -269,6 +271,85 @@ test.describe("G-284 agent-tools wiring", { concurrency: false }, () => {
 			);
 			assert.equal(details.ok, false);
 			assert.equal(existsSync(join(cwd, SENTINEL)), false, "out-of-scope call must not execute the wrapped command");
+		});
+	});
+
+	test("GIVEN declared absolute pathPrefixes WHEN the target is inside THEN allow; WHEN outside THEN reject and execute nothing", async () => {
+		await withSession(async ({ tools, ctx, cwd }) => {
+			const inPrefix = await mkdtemp(join(tmpdir(), "her-g284-path-in-"));
+			const outPrefix = await mkdtemp(join(tmpdir(), "her-g284-path-out-"));
+			try {
+				const declared = await invoke(
+					tools.get("her_tool_declare"),
+					legalDecl({
+						name: "node-in-prefix",
+						purpose: "node only under an absolute prefix",
+						scope: {
+							pathPrefixes: [inPrefix],
+							readOnly: true,
+							commandHeads: ["node"],
+						},
+					}),
+					ctx,
+				);
+				assert.equal(declared.details.ok, true, String(declared.details.reason ?? declared.text));
+
+				const allowed = await invoke(
+					tools.get("her_tool_call"),
+					{
+						name: "node-in-prefix",
+						command: IN_SCOPE_COMMAND,
+						path: join(inPrefix, "inside.txt"),
+					},
+					ctx,
+				);
+				assert.equal(allowed.details.ok, true, String(allowed.details.reason ?? allowed.text));
+				const matched = allowed.details.matchedScope as { commandHead?: string; pathPrefix?: string };
+				assert.equal(matched.pathPrefix, inPrefix);
+				assert.equal(matched.commandHead, "node");
+				assert.match(allowed.text, /1/);
+
+				const denied = await invoke(
+					tools.get("her_tool_call"),
+					{
+						name: "node-in-prefix",
+						command: PATH_SENTINEL_COMMAND,
+						path: join(outPrefix, "outside.txt"),
+					},
+					ctx,
+				);
+				assert.equal(denied.details.ok, false);
+				assert.equal(denied.details.reason, "scope");
+				assert.equal(
+					existsSync(join(cwd, SENTINEL)),
+					false,
+					"out-of-prefix call must not execute the wrapped command",
+				);
+			} finally {
+				await rm(inPrefix, { force: true, recursive: true });
+				await rm(outPrefix, { force: true, recursive: true });
+			}
+		});
+	});
+
+	test("GIVEN bash cannot be resolved WHEN her_tool_call THEN reject with wraps-channel-unavailable and do not throw", async () => {
+		await withSession(async ({ tools, ctx }) => {
+			setResolveShellConfigForTest(() => {
+				throw new Error(
+					"No bash shell found. Options:\n  1. Install Git for Windows: https://git-scm.com/download/win",
+				);
+			});
+			const declared = await invoke(tools.get("her_tool_declare"), legalDecl(), ctx);
+			assert.equal(declared.details.ok, true);
+			const { text, details } = await invoke(
+				tools.get("her_tool_call"),
+				{ name: "node-p", command: IN_SCOPE_COMMAND },
+				ctx,
+			);
+			assert.equal(details.ok, false);
+			assert.match(String(details.reason), /^wraps-channel-unavailable/);
+			assert.match(text, /wraps-channel-unavailable/);
+			assert.match(text, /Install Git for Windows/);
 		});
 	});
 

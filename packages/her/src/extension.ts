@@ -6,7 +6,12 @@ import { fileURLToPath } from "node:url";
 import type { AuthorizationCall } from "@cedar-policy/cedar-wasm/nodejs";
 import { type Api, type Model, type Provider, StringEnum } from "@earendil-works/pi-ai";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
-import type { ExtensionAPI, ExtensionContext, ProviderConfig } from "@earendil-works/pi-coding-agent";
+import {
+	type ExtensionAPI,
+	type ExtensionContext,
+	getShellConfig,
+	type ProviderConfig,
+} from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { summarizeForCompaction } from "./compaction.ts";
 import { CuaCliDriver } from "./hands/driver.ts";
@@ -112,6 +117,16 @@ const packageRoot = resolve(here, "..");
 const skillsDir = resolve(packageRoot, "pi-package", "skills");
 const promptsDir = resolve(packageRoot, "pi-package", "prompts");
 const herPromptPath = resolve(promptsDir, "her.md");
+// Caps a hung shell so a wrap cannot pin the session. Spec did not set a bound; this is the session-safety ceiling.
+const WRAPPED_BASH_TIMEOUT_MS = 30_000;
+
+type ShellConfigResolver = typeof getShellConfig;
+let resolveShellConfig: ShellConfigResolver = getShellConfig;
+
+/** Test-only: inject a throwing/fake getShellConfig without uninstalling bash. */
+export function setResolveShellConfigForTest(resolver?: ShellConfigResolver): void {
+	resolveShellConfig = resolver ?? getShellConfig;
+}
 
 const zeroCost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 const memoryStatusValues = ["active", "archive_only", "needs_deep_read"] as const;
@@ -306,23 +321,50 @@ function textResult(text: string, details: Record<string, unknown> = {}) {
 	};
 }
 
+function wrapChannelUnavailable(error: unknown): AgentToolWrappedResult {
+	const detail = error instanceof Error ? error.message : String(error);
+	return { ok: false, reason: `wraps-channel-unavailable: ${detail}` };
+}
+
 function runWrappedBash(input: AgentToolCallInput, cwd: string): AgentToolWrappedResult {
-	const spawned = spawnSync(input.command, {
-		cwd,
-		encoding: "utf8",
-		shell: true,
-		timeout: 30_000,
-		windowsHide: true,
-	});
-	if (spawned.error) return { ok: false, reason: spawned.error.message };
-	if (spawned.status !== 0) {
-		return {
-			ok: false,
-			reason: (spawned.stderr ?? "").trim() || `exit ${spawned.status}`,
-			...(spawned.stdout ? { output: spawned.stdout } : {}),
-		};
+	let shellConfig: ReturnType<typeof getShellConfig>;
+	try {
+		shellConfig = resolveShellConfig();
+	} catch (error) {
+		return wrapChannelUnavailable(error);
 	}
-	return { ok: true, output: spawned.stdout ?? "" };
+
+	try {
+		const commandFromStdin = shellConfig.commandTransport === "stdin";
+		const spawned = spawnSync(
+			shellConfig.shell,
+			commandFromStdin ? shellConfig.args : [...shellConfig.args, input.command],
+			{
+				cwd,
+				encoding: "utf8",
+				input: commandFromStdin ? input.command : undefined,
+				timeout: WRAPPED_BASH_TIMEOUT_MS,
+				stdio: [commandFromStdin ? "pipe" : "ignore", "pipe", "pipe"],
+				shell: false,
+				windowsHide: true,
+			},
+		);
+		if (spawned.error) {
+			const err = spawned.error as NodeJS.ErrnoException;
+			if (err.code === "ENOENT") return wrapChannelUnavailable(err);
+			return { ok: false, reason: spawned.error.message };
+		}
+		if (spawned.status !== 0) {
+			return {
+				ok: false,
+				reason: (spawned.stderr ?? "").trim() || `exit ${spawned.status}`,
+				...(spawned.stdout ? { output: spawned.stdout } : {}),
+			};
+		}
+		return { ok: true, output: spawned.stdout ?? "" };
+	} catch (error) {
+		return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+	}
 }
 
 function renderSync(result: MemorySyncResult): string {
@@ -1174,7 +1216,8 @@ export default function her(pi: ExtensionAPI): void {
 			purpose: Type.String({ description: "One-line reason, stored on the audit row" }),
 			scope: Type.Object({
 				pathPrefixes: Type.Array(Type.String(), {
-					description: "Allowed path prefixes; empty = no filesystem target",
+					description:
+						'Allowed path prefixes. Must be absolute filesystem paths; a relative prefix such as "packages/" never matches because the target is resolved to an absolute path before prefix comparison. Empty = no filesystem target',
 				}),
 				readOnly: Type.Boolean({ description: "When true the wrapper may not mutate" }),
 				commandHeads: Type.Array(Type.String(), { description: "Allowed argv heads; empty = no command" }),
