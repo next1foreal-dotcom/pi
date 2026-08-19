@@ -18,8 +18,8 @@ export function createSummaryModel(env: NodeJS.ProcessEnv = process.env): ModelL
 	const config = readSummaryConfig(env);
 	if (!config) return undefined;
 	return {
-		async complete(prompt) {
-			return await completeChat(config, prompt);
+		async complete(prompt, options) {
+			return await completeChat(config, prompt, options?.signal);
 		},
 	};
 }
@@ -63,7 +63,7 @@ function readSummaryConfig(env: NodeJS.ProcessEnv): SummaryConfig | undefined {
 	return undefined;
 }
 
-async function completeChat(config: SummaryConfig, prompt: string): Promise<string> {
+async function completeChat(config: SummaryConfig, prompt: string, signal?: AbortSignal): Promise<string> {
 	const response = await fetch(chatCompletionsUrl(config.baseUrl), {
 		method: "POST",
 		headers: headers(config.apiKey),
@@ -73,6 +73,7 @@ async function completeChat(config: SummaryConfig, prompt: string): Promise<stri
 			temperature: 0.2,
 			max_tokens: 700,
 		}),
+		...(signal ? { signal } : {}),
 	});
 	if (!response.ok) {
 		throw new Error(`summary model failed: HTTP ${response.status}`);

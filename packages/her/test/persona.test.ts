@@ -19,6 +19,7 @@ import {
 	writeText,
 } from "../src/her-core/index.ts";
 import {
+	PERSONA_MODEL_TIMEOUT_MS,
 	PERSONA_ORGAN_SYSTEM_PROMPT,
 	PERSONA_PROPOSAL_BEGIN,
 	PERSONA_PROPOSAL_END,
@@ -159,7 +160,7 @@ async function seedLastPersona(store: string, last: string): Promise<void> {
 async function runCli(
 	store: string,
 	args: string[],
-	opts: { model?: ModelLike } = {},
+	opts: { model?: ModelLike; modelTimeoutMs?: number } = {},
 ): Promise<{ code: number; stdout: string; stderr: string }> {
 	const stdout = new PassThrough();
 	const stderr = new PassThrough();
@@ -188,6 +189,7 @@ async function runCli(
 		stdout,
 		stderr,
 		...(opts.model ? { model: opts.model } : {}),
+		...(opts.modelTimeoutMs !== undefined ? { modelTimeoutMs: opts.modelTimeoutMs } : {}),
 	});
 	return {
 		code,
@@ -436,6 +438,73 @@ test("empty model response is loud, not a silent NO_PROPOSAL", async () => {
 	const state = await readJson<{ last_persona?: string }>(join(store, ".her", "state.json"), {});
 	assert.equal(state.last_persona, last);
 });
+
+test(
+	"hanging FakeModel hits wall-clock timeout: ran false, TG once, last_persona unchanged",
+	{ timeout: 5000 },
+	async () => {
+		assert.equal(PERSONA_MODEL_TIMEOUT_MS, 20 * 60 * 1000);
+		const store = await tempStore();
+		const last = new Date(NOW.getTime() - 8 * DAY_MS).toISOString();
+		await seedLastPersona(store, last);
+		const tg: string[] = [];
+		const hanging: ModelLike = {
+			complete() {
+				return new Promise<string>(() => {});
+			},
+		};
+		const started = Date.now();
+		const result = await runPersonaOrgan(store, {
+			ifDue: true,
+			model: hanging,
+			modelTimeoutMs: 50,
+			now: NOW,
+			log: () => {},
+			sendTelegram: async (text) => {
+				tg.push(text);
+			},
+		});
+		const elapsed = Date.now() - started;
+		assert.ok(elapsed < 2000, `timeout path hung (${elapsed}ms)`);
+		assert.equal(result.ran, false);
+		assert.equal(result.due, true);
+		assert.ok(result.error && /timed out/i.test(result.error));
+		assert.equal(tg.length, 1);
+		assert.match(tg[0] ?? "", /persona-scan failed/i);
+		assert.match(tg[0] ?? "", /timed out/i);
+		const state = await readJson<{ last_persona?: string }>(join(store, ".her", "state.json"), {});
+		assert.equal(state.last_persona, last);
+	},
+);
+
+test(
+	"CLI persona-scan hanging model times out non-zero without advancing last_persona",
+	{ timeout: 5000 },
+	async () => {
+		const store = await tempStore();
+		const last = new Date(NOW.getTime() - 8 * DAY_MS).toISOString();
+		await seedLastPersona(store, last);
+		const hanging: ModelLike = {
+			complete() {
+				return new Promise<string>(() => {});
+			},
+		};
+		const started = Date.now();
+		const { code, stdout } = await runCli(store, ["persona-scan", "--if-due", "--json"], {
+			model: hanging,
+			modelTimeoutMs: 50,
+		});
+		const elapsed = Date.now() - started;
+		assert.ok(elapsed < 2000, `CLI timeout path hung (${elapsed}ms)`);
+		assert.notEqual(code, 0);
+		const payload = JSON.parse(stdout) as { ran: boolean; error?: string; skippedReason?: string };
+		assert.equal(payload.ran, false);
+		assert.ok(payload.error && /timed out/i.test(payload.error));
+		assert.equal(payload.skippedReason, undefined);
+		const state = await readJson<{ last_persona?: string }>(join(store, ".her", "state.json"), {});
+		assert.equal(state.last_persona, last);
+	},
+);
 
 test("CLI persona-scan FakeModel throw exits non-zero with error, not skippedReason", async () => {
 	const store = await tempStore();

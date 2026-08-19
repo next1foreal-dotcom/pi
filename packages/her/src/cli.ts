@@ -894,6 +894,7 @@ export async function runHerCli(
 			log: (line) => writeLine(io.stderr, line),
 			model: io.model ?? createCliModel(memoryDir, env),
 			sendTelegram: (text) => sendPersonaTelegram(env, text),
+			...(io.modelTimeoutMs !== undefined ? { modelTimeoutMs: io.modelTimeoutMs } : {}),
 		});
 		writePayload(io.stdout, result, command.json, renderPersonaScan);
 		return result.error ? 1 : 0;

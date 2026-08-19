@@ -20,6 +20,7 @@ export interface CompletionResult extends CompletionMeta {
 export type CompletionOptions = {
 	strong?: boolean;
 	maxTokens?: number;
+	signal?: AbortSignal;
 };
 
 export interface ModelLike {
@@ -127,6 +128,7 @@ export class OpenAICompatibleModel implements ModelLike {
 					? { max_tokens: options.maxTokens }
 					: {}),
 			}),
+			...(options.signal ? { signal: options.signal } : {}),
 		});
 		if (!response.ok) throw new Error(`model request failed: HTTP ${response.status}`);
 		const data = (await response.json()) as ChatCompletionResponse;

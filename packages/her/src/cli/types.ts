@@ -498,4 +498,6 @@ export interface CliIo {
 	stdin?: NodeJS.ReadableStream;
 	/** Test seam: persona-scan uses this instead of the live CLI model. */
 	model?: ModelLike;
+	/** Test seam: persona-scan wall-clock budget in ms. */
+	modelTimeoutMs?: number;
 }
