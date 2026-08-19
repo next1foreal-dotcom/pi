@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -21,6 +22,8 @@ import {
 	WAKE_TURN_BOUNDARY,
 } from "./her-core/event-wake.ts";
 import {
+	type AgentToolCallInput,
+	type AgentToolWrappedResult,
 	applyMemoryRetraction,
 	archiveInbox,
 	buildRecallReceipts,
@@ -45,6 +48,7 @@ import {
 	formatSessionSearch,
 	formatWakeMessage,
 	type GateDecision,
+	getSessionAgentToolRegistry,
 	type HerProposalRecord,
 	type HerTaskRecord,
 	herProposalFeedbackVerdicts,
@@ -300,6 +304,25 @@ function textResult(text: string, details: Record<string, unknown> = {}) {
 		content: [{ type: "text" as const, text }],
 		details,
 	};
+}
+
+function runWrappedBash(input: AgentToolCallInput, cwd: string): AgentToolWrappedResult {
+	const spawned = spawnSync(input.command, {
+		cwd,
+		encoding: "utf8",
+		shell: true,
+		timeout: 30_000,
+		windowsHide: true,
+	});
+	if (spawned.error) return { ok: false, reason: spawned.error.message };
+	if (spawned.status !== 0) {
+		return {
+			ok: false,
+			reason: (spawned.stderr ?? "").trim() || `exit ${spawned.status}`,
+			...(spawned.stdout ? { output: spawned.stdout } : {}),
+		};
+	}
+	return { ok: true, output: spawned.stdout ?? "" };
 }
 
 function renderSync(result: MemorySyncResult): string {
@@ -1136,6 +1159,79 @@ export default function her(pi: ExtensionAPI): void {
 				to: params.to,
 				path: stored.path,
 				wake,
+			});
+		},
+	});
+
+	pi.registerTool({
+		name: "her_tool_declare",
+		label: "Her Tool Declare",
+		description:
+			"Declare a session-ephemeral narrowing wrapper over an existing capability. Wrappable surface is bash only. The registry is in-memory and dies with the process. Not a new power.",
+		parameters: Type.Object({
+			name: Type.String({ description: "Session-unique wrapper name" }),
+			wraps: Type.String({ description: "Existing capability this wraps; must be bash" }),
+			purpose: Type.String({ description: "One-line reason, stored on the audit row" }),
+			scope: Type.Object({
+				pathPrefixes: Type.Array(Type.String(), {
+					description: "Allowed path prefixes; empty = no filesystem target",
+				}),
+				readOnly: Type.Boolean({ description: "When true the wrapper may not mutate" }),
+				commandHeads: Type.Array(Type.String(), { description: "Allowed argv heads; empty = no command" }),
+			}),
+		}),
+		async execute(_toolCallId, params) {
+			const result = getSessionAgentToolRegistry().register(
+				{
+					name: params.name,
+					wraps: params.wraps,
+					purpose: params.purpose,
+					scope: {
+						pathPrefixes: params.scope.pathPrefixes,
+						readOnly: params.scope.readOnly,
+						commandHeads: params.scope.commandHeads,
+					},
+				},
+				{ memoryDir },
+			);
+			if (!result.ok) {
+				return textResult(result.reason, { ok: false, reason: result.reason });
+			}
+			return textResult(`declared ${result.tool.name}`, { ok: true, tool: result.tool });
+		},
+	});
+
+	pi.registerTool({
+		name: "her_tool_call",
+		label: "Her Tool Call",
+		description:
+			"Call a session-declared narrowing wrapper. Scope and Cedar evaluation live in the agent-tools library; this tool only forwards.",
+		parameters: Type.Object({
+			name: Type.String({ description: "Declared wrapper name" }),
+			command: Type.String({ description: "Command passed to the wrapped capability" }),
+			path: Type.Optional(Type.String({ description: "Optional filesystem target" })),
+		}),
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			const result = getSessionAgentToolRegistry().call(
+				params.name,
+				{
+					command: params.command,
+					...(params.path !== undefined ? { path: params.path } : {}),
+				},
+				{
+					cwd: ctx.cwd,
+					memoryDir,
+					runWrapped: (_wraps, input) => runWrappedBash(input, ctx.cwd),
+				},
+			);
+			if (!result.ok) {
+				return textResult(result.reason, { ok: false, origin: result.origin, reason: result.reason });
+			}
+			return textResult(result.wrapped.output ?? "", {
+				ok: true,
+				origin: result.origin,
+				matchedScope: result.matchedScope,
+				wrapped: result.wrapped,
 			});
 		},
 	});
