@@ -86,6 +86,18 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	// Deny-by-default until Fei grants a named Cedar permit (her_session_send
 	// precedent). her_mcp_list stays read-only.
 	her_mcp_call: { destructive: true },
+	// G-284 agent-made tool ladder. Both destructive on purpose, and it is not the
+	// fail-safe default doing the work - it is a choice. Declaring alone has no side
+	// effect (the registry is in-memory and dies with the process), so the read-only
+	// family would have accepted her_tool_declare. Registering it destructive keeps
+	// BOTH halves out of the unattended heartbeat profile, which permits only
+	// destructive == false. A heartbeat round that can declare a wrapper it can never
+	// call would be pure noise in the ledger.
+	// Named Cedar permits exist as of 2026-08-19 (permit_her_tool_declare /
+	// permit_her_tool_call). They grant zero new capability: she already holds bash on
+	// every non-anchor path, and a wrapper can only narrow. See ADR-0005.
+	her_tool_declare: { destructive: true },
+	her_tool_call: { destructive: true },
 };
 
 export function resolveGovernedTool(name: string): GovernedToolResolution {

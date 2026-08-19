@@ -94,3 +94,35 @@ permit(
   action == Action::"CallTool",
   resource == Tool::"her_session_send"
 );
+
+// G-284 工具信任梯 — Fei 拍板发证(2026-08-19)。取证结论先于直觉:她**早就**有 bash
+// 在所有非锚路径上(上面 permit_coding_destructive_tools),所以自造工具是 **0 能力增量**
+// ——它只能比被包装者更窄(注册期 wider-than-wrapped 直接拒;可包装清单只有 ["bash"])。
+// 这两条证买到的不是新能力,是把一次宽口径不透明的 `bash -c "<任意>"` 换成一次具名、
+// 有作用域、账本读得懂的调用(审计带 origin: "agent-made")。**这是降权机制,不是升权机制**
+// ——ADR-0005 记录了这个反直觉结论和它的取证。
+//
+// 发证后仍然不可能的事(逐条核过,不是推断):
+//   · 锚层:forbid_anchor_write 对 destructive+锚路径开火,forbid 压过一切 permit。
+//   · 无人值守轮:her-trust-heartbeat.cedar 是**独立策略集**,只放行 destructive == false、
+//     明确 forbid destructive;两个工具都注册为 destructive:true ⇒ **这张证漏不进心跳轮**。
+//     (与 her_session_send 发证时同一条安全性质,不是新论证。)
+//   · 留存:注册表纯内存,进程退出即消失;不进 governedTools 的可调用面,可调用性只来自
+//     那张临时注册表。
+//
+// 防反悔护栏:将来一定有人想「她已经用了 50 次了,自动转正吧」或「反正只是包装,放宽点
+// 让它能包 edit/write 吧」。本处记录:转正是**人审**、永不靠调用次数攒;可包装清单收窄到
+// bash 是有意的。这两条都是把收窄机制反向变成扩权机制。
+@id("permit_her_tool_declare")
+permit(
+  principal == Agent::"samantha",
+  action == Action::"CallTool",
+  resource == Tool::"her_tool_declare"
+);
+
+@id("permit_her_tool_call")
+permit(
+  principal == Agent::"samantha",
+  action == Action::"CallTool",
+  resource == Tool::"her_tool_call"
+);
