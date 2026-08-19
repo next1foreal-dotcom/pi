@@ -46,6 +46,7 @@ import {
 	renderReviewNarrative,
 	renderSelfNarrative,
 	renderSession,
+	renderSkillScan,
 	renderStatus,
 	renderSurface,
 	renderSync,
@@ -146,6 +147,7 @@ import {
 	runMemoryLint,
 	runPersonaOrgan,
 	runReingest,
+	runSkillScanOrgan,
 	runTasteWeekly,
 	StorePaths,
 	sendTelegramMessage,
@@ -914,6 +916,19 @@ export async function runHerCli(
 			...(io.modelTimeoutMs !== undefined ? { modelTimeoutMs: io.modelTimeoutMs } : {}),
 		});
 		writePayload(io.stdout, result, command.json, renderPersonaScan);
+		return result.error ? 1 : 0;
+	}
+
+	if (command.kind === "skill-scan") {
+		const result = await runSkillScanOrgan(memoryDir, {
+			ifDue: command.ifDue,
+			log: (line) => writeLine(io.stderr, line),
+			model: io.model ?? createCliModel(memoryDir, env),
+			repoRoot: cwd,
+			sendTelegram: (text) => sendPersonaTelegram(env, text),
+			...(io.modelTimeoutMs !== undefined ? { modelTimeoutMs: io.modelTimeoutMs } : {}),
+		});
+		writePayload(io.stdout, result, command.json, renderSkillScan);
 		return result.error ? 1 : 0;
 	}
 

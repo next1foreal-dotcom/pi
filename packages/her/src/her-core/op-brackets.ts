@@ -4,7 +4,7 @@ import { appendEventBestEffort } from "./event-history.ts";
 import type { CompletionMeta, ModelLike } from "./model.ts";
 import { appendText } from "./store.ts";
 
-export type OpName = "consolidate" | "persona-scan" | "reingest" | "synthesize";
+export type OpName = "consolidate" | "persona-scan" | "reingest" | "skill-scan" | "synthesize";
 
 export interface OpStartRecord {
 	op: OpName;

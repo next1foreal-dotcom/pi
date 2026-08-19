@@ -24,6 +24,7 @@ import type {
 	SelfNarrativeUpdateResult,
 	SessionMode,
 	SessionReadResult,
+	SkillScanOrganResult,
 	TasteBoardApplyOutcome,
 	TasteCluster,
 	TasteClusterStatus,
@@ -130,6 +131,7 @@ export type CliCommand =
 	| { kind: "memory-status"; json: boolean; noteId: string; reason: string; status: WorldNoteData["memoryStatus"] }
 	| { kind: "persona-scan"; ifDue: boolean; json: boolean }
 	| { kind: "privacy-audit"; json: boolean }
+	| { kind: "skill-scan"; ifDue: boolean; json: boolean }
 	| { kind: "privacy-check"; json: boolean; refs: string[] }
 	| { budget?: number; json: boolean; kind: "prior"; mode: PriorMode; task?: string }
 	| { kind: "recall"; archive: boolean; json: boolean; k?: number; query: string }
@@ -394,6 +396,7 @@ export interface CliMemoryStatusPayload extends CliStatusPayload {
 }
 
 export type CliPersonaScanPayload = PersonaOrganResult;
+export type CliSkillScanPayload = SkillScanOrganResult;
 
 export interface CliPrivacyAuditPayload extends CliStatusPayload {
 	result: MemoryClassificationResult;
@@ -496,8 +499,8 @@ export interface CliIo {
 	stderr: NodeJS.WritableStream;
 	/** intake-taste `-` reads pasted text from here; defaults to process.stdin. */
 	stdin?: NodeJS.ReadableStream;
-	/** Test seam: persona-scan uses this instead of the live CLI model. */
+	/** Test seam: persona-scan / skill-scan uses this instead of the live CLI model. */
 	model?: ModelLike;
-	/** Test seam: persona-scan wall-clock budget in ms. */
+	/** Test seam: persona-scan / skill-scan wall-clock budget in ms. */
 	modelTimeoutMs?: number;
 }

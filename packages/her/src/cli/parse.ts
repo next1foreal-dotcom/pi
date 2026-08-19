@@ -60,6 +60,7 @@ export function parseArgs(argv: string[]): CliCommand {
 	if (command === "restore") return parseRestore(rest);
 	if (command === "self-narrative") return parseJsonOnly("self-narrative", rest);
 	if (command === "session") return parseSession(rest);
+	if (command === "skill-scan") return parseSkillScan(rest);
 	if (command === "surface") return parseJsonOnly("surface", rest);
 	if (command === "synthesize") return parseSynthesize(rest);
 	if (command === "synthesize-due") return parseJsonOnly("synthesize-due", rest);
@@ -343,6 +344,23 @@ function parsePersonaScan(argv: string[]): CliCommand {
 		throw new UsageError(`unknown persona-scan option: ${arg}`);
 	}
 	return { kind: "persona-scan", json, ifDue };
+}
+
+function parseSkillScan(argv: string[]): CliCommand {
+	let json = false;
+	let ifDue = false;
+	for (const arg of argv) {
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--if-due") {
+			ifDue = true;
+			continue;
+		}
+		throw new UsageError(`unknown skill-scan option: ${arg}`);
+	}
+	return { kind: "skill-scan", json, ifDue };
 }
 
 function parseReviewNarrative(argv: string[]): CliCommand {
