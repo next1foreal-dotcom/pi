@@ -101,6 +101,7 @@ import {
 	requireOptionValue,
 	UsageError,
 } from "./cli/utils.ts";
+import { getSessionAgentToolRegistry } from "./her-core/agent-tools.ts";
 import { applyDreamProposal, rejectDreamProposal } from "./her-core/evidence-apply.ts";
 import { runDreamScan } from "./her-core/evidence-scan.ts";
 import {
@@ -238,6 +239,22 @@ export async function runHerCli(
 
 	if (argv[0] === "skills-drift") {
 		return runSkillsDriftCommand(argv.slice(1), getMemoryDir(env, cwd), cwd, io);
+	}
+
+	if (argv[0] === "agent-tool-propose") {
+		const name = argv[1];
+		if (!name) {
+			writeLine(io.stderr, "agent-tool-propose requires <name>");
+			return 2;
+		}
+		const memoryDir = getMemoryDir(env, cwd);
+		const proposed = await getSessionAgentToolRegistry().propose(name, { destRoot: memoryDir });
+		if (!proposed.ok) {
+			writeLine(io.stderr, `agent-tool-propose: ${proposed.reason}`);
+			return 1;
+		}
+		writeLine(io.stdout, proposed.path);
+		return 0;
 	}
 
 	if (argv[0] === "snapshot-create") {

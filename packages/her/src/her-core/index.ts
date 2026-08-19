@@ -1,4 +1,22 @@
 export type {
+	AgentMadeToolDecl,
+	AgentToolCallInput,
+	AgentToolCallOptions,
+	AgentToolCallResult,
+	AgentToolMatchedScope,
+	AgentToolRegistration,
+	AgentToolRegistry,
+	AgentToolWrappedResult,
+} from "./agent-tools.ts";
+export {
+	AGENT_TOOL_AUDIT_ORIGIN,
+	AGENT_TOOL_WRAPPABLE_V1,
+	createAgentToolRegistry,
+	getSessionAgentToolRegistry,
+	resetSessionAgentToolRegistryForTest,
+} from "./agent-tools.ts";
+
+export type {
 	AcceptanceClaim,
 	AcceptanceGate,
 	AcceptanceGateSummary,

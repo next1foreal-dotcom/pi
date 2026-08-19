@@ -639,6 +639,7 @@ export function usage(): string {
   her selfmod-status <id> [--json]
   her selfmod-check-rollback <id> [--json]
   her selfmod-pickup [--worktree-root <dir>] [--json]
+  her agent-tool-propose <name>
   her skills-drift [--json]
   her eval-golden [--write-baseline] [--now <ISO>] [--json]
   her eval-trend [--json]
