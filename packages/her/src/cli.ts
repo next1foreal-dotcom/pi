@@ -71,6 +71,7 @@ import {
 	runSelfmodPickupCommand,
 	runSelfmodRunCommand,
 	runSelfmodStatusCommand,
+	runSkillsDriftCommand,
 } from "./cli/selfmod.ts";
 import { runSnapshotCreateCommand, runSnapshotRestoreCommand, runSnapshotVerifyCommand } from "./cli/snapshot.ts";
 import {
@@ -233,6 +234,10 @@ export async function runHerCli(
 
 	if (argv[0] === "selfmod-pickup") {
 		return runSelfmodPickupCommand(argv.slice(1), getMemoryDir(env, cwd), cwd, io, env);
+	}
+
+	if (argv[0] === "skills-drift") {
+		return runSkillsDriftCommand(argv.slice(1), getMemoryDir(env, cwd), cwd, io);
 	}
 
 	if (argv[0] === "snapshot-create") {

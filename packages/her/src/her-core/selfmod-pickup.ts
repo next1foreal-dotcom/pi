@@ -10,6 +10,7 @@ import { checkRollback } from "./selfmod-rollback.ts";
 import { defaultRunEvalFixtures, defaultRunTests, resolveMemoryRel } from "./selfmod-runners.ts";
 import { SELFMOD_PATCH_MAX_BYTES, type SelfModProposal, type SelfModRunRecord } from "./selfmod-types.ts";
 import type { SelfmodGit } from "./selfmod-worktree.ts";
+import { runSkillsDrift, type SkillsDriftReport } from "./skills-drift.ts";
 import { fenceUntrusted, readText } from "./store.ts";
 
 export const SELFMOD_PROPOSAL_BEGIN =
@@ -31,6 +32,8 @@ export interface PickupRollback {
 
 export interface PickupResult {
 	action: PickupAction;
+	drift?: SkillsDriftReport;
+	driftError?: string;
 	outcome?: "not-run" | "rejected" | "merged";
 	reason?: string;
 	rollbacks: PickupRollback[];
@@ -54,6 +57,16 @@ export async function runSelfmodPickup(opts: RunSelfmodPickupOptions): Promise<P
 		return { action: "drain", rollbacks: [] };
 	}
 	const rollbacks = await sweepRollbacks(opts, now);
+	const result = await finishPickupAfterSweep(opts, now, rollbacks);
+	await attachSkillsDrift(opts, now, result);
+	return result;
+}
+
+async function finishPickupAfterSweep(
+	opts: RunSelfmodPickupOptions,
+	now: Date,
+	rollbacks: PickupRollback[],
+): Promise<PickupResult> {
 	const rows = await readSelfmodRecords(opts.memoryDir);
 	if (countTodayPipelineRuns(rows, now) >= SELFMOD_DAILY_PIPELINE_LIMIT) {
 		await notify(opts, QUOTA_NOTICE);
@@ -92,6 +105,23 @@ export async function runSelfmodPickup(opts: RunSelfmodPickupOptions): Promise<P
 	await fileAway(filePath, doneDir(opts.memoryDir), result.outcome === "merged" ? "merged" : "rejected");
 	await notify(opts, formatNotice(result.record.stage, proposal, result.outcome));
 	return { action: "ran", outcome: result.outcome, rollbacks };
+}
+
+async function attachSkillsDrift(opts: RunSelfmodPickupOptions, now: Date, result: PickupResult): Promise<void> {
+	try {
+		result.drift = await runSkillsDrift({
+			git: opts.git,
+			memoryDir: opts.memoryDir,
+			now,
+			persist: true,
+			repoRoot: opts.repoRoot,
+			sendNotify: opts.sendNotify,
+		});
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		console.error(`[her] skills-drift: ${message}`);
+		result.driftError = message;
+	}
 }
 
 export function countTodayPipelineRuns(rows: SelfModRunRecord[], now: Date): number {

@@ -5,6 +5,7 @@ import { checkRollback, latestSelfmodRecord, readSelfmodRecords, runSelfMod } fr
 import { runSelfmodPickup } from "../her-core/selfmod-pickup.ts";
 import { defaultRunEvalFixtures, defaultRunTests } from "../her-core/selfmod-runners.ts";
 import type { SelfModProposal } from "../her-core/selfmod-types.ts";
+import { runSkillsDrift } from "../her-core/skills-drift.ts";
 import { sendTelegramMessage } from "../her-core/telegram.ts";
 import { writeLine } from "./render.ts";
 import type { CliIo } from "./types.ts";
@@ -71,6 +72,40 @@ export async function runSelfmodCheckRollbackCommand(
 	} catch (error) {
 		return fail(io, error);
 	}
+}
+
+export async function runSkillsDriftCommand(
+	args: string[],
+	memoryDir: string,
+	cwd: string,
+	io: CliIo,
+): Promise<number> {
+	try {
+		const json = parseJsonFlag(args, "skills-drift");
+		const report = await runSkillsDrift({ memoryDir, persist: false, repoRoot: cwd });
+		if (json) writeLine(io.stdout, JSON.stringify(report));
+		else {
+			writeLine(
+				io.stdout,
+				`skills-drift: alarm=${report.unattributed.length} info=${report.human.length} selfmod=${report.selfmod.length}`,
+			);
+		}
+		return 0;
+	} catch (error) {
+		return fail(io, error);
+	}
+}
+
+function parseJsonFlag(args: string[], command: string): boolean {
+	let json = false;
+	for (const arg of args) {
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		throw new UsageError(`unknown ${command} option: ${arg}`);
+	}
+	return json;
 }
 
 export async function runSelfmodPickupCommand(
