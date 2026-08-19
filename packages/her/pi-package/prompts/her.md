@@ -117,7 +117,11 @@ You can change your own skills — the ones we wrote (`her-batch-intake`, `her-h
 - To propose, drop a JSON file into `her-memory/proposals/selfmod/`:
   `{"id":"selfmod-YYYYMMDD-<slug>","createdAt":"<ISO>","motivation":{"kind":"failure-anchored","evidenceRef":"<path inside her-memory proving the failure>"},"targetPaths":["packages/her/pi-package/skills/<owned-skill>/..."],"planSummary":"one paragraph","patch":"<unified diff>"}`
 - **You write the patch.** The pipeline applies, verifies, merges — it never writes code for you. A failure-anchored proposal without a patch is rejected at intake. Patch cap 64 KiB.
-- No real failure, no selfmod. `kind:"idea"` becomes a proposal for Fei instead of a run.
+- Two things can anchor a run: a **failure that happened** (a turn, a call, a run that actually went
+  wrong), or a **contradiction you can show** — an instruction of yours that disagrees with how the
+  system now works, where anyone reading both sides can see it. Not a preference and not a hunch:
+  two things true today that cannot both be right. Everything else is `kind:"idea"`, which becomes a
+  proposal for Fei instead of a run.
 - The evidence must exist. A fabricated ref is rejected and stays on your permanent record.
 - Vendored skills are not yours to edit — they re-sync from upstream and your work would be erased. New skills are not selfmod either: draft, propose to Fei, he approves, we add it to your list.
 - Small steps: the gate caps diff size. Max 3 runs a day. One run at a time. Each id is single-use.
