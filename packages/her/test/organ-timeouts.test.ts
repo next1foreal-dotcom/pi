@@ -17,6 +17,7 @@ import {
 	writeJson,
 	writeText,
 } from "../src/her-core/index.ts";
+import { withModelTimeout } from "../src/her-core/organ-timeouts.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -73,12 +74,116 @@ function hangingModel(): { model: ModelLike; signal: () => AbortSignal | undefin
 	};
 }
 
+async function withEnv(overrides: Record<string, string | undefined>, fn: () => Promise<void>): Promise<void> {
+	const previous: Record<string, string | undefined> = {};
+	for (const [name, value] of Object.entries(overrides)) {
+		previous[name] = process.env[name];
+		if (value === undefined) delete process.env[name];
+		else process.env[name] = value;
+	}
+	try {
+		await fn();
+	} finally {
+		for (const [name, value] of Object.entries(previous)) {
+			if (value === undefined) delete process.env[name];
+			else process.env[name] = value;
+		}
+	}
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+	return new Promise((resolve, reject) => {
+		if (signal?.aborted) {
+			reject(new Error("aborted"));
+			return;
+		}
+		const timer = setTimeout(resolve, ms);
+		signal?.addEventListener(
+			"abort",
+			() => {
+				clearTimeout(timer);
+				reject(new Error("aborted"));
+			},
+			{ once: true },
+		);
+	});
+}
+
+function truncatedJsonModel(reply: string, delayMs: number): { model: ModelLike; calls: () => number } {
+	let calls = 0;
+	return {
+		model: {
+			async complete(_prompt: string, options?: { signal?: AbortSignal }) {
+				calls++;
+				await sleep(delayMs, options?.signal);
+				return reply;
+			},
+		},
+		calls: () => calls,
+	};
+}
+
+function hangAfterTruncatedModel(
+	reply: string,
+	firstDelayMs: number,
+): { model: ModelLike; calls: () => number; hangSignal: () => AbortSignal | undefined } {
+	let calls = 0;
+	let hangSignal: AbortSignal | undefined;
+	return {
+		model: {
+			async complete(_prompt: string, options?: { signal?: AbortSignal }) {
+				calls++;
+				if (calls === 1) {
+					await sleep(firstDelayMs, options?.signal);
+					return reply;
+				}
+				hangSignal = options?.signal;
+				return new Promise<string>(() => {});
+			},
+		},
+		calls: () => calls,
+		hangSignal: () => hangSignal,
+	};
+}
+
+const SHRINK_KEYS = Array.from({ length: 64 }, (_, i) => `note-${String(i + 1).padStart(2, "0")}`);
+const HANG_LOOP_KEYS = ["note-a", "note-b", "note-c", "note-d"];
+const TRUNCATED_TOPIC_JSON = '{"maps":[{"theme":"truncated';
+const TRUNCATED_IDEA_JSON = '{"ideas":[{"title":"truncated';
+const SHARED_BUDGET_MS = 200;
+const TRUNCATE_DELAY_MS = 180;
+const HANG_ROUND1_DELAY_MS = 150;
+
 test("default organ model timeouts match the G-287 wall-clock table", () => {
 	assert.equal(ORGAN_MODEL_TIMEOUT_MS.consolidate, 900_000);
 	assert.equal(ORGAN_MODEL_TIMEOUT_MS.reflect, 600_000);
 	assert.equal(ORGAN_MODEL_TIMEOUT_MS.synthesize, 900_000);
 	assert.equal(ORGAN_MODEL_TIMEOUT_MS["topic-maps"], 1_200_000);
 	assert.equal(ORGAN_MODEL_TIMEOUT_MS.ideas, 600_000);
+});
+
+test("withModelTimeout past deadline fails without starting work", async () => {
+	let started = false;
+	await assert.rejects(
+		() =>
+			withModelTimeout(
+				"ideas",
+				200,
+				async () => {
+					started = true;
+					return "started";
+				},
+				Date.now() - 1,
+			),
+		(error: unknown) => {
+			assert.ok(error instanceof Error);
+			assert.match(error.message, /ideas/i);
+			assert.match(error.message, /timed out/i);
+			assert.match(error.message, /200ms/);
+			return true;
+		},
+	);
+	assert.equal(started, false);
 });
 
 test("reflect FakeModel NONE still advances last_reflect under a short timeout budget", async () => {
@@ -322,4 +427,146 @@ test("generateIdeas hanging model times out without writing idea files", { timeo
 	} finally {
 		await rm(store, { recursive: true, force: true });
 	}
+});
+
+test("buildTopicMaps shrink rounds share one timeout budget", { timeout: 15000 }, async () => {
+	await withEnv({ HER_TOPICS_BATCH_UNITS: "64", HER_TOPICS_MIN_BATCH_UNITS: "1" }, async () => {
+		const store = await tempStore();
+		try {
+			for (const key of SHRINK_KEYS) await seedNote(store, key);
+			const before = await stateOf(store);
+			const topicsBefore = await mdNames(join(store, "topics"));
+			const fake = truncatedJsonModel(TRUNCATED_TOPIC_JSON, TRUNCATE_DELAY_MS);
+			const started = Date.now();
+			await assert.rejects(
+				() =>
+					new Memory(store, {
+						model: fake.model,
+						modelTimeouts: { "topic-maps": SHARED_BUDGET_MS },
+					}).buildTopicMaps(),
+				(error: unknown) => {
+					assert.ok(error instanceof Error);
+					assert.match(error.message, /topic-maps/i);
+					assert.match(error.message, /timed out/i);
+					return true;
+				},
+			);
+			const elapsed = Date.now() - started;
+			assert.ok(
+				fake.calls() <= 2,
+				`topic-maps shrink stacked per-round budgets (calls=${fake.calls()}; ${elapsed}ms; limit ${SHARED_BUDGET_MS}ms)`,
+			);
+			assert.deepEqual(await stateOf(store), before);
+			assert.deepEqual(await mdNames(join(store, "topics")), topicsBefore);
+		} finally {
+			await rm(store, { recursive: true, force: true });
+		}
+	});
+});
+
+test("generateIdeas shrink rounds share one timeout budget", { timeout: 15000 }, async () => {
+	await withEnv({ HER_IDEAS_MAX_UNITS: "64", HER_IDEAS_MIN_UNITS: "1" }, async () => {
+		const store = await tempStore();
+		try {
+			for (const key of SHRINK_KEYS) await seedNote(store, key);
+			const before = await stateOf(store);
+			const ideasBefore = await mdNames(join(store, "ideas"));
+			const fake = truncatedJsonModel(TRUNCATED_IDEA_JSON, TRUNCATE_DELAY_MS);
+			const started = Date.now();
+			await assert.rejects(
+				() =>
+					new Memory(store, {
+						model: fake.model,
+						modelTimeouts: { ideas: SHARED_BUDGET_MS },
+					}).generateIdeas(),
+				(error: unknown) => {
+					assert.ok(error instanceof Error);
+					assert.match(error.message, /ideas/i);
+					assert.match(error.message, /timed out/i);
+					return true;
+				},
+			);
+			const elapsed = Date.now() - started;
+			assert.ok(
+				fake.calls() <= 2,
+				`ideas shrink stacked per-round budgets (calls=${fake.calls()}; ${elapsed}ms; limit ${SHARED_BUDGET_MS}ms)`,
+			);
+			assert.deepEqual(await stateOf(store), before);
+			assert.deepEqual(await mdNames(join(store, "ideas")), ideasBefore);
+		} finally {
+			await rm(store, { recursive: true, force: true });
+		}
+	});
+});
+
+test("buildTopicMaps hang on shrink round 2 still ends at the shared deadline", { timeout: 10000 }, async () => {
+	await withEnv({ HER_TOPICS_BATCH_UNITS: "4", HER_TOPICS_MIN_BATCH_UNITS: "1" }, async () => {
+		const store = await tempStore();
+		try {
+			for (const key of HANG_LOOP_KEYS) await seedNote(store, key);
+			const before = await stateOf(store);
+			const topicsBefore = await mdNames(join(store, "topics"));
+			const hang = hangAfterTruncatedModel(TRUNCATED_TOPIC_JSON, HANG_ROUND1_DELAY_MS);
+			const started = Date.now();
+			await assert.rejects(
+				() =>
+					new Memory(store, {
+						model: hang.model,
+						modelTimeouts: { "topic-maps": SHARED_BUDGET_MS },
+					}).buildTopicMaps(),
+				(error: unknown) => {
+					assert.ok(error instanceof Error);
+					assert.match(error.message, /topic-maps/i);
+					assert.match(error.message, /timed out/i);
+					assert.match(error.message, /200ms/);
+					return true;
+				},
+			);
+			const elapsed = Date.now() - started;
+			assert.ok(elapsed < 2000, `topic-maps hang-mid-loop exceeded one shared budget (${elapsed}ms)`);
+			assert.ok(hang.calls() <= 2, `topic-maps hang-mid-loop started extra rounds; calls=${hang.calls()}`);
+			assert.ok(hang.calls() >= 2, `expected shrink round 2 to start; calls=${hang.calls()}`);
+			assert.equal(hang.hangSignal()?.aborted, true);
+			assert.deepEqual(await stateOf(store), before);
+			assert.deepEqual(await mdNames(join(store, "topics")), topicsBefore);
+		} finally {
+			await rm(store, { recursive: true, force: true });
+		}
+	});
+});
+
+test("generateIdeas hang on shrink round 2 still ends at the shared deadline", { timeout: 10000 }, async () => {
+	await withEnv({ HER_IDEAS_MAX_UNITS: "4", HER_IDEAS_MIN_UNITS: "1" }, async () => {
+		const store = await tempStore();
+		try {
+			for (const key of HANG_LOOP_KEYS) await seedNote(store, key);
+			const before = await stateOf(store);
+			const ideasBefore = await mdNames(join(store, "ideas"));
+			const hang = hangAfterTruncatedModel(TRUNCATED_IDEA_JSON, HANG_ROUND1_DELAY_MS);
+			const started = Date.now();
+			await assert.rejects(
+				() =>
+					new Memory(store, {
+						model: hang.model,
+						modelTimeouts: { ideas: SHARED_BUDGET_MS },
+					}).generateIdeas(),
+				(error: unknown) => {
+					assert.ok(error instanceof Error);
+					assert.match(error.message, /ideas/i);
+					assert.match(error.message, /timed out/i);
+					assert.match(error.message, /200ms/);
+					return true;
+				},
+			);
+			const elapsed = Date.now() - started;
+			assert.ok(elapsed < 2000, `ideas hang-mid-loop exceeded one shared budget (${elapsed}ms)`);
+			assert.ok(hang.calls() <= 2, `ideas hang-mid-loop started extra rounds; calls=${hang.calls()}`);
+			assert.ok(hang.calls() >= 2, `expected shrink round 2 to start; calls=${hang.calls()}`);
+			assert.equal(hang.hangSignal()?.aborted, true);
+			assert.deepEqual(await stateOf(store), before);
+			assert.deepEqual(await mdNames(join(store, "ideas")), ideasBefore);
+		} finally {
+			await rm(store, { recursive: true, force: true });
+		}
+	});
 });

@@ -1761,18 +1761,25 @@ export class Memory {
 		if (prepared.units.length === 0) return [];
 		const batchSize = envPositiveInt("HER_TOPICS_BATCH_UNITS", DEFAULT_TOPICS_BATCH_UNITS);
 		const floor = envPositiveInt("HER_TOPICS_MIN_BATCH_UNITS", DEFAULT_TOPICS_MIN_BATCH_UNITS);
+		const timeoutMs = this.organTimeoutMs("topic-maps");
 		const keyset = new Set(prepared.units.map((unit) => unit.key));
 		const maps = new Map<string, { theme: string; summary: string; members: Set<string> }>();
 		for (let start = 0; start < prepared.units.length; start += batchSize) {
 			const batch = prepared.units.slice(start, start + batchSize);
+			// One deadline per batch: shrink rounds share it and cannot reset the budget.
+			const deadline = Date.now() + timeoutMs;
 			const result = await this.organJsonWithShrink(
 				batch,
 				async (current) => {
 					const lines = current.map((unit) => `- ${unit.key} (${unit.type}): ${unit.title}`).join("\n");
-					return withModelTimeout("topic-maps", this.organTimeoutMs("topic-maps"), (signal) =>
-						completeJson<{ maps?: Array<{ theme?: string; summary?: string; members?: string[] }> }>(() =>
-							invokeCompletion(model, topicMapPrompt(lines), { strong: true, signal }),
-						),
+					return withModelTimeout(
+						"topic-maps",
+						timeoutMs,
+						(signal) =>
+							completeJson<{ maps?: Array<{ theme?: string; summary?: string; members?: string[] }> }>(() =>
+								invokeCompletion(model, topicMapPrompt(lines), { strong: true, signal }),
+							),
+						deadline,
 					);
 				},
 				floor,
@@ -1840,27 +1847,33 @@ export class Memory {
 		const maxUnits = envPositiveInt("HER_IDEAS_MAX_UNITS", DEFAULT_IDEAS_MAX_UNITS);
 		const floor = envPositiveInt("HER_IDEAS_MIN_UNITS", DEFAULT_IDEAS_MIN_UNITS);
 		const subset = prepared.units.length > maxUnits ? prepared.units.slice(-maxUnits) : prepared.units;
+		const timeoutMs = this.organTimeoutMs("ideas");
+		const deadline = Date.now() + timeoutMs;
 		const result = await this.organJsonWithShrink(
 			subset,
 			async (current) => {
 				const unitLines = current
 					.map((unit) => `- ${unit.key} (${unit.kind}/${unit.type}): ${unit.title}`)
 					.join("\n");
-				return withModelTimeout("ideas", this.organTimeoutMs("ideas"), (signal) =>
-					completeJson<{
-						ideas?: Array<{
-							title?: string;
-							connects?: string[];
-							insight?: string;
-							spark?: string;
-							kind?: string;
-						}>;
-					}>(() =>
-						invokeCompletion(model, ideaEnginePrompt(unitLines, prepared.topicLines, prepared.existing), {
-							strong: true,
-							signal,
-						}),
-					),
+				return withModelTimeout(
+					"ideas",
+					timeoutMs,
+					(signal) =>
+						completeJson<{
+							ideas?: Array<{
+								title?: string;
+								connects?: string[];
+								insight?: string;
+								spark?: string;
+								kind?: string;
+							}>;
+						}>(() =>
+							invokeCompletion(model, ideaEnginePrompt(unitLines, prepared.topicLines, prepared.existing), {
+								strong: true,
+								signal,
+							}),
+						),
+					deadline,
 				);
 			},
 			floor,

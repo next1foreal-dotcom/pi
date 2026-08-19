@@ -16,10 +16,16 @@ export async function withModelTimeout<T>(
 	organ: string,
 	timeoutMs: number,
 	work: (signal: AbortSignal) => Promise<T>,
+	deadline?: number,
 ): Promise<T> {
-	const started = Date.now();
+	const now = Date.now();
+	const started = deadline === undefined ? now : deadline - timeoutMs;
+	const remaining = deadline === undefined ? timeoutMs : deadline - now;
+	if (remaining <= 0) {
+		throw new Error(organTimeoutError(organ, timeoutMs, now - started));
+	}
 	const controller = new AbortController();
-	const timer = setTimeout(() => controller.abort(), timeoutMs);
+	const timer = setTimeout(() => controller.abort(), remaining);
 	const call = work(controller.signal);
 	void call.catch(() => {});
 	try {
