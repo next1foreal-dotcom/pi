@@ -1,4 +1,4 @@
-import type { ModelLike } from "./her-core/index.ts";
+import type { CompletionOptions, CompletionResult, CompletionUsage, ModelLike } from "./her-core/index.ts";
 
 interface SummaryConfig {
 	baseUrl: string;
@@ -8,10 +8,17 @@ interface SummaryConfig {
 
 interface ChatCompletionResponse {
 	choices?: Array<{
+		finish_reason?: string | null;
 		message?: {
 			content?: unknown;
 		};
 	}>;
+	model?: string;
+	usage?: {
+		completion_tokens?: number;
+		prompt_tokens?: number;
+		total_tokens?: number;
+	};
 }
 
 export function createSummaryModel(env: NodeJS.ProcessEnv = process.env): ModelLike | undefined {
@@ -19,7 +26,17 @@ export function createSummaryModel(env: NodeJS.ProcessEnv = process.env): ModelL
 	if (!config) return undefined;
 	return {
 		async complete(prompt, options) {
-			return await completeChat(config, prompt, options?.signal);
+			return (await this.completeWithMeta!(prompt, options)).text;
+		},
+		async completeWithMeta(prompt, options) {
+			const result = await completeChat(config, prompt, options);
+			this.lastCompletion = {
+				...(result.finishReason ? { finishReason: result.finishReason } : {}),
+				...(result.usage ? { usage: result.usage } : {}),
+				...(result.model ? { model: result.model } : {}),
+				...(result.provider ? { provider: result.provider } : {}),
+			};
+			return result;
 		},
 	};
 }
@@ -63,7 +80,12 @@ function readSummaryConfig(env: NodeJS.ProcessEnv): SummaryConfig | undefined {
 	return undefined;
 }
 
-async function completeChat(config: SummaryConfig, prompt: string, signal?: AbortSignal): Promise<string> {
+async function completeChat(
+	config: SummaryConfig,
+	prompt: string,
+	options?: CompletionOptions,
+): Promise<CompletionResult> {
+	const maxTokens = typeof options?.maxTokens === "number" && options.maxTokens > 0 ? options.maxTokens : 700;
 	const response = await fetch(chatCompletionsUrl(config.baseUrl), {
 		method: "POST",
 		headers: headers(config.apiKey),
@@ -71,19 +93,47 @@ async function completeChat(config: SummaryConfig, prompt: string, signal?: Abor
 			model: config.model,
 			messages: [{ role: "user", content: prompt }],
 			temperature: 0.2,
-			max_tokens: 700,
+			max_tokens: maxTokens,
 		}),
-		...(signal ? { signal } : {}),
+		...(options?.signal ? { signal: options.signal } : {}),
 	});
 	if (!response.ok) {
 		throw new Error(`summary model failed: HTTP ${response.status}`);
 	}
 	const data = (await response.json()) as ChatCompletionResponse;
+	const finishReason =
+		typeof data.choices?.[0]?.finish_reason === "string" ? data.choices[0].finish_reason : undefined;
+	const usage = sanitizeUsage(data.usage);
+	const provider = providerHost(config.baseUrl);
+	const reportedModel = typeof data.model === "string" && data.model.trim() ? data.model : config.model;
 	const content = data.choices?.[0]?.message?.content;
 	if (typeof content !== "string" || !content.trim()) {
 		throw new Error("summary model returned empty content");
 	}
-	return content.trim();
+	return {
+		text: content.trim(),
+		...(finishReason ? { finishReason } : {}),
+		...(usage ? { usage } : {}),
+		model: reportedModel,
+		provider,
+	};
+}
+
+function sanitizeUsage(raw: ChatCompletionResponse["usage"]): CompletionUsage | undefined {
+	if (!raw || typeof raw !== "object") return undefined;
+	const usage: CompletionUsage = {};
+	if (typeof raw.prompt_tokens === "number") usage.prompt_tokens = raw.prompt_tokens;
+	if (typeof raw.completion_tokens === "number") usage.completion_tokens = raw.completion_tokens;
+	if (typeof raw.total_tokens === "number") usage.total_tokens = raw.total_tokens;
+	return Object.keys(usage).length > 0 ? usage : undefined;
+}
+
+function providerHost(baseUrl: string): string {
+	try {
+		return new URL(chatCompletionsUrl(baseUrl)).host;
+	} catch {
+		return "openai-compatible";
+	}
 }
 
 function chatCompletionsUrl(baseUrl: string): string {
