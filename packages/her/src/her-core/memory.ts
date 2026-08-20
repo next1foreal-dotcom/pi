@@ -919,13 +919,15 @@ export class Memory {
 	}
 
 	async remember(content: string, type = "note"): Promise<string> {
-		const id = genId(new Date().toISOString(), content);
-		const key = slug(content.split(/\r?\n/, 1)[0] ?? "note");
-		await writeText(
-			join(this.paths.semantic, `${key}-${id}.md`),
-			`${frontmatter({ id, type, tier: "summarizable", created: today() })}# ${key}\n\n${content.trim()}\n`,
-		);
-		return id;
+		return this.withStoreLock(async () => {
+			const id = genId(new Date().toISOString(), content);
+			const key = slug(content.split(/\r?\n/, 1)[0] ?? "note");
+			await writeText(
+				join(this.paths.semantic, `${key}-${id}.md`),
+				`${frontmatter({ id, type, tier: "summarizable", created: today() })}# ${key}\n\n${content.trim()}\n`,
+			);
+			return id;
+		});
 	}
 
 	async consolidate(limit = 25): Promise<ConsolidateResult> {
@@ -2125,10 +2127,11 @@ export class Memory {
 	}
 
 	async writeIdea(data: IdeaData): Promise<string> {
-		const id = genId(data.title, data.content);
-		const key = slug(data.title);
-		const connections = data.connections ?? [];
-		const body = `# ${data.title}
+		return this.withStoreLock(async () => {
+			const id = genId(data.title, data.content);
+			const key = slug(data.title);
+			const connections = data.connections ?? [];
+			const body = `# ${data.title}
 
 ${data.content.trim()}
 
@@ -2136,11 +2139,12 @@ ${data.content.trim()}
 
 ${connections.map((item) => `- [[${item}]]`).join("\n")}
 `;
-		await writeText(
-			join(this.paths.ideas, `${today()}--${key}--${id}.md`),
-			`${frontmatter({ id, title: data.title, created: today(), source: data.source ?? "her_idea", connections })}${body}`,
-		);
-		return id;
+			await writeText(
+				join(this.paths.ideas, `${today()}--${key}--${id}.md`),
+				`${frontmatter({ id, title: data.title, created: today(), source: data.source ?? "her_idea", connections })}${body}`,
+			);
+			return id;
+		});
 	}
 
 	async writeSamanthaZoneNote(data: SamanthaZoneNoteInput): Promise<SamanthaZoneNoteResult> {
@@ -2156,7 +2160,7 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 	}
 
 	async writeWorldNote(data: WorldNoteData): Promise<string> {
-		return writeWorldNote(this.paths, data);
+		return this.withStoreLock(async () => writeWorldNote(this.paths, data));
 	}
 
 	async recordJudgment(noteId: string, fields: JudgmentFields): Promise<void> {
