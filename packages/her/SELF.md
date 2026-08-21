@@ -15,7 +15,7 @@
 - `src/lib/governed-tools.ts` — 工具信任注册表。**fail-safe:未登记的工具名一律按破坏性处理**(G-257)。新工具必须先在这里登记。
 - `src/lib/cedar.ts` — Cedar 授权(含 selfmod profile);`src/lib/audit.ts` — 审计通道;`src/lib/injection-ledger.ts` — 注入台账。
 - `src/rsi/anchors.ts` — ANCHOR_PATHS 运行时副本 + 路径匹配。真相源在上级仓 `Her-repo/docs/specs/her-rsi-contracts/selfmod.ts`——改清单先改契约,再同步这里,双份必须一致。
-- `src/her-core/` — 器官:`memory.ts`(synthesize/consolidate;CONTEXT 只经 approve() 写)、`synthesize-budget.ts`(G-263 装箱)、`evals.ts`(裁判,对自改只读)、`dispatch.ts`(worktree 派工;selfmod 档落点,ADR-0003)、`doctor.ts`(体检)、`task.ts` / `task-runner.mjs`(计划任务)、`telegram.ts`(告警口)。
+- `src/her-core/` — 器官:`memory.ts`(synthesize/consolidate;CONTEXT 每笔只经 writeContextUpdate 写,write-then-review)、`synthesize-budget.ts`(G-263 装箱)、`evals.ts`(裁判,对自改只读)、`dispatch.ts`(worktree 派工;selfmod 档落点,ADR-0003)、`doctor.ts`(体检)、`task.ts` / `task-runner.mjs`(计划任务)、`telegram.ts`(告警口)。
 - `pi-package/prompts/her.md` — 她的身份与操作规则。**提案流过审,任何人禁直改**(起草→Fei+她 review)。
 - `pi-package/policies/*.cedar` — 锚闸策略(锚区,闸保护闸)。
 - `pi-package/skills/` — **selfmod v1 唯一可写圈**(SELFMOD_ALLOWED_PATHS_V1)。
@@ -28,7 +28,7 @@
 
 ## 她的记忆店(D:\@Her\her-memory,独立 git 仓,远端只有本机 mirror)
 
-- `narrative/SOUL.md` `FACTS.md` `CONTEXT.md` — 锚区;CONTEXT **只经 approve() 写**。
+- `narrative/SOUL.md` `FACTS.md` `CONTEXT.md` — 锚区;CONTEXT **每笔写入只经 writeContextUpdate 原语**(落 context-log、可 revert;synthesize 自主写=有意设计,事后 keep/revert 审——G-301 A-1 判 b)。
 - `episodic/raw/` — append-only,永不编辑。
 - `semantic/` 笔记;`evals/` 裁判夹具(锚区);`audit/` 账本——其中 `events.jsonl` 是事件正史,只经 appendEvent() 追加(ADR-0004,G-270)。
 - 铁律:永不给它加网络远端;凭据读取只出指纹不出值。
