@@ -61,6 +61,8 @@ owner = TS her-core (`packages/her/src/her-core`).
 - `consolidate`, `synthesize`, `approve`, `buildTopicMaps`, `generateIdeas`, context digesting, and context review/keep/revert are owned by the TS Her package in this pi fork.
 - Legacy Python adapters may remain only as capture-only transition shims. They must not run scheduled growth maintenance or write `narrative/CONTEXT.md`.
 - No Python `schtasks` for `consolidate` or `synthesize` are active on this machine as of 2026-06-04 verification.
+- Harness is borrowed. Growth write-core has zero pi imports; `bin/her.mjs:10` → `cli.ts createCliMemory` (`:1389`) plus `\Her\*` scheduled tasks run it as a standalone process (env HTTP via `createCliModel` `:1385`, not pi `ctx.model`). Switching harness does not stall memory growth.
+- pi session owns `extension.ts` `turn_end` (`:856`) capture (`:864`) and the tool surface (intake/remember/review). Other harnesses attach capture via their own adapters (claude-code hooks / DSH Stop hook).
 
 ## Footer sync status
 

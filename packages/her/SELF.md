@@ -33,6 +33,13 @@
 - `semantic/` 笔记;`evals/` 裁判夹具(锚区);`audit/` 账本——其中 `events.jsonl` 是事件正史,只经 appendEvent() 追加(ADR-0004,G-270)。
 - 铁律:永不给它加网络远端;凭据读取只出指纹不出值。
 
+## Harness 可替换
+
+换 harness 时记忆照常生长——own the memory; borrow the harness。
+
+- growth 五件套(`consolidate`/`synthesize`/`topic-maps`/`ideas`/`approve`)写核只依赖 `Memory + ModelLike + HER_MEMORY_DIR`;`src/her-core/` 零 pi import。主触发是独立进程:`bin/her.mjs:10` → `cli.ts createCliMemory`(`:1389`) + `\Her\*` 计划任务;模型走 env HTTP(`createCliModel` `:1385`),不是 pi `ctx.model`。
+- pi session 独占 `extension.ts` `turn_end`(`:856`) capture(`:864`)与工具面(intake/remember/审核)。换 harness 时 capture 各接各的 adapter(claude-code hooks / DSH Stop hook)。
+
 ## 环境速查
 
 - 裸 worktree 跑不了测试:缺 tsx + 38 个 providers/data JSON(会假报 ~700 个 TS 错);环境性挂 ≈5 条不算回归。
