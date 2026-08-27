@@ -105,10 +105,12 @@ import { evaluate, policyEnvelope, resolveToolCallAnchor } from "./lib/cedar.ts"
 import { governedTools, resolveGovernedTool } from "./lib/governed-tools.ts";
 import { CONTEXT_INJECTION_SOURCES, injectLoggedContent } from "./lib/injection-ledger.ts";
 import { registerMcpTools } from "./mcp/tools.ts";
+import { registerPreviewStillTools } from "./preview/still-tools.ts";
 import { registerPreviewTools } from "./preview/tools.ts";
 import { registerRelayProviderTools } from "./providers-relay/tools.ts";
 import { registerShowWidgetTools } from "./show-widget/tools.ts";
 import { createSummaryModel } from "./summary-model.ts";
+import { registerTodoWriteTools } from "./todo-write/tools.ts";
 import { registerFileToolkit } from "./tools/index.ts";
 import { registerUiActionTools } from "./ui-action/tools.ts";
 
@@ -2303,7 +2305,9 @@ export default function her(pi: ExtensionAPI): void {
 		},
 	});
 	registerPreviewTools(pi);
+	registerPreviewStillTools(pi);
 	registerShowWidgetTools(pi);
+	registerTodoWriteTools(pi);
 	registerRelayProviderTools(pi);
 	registerUiActionTools(pi);
 	registerHerActTools(pi);
