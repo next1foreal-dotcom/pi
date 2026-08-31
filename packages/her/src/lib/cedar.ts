@@ -19,7 +19,7 @@ const policyDir = resolve(here, "..", "..", "pi-package", "policies");
 const schemaPath = resolve(policyDir, "her-trust.cedarschema");
 const repositoryRoot = resolve(here, "..", "..", "..", "..");
 
-export type CedarProfile = "default" | "heartbeat" | "selfmod";
+export type CedarProfile = "default" | "heartbeat" | "selfmod" | "plan";
 
 export const POLICY_TEXT = readPolicyText("default");
 export const SCHEMA_TEXT = readFileSync(schemaPath, "utf8");
@@ -72,7 +72,9 @@ export function readPolicyText(profile: CedarProfile = selectedProfile()): strin
 			? "her-trust-heartbeat.cedar"
 			: profile === "selfmod"
 				? "her-trust-selfmod.cedar"
-				: "her-trust.cedar";
+				: profile === "plan"
+					? "her-trust-plan.cedar"
+					: "her-trust.cedar";
 	return readFileSync(resolve(policyDir, file), "utf8");
 }
 
@@ -343,7 +345,7 @@ function relativeWithin(basePath: string, targetPath: string): string | null {
 
 function selectedProfile(): CedarProfile {
 	const profile = process.env.HER_CEDAR_PROFILE;
-	return profile === "heartbeat" || profile === "selfmod" ? profile : "default";
+	return profile === "heartbeat" || profile === "selfmod" || profile === "plan" ? profile : "default";
 }
 
 function mentionHistoryLeaf(haystack: string): string | undefined {
