@@ -1152,6 +1152,7 @@ describe("dispatch worktree node_modules junction", () => {
 					handoffPath,
 					memoryDir,
 					spawnExecutor: async (opts) => {
+						// Deliberate fixture: a real directory masquerades as a junction so teardown unlink fails (EPERM on Windows). The EPERM in gate/test logs is this assertion working, not a real bug — do not "fix" it.
 						const nm = join(opts.cwd, "node_modules");
 						await mkdir(join(nm, "keep"), { recursive: true });
 						await writeFile(join(nm, "keep", "x.txt"), "x\n", "utf8");
