@@ -67,6 +67,7 @@ export function parseArgs(argv: string[]): CliCommand {
 	if (command === "synthesize-due") return parseJsonOnly("synthesize-due", rest);
 	if (command === "status") return parseStatus(rest);
 	if (command === "sync") return parseSync(rest);
+	if (command === "task-reconcile") return parseJsonOnly("task-reconcile", rest);
 	if (command === "taste") return parseTaste(rest);
 	if (command === "taste-weekly") return parseTasteWeekly(rest);
 	if (command === "taste-board-apply") return parseTasteBoardApply(rest);
@@ -91,6 +92,7 @@ function parseJsonOnly(
 		| "self-narrative"
 		| "surface"
 		| "synthesize-due"
+		| "task-reconcile"
 		| "topic-maps",
 	argv: string[],
 ): CliCommand {

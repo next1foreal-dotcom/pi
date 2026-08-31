@@ -1,4 +1,4 @@
-import { formatSessionRead, renderEvalTrendReport } from "../her-core/index.ts";
+import { formatSessionRead, renderEvalTrendReport, type WakeEvent } from "../her-core/index.ts";
 import type {
 	CliApprovePayload,
 	CliBackfillPayload,
@@ -410,6 +410,16 @@ export function renderPersonaScan(payload: CliPersonaScanPayload): string {
 	return payload.proposals.map((item) => `persona-scan proposal ${item.kind}: ${item.path}`).join("\n");
 }
 
+export function renderTaskReconcile(events: WakeEvent[]): string {
+	const lines = [`task-reconcile: ${events.length} event(s)`];
+	for (const e of events) {
+		const tag = e.failureReason ? `${e.status}/${e.failureReason}` : e.status;
+		const verdict = e.acceptance ? ` verdict=${e.acceptance.verdict}` : "";
+		lines.push(`  ${e.taskId} ${tag}${verdict}`);
+	}
+	return lines.join("\n");
+}
+
 export function renderSkillScan(payload: CliSkillScanPayload): string {
 	if (payload.error) return `skill-scan failed: ${payload.error}`;
 	if (!payload.ran && payload.skippedReason === "draft-open") return "skill-scan: draft already open, skipping";
@@ -715,6 +725,7 @@ export function usage(): string {
   her sync --status [--json]
   her sync [--message <message>] [--json]
   her status [--json]
+  her task-reconcile [--json]
   her taste --title <title> --judgment <text> --reason <text> [--differs-from-fei-rule <text>] [--source <text>] [--timestamp <ISO>] [--json]
   her taste-weekly [--since <ISO>] [--json]
   her taste-board-apply <board> <cardId|slug>... [--json]

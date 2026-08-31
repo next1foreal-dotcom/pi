@@ -157,6 +157,7 @@ export type CliCommand =
 			title: string;
 	  }
 	| { kind: "taste-weekly"; json: boolean; since?: string }
+	| { kind: "task-reconcile"; json: boolean }
 	| { kind: "taste-board-apply"; board: string; cardIds: string[]; json: boolean }
 	| {
 			ackText?: string;

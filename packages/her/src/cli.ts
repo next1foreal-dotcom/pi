@@ -53,6 +53,7 @@ import {
 	renderSync,
 	renderSynthesize,
 	renderSynthesizeDue,
+	renderTaskReconcile,
 	renderTaste,
 	renderTasteBoardApply,
 	renderTasteWeekly,
@@ -139,6 +140,7 @@ import {
 	readSession,
 	readTriggerStats,
 	readUrlForWorldNote,
+	reconcileBgTasks,
 	recordTelegramConfirmationFromText,
 	resolveTasteToolConfig,
 	runAcceptanceJudge,
@@ -424,6 +426,17 @@ export async function runHerCli(
 		const payload = { ...(await buildFreshStatusPayload(root, env)), result };
 		writePayload(io.stdout, payload, command.json, renderReingest);
 		return 0;
+	}
+
+	if (command.kind === "task-reconcile") {
+		try {
+			const events = await reconcileBgTasks(memoryDir);
+			writePayload(io.stdout, events, command.json, renderTaskReconcile);
+			return 0;
+		} catch (error) {
+			writeLine(io.stderr, `task-reconcile: ${errorMessage(error)}`);
+			return 1;
+		}
 	}
 
 	const memory = createCliMemory(memoryDir, env);
