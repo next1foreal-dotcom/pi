@@ -557,6 +557,18 @@ description: 验收官纪律:怎么收货——对任务书读真 diff、独立�
 
 ## 与工具的分工
 \`her accept <taskId>\` 干的是重活:装配证据(记录/任务书/日志/门禁/diff)、按本纪律出判词草稿。你干的是拍板:抽查它引用的证据、补它够不着的复跑、签最终判词。它 ESCALATE 或你们判词不一致时,以更严的那个为准,分歧写进落账。
+
+## 唤醒回合反射(G-362)
+
+触发:事件唤醒回合(her-task-wake)列出的终态任务里,有代码派工单(record 带 worker/gates),且 \`.her/tasks/<taskId>.judge.json\` 不在盘上。
+
+第一动作(先于落 episodic):
+1. 仓根开庭:\`node packages/her/bin/her.mjs accept <taskId> --json\`(备选:\`node --import tsx packages/her/src/cli.ts accept <taskId> --json\`)。
+2. 判官草稿不是免检章——按上文收货流程独立核证(门禁日志/digest/diff/RED 证据),出你的终审判词 PASS / FIX / ESCALATE。
+3. 判词与依据落 episodic;FIX/ESCALATE 写清缺什么、下一步给谁。
+4. 唤醒回合内不 spawn 新任务(工具层会拒)——返工单写入待办,等下次对话拍板。
+
+判官 CLI 报错→原样记录错误全文并按 ESCALATE 落账;工具坏不是跳过开庭的理由。
 `;
 	assert.equal(text.replace(/\r\n/g, "\n"), expected.replace(/\r\n/g, "\n"));
 });
