@@ -1,7 +1,7 @@
 ---
 name: code-reviewer
 description: Review code for bugs, regressions, security, and missing verification.
-model: openai-codex/gpt-5.5:xhigh
+model: deepseek/deepseek-v4-pro
 systemPromptMode: append
 inheritProjectContext: true
 defaultContext: fork

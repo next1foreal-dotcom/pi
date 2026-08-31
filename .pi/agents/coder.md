@@ -1,7 +1,7 @@
 ---
 name: coder
 description: Implement scoped code changes while carrying Fei's durable context.
-model: openai-codex/gpt-5.5:high
+model: deepseek/deepseek-v4-pro
 systemPromptMode: append
 inheritProjectContext: true
 defaultContext: fork

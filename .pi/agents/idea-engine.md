@@ -1,7 +1,7 @@
 ---
 name: idea-engine
 description: Find non-obvious connections and persist candidate ideas into Her memory.
-model: claude-bridge/claude-opus-4-8
+model: deepseek/deepseek-v4-pro
 systemPromptMode: append
 inheritProjectContext: true
 defaultContext: fork

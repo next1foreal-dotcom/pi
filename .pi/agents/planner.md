@@ -1,7 +1,7 @@
 ---
 name: planner
 description: Turn fuzzy goals into staged plans with verification gates.
-model: claude-bridge/claude-opus-4-8
+model: deepseek/deepseek-v4-pro
 systemPromptMode: append
 inheritProjectContext: true
 defaultContext: fork

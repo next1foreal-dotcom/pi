@@ -1,7 +1,7 @@
 ---
 name: reviewer
 description: Review memory or narrative updates before approval.
-model: claude-bridge/claude-sonnet-5
+model: deepseek/deepseek-v4-pro
 systemPromptMode: append
 inheritProjectContext: true
 defaultContext: fork
