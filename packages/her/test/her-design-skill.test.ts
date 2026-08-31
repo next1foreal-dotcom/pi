@@ -10,11 +10,14 @@ import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
+import { SELFMOD_OWNED_SKILLS } from "../src/her-core/selfmod-types.ts";
+
 const herRoot = join(process.cwd(), "packages", "her");
 const skillRoot = join(herRoot, "pi-package", "skills", "her-design");
 const herMdPath = join(herRoot, "pi-package", "prompts", "her.md");
 
-// Task 搬运清单 (explicit paths). The package text said "26"; the list is 29.
+// Task 搬运清单 (explicit paths; the package text said "26", the list is 29)
+// + 2 authored at landing: process/steps.md (W2 first piece), process/to-code.md (W4, intake #9).
 const HER_DESIGN_REFERENCE_FILES = [
 	"design/foundations.md",
 	"design/colors.md",
@@ -30,6 +33,8 @@ const HER_DESIGN_REFERENCE_FILES = [
 	"process/visual-review.md",
 	"process/references.md",
 	"process/filing.md",
+	"process/steps.md",
+	"process/to-code.md",
 	"review/rubric.md",
 	"review/refine-order.md",
 	"review/anti-generic.md",
@@ -52,7 +57,7 @@ async function mustBeFile(path: string): Promise<void> {
 	assert.equal(info.isFile(), true, `${path} must be a file`);
 }
 
-test("her-design skill exists with frontmatter name, 29 references, and her.md owned-skills entry", async () => {
+test("her-design skill exists with frontmatter name, 31 references, and her.md owned-skills entry", async () => {
 	const skillPath = join(skillRoot, "SKILL.md");
 	const skill = await readFile(skillPath, "utf8");
 	const normalized = skill.replace(/\r\n/g, "\n");
@@ -72,4 +77,10 @@ test("her-design skill exists with frontmatter name, 29 references, and her.md o
 		/You can change your own skills[^\n]*`her-design`/,
 		"her.md owned-skills list must include her-design",
 	);
+});
+
+test("her-design is machine-owned, not just claimed: SELFMOD_OWNED_SKILLS includes it", () => {
+	// SKILL.md tells her "this skill is yours" — the selfmod fence must agree,
+	// or every her-design proposal dies at isOwnedSkillPath.
+	assert.ok(SELFMOD_OWNED_SKILLS.includes("her-design"));
 });

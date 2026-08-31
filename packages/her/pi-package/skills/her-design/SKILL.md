@@ -25,6 +25,7 @@ over-read, never under-read.
 
 | Task | Read |
 |---|---|
+| Starting any design project / which step am I in | process/steps |
 | Any new design | design/foundations · design/colors · design/typography · design/composition · review/anti-generic · process/direction-first |
 | Deciding scope — what gets in, what gets cut | design/composition (entry test: earned its way in? which five get the permanent place?) |
 | Important / multi-direction work | process/direction-first · process/variants |
@@ -41,6 +42,7 @@ over-read, never under-read.
 | Screen flows and prototypes | process/flows |
 | Judging a render before calling it done | review/rubric · review/refine-order · design/details |
 | Verifying a live screen / responsive sweep | review/rendered-page-verify |
+| Landing a design into code — export, handoff | process/to-code |
 | Ending a design session | process/filing — file decisions, patterns, tool notes, debt before you stop |
 
 Some files carry passages written for the loora vector canvas (flagged at the top of the

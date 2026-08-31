@@ -7,6 +7,7 @@ export { ANCHOR_PATHS, SELFMOD_ALLOWED_PATHS_V1 };
 // so she cannot expand her own fence. Updating this list is an our-side commit.
 export const SELFMOD_OWNED_SKILLS: readonly string[] = [
 	"her-batch-intake",
+	"her-design",
 	"her-hands-desktop",
 	"her-intake",
 	"her-jina-read",
