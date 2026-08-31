@@ -46,11 +46,18 @@ workers:
 
 `--always-approve`：grok 的 Windows 沙箱是静默空操作，隔离靠 worktree，门禁靠 G-206；工具审批弹窗在无头下会挂死任务。brief 走 `--prompt-file <id>.brief`（管线注入，答案走 stdout / 任务日志）。
 
-**探针前置。** 派外部 CLI 前先跑 `node packages/her/scripts/probe-worker-channels.mjs`（或读其最新输出）。**探针绿 ≠ 有额度**，额度看 `ops/channel-quota.yaml` 口径。
+**探针前置。** 探针已是 spawn 层**门禁**(G-356):没有 ≤24h 的 `ops/channel-probe-latest.json` 或该通道 dead,`her_task_spawn` 会拒绝;补救=跑 `node packages/her/scripts/probe-worker-channels.mjs --write-latest`。**探针绿≠有额度**照旧。
 
 **水位快照（2026-08-31）：** grok 主力；cursor-agent / codex 额度尽，恢复以 Fei 口径为准。
 
 名册表以 `.pi/agents/*.md` frontmatter 的 `model` 为准（本轮已核，8 行一致）。对不上又查不到的行标「待核」，禁止凭空发明型号。
+
+## 承重假设先实弹(G-356)
+
+任务包写下之前,把设计压在上面的那一两个假设**先用最小实弹钉死**——一发探针省一轮返工。
+判据:哪个假设错了会推翻整包设计,哪个就值得一发实弹;其余假设交给执行方在包内核实。
+实弹结论写进任务包「已实测钉死的事实」一节,注明日期与证据;执行方以此为准,不复测浪费额度。
+例(G-354):grok 吃不吃 stdin 决定整个注入设计——三发探针(`-p` 缺参报错 / `-p -` 把 `-` 当字面提示词发给了模型 / `--prompt-file` 独立可用)当场定案,任务包因此一次成活。
 
 ## 验收纪律（收货不收话）
 

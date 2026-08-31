@@ -117,6 +117,16 @@ export {
 	spawnBgTask,
 	stopBgTask,
 } from "./bg-task-spawn.ts";
+export {
+	assertFreshExternalCliProbe,
+	CHANNEL_PROBE_LATEST_RELATIVE,
+	CHANNEL_PROBE_REMEDY,
+	type ChannelProbeLatest,
+	type ChannelProbeRow,
+	channelProbeLatestPath,
+	EXTERNAL_CLI_SET,
+	SAMANTHA_REPO_ROOT,
+} from "./channel-probe-gate.ts";
 export type { HerConfig } from "./config.ts";
 export { DEFAULT_CONFIG, loadConfig, renderConfig } from "./config.ts";
 export type {
@@ -689,6 +699,7 @@ export {
 	resolveWorkerModel,
 	STALE_ENV_KEYS,
 	type WorkerProfile,
+	workerCliName,
 } from "./worker-profile.ts";
 export type {
 	XArticleFullTextFailure,

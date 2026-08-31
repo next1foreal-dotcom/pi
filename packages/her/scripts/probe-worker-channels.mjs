@@ -9,15 +9,19 @@
  *   node packages/her/scripts/probe-worker-channels.mjs --json
  *   node packages/her/scripts/probe-worker-channels.mjs --quota-file <path>
  *   node packages/her/scripts/probe-worker-channels.mjs --channels grok,codex
+ *   node packages/her/scripts/probe-worker-channels.mjs --write-latest
+ *   node packages/her/scripts/probe-worker-channels.mjs --write-latest --latest-file <path>
  */
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DEFAULT_CHANNELS = ["grok", "cursor-agent", "codex"];
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const DEFAULT_QUOTA_FILE = join(REPO_ROOT, "ops", "channel-quota.yaml");
+export const CHANNEL_PROBE_LATEST_RELATIVE = join("ops", "channel-probe-latest.json");
+export const DEFAULT_LATEST_FILE = join(REPO_ROOT, CHANNEL_PROBE_LATEST_RELATIVE);
 const CHANNEL_NAME_RE = /^[A-Za-z0-9._-]+$/;
 const VERSION_TIMEOUT_MS = 25_000;
 export const QUOTA_DISCLAIMER = "探针绿 ≠ 有额度;额度以口径文件与 Fei 为准。";
@@ -122,10 +126,17 @@ export function formatHuman(channels) {
  * @param {string[]} argv
  */
 export function parseProbeArgs(argv) {
-	const out = { json: false, channels: DEFAULT_CHANNELS, quotaFile: DEFAULT_QUOTA_FILE };
+	const out = {
+		json: false,
+		writeLatest: false,
+		channels: DEFAULT_CHANNELS,
+		quotaFile: DEFAULT_QUOTA_FILE,
+		latestFile: DEFAULT_LATEST_FILE,
+	};
 	for (let i = 0; i < argv.length; i += 1) {
 		const arg = argv[i];
 		if (arg === "--json") out.json = true;
+		else if (arg === "--write-latest") out.writeLatest = true;
 		else if (arg === "--channels") {
 			i += 1;
 			out.channels = (argv[i] ?? "")
@@ -135,9 +146,36 @@ export function parseProbeArgs(argv) {
 		} else if (arg === "--quota-file") {
 			i += 1;
 			out.quotaFile = resolve(argv[i] ?? "");
+		} else if (arg === "--latest-file") {
+			i += 1;
+			out.latestFile = resolve(argv[i] ?? "");
 		}
 	}
 	return out;
+}
+
+/**
+ * Atomically write `{ at, channels }` (same channel rows as `--json`, wrapped with ISO `at`).
+ * @param {string} path
+ * @param {Array<{ name: string, alive: boolean, version: string | null, error: string | null, quota: string }>} channels
+ * @param {string} [at]
+ */
+export function writeLatestArchive(path, channels, at = new Date().toISOString()) {
+	const dir = dirname(path);
+	mkdirSync(dir, { recursive: true });
+	const body = `${JSON.stringify({ at, channels })}\n`;
+	const tmp = join(dir, `.${basename(path)}.${process.pid}.tmp`);
+	writeFileSync(tmp, body, "utf8");
+	try {
+		renameSync(tmp, path);
+	} catch {
+		try {
+			unlinkSync(path);
+		} catch {
+			// dest may not exist; the second rename is the real failure if this also throws
+		}
+		renameSync(tmp, path);
+	}
 }
 
 function isMain() {
@@ -154,6 +192,7 @@ function main(argv = process.argv.slice(2)) {
 	const args = parseProbeArgs(argv);
 	const quota = loadQuotaMap(args.quotaFile);
 	const channels = probeChannels(args.channels, { quota });
+	if (args.writeLatest) writeLatestArchive(args.latestFile, channels);
 	if (args.json) process.stdout.write(`${JSON.stringify(channels)}\n`);
 	else process.stdout.write(formatHuman(channels));
 	process.exit(channels.some((channel) => channel.alive) ? 0 : 1);

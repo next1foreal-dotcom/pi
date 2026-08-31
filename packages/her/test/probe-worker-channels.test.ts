@@ -5,6 +5,7 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -106,4 +107,39 @@ test("G-354 CLI human output prints the quota disclaimer", () => {
 	]);
 	assert.match(stdoutText(result.stdout), /探针绿 ≠ 有额度;额度以口径文件与 Fei 为准/);
 	assert.equal(result.status, 1);
+});
+
+test("G-356 --write-latest writes {at, channels} JSON to --latest-file", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "g356-latest-"));
+	const dest = join(dir, "channel-probe-latest.json");
+	const result = runProbe([
+		"--json",
+		"--channels",
+		"definitely-not-a-cli-xyz",
+		"--write-latest",
+		"--latest-file",
+		dest,
+	]);
+	assert.equal(result.error, undefined);
+	assert.equal(existsSync(dest), true, "flag must write the archive");
+	const parsed = JSON.parse(readFileSync(dest, "utf8")) as {
+		at: string;
+		channels: Channel[];
+	};
+	assert.equal(typeof parsed.at, "string");
+	assert.equal(Number.isNaN(Date.parse(parsed.at)), false, "at must be ISO-parseable");
+	assert.equal(Array.isArray(parsed.channels), true);
+	assert.equal(parsed.channels.length, 1);
+	assert.equal(parsed.channels[0].name, "definitely-not-a-cli-xyz");
+	assert.equal(parsed.channels[0].alive, false);
+	const stdoutChannels = parseChannels(result.stdout);
+	assert.deepEqual(parsed.channels, stdoutChannels);
+});
+
+test("G-356 without --write-latest does not write --latest-file", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "g356-nolatest-"));
+	const dest = join(dir, "channel-probe-latest.json");
+	const result = runProbe(["--json", "--channels", "definitely-not-a-cli-xyz", "--latest-file", dest]);
+	assert.equal(result.error, undefined);
+	assert.equal(existsSync(dest), false, "absent --write-latest must not create the archive");
 });

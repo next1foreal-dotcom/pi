@@ -28,6 +28,7 @@ import {
 	saveBgTaskTransition,
 	tasksDir,
 } from "./bg-task-record.ts";
+import { assertFreshExternalCliProbe, SAMANTHA_REPO_ROOT } from "./channel-probe-gate.ts";
 import { enforceDailyCostCap } from "./cost-ledger.ts";
 import { discardPartialTaskWorktree, ensureTaskWorktree } from "./long-task-worktree.ts";
 import { redactSecrets, writeJson, writeText } from "./store.ts";
@@ -40,6 +41,7 @@ import {
 	resolveWorkerInvocation,
 	resolveWorkerModel,
 	type WorkerProfile,
+	workerCliName,
 } from "./worker-profile.ts";
 
 const DEFAULT_ALLOW = new Set(["node", "nodejs"]);
@@ -82,6 +84,11 @@ export type SpawnBgTaskInput = {
 	skipGates?: boolean;
 	/** Internal trusted command path: allow the configured CLI shim chain in command mode. */
 	allowComspec?: boolean;
+	/**
+	 * Test hook: override the samantha repo root used to read
+	 * `ops/channel-probe-latest.json`. Production always uses SAMANTHA_REPO_ROOT.
+	 */
+	probeRepoRoot?: string;
 };
 
 type SpawnMode = "worker" | "command";
@@ -286,6 +293,11 @@ export async function spawnBgTask(
 		workerProfile = resolveWorkerInvocation(cfg.workers, workerName);
 		assertBriefWithinCap(input.brief ?? "", cfg.tasks.briefCapBytes);
 		command = workerProfile.argv;
+		assertFreshExternalCliProbe({
+			cliName: workerCliName(workerProfile.argv[0]),
+			maxAgeHours: cfg.tasks.probeMaxAgeHours,
+			repoRoot: input.probeRepoRoot?.trim() ? resolve(input.probeRepoRoot.trim()) : SAMANTHA_REPO_ROOT,
+		});
 	} else {
 		assertCommandAllowed(input.command ?? [], cfg.workers);
 		command = input.command ?? [];

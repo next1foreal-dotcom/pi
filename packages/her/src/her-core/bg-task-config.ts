@@ -44,6 +44,11 @@ export type TasksConfig = {
 	eventWakeSpawnBlock: boolean;
 	/** G-147 v2 — pre-built git worktree slots (clamped 0–2 at use site). */
 	warmWorktreePoolSize: number;
+	/**
+	 * G-356 — max age of ops/channel-probe-latest.json before spawn refuses an
+	 * external CLI worker. 0 disables the gate.
+	 */
+	probeMaxAgeHours: number;
 };
 
 export type PublishConfig = {
@@ -79,6 +84,7 @@ export const DEFAULT_TASKS_CONFIG: TasksConfig = {
 	eventWakeDailyMax: 6, // event_wake_daily_max — 我垫的:soak 起步,跑稳一周再提
 	eventWakeSpawnBlock: true, // event_wake_spawn_block — 唤醒回合内 her_task_spawn 硬拒
 	warmWorktreePoolSize: 0, // warm_worktree_pool_size — G-147 v2:默认关;生产可设 1–2
+	probeMaxAgeHours: 24, // probe_max_age_hours — G-356: spawn 闸窗口小时;0 = 关
 };
 
 export const DEFAULT_PUBLISH_CONFIG: PublishConfig = {

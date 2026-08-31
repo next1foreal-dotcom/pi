@@ -246,7 +246,7 @@ export function prepareWorkerCommand(
 }
 
 /** Strip Windows shim suffixes so `grok.exe` / `grok.cmd` still identify as grok. */
-function workerCliName(file: string | undefined): string {
+export function workerCliName(file: string | undefined): string {
 	return basename(file ?? "")
 		.toLowerCase()
 		.replace(/\.(exe|cmd|bat)$/i, "");
