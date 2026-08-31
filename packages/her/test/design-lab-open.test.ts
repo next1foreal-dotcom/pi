@@ -105,7 +105,7 @@ test("design_lab_open is registered as a no-arg non-destructive governed tool", 
 	assert.deepEqual(tools.get("design_lab_open")?.parameters, { type: "object", properties: {} });
 });
 
-test("already-listening reuses the server, skips start, navigates 5180 through the control-owner gate", async () => {
+test("already-listening reuses the server, skips start, navigates 5180 via the human path", async () => {
 	const fetchImpl = fakeFetch(() => new Response(JSON.stringify({ ok: true }), { status: 200 }));
 	let starts = 0;
 	const tools = previewHarness({
@@ -125,7 +125,7 @@ test("already-listening reuses the server, skips start, navigates 5180 through t
 	assert.equal(details.status, "already-running");
 	assert.match(text, /already-running|already listening/i);
 	assert.equal(fetchImpl.calls.length, 1);
-	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:4321/api/browser/agent-navigate");
+	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:4321/api/browser/navigate");
 	assert.equal(fetchImpl.calls[0].init.method, "POST");
 	assert.deepEqual(JSON.parse(String(fetchImpl.calls[0].init.body)), { url: DESIGN_LAB_URL });
 	assert.equal(DESIGN_LAB_PORT, 5180);
@@ -161,7 +161,7 @@ test("not listening starts via nested bat then reports opened after the port is 
 	assert.deepEqual(starts[0].args.slice(0, 4), ["/c", "start", "", "/min"]);
 	assert.equal(details.status, "opened");
 	assert.match(text, /opened/i);
-	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:4321/api/browser/agent-navigate");
+	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:4321/api/browser/navigate");
 	assert.deepEqual(JSON.parse(String(fetchImpl.calls[0].init.body)), { url: "http://localhost:5180" });
 });
 
@@ -250,25 +250,31 @@ test("HER_UI_BASE_URL override is the navigate base; missing env does not fall b
 		if (previous === undefined) delete process.env.HER_UI_BASE_URL;
 		else process.env.HER_UI_BASE_URL = previous;
 	}
-	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:7777/api/browser/agent-navigate");
+	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:7777/api/browser/navigate");
 });
 
-test("control-owner-denied uses the same handback wording as browser_navigate", async () => {
-	const fetchImpl = fakeFetch(
-		() => new Response(JSON.stringify({ ok: false, error: "control-owner-denied" }), { status: 409 }),
+test("design_lab_open opens without a handback while browser_navigate stays behind the gate", async () => {
+	// Fei 2026-08-31: design work should pop the canvas open automatically. The
+	// exception is safe because the destination is a fixed constant and the tool
+	// takes no parameters; every other browser tool must keep the gate.
+	const fetchImpl = fakeFetch((url) =>
+		url.includes("/api/browser/agent-navigate")
+			? new Response(JSON.stringify({ ok: false, error: "control-owner-denied" }), { status: 409 })
+			: new Response(JSON.stringify({ ok: true }), { status: 200 }),
 	);
 	const tools = previewHarness({
 		fetchImpl,
 		designLab: { probe: async () => true, writeAndStart: async () => {} },
 	});
 
-	const denied = await run(tools.get("design_lab_open"));
+	const lab = await run(tools.get("design_lab_open"));
 	const navigateDenied = await run(tools.get("browser_navigate"), { url: "https://example.com" });
 
-	assert.match(denied.text, /Fei/);
-	assert.match(denied.text, /hand.*back|handback/i);
-	assert.equal(denied.details.status, "failed");
-	assert.equal(denied.text, navigateDenied.text);
+	assert.equal(lab.details.status, "already-running");
+	assert.match(lab.text, /already-running|already listening/i);
+	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:4321/api/browser/navigate");
+	assert.match(navigateDenied.text, /Fei/);
+	assert.match(navigateDenied.text, /hand.*back|handback/i);
 });
 
 test("navigate connection-refused is failed naming the Studio base, no throw", async () => {

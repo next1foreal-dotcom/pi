@@ -197,8 +197,9 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 		description:
 			"Open the her design-lab canvas in Fei's Studio live browser pane at http://localhost:5180. " +
 			"Probes port 5180 and reuses a running lab; otherwise starts it detached via a nested cmd start. " +
-			"Ready in a log is not success — the port must be listening. Navigation uses the same " +
-			"control-owner gate as browser_navigate.",
+			"Ready in a log is not success — the port must be listening. Opens the pane directly, no " +
+			"handback needed: the destination is fixed to the design lab and the tool takes no parameters, " +
+			"so it cannot steer the pane anywhere else. All other browser driving stays gated.",
 		parameters: Type.Object({}),
 		async execute(_toolCallId, _params, signal) {
 			const ready = await ensureDesignLabReady({ ...deps.designLab, signal });
@@ -206,7 +207,20 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 				return textResult(`failed: ${ready.reason}`, { status: "failed", reason: ready.reason });
 			}
 			const base = resolveStudioUiBase();
-			const nav = await navigateStudioBrowser(fetchImpl, base, DESIGN_LAB_URL, signal, browserTimeoutMs);
+			// Human-path navigate on purpose (Fei 2026-08-31: the canvas pops open
+			// without a handback). The exception is safe because DESIGN_LAB_URL is a
+			// fixed constant and the tool takes no parameters — it cannot steer the
+			// pane anywhere else. Every other browser tool stays behind the
+			// control-owner gate.
+			const nav = await postJson(
+				fetchImpl,
+				base,
+				"/api/browser/navigate",
+				{ url: DESIGN_LAB_URL },
+				signal,
+				browserTimeoutMs,
+				{ successText: () => `Navigated to ${DESIGN_LAB_URL}` },
+			);
 			const navText = nav.content[0]?.text ?? "";
 			if (navText.startsWith(`Navigated to ${DESIGN_LAB_URL}`)) {
 				const text =
