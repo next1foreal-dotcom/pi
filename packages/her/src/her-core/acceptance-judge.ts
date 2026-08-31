@@ -146,11 +146,13 @@ export async function runAcceptanceJudge(
 	}
 	const parsed = parseJudgeVerdict(trimmed);
 	if (!parsed) {
-		return failJudge({
+		const failed = await failJudge({
 			error: "unusable model response: missing or invalid verdict",
 			log,
 			sendTelegram: opts.sendTelegram,
 		});
+		const head = trimmed.replace(/\s+/g, " ").trim().slice(0, 120);
+		return { ...failed, error: `${failed.error}; head: ${head}` };
 	}
 
 	const evidenceGaps = unionGaps(parsed.evidence_gaps, assembled.evidence_gaps);
@@ -362,6 +364,46 @@ async function defaultGitRead(cwd: string, args: readonly string[]): Promise<{ s
 	return { stdout, stderr };
 }
 
+export function extractJudgeJson(raw: string): string | null {
+	const fence = /```(?:json)?[ \t]*\r?\n?([\s\S]*?)```/i.exec(raw);
+	const source = fence ? (fence[1] ?? "") : raw;
+	const trimmed = source.trim();
+	if (!trimmed) return null;
+	const start = trimmed.startsWith("[") ? 0 : trimmed.indexOf("{");
+	if (start < 0) return null;
+	return sliceBalancedJson(trimmed, start);
+}
+
+function sliceBalancedJson(source: string, start: number): string | null {
+	const opener = source[start];
+	if (opener !== "{" && opener !== "[") return null;
+	let depth = 0;
+	let inString = false;
+	let escaped = false;
+	for (let i = start; i < source.length; i++) {
+		const char = source[i];
+		if (escaped) {
+			escaped = false;
+			continue;
+		}
+		if (inString) {
+			if (char === "\\") escaped = true;
+			else if (char === '"') inString = false;
+			continue;
+		}
+		if (char === '"') {
+			inString = true;
+			continue;
+		}
+		if (char === "{" || char === "[") depth++;
+		else if (char === "}" || char === "]") {
+			depth--;
+			if (depth === 0) return source.slice(start, i + 1);
+		}
+	}
+	return null;
+}
+
 function parseJudgeVerdict(raw: string): {
 	verdict: AcceptanceJudgeVerdict;
 	reasons: string[];
@@ -370,9 +412,11 @@ function parseJudgeVerdict(raw: string): {
 	evidence_gaps: string[];
 	confidence: AcceptanceJudgeConfidence;
 } | null {
+	const candidate = extractJudgeJson(raw);
+	if (candidate === null) return null;
 	let value: unknown;
 	try {
-		value = JSON.parse(raw);
+		value = JSON.parse(candidate);
 	} catch {
 		return null;
 	}

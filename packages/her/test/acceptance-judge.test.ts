@@ -23,6 +23,7 @@ import {
 	ACCEPT_MODEL_TIMEOUT_MS,
 	acceptanceJudgeFilename,
 	assembleAcceptanceEvidence,
+	extractJudgeJson,
 	runAcceptanceJudge,
 } from "../src/her-core/acceptance-judge.ts";
 import { ACCEPTANCE_REPORT_FILENAME } from "../src/her-core/bg-task-acceptance.ts";
@@ -315,6 +316,89 @@ test("model failure does not write a verdict file, exits non-zero, notifies", as
 		await readFile(join(tasksDir(memory), acceptanceJudgeFilename(id)), "utf8").catch(() => "missing"),
 		"missing",
 	);
+});
+
+test("fenced json verdict parses", async () => {
+	const fenced = ["```json", PASS_JSON, "```"].join("\n");
+	const extracted = extractJudgeJson(fenced);
+	assert.ok(extracted);
+	assert.equal(JSON.parse(extracted).verdict, "PASS");
+	const memory = await tempMemory();
+	const id = await writeTask(memory);
+	const result = await runAcceptanceJudge(memory, id, {
+		model: new FakeModel(fenced),
+		now: NOW,
+	});
+	assert.equal(result.ran, true);
+	assert.equal(result.document?.verdict, "PASS");
+});
+
+test("prose prefix then naked json verdict parses", async () => {
+	const prefixed = `好的,以下是判词:\n${PASS_JSON}`;
+	const extracted = extractJudgeJson(prefixed);
+	assert.ok(extracted);
+	assert.equal(JSON.parse(extracted).verdict, "PASS");
+	const memory = await tempMemory();
+	const id = await writeTask(memory);
+	const result = await runAcceptanceJudge(memory, id, {
+		model: new FakeModel(prefixed),
+		now: NOW,
+	});
+	assert.equal(result.ran, true);
+	assert.equal(result.document?.verdict, "PASS");
+});
+
+test("valid json with misspelled verdict stays rejected", async () => {
+	const misspelled = JSON.stringify({
+		verdict: "PASSED",
+		reasons: [],
+		silences: [],
+		out_of_scope: [],
+		evidence_gaps: [],
+		confidence: "high",
+	});
+	assert.ok(extractJudgeJson(misspelled));
+	const memory = await tempMemory();
+	const id = await writeTask(memory);
+	const result = await runAcceptanceJudge(memory, id, {
+		model: new FakeModel(misspelled),
+		now: NOW,
+	});
+	assert.equal(result.ran, false);
+	assert.match(result.error ?? "", /verdict/);
+});
+
+test("prose without json is null and error includes head", async () => {
+	const prose = "好的,这任务看起来没问题,建议通过。没有结构化输出。";
+	assert.equal(extractJudgeJson(prose), null);
+	const memory = await tempMemory();
+	const id = await writeTask(memory);
+	const tg: string[] = [];
+	const result = await runAcceptanceJudge(memory, id, {
+		model: new FakeModel(prose),
+		now: NOW,
+		sendTelegram: async (text) => {
+			tg.push(text);
+		},
+	});
+	assert.equal(result.ran, false);
+	assert.match(result.error ?? "", /head:/);
+	assert.match(result.error ?? "", /好的,这任务看起来没问题/);
+	assert.equal(tg.length, 1);
+	assert.match(tg[0] ?? "", /accept failed: unusable model response: missing or invalid verdict/);
+	assert.equal(/head:/.test(tg[0] ?? ""), false);
+});
+
+test("top-level array is rejected", async () => {
+	const arrayJson = `[${PASS_JSON}]`;
+	const memory = await tempMemory();
+	const id = await writeTask(memory);
+	const result = await runAcceptanceJudge(memory, id, {
+		model: new FakeModel(arrayJson),
+		now: NOW,
+	});
+	assert.equal(result.ran, false);
+	assert.match(result.error ?? "", /verdict/);
 });
 
 test("model JSON missing verdict field fails loud and writes nothing", async () => {
