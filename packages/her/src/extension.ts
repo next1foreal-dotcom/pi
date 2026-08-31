@@ -1277,7 +1277,11 @@ export default function her(pi: ExtensionAPI): void {
 					body,
 				});
 				try {
-					wake = await maybeWake(memoryDir, params.to, loadRuntimeConfig(memoryDir).tasks);
+					const cfg = loadRuntimeConfig(memoryDir);
+					wake = await maybeWake(memoryDir, params.to, cfg.tasks, {
+						minBatch: cfg.tasks.messageWakeMinBatch,
+						maxAgeMs: cfg.tasks.messageWakeMaxAgeMinutes * 60_000,
+					});
 				} catch (error) {
 					console.warn(`[her] message wake check skipped: ${errorMessage(error)}`);
 				}

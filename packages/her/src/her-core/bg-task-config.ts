@@ -49,6 +49,10 @@ export type TasksConfig = {
 	 * external CLI worker. 0 disables the gate.
 	 */
 	probeMaxAgeHours: number;
+	/** G-373 — non-urgent cross-session wake: min unread count (maybeWake minBatch). */
+	messageWakeMinBatch: number;
+	/** G-373 — non-urgent cross-session wake: max age in minutes (maybeWake maxAgeMs). */
+	messageWakeMaxAgeMinutes: number;
 };
 
 export type PublishConfig = {
@@ -85,6 +89,8 @@ export const DEFAULT_TASKS_CONFIG: TasksConfig = {
 	eventWakeSpawnBlock: true, // event_wake_spawn_block — 唤醒回合内 her_task_spawn 硬拒
 	warmWorktreePoolSize: 0, // warm_worktree_pool_size — G-147 v2:默认关;生产可设 1–2
 	probeMaxAgeHours: 24, // probe_max_age_hours — G-356: spawn 闸窗口小时;0 = 关
+	messageWakeMinBatch: 3, // message_wake_min_batch — G-373: non-urgent wake batch; 1 = immediate
+	messageWakeMaxAgeMinutes: 30, // message_wake_max_age_minutes — G-373: non-urgent wake max age
 };
 
 export const DEFAULT_PUBLISH_CONFIG: PublishConfig = {
@@ -112,6 +118,12 @@ export function loadRuntimeConfig(memoryRoot: string, opts?: { failLoud?: boolea
 	if (tasks.staleMultiplier < 3) {
 		warnings.push("tasks.stale_multiplier < 3 forced to 3");
 		tasks.staleMultiplier = 3;
+	}
+	if (!(tasks.messageWakeMinBatch >= 1)) {
+		tasks.messageWakeMinBatch = DEFAULT_TASKS_CONFIG.messageWakeMinBatch;
+	}
+	if (!(tasks.messageWakeMaxAgeMinutes >= 0)) {
+		tasks.messageWakeMaxAgeMinutes = DEFAULT_TASKS_CONFIG.messageWakeMaxAgeMinutes;
 	}
 	const publish = { ...DEFAULT_PUBLISH_CONFIG, ...(raw.publish ?? {}) };
 	const failLoud = opts?.failLoud === true || process.env.HER_TASKS_FAIL_LOUD === "1";

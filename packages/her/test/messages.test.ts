@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readdir, readFile, stat, writeFile } from "node:fs/prom
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
-import { DEFAULT_TASKS_CONFIG, type TasksConfig } from "../src/her-core/bg-task-config.ts";
+import { DEFAULT_TASKS_CONFIG, loadRuntimeConfig, type TasksConfig } from "../src/her-core/bg-task-config.ts";
 import { recordEventWake } from "../src/her-core/event-wake.ts";
 import {
 	archiveInbox,
@@ -233,6 +233,49 @@ test("a single ordinary fresh message does not wake before batch or timeout", as
 		body: "x",
 	});
 	assert.deepEqual(await maybeWake(root, PI_ID, tasks(), { now: NOW }), { woke: false, reason: "threshold" });
+});
+
+test("message wake knobs load from yaml and default to 3/30", async () => {
+	const setRoot = await rootStore();
+	await mkdir(join(setRoot, ".her"), { recursive: true });
+	await writeFile(
+		join(setRoot, ".her", "config.yaml"),
+		"tasks:\n  message_wake_min_batch: 1\n  message_wake_max_age_minutes: 5\n",
+		"utf8",
+	);
+	const set = loadRuntimeConfig(setRoot);
+	assert.equal(set.tasks.messageWakeMinBatch, 1);
+	assert.equal(set.tasks.messageWakeMaxAgeMinutes, 5);
+
+	const missingRoot = await rootStore();
+	const missing = loadRuntimeConfig(missingRoot);
+	assert.equal(missing.tasks.messageWakeMinBatch, 3);
+	assert.equal(missing.tasks.messageWakeMaxAgeMinutes, 30);
+	assert.equal(DEFAULT_TASKS_CONFIG.messageWakeMinBatch, 3);
+	assert.equal(DEFAULT_TASKS_CONFIG.messageWakeMaxAgeMinutes, 30);
+});
+
+test("maybeWake uses config minBatch so a single non-urgent message can wake immediately", async () => {
+	const root = await rootStore();
+	await mkdir(join(root, ".her"), { recursive: true });
+	await writeFile(join(root, ".her", "config.yaml"), "tasks:\n  message_wake_min_batch: 1\n", "utf8");
+	const cfg = loadRuntimeConfig(root);
+	await writeMessage(root, {
+		from: REAL_FROM,
+		to: PI_ID,
+		at: NOW.toISOString(),
+		urgent: false,
+		origin: "immediate",
+		body: "x",
+	});
+	assert.deepEqual(
+		await maybeWake(root, PI_ID, cfg.tasks, {
+			now: NOW,
+			minBatch: cfg.tasks.messageWakeMinBatch,
+			maxAgeMs: cfg.tasks.messageWakeMaxAgeMinutes * 60_000,
+		}),
+		{ woke: true },
+	);
 });
 
 test("same origin does not create an echo wake on the return hop", async () => {
