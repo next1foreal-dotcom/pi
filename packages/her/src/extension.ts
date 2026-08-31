@@ -18,6 +18,7 @@ import { CuaCliDriver } from "./hands/driver.ts";
 import { resolveHandsConfig } from "./hands/policy.ts";
 import { registerHandsTools } from "./hands/tools.ts";
 import { registerHerActTools } from "./her-actions/tools.ts";
+import { buildAskMessage } from "./her-core/ask.ts";
 import { canDeliverWake, formatOwnerTakeoverNote } from "./her-core/bg-task-owner.ts";
 import { listBgTaskPs, renderBgTaskPs } from "./her-core/bg-task-ps.ts";
 import { BG_TASK_STATUSES } from "./her-core/bg-task-record.ts";
@@ -1306,6 +1307,42 @@ export default function her(pi: ExtensionAPI): void {
 				wake,
 				...(notifyWhenIdle ? { notifyWhenIdle: true } : {}),
 			});
+		},
+	});
+
+	pi.registerTool({
+		name: "her_ask",
+		label: "Her Ask",
+		description:
+			"Pop a structured option card for Fei: one question plus 2 to 6 options. Wait for his click or typed reply; do not answer on his behalf.",
+		parameters: Type.Object({
+			question: Type.String({ description: "Question shown on the card, at most 500 characters" }),
+			options: Type.Array(
+				Type.Object({
+					label: Type.String({ description: "Option label, at most 60 characters" }),
+					description: Type.Optional(Type.String({ description: "Optional explanation, at most 200 characters" })),
+				}),
+				{ minItems: 2, maxItems: 6, description: "Two to six options" },
+			),
+			multi: Type.Optional(Type.Boolean({ description: "When true, Fei may pick more than one option" })),
+		}),
+		async execute(_toolCallId, params) {
+			try {
+				const { content, details } = buildAskMessage({
+					question: params.question,
+					options: params.options,
+					multi: params.multi,
+				});
+				pi.sendMessage({
+					customType: "her-ask",
+					content,
+					display: true,
+					details,
+				});
+				return textResult("选项卡已弹出;本回合到此,等 Fei 点选,不要替他作答。", { phase: "G-375" });
+			} catch (error) {
+				return textResult(errorMessage(error), { phase: "G-375", status: "error" });
+			}
 		},
 	});
 
