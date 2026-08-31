@@ -34,6 +34,7 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	her_task_continue: { destructive: true },
 	her_task_stop: { destructive: true },
 	her_task_output: { destructive: false },
+	her_task_ps: { destructive: false },
 	her_bg_task_list: { destructive: false },
 	her_publish: { destructive: true },
 	her_privacy_audit: { destructive: false },
