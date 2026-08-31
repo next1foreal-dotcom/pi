@@ -1,10 +1,22 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import {
+	lstat,
+	mkdir,
+	mkdtemp,
+	readdir,
+	readFile,
+	realpath,
+	rm,
+	rmdir,
+	symlink,
+	unlink,
+	writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import test from "node:test";
+import test, { describe } from "node:test";
 import { promisify } from "node:util";
 import {
 	DISPATCH_GROUND_RULES,
@@ -874,4 +886,286 @@ test("estimateUsdFromNdjson reads the settled message.usage.cost.total pi actual
 test("estimateUsdFromNdjson returns undefined for stub output with no usage at all", () => {
 	assert.equal(estimateUsdFromNdjson(""), undefined);
 	assert.equal(estimateUsdFromNdjson("not json\nalso not json"), undefined);
+});
+
+const JUNCTION_TYPE = process.platform === "win32" ? "junction" : "dir";
+
+async function tempHostWithNodeModules(): Promise<string> {
+	const host = await mkdtemp(join(tmpdir(), "her-dispatch-host-"));
+	const files: Array<[string, string]> = [
+		[join("node_modules", ".bin", "probe-1.txt"), "one\n"],
+		[join("node_modules", ".bin", "probe-2.txt"), "two\n"],
+		[join("node_modules", ".bin", "probe-3.txt"), "three\n"],
+		[join("node_modules", "keep-me.txt"), "keep\n"],
+		[join("node_modules", "nested", "deep.txt"), "deep\n"],
+	];
+	for (const [rel, body] of files) {
+		const abs = join(host, rel);
+		await mkdir(join(abs, ".."), { recursive: true });
+		await writeFile(abs, body, "utf8");
+	}
+	return host;
+}
+
+async function snapshotFiles(root: string): Promise<Record<string, string>> {
+	const out: Record<string, string> = {};
+	const stack = [""];
+	while (stack.length > 0) {
+		const rel = stack.pop() ?? "";
+		const abs = rel ? join(root, rel) : root;
+		let entries: Array<{ isDirectory(): boolean; isFile(): boolean; isSymbolicLink(): boolean; name: string }>;
+		try {
+			entries = await readdir(abs, { withFileTypes: true });
+		} catch {
+			continue;
+		}
+		for (const entry of entries) {
+			const childRel = rel ? `${rel.replace(/\\/g, "/")}/${entry.name}` : entry.name;
+			if (entry.isSymbolicLink()) continue;
+			if (entry.isDirectory()) {
+				stack.push(childRel);
+				continue;
+			}
+			if (entry.isFile()) out[childRel] = await readFile(join(abs, entry.name), "utf8");
+		}
+	}
+	return out;
+}
+
+async function unlinkIfLink(path: string): Promise<void> {
+	try {
+		await rmdir(path);
+	} catch {
+		try {
+			await unlink(path);
+		} catch {
+			/* missing or not a link */
+		}
+	}
+}
+
+async function unlinkLinksUnder(root: string): Promise<void> {
+	const stack = [root];
+	while (stack.length > 0) {
+		const dir = stack.pop();
+		if (!dir) break;
+		let entries: Array<{ isDirectory(): boolean; isSymbolicLink(): boolean; name: string }>;
+		try {
+			entries = await readdir(dir, { withFileTypes: true });
+		} catch {
+			continue;
+		}
+		for (const entry of entries) {
+			const child = join(dir, entry.name);
+			let isLink = entry.isSymbolicLink();
+			if (!isLink) {
+				try {
+					isLink = (await lstat(child)).isSymbolicLink();
+				} catch {
+					continue;
+				}
+			}
+			if (isLink) {
+				await unlinkIfLink(child);
+				continue;
+			}
+			if (entry.isDirectory()) stack.push(child);
+		}
+	}
+}
+
+async function ensureJunction(source: string, dest: string): Promise<void> {
+	try {
+		await lstat(dest);
+		return;
+	} catch {
+		/* dest missing */
+	}
+	await symlink(source, dest, JUNCTION_TYPE);
+}
+
+async function cleanupDispatchJunctionFixture(opts: {
+	cwd: string;
+	host: string;
+	memoryDir: string;
+	worktreeRoot: string;
+}): Promise<void> {
+	await unlinkLinksUnder(opts.worktreeRoot);
+	await unlinkLinksUnder(opts.cwd);
+	await git(opts.cwd, "worktree", "prune").catch(() => undefined);
+	await rm(opts.worktreeRoot, { force: true, recursive: true }).catch(() => undefined);
+	await rm(opts.host, { force: true, recursive: true }).catch(() => undefined);
+	await rm(opts.cwd, { force: true, recursive: true }).catch(() => undefined);
+	await rm(opts.memoryDir, { force: true, recursive: true }).catch(() => undefined);
+}
+
+describe("dispatch worktree node_modules junction", () => {
+	test("createDispatchWorktree junctions host node_modules into the worktree", { timeout: 60_000 }, async () => {
+		const host = await tempHostWithNodeModules();
+		const cwd = await tempGitRepo();
+		const memoryDir = await tempMemoryStore();
+		const worktreeRoot = await tempWorktreeStagingRoot();
+		const handoffPath = await tempHandoff("# Junction create\n\nMount node_modules.\n");
+		try {
+			const result = await runDispatch({
+				cwd,
+				env: {
+					...process.env,
+					HER_DISPATCH_NODE_MODULES: join(host, "node_modules"),
+					HER_DISPATCH_WORKTREE_ROOT: worktreeRoot,
+				},
+				executor: "pi:deepseek",
+				handoffPath,
+				memoryDir,
+				spawnExecutor: committingStub([{ path: "keep-worktree.txt", content: "keep\n" }]),
+			});
+			assert.ok(result.worktreePath, "expected worktree to remain after a commit");
+			const dest = join(result.worktreePath ?? "", "node_modules");
+			const st = await lstat(dest);
+			assert.ok(st.isSymbolicLink(), "expected node_modules to be a junction (win32) or dir symlink");
+			assert.equal(await readFile(join(dest, ".bin", "probe-1.txt"), "utf8"), "one\n");
+			assert.equal(await realpath(dest), await realpath(join(host, "node_modules")));
+		} finally {
+			await cleanupDispatchJunctionFixture({ cwd, host, memoryDir, worktreeRoot });
+		}
+	});
+
+	test(
+		"removeDispatchWorktree unlinks junctions and does not delete host node_modules",
+		{ timeout: 60_000 },
+		async () => {
+			const host = await tempHostWithNodeModules();
+			const cwd = await tempGitRepo();
+			const memoryDir = await tempMemoryStore();
+			const worktreeRoot = await tempWorktreeStagingRoot();
+			const handoffPath = await tempHandoff("# Junction remove\n\nDo not penetrate host node_modules.\n");
+			const hostNm = join(host, "node_modules");
+			const before = await snapshotFiles(hostNm);
+			assert.equal(Object.keys(before).length, 5);
+			let worktreePath = "";
+			try {
+				const result = await runDispatch({
+					cwd,
+					env: {
+						...process.env,
+						HER_DISPATCH_NODE_MODULES: hostNm,
+						HER_DISPATCH_WORKTREE_ROOT: worktreeRoot,
+					},
+					executor: "pi:deepseek",
+					handoffPath,
+					memoryDir,
+					spawnExecutor: async (opts) => {
+						worktreePath = opts.cwd;
+						await ensureJunction(hostNm, join(opts.cwd, "node_modules"));
+						return okStub();
+					},
+				});
+				assert.equal(result.status, "completed");
+				assert.equal(result.commits, 0);
+				const after = await snapshotFiles(hostNm);
+				assert.deepEqual(after, before, "host node_modules files must survive worktree removal");
+				assert.equal(Object.keys(after).length, 5);
+				const treeGone = !existsSync(worktreePath);
+				let linkGone = true;
+				if (!treeGone) {
+					try {
+						linkGone = !(await lstat(join(worktreePath, "node_modules"))).isSymbolicLink();
+					} catch {
+						linkGone = true;
+					}
+				}
+				assert.ok(treeGone || linkGone, "expected worktree gone or node_modules unlinked");
+			} finally {
+				await cleanupDispatchJunctionFixture({ cwd, host, memoryDir, worktreeRoot });
+			}
+		},
+	);
+
+	test(
+		"removeDispatchWorktree scans leftover nested junctions before deleting the tree",
+		{ timeout: 60_000 },
+		async () => {
+			const host = await tempHostWithNodeModules();
+			const cwd = await tempGitRepo();
+			const memoryDir = await tempMemoryStore();
+			const worktreeRoot = await tempWorktreeStagingRoot();
+			const handoffPath = await tempHandoff("# Junction leftover scan\n\nUnlink extra leftovers.\n");
+			const hostNm = join(host, "node_modules");
+			const before = await snapshotFiles(hostNm);
+			let leftover = "";
+			let worktreePath = "";
+			try {
+				await runDispatch({
+					cwd,
+					env: {
+						...process.env,
+						HER_DISPATCH_NODE_MODULES: hostNm,
+						HER_DISPATCH_WORKTREE_ROOT: worktreeRoot,
+					},
+					executor: "pi:deepseek",
+					handoffPath,
+					memoryDir,
+					spawnExecutor: async (opts) => {
+						worktreePath = opts.cwd;
+						await ensureJunction(hostNm, join(opts.cwd, "node_modules"));
+						leftover = join(opts.cwd, "vendor", "extra-link");
+						await mkdir(join(opts.cwd, "vendor"), { recursive: true });
+						await ensureJunction(hostNm, leftover);
+						return okStub();
+					},
+				});
+				const after = await snapshotFiles(hostNm);
+				assert.deepEqual(after, before, "host node_modules must survive leftover-junction teardown");
+				assert.equal(Object.keys(after).length, 5);
+				assert.equal(existsSync(leftover), false, "expected leftover nested junction to be unlinked");
+				assert.equal(existsSync(worktreePath), false);
+			} finally {
+				await cleanupDispatchJunctionFixture({ cwd, host, memoryDir, worktreeRoot });
+			}
+		},
+	);
+
+	test(
+		"removeDispatchWorktree records unlink failures as warnings instead of swallowing them",
+		{ timeout: 60_000 },
+		async () => {
+			const host = await mkdtemp(join(tmpdir(), "her-dispatch-warn-host-"));
+			const cwd = await tempGitRepo();
+			const memoryDir = await tempMemoryStore();
+			const worktreeRoot = await tempWorktreeStagingRoot();
+			const handoffPath = await tempHandoff("# Junction warning\n\nSurface unlink errors.\n");
+			const errors: string[] = [];
+			const originalError = console.error;
+			console.error = (...args: unknown[]) => {
+				errors.push(args.map(String).join(" "));
+				originalError.apply(console, args);
+			};
+			try {
+				await runDispatch({
+					cwd,
+					env: {
+						...process.env,
+						HER_DISPATCH_NODE_MODULES: join(host, "missing-node-modules"),
+						HER_DISPATCH_WORKTREE_ROOT: worktreeRoot,
+					},
+					executor: "pi:deepseek",
+					handoffPath,
+					memoryDir,
+					spawnExecutor: async (opts) => {
+						const nm = join(opts.cwd, "node_modules");
+						await mkdir(join(nm, "keep"), { recursive: true });
+						await writeFile(join(nm, "keep", "x.txt"), "x\n", "utf8");
+						return okStub();
+					},
+				});
+				assert.ok(
+					errors.some((line) => /unlink-junction/i.test(line)),
+					`expected an unlink-junction warning, got: ${errors.join(" | ") || "(none)"}`,
+				);
+			} finally {
+				console.error = originalError;
+				await cleanupDispatchJunctionFixture({ cwd, host, memoryDir, worktreeRoot });
+			}
+		},
+	);
 });

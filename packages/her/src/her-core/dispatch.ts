@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { appendFile, mkdir, rm } from "node:fs/promises";
+import { appendFile, lstat, mkdir, readdir, rm, rmdir, symlink, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -563,6 +563,7 @@ async function createDispatchWorktree(
 	const branch = `dispatch/${dispatchId}`;
 	await mkdir(dirname(worktreePath), { recursive: true });
 	await git(cwd, "worktree", "add", worktreePath, "-b", branch, "HEAD");
+	await junctionNodeModules(worktreePath, dispatchNodeModulesSource(env));
 	return { branch, headSha, remoteRefs, worktreePath };
 }
 
@@ -572,9 +573,123 @@ async function createDispatchWorktree(
  * worktree and branch in place for the acceptor to merge/cherry-pick and clean up.
  */
 async function removeDispatchWorktree(cwd: string, worktree: DispatchWorktree): Promise<void> {
-	await git(cwd, "worktree", "remove", worktree.worktreePath, "--force").catch(() => undefined);
-	await rm(worktree.worktreePath, { force: true, recursive: true }).catch(() => undefined);
-	await git(cwd, "branch", "-D", worktree.branch).catch(() => undefined);
+	const warnings: string[] = [];
+	const worktreePath = worktree.worktreePath;
+	try {
+		await unlinkJunction(join(worktreePath, "node_modules"));
+	} catch (error) {
+		if (!isMissing(error)) warnings.push(`unlink-junction: ${errorMessage(error)}`);
+	}
+	try {
+		for (const leftover of await scanJunctions(worktreePath)) {
+			try {
+				await unlinkJunction(leftover);
+			} catch (error) {
+				if (!isMissing(error)) warnings.push(`scan-unlink ${leftover}: ${errorMessage(error)}`);
+			}
+		}
+	} catch (error) {
+		if (!isMissing(error)) warnings.push(`scan-junctions: ${errorMessage(error)}`);
+	}
+	try {
+		await git(cwd, "worktree", "remove", worktreePath, "--force");
+	} catch (error) {
+		if (!isMissing(error)) warnings.push(`worktree-remove: ${errorMessage(error)}`);
+	}
+	try {
+		await rm(worktreePath, { force: true, recursive: true });
+	} catch (error) {
+		if (!isMissing(error)) warnings.push(`remove-tree: ${errorMessage(error)}`);
+	}
+	try {
+		await git(cwd, "branch", "-D", worktree.branch);
+	} catch (error) {
+		const message = errorMessage(error);
+		if (!isMissingBranchError(message)) warnings.push(`delete-branch: ${message}`);
+	}
+	if (warnings.length > 0) console.error(`[her] dispatch worktree teardown failed: ${warnings.join("; ")}`);
+}
+
+function dispatchNodeModulesSource(env: NodeJS.ProcessEnv): string | undefined {
+	const override = env.HER_DISPATCH_NODE_MODULES?.trim();
+	if (override) return override;
+	// Tests must opt in via HER_DISPATCH_NODE_MODULES so leftover worktrees never junction
+	// the live samantha node_modules (G-357: git worktree remove --force follows junctions).
+	if (env.NODE_TEST_CONTEXT) return undefined;
+	return join(SAMANTHA_REPO_ROOT, "node_modules");
+}
+
+async function junctionNodeModules(worktreePath: string, source: string | undefined): Promise<void> {
+	if (!source) return;
+	const dest = join(worktreePath, "node_modules");
+	if (!(await pathExists(source)) || (await pathExists(dest))) return;
+	const type = process.platform === "win32" ? "junction" : "dir";
+	await symlink(source, dest, type);
+}
+
+async function unlinkJunction(path: string): Promise<void> {
+	try {
+		await rmdir(path);
+	} catch (error) {
+		if (isMissing(error)) return;
+		await unlink(path);
+	}
+}
+
+async function scanJunctions(root: string): Promise<string[]> {
+	const found: string[] = [];
+	const stack = [root];
+	while (stack.length > 0) {
+		const dir = stack.pop();
+		if (!dir) break;
+		let entries: Array<{ isDirectory(): boolean; isSymbolicLink(): boolean; name: string }>;
+		try {
+			entries = await readdir(dir, { withFileTypes: true });
+		} catch {
+			continue;
+		}
+		for (const entry of entries) {
+			const child = join(dir, entry.name);
+			if (entry.isSymbolicLink() || (await isReparseDir(child))) {
+				found.push(child);
+				continue;
+			}
+			if (entry.isDirectory()) stack.push(child);
+		}
+	}
+	return found;
+}
+
+async function isReparseDir(path: string): Promise<boolean> {
+	try {
+		const info = await lstat(path);
+		return info.isSymbolicLink();
+	} catch {
+		return false;
+	}
+}
+
+async function pathExists(path: string): Promise<boolean> {
+	try {
+		await lstat(path);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+function isMissing(error: unknown): boolean {
+	return Boolean(
+		error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === "ENOENT",
+	);
+}
+
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+function isMissingBranchError(message: string): boolean {
+	return /not found|unknown branch|doesn't exist/i.test(message);
 }
 
 async function diffAgainstBaseline(
