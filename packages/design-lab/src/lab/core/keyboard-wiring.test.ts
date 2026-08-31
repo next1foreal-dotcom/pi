@@ -183,4 +183,82 @@ describe("keyboard wiring (full chain, jsdom + StrictMode)", () => {
     // data-mode should now be "focus"
     expect(rootEl?.getAttribute("data-mode")).toBe("focus");
   });
+
+  // ── Layer 4: labels intercept chain (after notes) ─────────────────
+
+  async function backToExplore() {
+    await act(() => {
+      dispatchKey("Escape");
+    });
+    await act(() => {
+      dispatchKey("Escape");
+    });
+  }
+
+  it("Shift+L spawns a label on the labels host", async () => {
+    await backToExplore();
+    await act(() => {
+      dispatchKey("l", "KeyL", { shiftKey: true });
+    });
+    const labels = container.querySelectorAll("[data-labels-host] .lb-label");
+    expect(labels.length).toBeGreaterThan(0);
+  });
+
+  it("Delete with a selected label removes the label, not a screen", async () => {
+    await backToExplore();
+    const screensBefore = container.querySelectorAll(
+      "[data-screen-scroll]",
+    ).length;
+    expect(screensBefore).toBeGreaterThan(0);
+
+    await act(() => {
+      dispatchKey("Tab");
+    });
+    await act(() => {
+      dispatchKey("l", "KeyL", { shiftKey: true });
+    });
+    const labelsBefore = container.querySelectorAll(
+      "[data-labels-host] .lb-label",
+    ).length;
+    expect(labelsBefore).toBeGreaterThan(0);
+
+    dispatchSpy.mockClear();
+    await act(() => {
+      dispatchKey("Delete");
+    });
+
+    expect(
+      container.querySelectorAll("[data-labels-host] .lb-label").length,
+    ).toBe(labelsBefore - 1);
+    expect(container.querySelectorAll("[data-screen-scroll]").length).toBe(
+      screensBefore,
+    );
+    const deletedScreen = dispatchSpy.mock.results.some(
+      (r: { type: string; value?: { action?: string } }) =>
+        r.type === "return" && r.value?.action === "delete-screen",
+    );
+    expect(deletedScreen).toBe(false);
+  });
+
+  it("Delete with no label selected reaches lab delete-screen", async () => {
+    await backToExplore();
+    await act(() => {
+      document.dispatchEvent(
+        new PointerEvent("pointerdown", { bubbles: true, cancelable: true }),
+      );
+    });
+    await act(() => {
+      dispatchKey("Tab");
+    });
+    dispatchSpy.mockClear();
+    await act(() => {
+      dispatchKey("Delete");
+    });
+    expect(dispatchSpy).toHaveBeenCalled();
+    const reachedLab = dispatchSpy.mock.results.some(
+      (r: { type: string; value?: { action?: string } }) =>
+        r.type === "return" && r.value?.action === "delete-screen",
+    );
+    expect(reachedLab).toBe(true);
+  });
 });

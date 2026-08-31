@@ -56,7 +56,9 @@
 }
 
 .root[data-mode="focus"] .notesHost :global(.sn-note),
-.root[data-mode="fill"] .notesHost :global(.sn-note) {
+.root[data-mode="fill"] .notesHost :global(.sn-note),
+.root[data-mode="focus"] .labelsHost :global(.lb-label),
+.root[data-mode="fill"] .labelsHost :global(.lb-label) {
   pointer-events: none;
 }
 
@@ -203,6 +205,17 @@
   overflow: visible;
   pointer-events: none;
   z-index: 4;
+}
+
+.labelsHost {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 5;
 }
 
 .chrome {

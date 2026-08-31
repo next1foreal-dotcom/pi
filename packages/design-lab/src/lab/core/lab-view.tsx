@@ -37,6 +37,7 @@ import { SCREENS, screenById, type ScreenDef } from "../screens";
 import type { Mode } from "./types";
 import { CanvasRuler } from "./canvas-ruler";
 import { NOTE_H, NOTE_W, StickyNotes } from "./page-notes";
+import { Labels } from "./page-labels";
 import { dispatchLabKey } from "./keyboard-dispatch";
 import styles from "./lab.module.css";
 import {
@@ -125,6 +126,7 @@ export function InteractionLab() {
       getGuides: () => [] as { axis: "x" | "y"; pos: number }[],
       rulerKey: () => false,
       notesKey: () => false,
+      labelsKey: () => false,
       rulerRefresh: () => {},
       disposeExtras: () => {},
       getSnapshot: () => snapshotOf(s as Session),
@@ -220,9 +222,32 @@ export function InteractionLab() {
           return { x: center.x - NOTE_W / 2, y: center.y - NOTE_H / 2 };
         });
     }
+
+    const labelsHost = el.querySelector("[data-labels-host]");
+    const labels =
+      labelsHost instanceof HTMLElement
+        ? new Labels({
+            host: labelsHost,
+            getZoom: () => getCamera().z,
+          })
+        : null;
+    if (labels) {
+      session.labelsKey = (e) =>
+        labels.handleKey(e, () => {
+          const cam = getCamera();
+          const vp = session.viewport;
+          const origin = session.origin;
+          return screenToPage(
+            { x: origin.x + vp.width / 2, y: origin.y + vp.height / 2 },
+            cam,
+            origin,
+          );
+        });
+    }
     session.disposeExtras = () => {
       ruler?.destroy();
       notes?.destroy();
+      labels?.destroy();
     };
 
     const ro = new ResizeObserver(() => {
@@ -254,7 +279,8 @@ export function InteractionLab() {
       onPointerDown: (e) => {
         const t = e.target;
         if (!(t instanceof Element)) return false;
-        if (t.closest("[data-lab-chrome], [data-notes-host]")) return true;
+        if (t.closest("[data-lab-chrome], [data-notes-host], [data-labels-host]"))
+          return true;
         return Boolean(session.drag);
       },
       onBackgroundClick: () => exitOne(session),
@@ -379,6 +405,7 @@ export function InteractionLab() {
       // Ruler & notes get first refusal in explore mode
       if (session.mode === "explore" && session.rulerKey(e)) return;
       if (session.mode === "explore" && session.notesKey(e)) return;
+      if (session.mode === "explore" && session.labelsKey(e)) return;
 
       // Alt tracking for measurement overlay
       onKeyMeta(e);
@@ -708,6 +735,7 @@ export function InteractionLab() {
           />
         ))}
         <div className={styles.notesHost} data-notes-host />
+        <div className={styles.labelsHost} data-labels-host />
         <div
           className={styles.ghost}
           ref={(node) => {

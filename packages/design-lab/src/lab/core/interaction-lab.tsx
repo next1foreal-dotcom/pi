@@ -133,6 +133,7 @@ export type Session = {
   getGuides: () => { axis: "x" | "y"; pos: number }[];
   rulerKey: (e: KeyboardEvent) => boolean;
   notesKey: (e: KeyboardEvent) => boolean;
+  labelsKey: (e: KeyboardEvent) => boolean;
   rulerRefresh: () => void;
   disposeExtras: () => void;
   getSnapshot: () => PersistedV1;
