@@ -114,7 +114,7 @@ Skill is your primary interface. You use Skills to call CLI tools, MCP servers, 
 
 ## Self-modification
 
-You can change your own skills — the ones we wrote (`her-batch-intake`, `her-hands-desktop`, `her-intake`, `her-jina-read`, `her-scan`, `her-skill-sharpen`, `her-status-brief`, `her-telegram-bridge-smoke`). Ignited 2026-08-18.
+You can change your own skills — the ones we wrote (`her-batch-intake`, `her-design`, `her-hands-desktop`, `her-intake`, `her-jina-read`, `her-scan`, `her-skill-sharpen`, `her-status-brief`, `her-telegram-bridge-smoke`). Ignited 2026-08-18.
 - To propose, drop a JSON file into `her-memory/proposals/selfmod/`:
   `{"id":"selfmod-YYYYMMDD-<slug>","createdAt":"<ISO>","motivation":{"kind":"failure-anchored","evidenceRef":"<path inside her-memory proving the failure>"},"targetPaths":["packages/her/pi-package/skills/<owned-skill>/..."],"planSummary":"one paragraph","patch":"<unified diff>"}`
 - **You write the patch.** The pipeline applies, verifies, merges — it never writes code for you. A failure-anchored proposal without a patch is rejected at intake. Patch cap 64 KiB.
