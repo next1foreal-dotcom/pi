@@ -1,0 +1,479 @@
+:root {
+  --lab-accent: #0d99ff;
+  --lab-pill: #1c1c1c;
+  --lab-canvas: #f1f1f1;
+  --lab-surface: #ffffff;
+  --lab-chrome: #1c1c1c;
+  --lab-chrome-text: #ffffff;
+  --lab-chrome-muted: #b3b3b3;
+  --lab-danger: #f24822;
+  --lab-ring: var(--lab-accent);
+  --lab-handle: #ffffff;
+  --lab-ghost: var(--lab-accent);
+  --lab-dim: color-mix(in srgb, var(--color-canvas, var(--lab-canvas)) 60%, transparent);
+  --lab-font: "Inter", system-ui, sans-serif;
+  --lab-shadow:
+    0 1px 1px rgba(0, 0, 0, 0.04),
+    0 8px 24px rgba(0, 0, 0, 0.08),
+    0 24px 48px rgba(0, 0, 0, 0.06);
+  --inv-zoom: 1;
+  --color-canvas: var(--lab-canvas);
+}
+
+.root {
+  position: fixed;
+  inset: 0;
+  overflow: clip;
+  touch-action: none;
+  background: var(--color-canvas);
+  font-family: var(--lab-font);
+  color: var(--lab-chrome-text);
+  user-select: none;
+  cursor: default;
+}
+
+.root[data-canvas-theme="dark"] {
+  --lab-chrome: #f1f1f1;
+  --lab-chrome-text: #1c1c1c;
+  --lab-chrome-muted: #5c5c5c;
+}
+
+.root[data-gesturing] .layer,
+.root[data-gesturing] .chrome {
+  pointer-events: none;
+}
+
+.root[data-mode="focus"] .layer,
+.root[data-mode="fill"] .layer,
+.root[data-mode="focus"] .chrome,
+.root[data-mode="fill"] .chrome {
+  pointer-events: auto;
+}
+
+.root[data-mode="fill"] .pixelGrid,
+.root[data-mode="fill"] .rulerHost {
+  display: none;
+}
+
+.root[data-mode="focus"] .notesHost :global(.sn-note),
+.root[data-mode="fill"] .notesHost :global(.sn-note) {
+  pointer-events: none;
+}
+
+.pixelGrid {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.layer {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+  will-change: auto;
+  z-index: 1;
+}
+
+.group {
+  position: absolute;
+  left: 0;
+  top: 0;
+  contain: strict;
+  border-radius: 8px;
+}
+
+.group[data-culled] {
+  content-visibility: hidden;
+  pointer-events: none;
+}
+
+.frame {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  border-radius: 8px;
+  background: var(--lab-surface);
+  box-shadow: var(--lab-shadow);
+}
+
+.scroll {
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  background: var(--lab-surface);
+}
+
+.content {
+  pointer-events: none;
+  min-height: 100%;
+}
+
+.group[data-active] .content {
+  pointer-events: auto;
+}
+
+.shield {
+  position: absolute;
+  inset: 0;
+  cursor: default;
+}
+
+.group[data-active] .shield {
+  display: none;
+}
+
+.dim {
+  position: absolute;
+  inset: 0;
+  background: var(--color-canvas);
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.handle {
+  position: absolute;
+  z-index: 3;
+  pointer-events: auto;
+}
+
+.handle[data-edge="n"],
+.handle[data-edge="s"] {
+  left: 0;
+  right: 0;
+  height: calc(8px * var(--inv-zoom));
+  cursor: ns-resize;
+}
+
+.handle[data-edge="e"],
+.handle[data-edge="w"] {
+  top: 0;
+  bottom: 0;
+  width: calc(8px * var(--inv-zoom));
+  cursor: ew-resize;
+}
+
+.handle[data-edge="n"] { top: calc(-4px * var(--inv-zoom)); }
+.handle[data-edge="s"] { bottom: calc(-4px * var(--inv-zoom)); }
+.handle[data-edge="w"] { left: calc(-4px * var(--inv-zoom)); }
+.handle[data-edge="e"] { right: calc(-4px * var(--inv-zoom)); }
+
+.handle[data-edge="nw"],
+.handle[data-edge="ne"],
+.handle[data-edge="sw"],
+.handle[data-edge="se"] {
+  width: calc(8px * var(--inv-zoom));
+  height: calc(8px * var(--inv-zoom));
+  background: var(--lab-handle);
+  border: calc(1px * var(--inv-zoom)) solid var(--lab-accent);
+  box-sizing: border-box;
+}
+
+.handle[data-edge="nw"] {
+  top: calc(-4px * var(--inv-zoom));
+  left: calc(-4px * var(--inv-zoom));
+  cursor: nwse-resize;
+}
+.handle[data-edge="ne"] {
+  top: calc(-4px * var(--inv-zoom));
+  right: calc(-4px * var(--inv-zoom));
+  cursor: nesw-resize;
+}
+.handle[data-edge="sw"] {
+  bottom: calc(-4px * var(--inv-zoom));
+  left: calc(-4px * var(--inv-zoom));
+  cursor: nesw-resize;
+}
+.handle[data-edge="se"] {
+  bottom: calc(-4px * var(--inv-zoom));
+  right: calc(-4px * var(--inv-zoom));
+  cursor: nwse-resize;
+}
+
+.notesHost {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.chrome {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+  overflow: hidden;
+}
+
+.chromeItem {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: auto;
+  transform-origin: 0 100%;
+}
+
+.label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 8px;
+  margin-top: -26px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--lab-chrome-text);
+  white-space: nowrap;
+  cursor: grab;
+  max-width: 100%;
+}
+
+.labelInput {
+  font: inherit;
+  color: inherit;
+  background: var(--lab-pill);
+  border: 1px solid var(--lab-accent);
+  border-radius: 4px;
+  padding: 0 6px;
+  height: 20px;
+  outline: none;
+}
+
+.play {
+  position: absolute;
+  right: 0;
+  top: 0;
+  margin-top: -28px;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 6px;
+  background: var(--lab-accent);
+  color: #fff;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+
+.play svg {
+  width: 10px;
+  height: 10px;
+}
+
+.sizeBadge {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  transform: translate(-50%, calc(100% + 8px));
+  background: var(--lab-pill);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 8px;
+  border-radius: 6px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 8px;
+  outline: calc(2px * var(--inv-zoom)) solid var(--lab-accent);
+  outline-offset: 0;
+  pointer-events: none;
+}
+
+.ghost {
+  position: absolute;
+  border-radius: 8px;
+  border: calc(2px * var(--inv-zoom)) dashed var(--lab-accent);
+  pointer-events: none;
+  z-index: 6;
+}
+
+.snapX,
+.snapY {
+  position: absolute;
+  background: var(--lab-danger);
+  pointer-events: none;
+  z-index: 7;
+  display: none;
+}
+
+.snapX {
+  width: 1px;
+  top: 0;
+  bottom: 0;
+}
+
+.snapY {
+  height: 1px;
+  left: 0;
+  right: 0;
+}
+
+.measureCanvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 8;
+}
+
+.rulerHost {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9;
+}
+
+.hud {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 20;
+  pointer-events: none;
+}
+
+.pill {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--lab-pill);
+  color: #fff;
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.pill button,
+.zoomBtn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.pill button:hover,
+.zoomBtn:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  padding: 0;
+  cursor: pointer;
+  background: var(--color-canvas);
+}
+
+.badge {
+  padding: 4px 10px;
+  color: #fff;
+  background: var(--lab-accent);
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+.popover {
+  pointer-events: auto;
+  position: absolute;
+  bottom: 52px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--lab-pill);
+  color: #fff;
+  border-radius: 10px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 220px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+  z-index: 21;
+}
+
+.swatchRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.swatchRow button {
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  padding: 0;
+  cursor: pointer;
+}
+
+.hexRow {
+  display: flex;
+  gap: 6px;
+}
+
+.hexRow input[type="text"] {
+  flex: 1;
+  background: #111;
+  color: #fff;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font: 12px/1.2 ui-monospace, monospace;
+}
+
+.hexRow input[type="color"] {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
+.toasts {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 30;
+  pointer-events: none;
+}
+
+.toast {
+  background: var(--lab-pill);
+  color: #fff;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+}

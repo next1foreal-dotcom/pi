@@ -1,5 +1,11 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import {
+	DESIGN_LAB_URL,
+	type DesignLabOpenDeps,
+	ensureDesignLabReady,
+	resolveStudioUiBase,
+} from "./design-lab-open.ts";
 
 const DEFAULT_UI_BASE_URL = "http://127.0.0.1:3000";
 export const REQUEST_TIMEOUT_MS = 5000;
@@ -25,6 +31,8 @@ export interface PreviewToolDeps {
 	timeoutMs?: number;
 	/** Overrides only the browser-driving tier; falls back to timeoutMs, then the 30s default. */
 	browserTimeoutMs?: number;
+	/** Test seams for design_lab_open (probe/start/base). */
+	designLab?: DesignLabOpenDeps;
 }
 
 interface PreviewApiBody {
@@ -79,19 +87,7 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 		parameters: Type.Object({ url: Type.String() }),
 		async execute(_toolCallId, params, signal) {
 			const base = uiBase();
-			return await postJson(
-				fetchImpl,
-				base,
-				"/api/browser/agent-navigate",
-				{ url: params.url },
-				signal,
-				browserTimeoutMs,
-				{
-					successText: () => `Navigated to ${params.url}`,
-					controlOwnerDeniedText: () =>
-						"Navigation denied: control is with Fei right now. Ask him to hand control back (handback), then try again.",
-				},
-			);
+			return await navigateStudioBrowser(fetchImpl, base, params.url, signal, browserTimeoutMs);
 		},
 	});
 
@@ -194,10 +190,56 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 			});
 		},
 	});
+
+	pi.registerTool({
+		name: "design_lab_open",
+		label: "Design Lab Open",
+		description:
+			"Open the her design-lab canvas in Fei's Studio live browser pane at http://localhost:5180. " +
+			"Probes port 5180 and reuses a running lab; otherwise starts it detached via a nested cmd start. " +
+			"Ready in a log is not success — the port must be listening. Navigation uses the same " +
+			"control-owner gate as browser_navigate.",
+		parameters: Type.Object({}),
+		async execute(_toolCallId, _params, signal) {
+			const ready = await ensureDesignLabReady({ ...deps.designLab, signal });
+			if (!ready.ok) {
+				return textResult(`failed: ${ready.reason}`, { status: "failed", reason: ready.reason });
+			}
+			const base = resolveStudioUiBase();
+			const nav = await navigateStudioBrowser(fetchImpl, base, DESIGN_LAB_URL, signal, browserTimeoutMs);
+			const navText = nav.content[0]?.text ?? "";
+			if (navText.startsWith(`Navigated to ${DESIGN_LAB_URL}`)) {
+				const text =
+					ready.status === "already-running"
+						? `already-running: Design lab already listening on ${DESIGN_LAB_URL}. ${navText}`
+						: `opened: Design lab opened at ${DESIGN_LAB_URL}`;
+				return textResult(text, { status: ready.status });
+			}
+			return {
+				content: nav.content,
+				details: { ...nav.details, status: "failed" as const },
+			};
+		},
+	});
 }
 
 function uiBase(): string {
 	return process.env.HER_UI_BASE_URL ?? DEFAULT_UI_BASE_URL;
+}
+
+/** Same path and control-owner gate as browser_navigate. */
+async function navigateStudioBrowser(
+	fetchImpl: typeof fetch,
+	base: string,
+	url: string,
+	signal: AbortSignal | undefined,
+	timeoutMs: number,
+) {
+	return await postJson(fetchImpl, base, "/api/browser/agent-navigate", { url }, signal, timeoutMs, {
+		successText: () => `Navigated to ${url}`,
+		controlOwnerDeniedText: () =>
+			"Navigation denied: control is with Fei right now. Ask him to hand control back (handback), then try again.",
+	});
 }
 
 /**

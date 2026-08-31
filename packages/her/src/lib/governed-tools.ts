@@ -72,6 +72,7 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	preview_open_review: { destructive: false },
 	her_preview_still: { destructive: false },
 	browser_navigate: { destructive: false },
+	design_lab_open: { destructive: false },
 	browser_read_page: { destructive: false },
 	browser_act: { destructive: false },
 	artifact_publish: { destructive: true },
