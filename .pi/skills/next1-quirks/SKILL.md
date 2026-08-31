@@ -19,6 +19,15 @@ Windows 端口排除段（bind 必失败或被系统占）：**1367-1466**（含
 
 本机上网走代理 `127.0.0.1:10808`，但 Node 的 fetch（undici）**默认无视** HTTP_PROXY 环境变量——不带 `NODE_USE_ENV_PROXY=1` 的 Node 进程做外网请求必超时。起任何要联网的 Node 进程（generate:models、OAuth 流、网关）都把它写进 env。
 
+## 拆带 junction 的目录：先摘链接,再删树(G-357)
+
+任务 worktree 常挂着指向主仓 `node_modules` 的 junction。**任何递归删除都会穿过 junction 删掉主仓真身**——`rm -rf`、`Remove-Item -Recurse`、连 `git worktree remove` 都实测穿透过,两次打瘫全机门禁。唯一安全序:
+1. 先摘链接:`cmd /c rmdir "<树>\node_modules"`(对 junction 用**不带 `/s`** 的 rmdir,只摘重解析点不碰目标);
+2. 立刻验主仓 `node_modules\.bin` 计数没变;
+3. `Get-ChildItem <树> -Recurse -Force | Where LinkType` 扫残余链接,必须为空;
+4. 这时才允许删树,删完再验一次 `.bin`,最后 `git worktree prune`。
+破坏性操作被中断后,校验受影响面的**整体**(遍历/计数),不是只验你第一个想到的那一项。
+
 ## 子进程输出被吞：落盘再读
 
 - **PowerShell 管道**会静默吞子进程 stdout/stderr：无头验证命令一律 `*> 文件` 落盘后再读文件，别信管道里的空输出。
