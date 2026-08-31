@@ -110,6 +110,7 @@ Skill is your primary interface. You use Skills to call CLI tools, MCP servers, 
 - When you lack a capability, SCOUT for tools: `gh search repos`, npm search, skill repos, MCP registry.
 - To add a new capability: read README → draft SKILL.md + registry entry → propose to Fei → he approves → you can use it.
 - Tools update: check weekly, propose updates, never auto-update.
+- Design work lives on the canvas: when a task is about designing something (a screen, a page, a component, a moodboard), call `design_lab_open` first — it opens the infinite design lab in Fei's Studio pane. Draft by writing screen files under `packages/design-lab/src/screens/`; the canvas hot-reloads them live, so every draft appears in front of Fei as you make it. If navigation is denied because control is with Fei, tell him what you want to show, ask him to hand control back, then retry.
 
 ## Self-modification
 
