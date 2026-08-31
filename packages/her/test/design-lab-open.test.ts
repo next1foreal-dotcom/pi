@@ -66,9 +66,11 @@ function listenEphemeral(): Promise<{ port: number; close: () => Promise<void> }
 	});
 }
 
-test("buildDesignLabBat writes pnpm -C <abs> dev with stdout/err redirected to the log", () => {
+test("buildDesignLabBat cds into the lab and runs npm run dev with stdout/err redirected to the log", () => {
 	const bat = buildDesignLabBat("D:\\lab", "D:\\logs\\lab.log");
-	assert.match(bat, /pnpm -C "D:\\lab" dev/);
+	assert.match(bat, /cd \/d "D:\\lab"/);
+	assert.match(bat, /npm run dev/);
+	assert.doesNotMatch(bat, /pnpm/);
 	assert.match(bat, /> "D:\\logs\\lab\.log" 2>&1/);
 });
 
@@ -152,7 +154,8 @@ test("not listening starts via nested bat then reports opened after the port is 
 	const { text, details } = await run(tools.get("design_lab_open"));
 
 	assert.equal(starts.length, 1);
-	assert.match(starts[0].batContents, /pnpm -C "D:\\lab" dev/);
+	assert.match(starts[0].batContents, /cd \/d "D:\\lab"/);
+	assert.match(starts[0].batContents, /npm run dev/);
 	assert.match(starts[0].batContents, /2>&1/);
 	assert.equal(starts[0].command, "cmd");
 	assert.deepEqual(starts[0].args.slice(0, 4), ["/c", "start", "", "/min"]);

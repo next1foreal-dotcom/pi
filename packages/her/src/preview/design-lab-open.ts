@@ -46,7 +46,11 @@ export function resolveStudioUiBase(env: NodeJS.ProcessEnv | Record<string, stri
 }
 
 export function buildDesignLabBat(labAbsPath: string, logAbsPath: string): string {
-	return `@echo off\r\npnpm -C "${labAbsPath}" dev > "${logAbsPath}" 2>&1\r\n`;
+	// npm, not pnpm: this repo is npm workspaces, deps are hoisted to the root,
+	// and only npm run's ancestor node_modules/.bin walk resolves the hoisted
+	// vite binary. pnpm -C treats the dir as standalone and misses it (live-fire
+	// 2026-08-31: 'vite' is not recognized).
+	return `@echo off\r\ncd /d "${labAbsPath}"\r\nnpm run dev > "${logAbsPath}" 2>&1\r\n`;
 }
 
 export function nestedStartArgs(batAbsPath: string): { args: string[]; command: string } {
@@ -58,19 +62,33 @@ export function defaultDesignLabPath(): string {
 	return join(here, "..", "..", "..", "..", "packages", "design-lab");
 }
 
-export function probeListeningPort(port: number, host = "127.0.0.1"): Promise<boolean> {
+// Dual-stack on purpose: vite binds `localhost`, which on Windows can mean
+// ::1 only, while other servers sit on 127.0.0.1 only (live-fire 2026-08-31:
+// vite was up on ::1 and an IPv4-pinned probe reported it down forever).
+export function probeListeningPort(port: number, hosts: readonly string[] = ["127.0.0.1", "::1"]): Promise<boolean> {
 	return new Promise((resolve) => {
-		const socket = net.connect({ port, host });
+		let pending = hosts.length;
 		let settled = false;
-		const done = (value: boolean) => {
-			if (settled) return;
-			settled = true;
-			socket.destroy();
-			resolve(value);
-		};
-		socket.once("connect", () => done(true));
-		socket.once("error", () => done(false));
-		socket.setTimeout(500, () => done(false));
+		for (const host of hosts) {
+			const socket = net.connect({ port, host });
+			const done = (value: boolean) => {
+				socket.destroy();
+				if (settled) return;
+				if (value) {
+					settled = true;
+					resolve(true);
+					return;
+				}
+				pending -= 1;
+				if (pending === 0) {
+					settled = true;
+					resolve(false);
+				}
+			};
+			socket.once("connect", () => done(true));
+			socket.once("error", () => done(false));
+			socket.setTimeout(500, () => done(false));
+		}
 	});
 }
 
