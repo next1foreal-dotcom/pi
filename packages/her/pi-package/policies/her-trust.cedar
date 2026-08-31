@@ -110,6 +110,16 @@ permit(
   resource == Tool::"her_schedule_wakeup"
 );
 
+// subagent 来自 fei-pi-preset 的 pi-subagents 包(非 extension 注册):single/parallel/chain
+// 三模召唤 .pi/agents 八员班子。子代理按各自定义持工具(coder 可写码),故按 destructive
+// 对待;心跳档策略集无具名 permit,本证不漏无人值守轮。发证:Fei 2026-08-31(迁移对等 G-372)。
+@id("permit_subagent")
+permit(
+  principal == Agent::"samantha",
+  action == Action::"CallTool",
+  resource == Tool::"subagent"
+);
+
 // G-284 工具信任梯 — Fei 拍板发证(2026-08-19)。取证结论先于直觉:她**早就**有 bash
 // 在所有非锚路径上(上面 permit_coding_destructive_tools),所以自造工具是 **0 能力增量**
 // ——它只能比被包装者更窄(注册期 wider-than-wrapped 直接拒;可包装清单只有 ["bash"])。
