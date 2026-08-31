@@ -52,6 +52,7 @@
 | 6 | CasJam 推文(portable AI workflows) | 判断力要外置成可移植的文件(skills/文档),不锁进任何模型或 harness 的记忆——换模型换壳,系统不失忆 | 原则(元) | 采,收为系统自身的存在方式:本设计系统=一组文件(knowledge/canon/本文档/skills),任何读它的模型都按我们的方式设计;与 Her 北极星「own the memory, borrow the harness」同源 |
 | 8 | Fei 重发 7 步工作流(2026-08-31 夜,归家判决后) | **工作流是宪法的时间形态**:结构先于细节、细节晚到且限量;线框是硬门因为它是"分歧最便宜的时刻"(灰盒改一个答案=一个灰盒,首稿后改=重画);composition 两问(挣门票/选五件)就问在灰盒上;知识随阶段载入——1–4 步只载 process/*,细节知识第 5 步起才进上下文(限量律管到她自己的加载) | 流程 | 采,落为 skill 教材 `references/process/steps.md`(Fable 亲写,W2 首篇)+ SKILL.md 首行任务;观察:此版 7 步无 to-code,已问 Owner——随后 Owner 重投 Vidal 出码节(行 9)= 第 8 步保留 |
 | 9 | Fei 重投 Vidal「The project is the specification, Figma is the reference」节(2026-08-31 夜,点名"赶紧应用上,不是白给你看的") | 落码时权威翻转:目标项目(token/组件/命名)是规格,稿子只是参照——逐值找家、近 token 吸附(系统赢设计弯)、无 token 停下报债不许静默造值;偏离稿子=决策必须显影,含"感觉是改进"的那种;写请求不是收据,渲染出来的页才是证据 | 流程+出码 | 采,W4 教材落地 `references/process/to-code.md` + SKILL.md 加行 + steps.md 第 8 步挂链;**此前该教义只躺在 plan W4 一格里——记在计划≠接线运行时,Owner 一投照出的正是这条缝**;同时裁决 7-vs-8:Owner 主动推出码原则=第 8 步保留 |
+| 10 | Victoria(@victoria_framer)"my new fav animation" 视频 + 引文 Framer Agents 官宣(2026-08-31 夜) | **镜头替 agent 表演注意力**:agent 改哪个元素,画布就飞进哪——帧证(8.4s,抽 2fps 亲看):0–4.5s 全景静置 → 4.5–5.5s 俯冲进 YORK wordmark、虚线选中、字形当众在变 → 6s 带动态模糊拉出 → 落定。人全程不丢空间上下文,"改了什么"不用自己扫 diff。引文=Framer Agents("built into every part…not replace you…help you ship")——「agent 长在画布里」被商业同行独立做出,印证我们空间层架构与 design_lab_open 反射弧 | 空间 | 采原理;落成动作=立卡 **G-380 edit spotlight**(她的 screen 编辑落地时,lab 相机飞向改动区+虚线短高亮+拉回,复用既有相机系统)——新功能属新范围,荐建、待 Owner 拍;引文部分=印证既有架构,无新动作 |
 
 ## 归属判决(Fei 2026-08-31 夜拍板)
 
