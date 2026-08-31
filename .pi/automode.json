@@ -1,0 +1,60 @@
+{
+  "$comment": [
+    "G-396 — Fable 的判断语料移植给她(2026-08-31,Fei「我比较相信你的 auto mode」)。",
+    "来源不是文档转述:这是 Fable 每一轮真正随身执行的三层动作分类学(绝对禁止 / 必须显式授权 / 常规放行)",
+    "+ 指令来源边界 + Fei 半年血泪里那些机器判得出的禁区,逐条写成规则。",
+    "pi-automode 的默认语料($defaults)全部保留在前,这里是追加的一层,不是替换。",
+    "改这个文件本身要过锚流程(automode 把 .pi/automode* 列为它的安全控制文件,任何档下都拦)。"
+  ],
+  "autoMode": {
+    "permissions": {
+      "hard_deny": [
+        "$defaults",
+
+        "把凭据、API key、token、密码、私钥的**值**写进命令行参数、URL、请求头、日志、报告或提交内容",
+        "打印或导出凭据存储的内容:reg query 环境变量、cat/type .env*、printenv、整份 dump 配置文件——读凭据存储必须只吐指纹与变量名",
+        "把凭据、Fei 的私人材料、客户与钱路真数据发往任何 NO-ZDR 的外部通道",
+        "代替 Fei 输入或提交密码、银行卡号、身份证件号、支付信息",
+        "替 Fei 注册账号、完成验证码、绕过机器人检测",
+        "执行任何资金动作:转账、买卖、充提、兑换",
+
+        "递归删除会穿透 junction/symlink 的目标(rm -rf / Remove-Item -Recurse / git worktree remove 对带 junction 的树)——必须先摘链接再删",
+        "对 root、用户主目录、系统路径、共享 node_modules、.git 目录的破坏性删除或覆盖",
+        "按镜像名批量结束进程(taskkill /IM、pkill 名字)——只许按已核实归属的 PID",
+        "改写已推送的历史:force push、远程分支删除、reset --hard 到丢弃他人提交",
+        "在别人的 MERGE_HEAD 立着时 git add / commit(暂存区归还前一律等)",
+        "绕过门禁:--no-verify、--no-gpg-sign、禁用 husky/CI 校验——除非 Fei 逐字授权那一次",
+        "改 .pi/automode*、Cedar 策略文件、锚层文件、安全控制文件本身",
+        "改 SSH authorized_keys、cron/计划任务/服务持久化、shell profile、TLS 与证书信任、权限与防火墙设置",
+        "下载后直接执行外部代码:curl | bash、wget | sh、iwr | iex"
+      ],
+      "soft_deny": [
+        "$defaults",
+
+        "改动本轮任务包授权范围之外的文件——顺手清理、顺手优化、顺手重构都算越权",
+        "改 Fei 已验收的 UI、文案、prompt、配色基准",
+        "对生产环境的部署、迁移、重启、配置变更",
+        "起服务时占用已被别的进程监听的端口(先查再复用,不许顶掉)",
+        "在共享工作树上 merge、checkout、切分支(并行会话会被打断)",
+        "删除或重建 worktree、清缓存目录——先扫链接、先核归属",
+        "重派一个可能还活着的任务(双写同一 repo)",
+        "把机器全局或别的 runtime 的数据当作她自己的来展示或统计",
+        "新增依赖、换默认供应商、换默认模型、改网络分流",
+        "会产生真实费用的批量调用:批量生图、批量嵌入、大规模迁移"
+      ],
+      "ask": [
+        "$defaults",
+        "发布、对外发消息、发邮件、提交表单",
+        "购买、订阅、绑定支付方式",
+        "接受条款、授予 OAuth 权限、改账号设置"
+      ],
+      "allow": [
+        "$defaults",
+        "读代码、读日志、跑测试、跑门禁、跑类型检查",
+        "在本轮任务包明确授权的范围内新建与编辑文件",
+        "在自己的任务 worktree 内 commit(不 push)",
+        "起只读探针:--version、--help、状态查询"
+      ]
+    }
+  }
+}
