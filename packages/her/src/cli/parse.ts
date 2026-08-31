@@ -23,6 +23,7 @@ import {
 export function parseArgs(argv: string[]): CliCommand {
 	const [command, ...rest] = argv;
 	if (!command || command === "help" || command === "--help" || command === "-h") return { kind: "help" };
+	if (command === "accept") return parseAccept(rest);
 	if (command === "approve") return parseApprove(rest);
 	if (command === "backfill") return parseBackfill(rest);
 	if (command === "bootstrap-feed") return parseBootstrapFeed(rest);
@@ -327,6 +328,27 @@ function parseReflect(argv: string[]): CliCommand {
 		throw new UsageError(`unknown reflect option: ${arg}`);
 	}
 	return { kind: "reflect", json, ifDue };
+}
+
+function parseAccept(argv: string[]): CliCommand {
+	let json = false;
+	let force = false;
+	let taskId: string | undefined;
+	for (const arg of argv) {
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--force") {
+			force = true;
+			continue;
+		}
+		if (arg.startsWith("--")) throw new UsageError(`unknown accept option: ${arg}`);
+		if (taskId !== undefined) throw new UsageError("accept accepts only one task id");
+		taskId = arg;
+	}
+	if (!taskId?.trim()) throw new UsageError("accept requires a task id: her accept <taskId>");
+	return { kind: "accept", taskId: taskId.trim(), json, force };
 }
 
 function parsePersonaScan(argv: string[]): CliCommand {

@@ -6,6 +6,8 @@ export interface HerConfig {
 		modelFast: string;
 		modelStrong: string;
 		apiKeyEnv: string;
+		/** Optional G-355 judge model; when absent, accept uses modelStrong (persona-strong path). */
+		acceptanceJudgeModel?: string;
 	};
 	cadence: {
 		consolidate: string;

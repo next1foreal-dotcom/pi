@@ -380,6 +380,29 @@ export function renderMemoryStatus(payload: CliMemoryStatusPayload): string {
 	].join("\n");
 }
 
+export function renderAccept(payload: {
+	verdict: string;
+	reasons: string[];
+	silences: string[];
+	out_of_scope: string[];
+	evidence_gaps: string[];
+	confidence: string;
+	model: string;
+	at: string;
+}): string {
+	const block = (title: string, items: string[]): string =>
+		[title, ...(items.length > 0 ? items.map((item) => `- ${item}`) : ["- (none)"])].join("\n");
+	return [
+		`verdict: ${payload.verdict} (${payload.confidence})`,
+		block("reasons", payload.reasons),
+		block("silences", payload.silences),
+		block("out_of_scope", payload.out_of_scope),
+		block("evidence_gaps", payload.evidence_gaps),
+		`model: ${payload.model}`,
+		`at: ${payload.at}`,
+	].join("\n\n");
+}
+
 export function renderPersonaScan(payload: CliPersonaScanPayload): string {
 	if (payload.error) return `persona-scan failed: ${payload.error}`;
 	if (!payload.ran) return "persona-scan: not due, skipping";
@@ -671,6 +694,7 @@ export function usage(): string {
   her journal --kind daily|weekly --text <text> [--title <text>] [--source <text>] [--timestamp <ISO>] [--run <memory-path>] [--json]
   her lint [--json]
   her memory-status --note <id> --status active|archive_only|needs_deep_read --reason <text> [--json]
+  her accept <taskId> [--json] [--force]
   her persona-scan [--if-due] [--json]
   her skill-scan [--if-due] [--json]
   her privacy-audit [--json]

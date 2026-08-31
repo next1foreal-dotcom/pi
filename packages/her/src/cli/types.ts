@@ -43,6 +43,7 @@ export const defaultTelegramResponderTools = ["her_status", "her_recall"] as con
 export const telegramResponderReadOnlyTools = new Set<string>(defaultTelegramResponderTools);
 
 export type CliCommand =
+	| { kind: "accept"; force: boolean; json: boolean; taskId: string }
 	| { kind: "approve"; json: boolean; proposalId: string }
 	| {
 			batchSize?: number;
@@ -499,8 +500,8 @@ export interface CliIo {
 	stderr: NodeJS.WritableStream;
 	/** intake-taste `-` reads pasted text from here; defaults to process.stdin. */
 	stdin?: NodeJS.ReadableStream;
-	/** Test seam: persona-scan / skill-scan uses this instead of the live CLI model. */
+	/** Test seam: persona-scan / skill-scan / accept uses this instead of the live CLI model. */
 	model?: ModelLike;
-	/** Test seam: persona-scan / skill-scan wall-clock budget in ms. */
+	/** Test seam: persona-scan / skill-scan / accept wall-clock budget in ms. */
 	modelTimeoutMs?: number;
 }

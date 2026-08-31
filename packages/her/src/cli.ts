@@ -11,6 +11,7 @@ import { runDrainStartCommand, runDrainStatusCommand, runDrainStopCommand, runDr
 import { runEventsVerifyCommand, runHostEventCommand } from "./cli/event-history.ts";
 import { parseArgs } from "./cli/parse.ts";
 import {
+	renderAccept,
 	renderApprove,
 	renderBackfill,
 	renderBootstrapFeed,
@@ -140,6 +141,7 @@ import {
 	readUrlForWorldNote,
 	recordTelegramConfirmationFromText,
 	resolveTasteToolConfig,
+	runAcceptanceJudge,
 	runDispatch,
 	runDoctor,
 	runEvalTrend,
@@ -907,6 +909,32 @@ export async function runHerCli(
 		return payload.status.status === "unknown" ? 1 : 0;
 	}
 
+	if (command.kind === "accept") {
+		const result = await runAcceptanceJudge(memoryDir, command.taskId, {
+			force: command.force,
+			log: (line) => writeLine(io.stderr, line),
+			model: io.model ?? createAcceptModel(memoryDir, env),
+			sendTelegram: (text) => sendPersonaTelegram(env, text),
+			...(io.modelTimeoutMs !== undefined ? { modelTimeoutMs: io.modelTimeoutMs } : {}),
+		});
+		if (result.usage) {
+			writeLine(io.stderr, result.error ?? "accept usage error");
+			writeLine(io.stderr, usage());
+			return 2;
+		}
+		if (result.document) {
+			writePayload(io.stdout, result.document, command.json, renderAccept);
+			return 0;
+		}
+		writePayload(
+			io.stdout,
+			{ ran: false, error: result.error },
+			command.json,
+			() => `accept failed: ${result.error ?? "unknown"}`,
+		);
+		return 1;
+	}
+
 	if (command.kind === "persona-scan") {
 		const result = await runPersonaOrgan(memoryDir, {
 			ifDue: command.ifDue,
@@ -1384,6 +1412,13 @@ function tasteSlug(title: string): string {
 
 function createCliModel(memoryDir: string, env: NodeJS.ProcessEnv): ModelLike {
 	return createSummaryModel(env) ?? new OpenAICompatibleModel(loadConfig(join(memoryDir, ".her", "config.yaml")), env);
+}
+
+function createAcceptModel(memoryDir: string, env: NodeJS.ProcessEnv): ModelLike {
+	const config = loadConfig(join(memoryDir, ".her", "config.yaml"));
+	const named = config.llm.acceptanceJudgeModel?.trim();
+	const resolved = named ? { ...config, llm: { ...config.llm, modelStrong: named } } : config;
+	return createSummaryModel(env) ?? new OpenAICompatibleModel(resolved, env);
 }
 
 function createCliMemory(memoryDir: string, env: NodeJS.ProcessEnv): Memory {

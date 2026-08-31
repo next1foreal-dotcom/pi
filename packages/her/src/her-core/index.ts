@@ -1,4 +1,22 @@
 export type {
+	AcceptanceJudgeConfidence,
+	AcceptanceJudgeDocument,
+	AcceptanceJudgeResult,
+	AcceptanceJudgeVerdict,
+	AssembledAcceptanceEvidence,
+	GitRead,
+	RunAcceptanceJudgeOptions,
+} from "./acceptance-judge.ts";
+export {
+	ACCEPT_INPUT_BUDGET_CHARS,
+	ACCEPT_JUDGE_SYSTEM_PROMPT,
+	ACCEPT_MODEL_TIMEOUT_MS,
+	acceptanceJudgeFilename,
+	acceptanceJudgePath,
+	assembleAcceptanceEvidence,
+	runAcceptanceJudge,
+} from "./acceptance-judge.ts";
+export type {
 	AgentMadeToolDecl,
 	AgentToolCallInput,
 	AgentToolCallOptions,
