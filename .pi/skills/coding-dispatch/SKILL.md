@@ -48,7 +48,7 @@ workers:
 
 **探针前置。** 探针已是 spawn 层**门禁**(G-356):没有 ≤24h 的 `ops/channel-probe-latest.json` 或该通道 dead,`her_task_spawn` 会拒绝;补救=跑 `node packages/her/scripts/probe-worker-channels.mjs --write-latest`。**探针绿≠有额度**照旧。
 
-**水位快照（2026-08-31）：** grok 主力；cursor-agent / codex 额度尽，恢复以 Fei 口径为准。
+**水位快照（2026-08-31）：** grok 主力；cursor-agent / codex 额度尽，恢复以 Fei 口径为准；claude CLI 凭据失效待重登（医治=Fei 跑 claude login，一针连治 claude-bridge 与 claude worker）。
 
 名册表以 `.pi/agents/*.md` frontmatter 的 `model` 为准（本轮已核，8 行一致）。对不上又查不到的行标「待核」，禁止凭空发明型号。
 

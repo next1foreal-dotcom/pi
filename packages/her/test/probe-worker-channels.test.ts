@@ -136,6 +136,14 @@ test("G-356 --write-latest writes {at, channels} JSON to --latest-file", async (
 	assert.deepEqual(parsed.channels, stdoutChannels);
 });
 
+test("G-361 default channels include all four worker CLIs", () => {
+	const result = runProbe(["--json"]);
+	assert.equal(result.error, undefined, result.error instanceof Error ? result.error.message : "");
+	const channels = parseChannels(result.stdout);
+	const names = channels.map((c) => c.name);
+	assert.deepEqual(names, ["grok", "cursor-agent", "codex", "claude"]);
+});
+
 test("G-356 without --write-latest does not write --latest-file", async () => {
 	const dir = await mkdtemp(join(tmpdir(), "g356-nolatest-"));
 	const dest = join(dir, "channel-probe-latest.json");

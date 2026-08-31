@@ -17,7 +17,7 @@ import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const DEFAULT_CHANNELS = ["grok", "cursor-agent", "codex"];
+const DEFAULT_CHANNELS = ["grok", "cursor-agent", "codex", "claude"];
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const DEFAULT_QUOTA_FILE = join(REPO_ROOT, "ops", "channel-quota.yaml");
 export const CHANNEL_PROBE_LATEST_RELATIVE = join("ops", "channel-probe-latest.json");
