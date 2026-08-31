@@ -100,6 +100,13 @@ import {
 	writeMessage,
 } from "./her-core/index.ts";
 import { deliverIdleNotice, drainIdleWatches, requestIdleNotice } from "./her-core/messages.ts";
+import {
+	clearPresence,
+	formatPresenceLine,
+	joinPresence,
+	readPresenceMap,
+	recordPresence,
+} from "./her-core/presence.ts";
 import { type ReviewEvidenceItem, verifyEvidence } from "./her-core/review-evidence.ts";
 import { appendAuditLog } from "./lib/audit.ts";
 import { evaluate, policyEnvelope, resolveToolCallAnchor } from "./lib/cedar.ts";
@@ -766,6 +773,16 @@ export default function her(pi: ExtensionAPI): void {
 
 	pi.on("session_start", async (_event, ctx) => {
 		lastEventWakeCtx = ctx;
+		try {
+			await recordPresence(memoryDir, {
+				sessionId: ctx.sessionManager.getSessionId(),
+				pid: process.pid,
+				mode: ctx.mode,
+				state: "idle",
+			});
+		} catch (error) {
+			console.warn(`[her] presence record skipped: ${errorMessage(error)}`);
+		}
 		withUi(ctx, (ui) => ui.setStatus("her", "Her loaded"));
 		try {
 			const bgStatus = await formatBgTaskStatusBoard(memoryDir);
@@ -789,7 +806,14 @@ export default function her(pi: ExtensionAPI): void {
 		}
 	});
 
-	pi.on("session_shutdown", () => {
+	pi.on("session_shutdown", (_event, ctx) => {
+		try {
+			void clearPresence(memoryDir, ctx.sessionManager.getSessionId()).catch((error) => {
+				console.warn(`[her] presence clear skipped: ${errorMessage(error)}`);
+			});
+		} catch (error) {
+			console.warn(`[her] presence clear skipped: ${errorMessage(error)}`);
+		}
 		if (eventWakeTimer) {
 			clearInterval(eventWakeTimer);
 			eventWakeTimer = undefined;
@@ -798,6 +822,16 @@ export default function her(pi: ExtensionAPI): void {
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
+		try {
+			await recordPresence(memoryDir, {
+				sessionId: ctx.sessionManager.getSessionId(),
+				pid: process.pid,
+				mode: ctx.mode,
+				state: "busy",
+			});
+		} catch (error) {
+			console.warn(`[her] presence record skipped: ${errorMessage(error)}`);
+		}
 		const { context, facts, soul, self, choiceModel } = await mem.getContext();
 		const herBlock = composeHerMemoryBlock(context, facts, soul, self, choiceModel);
 		const injectedHer = injectLoggedContent({
@@ -960,6 +994,16 @@ export default function her(pi: ExtensionAPI): void {
 				memoryDir,
 			});
 		} finally {
+			try {
+				await recordPresence(memoryDir, {
+					sessionId,
+					pid: process.pid,
+					mode: ctx.mode,
+					state: "idle",
+				});
+			} catch (error) {
+				console.warn(`[her] presence record skipped: ${errorMessage(error)}`);
+			}
 			try {
 				// G-366 idle receipts. Same availability gate as her_session_send: G-245
 				// registered it destructive, and her-trust-heartbeat.cedar
@@ -1140,7 +1184,7 @@ export default function her(pi: ExtensionAPI): void {
 		name: "her_session_list",
 		label: "Her Session List",
 		description:
-			"List read-only session metadata across Claude Code, Codex, Cursor, and pi. Activity is derived from file mtime only, not process state; source filters are literal, case-insensitive.",
+			"List read-only session metadata across Claude Code, Codex, Cursor, and pi. Activity is derived from file mtime only, not process state; source filters are literal, case-insensitive. pi sessions additionally carry live presence (alive/busy/idle) from the presence ledger; other sources remain mtime-only.",
 		parameters: Type.Object({
 			source: Type.Optional(StringEnum(["claude", "codex", "cursor", "pi"] as const)),
 			since: Type.Optional(Type.String({ description: "Only sessions modified at or after this ISO timestamp" })),
@@ -1153,7 +1197,12 @@ export default function her(pi: ExtensionAPI): void {
 				...(params.since ? { since: params.since } : {}),
 				...(params.limit !== undefined ? { limit: params.limit } : {}),
 			});
-			return textResult(formatSessionList(rows), { phase: "G-245", count: rows.length });
+			const presence = await readPresenceMap(memoryDir);
+			const joined = joinPresence(rows, presence);
+			const roster = formatSessionList(joined);
+			const presenceLine = formatPresenceLine(joined);
+			const text = presenceLine ? `${roster}\n${presenceLine}` : roster;
+			return textResult(text, { phase: "G-245", count: joined.length, sessions: joined });
 		},
 	});
 
