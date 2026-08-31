@@ -47,7 +47,7 @@ test("task-reconcile: no tasks -> exit 0, empty events", async () => {
 	assert.match(stdout.text(), /0 event/, "should report zero events");
 });
 
-test("task-reconcile --json: output is JSON-parseable array", async () => {
+test("task-reconcile --json: output is JSON-parseable with events and wakeupsFired", async () => {
 	const root = await makeMemoryRoot();
 	const stdout = capture();
 	const stderr = capture();
@@ -56,7 +56,8 @@ test("task-reconcile --json: output is JSON-parseable array", async () => {
 		stderr: stderr.stream,
 	});
 	assert.equal(code, 0, `expected exit 0, got ${code}; stderr: ${stderr.text()}`);
-	const parsed = JSON.parse(stdout.text().trim());
-	assert.ok(Array.isArray(parsed), "expected JSON array");
-	assert.equal(parsed.length, 0, "expected empty array for no tasks");
+	const parsed = JSON.parse(stdout.text().trim()) as { events?: unknown; wakeupsFired?: unknown };
+	assert.ok(Array.isArray(parsed.events), "expected events array");
+	assert.equal(parsed.events.length, 0, "expected empty events for no tasks");
+	assert.deepEqual(parsed.wakeupsFired, [], "expected empty wakeupsFired when no due alarms");
 });

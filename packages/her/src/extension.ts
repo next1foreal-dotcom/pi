@@ -108,6 +108,7 @@ import {
 	recordPresence,
 } from "./her-core/presence.ts";
 import { type ReviewEvidenceItem, verifyEvidence } from "./her-core/review-evidence.ts";
+import { cancelWakeup, fireDueWakeups, listWakeups, scheduleWakeup } from "./her-core/self-wakeup.ts";
 import { appendAuditLog } from "./lib/audit.ts";
 import { evaluate, policyEnvelope, resolveToolCallAnchor } from "./lib/cedar.ts";
 import { governedTools, resolveGovernedTool } from "./lib/governed-tools.ts";
@@ -705,6 +706,11 @@ export default function her(pi: ExtensionAPI): void {
 			console.warn(`[her] event-wake reconcile skipped: ${errorMessage(error)}`);
 			return false;
 		}
+		try {
+			await fireDueWakeups(memoryDir, new Date());
+		} catch (error) {
+			console.warn(`[her] self-wakeup fire skipped: ${errorMessage(error)}`);
+		}
 		if (events.length === 0) return false;
 		const runtime = loadRuntimeConfig(memoryDir);
 		if (runtime.tasks.telegramNotify) {
@@ -1294,6 +1300,44 @@ export default function her(pi: ExtensionAPI): void {
 				wake,
 				...(notifyWhenIdle ? { notifyWhenIdle: true } : {}),
 			});
+		},
+	});
+
+	pi.registerTool({
+		name: "her_schedule_wakeup",
+		label: "Her Schedule Wakeup",
+		description:
+			"One-shot alarm: when due, an urgent [闹钟] inbox message is delivered back to this session. Unavailable on the heartbeat profile.",
+		parameters: Type.Object({
+			action: StringEnum(["set", "list", "cancel"] as const),
+			inMinutes: Type.Optional(
+				Type.Number({ description: "Fire after this many minutes; mutually exclusive with at" }),
+			),
+			at: Type.Optional(Type.String({ description: "ISO timestamp to fire; mutually exclusive with inMinutes" })),
+			note: Type.Optional(Type.String({ description: "Alarm note, required for set, max 500 characters" })),
+			id: Type.Optional(Type.String({ description: "Wakeup id to cancel" })),
+		}),
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			try {
+				if (params.action === "set") {
+					const result = await scheduleWakeup(memoryDir, {
+						...(params.at !== undefined ? { at: params.at } : {}),
+						...(params.inMinutes !== undefined ? { inMinutes: params.inMinutes } : {}),
+						note: params.note ?? "",
+						ownerSessionId: ctx.sessionManager.getSessionId(),
+					});
+					return textResult(JSON.stringify(result), { phase: "G-368", action: "set", ...result });
+				}
+				if (params.action === "list") {
+					const wakeups = await listWakeups(memoryDir);
+					return textResult(JSON.stringify(wakeups), { phase: "G-368", action: "list", wakeups });
+				}
+				const result = await cancelWakeup(memoryDir, params.id ?? "");
+				return textResult(JSON.stringify(result), { phase: "G-368", action: "cancel", ...result });
+			} catch (error) {
+				const message = errorMessage(error);
+				return textResult(JSON.stringify({ error: message }), { phase: "G-368", status: "error", error: message });
+			}
 		},
 	});
 

@@ -164,6 +164,7 @@ import {
 	type WorldNoteData,
 	writeText,
 } from "./her-core/index.ts";
+import { fireDueWakeups } from "./her-core/self-wakeup.ts";
 import { redactSecrets } from "./her-core/store.ts";
 import { createSummaryModel } from "./summary-model.ts";
 
@@ -431,7 +432,15 @@ export async function runHerCli(
 	if (command.kind === "task-reconcile") {
 		try {
 			const events = await reconcileBgTasks(memoryDir);
-			writePayload(io.stdout, events, command.json, renderTaskReconcile);
+			let wakeupsFired: string[] = [];
+			try {
+				wakeupsFired = (await fireDueWakeups(memoryDir, new Date())).fired;
+			} catch (error) {
+				writeLine(io.stderr, `task-reconcile wakeups: ${errorMessage(error)}`);
+			}
+			writePayload(io.stdout, { events, wakeupsFired }, command.json, (payload) =>
+				renderTaskReconcile(payload.events),
+			);
 			return 0;
 		} catch (error) {
 			writeLine(io.stderr, `task-reconcile: ${errorMessage(error)}`);

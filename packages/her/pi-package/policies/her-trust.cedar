@@ -95,6 +95,21 @@ permit(
   resource == Tool::"her_session_send"
 );
 
+// G-368 — one-shot self-alarm. her_schedule_wakeup writes a wakeup row and, when
+// due, an urgent inbox message back to the owner session (same side-effect family
+// as her_session_send: storage write + can ride the existing inbox wake path).
+// allow_memory_tools does not cover it once registered destructive:true.
+// Heartbeat stays closed the same way as her_session_send: her-trust-heartbeat.cedar
+// is a separate policy set that permits only destructive == false and forbids
+// destructive; this tool is catalogued destructive, so the named permit cannot
+// leak into an unattended round.
+@id("permit_her_schedule_wakeup")
+permit(
+  principal == Agent::"samantha",
+  action == Action::"CallTool",
+  resource == Tool::"her_schedule_wakeup"
+);
+
 // G-284 工具信任梯 — Fei 拍板发证(2026-08-19)。取证结论先于直觉:她**早就**有 bash
 // 在所有非锚路径上(上面 permit_coding_destructive_tools),所以自造工具是 **0 能力增量**
 // ——它只能比被包装者更窄(注册期 wider-than-wrapped 直接拒;可包装清单只有 ["bash"])。

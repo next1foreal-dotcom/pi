@@ -21,6 +21,10 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	// destructive tools, so this ships denied until Fei grants a named permit
 	// (the her_task_spawn / _stop / _continue precedent in her-trust.cedar).
 	her_session_send: { destructive: true },
+	// G-368 self-alarm. Writes wakeup rows and, when due, an urgent inbox
+	// message — same side-effect family as her_session_send. Heartbeat forbids
+	// destructive tools, so this stays out of unattended rounds.
+	her_schedule_wakeup: { destructive: true },
 	her_feedback: { destructive: false },
 	her_sync: { destructive: false },
 	her_task_create: { destructive: false },
