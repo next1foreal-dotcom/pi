@@ -310,18 +310,24 @@ export async function spawnBgTask(
 	if (mode === "worker" && workerProfile && workerName) {
 		command = prepareWorkerCommand(workerName, workerProfile, tasksDir(memoryRoot), record.id);
 		record.command = [...command];
-	} else if (
-		basename(command[0] ?? "")
-			.toLowerCase()
-			.replace(/\.exe$/i, "") === "codex"
-	) {
-		// G-187 — a bare-command codex invocation (a continuation) gets the same treatment as a
-		// profile one, keyed off argv[0] rather than the worker name: `worker` falls back to the
-		// configured default, which would otherwise inject codex flags into a plain `node` task.
-		// Without this the child captures no session id and writes no result.md — i.e. a
-		// continuation could not itself be continued.
-		command = prepareWorkerCommand("codex", { argv: command }, tasksDir(memoryRoot), record.id);
-		record.command = [...command];
+	} else {
+		const argv0 = basename(command[0] ?? "").toLowerCase();
+		const asCodex = argv0.replace(/\.exe$/i, "");
+		const asGrok = argv0.replace(/\.(exe|cmd|bat)$/i, "");
+		if (asCodex === "codex") {
+			// G-187 — a bare-command codex invocation (a continuation) gets the same treatment as a
+			// profile one, keyed off argv[0] rather than the worker name: `worker` falls back to the
+			// configured default, which would otherwise inject codex flags into a plain `node` task.
+			// Without this the child captures no session id and writes no result.md — i.e. a
+			// continuation could not itself be continued.
+			command = prepareWorkerCommand("codex", { argv: command }, tasksDir(memoryRoot), record.id);
+			record.command = [...command];
+		} else if (asGrok === "grok") {
+			// G-354 — same argv[0] fallback as codex, for a bare `grok` invocation. Windows shims
+			// are `grok.cmd`, so this strip is wider than the .exe-only codex match (unchanged).
+			command = prepareWorkerCommand("grok", { argv: command }, tasksDir(memoryRoot), record.id);
+			record.command = [...command];
+		}
 	}
 
 	if (!input.skipGates && !dependencyPending) {

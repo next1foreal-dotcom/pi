@@ -1,6 +1,6 @@
 ---
 name: coding-dispatch
-description: 写码任务的派工纪律：怎么把实现/计划/复审正确派给 .pi/agents/ 的 project 班子，而不是自己写。触发：Fei 或驱动方要求实现功能、修 bug、写测试、出实施计划、复审代码，或点名"派给 coder/planner/班子"。单文件小改（<20 行、无架构含义）直接做，不套派工。大活的拆解与并行编排看 orchestrate——本 skill 只管 subagent 这把枪怎么打准。
+description: 写码任务的派工纪律：怎么把实现/计划/复审正确派给 .pi/agents/ 的 project 班子，而不是自己写。触发：Fei 或驱动方要求实现功能、修 bug、写测试、出实施计划、复审代码，或点名"派给 coder/planner/班子"；以及外部 CLI、派给 grok、通道水位。单文件小改（<20 行、无架构含义）直接做，不套派工。大活的拆解与并行编排看 orchestrate——本 skill 只管 subagent 这把枪怎么打准。
 ---
 
 # coding-dispatch — 班子怎么派才打得准
@@ -29,6 +29,28 @@ description: 写码任务的派工纪律：怎么把实现/计划/复审正确�
 3. **任务书必须自包含。** 绝对路径、做什么、验收标准写全，结尾加"不要做其他任何事"。给 planner 类岗位额外声明**"直接返回文本，不要写任何文件"**（防 plan.md 之类残留污染仓库）。
 
 **并行改同一个仓的任务，`her_task_spawn` 带 `isolation:"worktree"`**——每个任务在自己的 git worktree（分支 `her-task/<taskId>`）里跑，互不踩工作树；跑完没产出就自动回收，有 commit 或有未提交改动就保留，路径和分支写进汇报等你验收合流（不自动合并）。
+
+## 外部 CLI 通道(G-354)
+
+班子岗位是 API 型脑；外部 CLI（grok / cursor-agent / codex）是订阅型算力。两层并存，不互相替代。实现 / 修 bug / 写测试类的大活，优先走外部 CLI。
+
+**怎么派。** `her_task_spawn` 带 `worker:"grok_build"` + `isolation:"worktree"` + 按活点名 `gates`。任务书必须自包含：绝对路径、验收命令、失败出口。六要素模板见同目录 `references/taskpkg-template.md`。
+
+推荐档案（只进她的 config，本仓库不改活 config）：
+
+```yaml
+workers:
+  grok_build:
+    argv: ["grok", "--always-approve", "--output-format", "plain"]
+```
+
+`--always-approve`：grok 的 Windows 沙箱是静默空操作，隔离靠 worktree，门禁靠 G-206；工具审批弹窗在无头下会挂死任务。brief 走 `--prompt-file <id>.brief`（管线注入，答案走 stdout / 任务日志）。
+
+**探针前置。** 派外部 CLI 前先跑 `node packages/her/scripts/probe-worker-channels.mjs`（或读其最新输出）。**探针绿 ≠ 有额度**，额度看 `ops/channel-quota.yaml` 口径。
+
+**水位快照（2026-08-31）：** grok 主力；cursor-agent / codex 额度尽，恢复以 Fei 口径为准。
+
+名册表以 `.pi/agents/*.md` frontmatter 的 `model` 为准（本轮已核，8 行一致）。对不上又查不到的行标「待核」，禁止凭空发明型号。
 
 ## 验收纪律（收货不收话）
 

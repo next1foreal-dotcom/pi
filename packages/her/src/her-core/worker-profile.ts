@@ -1,4 +1,4 @@
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
@@ -210,6 +210,15 @@ export function resolveWorkerModel(argv: readonly string[]): string | "unknown" 
  * directory" gate passed only by accident — because her-memory happens to be a git repo. Saying it
  * out loud keeps a non-git memory root from failing continues with an unrelated-looking error.
  *
+ * G-354 — grok does not read stdin (`grok -p -` sends the literal "-"). The pipeline already
+ * writes `<taskDir>/<taskId>.brief` before launch (G-129 sentinel; retries and retention know
+ * that name). This branch injects `--prompt-file` pointing at that file. It does **not** invent
+ * a `.brief.md` sibling — `isTaskRecordFile` would ignore it, but retention's SENTINELS list
+ * `brief`, not `brief.md`, and two files would drift.
+ *
+ * Placement: after argv[0] when the binary is grok (options before any positional prompt);
+ * otherwise appended, so a node wrapper used in tests is not given unknown node flags.
+ *
  * Idempotent: a flag the caller already configured is never added twice.
  */
 export function prepareWorkerCommand(
@@ -219,18 +228,56 @@ export function prepareWorkerCommand(
 	taskId: string,
 ): string[] {
 	const command = [...profile.argv];
-	if (workerName.toLowerCase() !== "codex") return command;
-	const flags: string[] = [];
-	if (!command.includes("--json")) flags.push("--json");
-	if (!command.includes("-o") && !command.includes("--output-last-message")) {
-		flags.push("-o", join(taskDir, `${taskId}.result.md`));
+	if (workerName.toLowerCase() === "codex") {
+		const flags: string[] = [];
+		if (!command.includes("--json")) flags.push("--json");
+		if (!command.includes("-o") && !command.includes("--output-last-message")) {
+			flags.push("-o", join(taskDir, `${taskId}.result.md`));
+		}
+		if (!command.includes("--skip-git-repo-check")) flags.push("--skip-git-repo-check");
+		if (flags.length === 0) return command;
+		// Options belong before any subcommand/positional; fall back to appending for an argv shape
+		// we do not recognise.
+		const at = command[1] === "exec" ? 2 : command.length;
+		return [...command.slice(0, at), ...flags, ...command.slice(at)];
 	}
-	if (!command.includes("--skip-git-repo-check")) flags.push("--skip-git-repo-check");
-	if (flags.length === 0) return command;
-	// Options belong before any subcommand/positional; fall back to appending for an argv shape
-	// we do not recognise.
-	const at = command[1] === "exec" ? 2 : command.length;
-	return [...command.slice(0, at), ...flags, ...command.slice(at)];
+	if (isGrokInvocation(workerName, command)) return injectGrokPromptFile(command, taskDir, taskId);
+	return command;
+}
+
+/** Strip Windows shim suffixes so `grok.exe` / `grok.cmd` still identify as grok. */
+function workerCliName(file: string | undefined): string {
+	return basename(file ?? "")
+		.toLowerCase()
+		.replace(/\.(exe|cmd|bat)$/i, "");
+}
+
+/**
+ * G-354 — fire on the worker name `grok`, the recommended archive name `grok_build`,
+ * or an argv whose binary is grok (bare-command fallback keys off argv[0] the same way).
+ */
+function isGrokInvocation(workerName: string, argv: readonly string[]): boolean {
+	const name = workerName.toLowerCase();
+	if (name === "grok" || name === "grok_build") return true;
+	return workerCliName(argv[0]) === "grok";
+}
+
+/** `-p` and `--single` are the same grok flag (single-turn prompt); do not also inject --prompt-file. */
+function hasGrokPrompt(command: readonly string[]): boolean {
+	for (const arg of command) {
+		if (arg === "--prompt-file" || arg === "-p" || arg === "--single") return true;
+		if (arg.startsWith("--prompt-file=") || arg.startsWith("--single=")) return true;
+	}
+	return false;
+}
+
+function injectGrokPromptFile(command: string[], taskDir: string, taskId: string): string[] {
+	if (hasGrokPrompt(command)) return command;
+	const flags = ["--prompt-file", join(taskDir, `${taskId}.brief`)];
+	if (workerCliName(command[0]) === "grok") {
+		return [command[0], ...flags, ...command.slice(1)];
+	}
+	return [...command, ...flags];
 }
 
 /**
