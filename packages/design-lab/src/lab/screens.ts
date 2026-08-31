@@ -1,4 +1,5 @@
 import type { ComponentType } from "react";
+import { notifyScreenHotUpdate } from "./spotlight/hmr";
 
 export type ScreenDef = {
   id: string;
@@ -59,4 +60,13 @@ export const SCREENS: ScreenDef[] = Object.entries(modules)
 
 export function screenById(id: string): ScreenDef | undefined {
   return SCREENS.find((s) => s.id === id);
+}
+
+if (import.meta.hot) {
+  import.meta.hot.on("vite:beforeUpdate", (payload) => {
+    const updates = payload.updates ?? [];
+    if (updates.some((u) => u.path.includes("/screens/"))) {
+      notifyScreenHotUpdate();
+    }
+  });
 }

@@ -39,6 +39,11 @@ import { CanvasRuler } from "./canvas-ruler";
 import { NOTE_H, NOTE_W, StickyNotes } from "./page-notes";
 import { Labels } from "./page-labels";
 import { dispatchLabKey } from "./keyboard-dispatch";
+import {
+  attachLabSpotlight,
+  notifySpotlightGesture,
+} from "../spotlight/attach";
+import { SpotlightOverlay } from "../spotlight/overlay";
 import styles from "./lab.module.css";
 import {
   CLEANUP_GAP,
@@ -178,7 +183,10 @@ export function InteractionLab() {
         if (b) seedCamera(zoomToBounds(b, session.viewport));
       }
     }
-    attachCameraApplier((cam) => applyCamera(session, cam));
+    attachCameraApplier((cam, reason) => {
+      applyCamera(session, cam);
+      if (reason === "gesture") notifySpotlightGesture();
+    });
     applyCamera(session, getCamera());
     flushCoarse();
 
@@ -271,6 +279,7 @@ export function InteractionLab() {
       isFill: () => session.mode === "fill",
       onGestureStart: () => {
         cancelCameraAnimation();
+        notifySpotlightGesture();
         markGesture(session);
       },
       onGestureMove: () => {
@@ -620,7 +629,14 @@ export function InteractionLab() {
     };
     window.addEventListener("pagehide", onPageHide);
 
+    const stopSpotlight = attachLabSpotlight({
+      getRoot: () => session.root,
+      getOrigin: () => session.origin,
+      getViewport: () => session.viewport,
+    });
+
     return () => {
+      stopSpotlight();
       unbind();
       ro.disconnect();
       window.removeEventListener("keydown", onKeyDown, true);
@@ -743,6 +759,7 @@ export function InteractionLab() {
             if (node) node.style.display = "none";
           }}
         />
+        <SpotlightOverlay />
       </div>
       <div className={styles.chrome}>
         {SCREENS.map((def) => (
