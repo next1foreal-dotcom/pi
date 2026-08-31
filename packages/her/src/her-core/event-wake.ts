@@ -28,6 +28,7 @@ type WakeLedgerRow = { at: string; taskIds: string[]; status: EventWakeStatus };
  */
 export const WAKE_TURN_BOUNDARY =
 	'这些后台任务已终态。职责:her_task_output 读结果、"发生过"落 episodic、推进所属目标。' +
+	"代码派工单完工而盘上无判词(.her/tasks/<taskId>.judge.json 缺)→ 第一动作按 acceptance-officer 技能开庭(仓根 node packages/her/bin/her.mjs accept <taskId> --json),独立核证后出终审判词再收账。" +
 	"本回合不许 spawn 新后台任务(工具层会拒绝);需要新任务时写入待办等下次对话拍板。";
 
 /** Refusal returned by her_task_spawn when called inside a wake turn (grok 缺口2 硬闸兜底). */

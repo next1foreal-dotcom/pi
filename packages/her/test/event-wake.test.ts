@@ -140,6 +140,9 @@ test("GWT-7 spawn is blocked only inside a wake turn with the block enabled", ()
 	assert.ok(EVENT_WAKE_SPAWN_REFUSAL.length > 0);
 	assert.match(WAKE_TURN_BOUNDARY, /her_task_output/);
 	assert.match(WAKE_TURN_BOUNDARY, /待办/);
+	assert.match(WAKE_TURN_BOUNDARY, /acceptance-officer/);
+	assert.match(WAKE_TURN_BOUNDARY, /her\.mjs accept/);
+	assert.match(WAKE_TURN_BOUNDARY, /judge\.json/);
 });
 
 // 闸序 — gate order is fixed: disabled > daily_cap > usd_cap. With every gate tripped
