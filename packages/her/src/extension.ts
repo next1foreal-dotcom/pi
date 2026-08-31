@@ -112,6 +112,7 @@ import {
 } from "./her-core/presence.ts";
 import { type ReviewEvidenceItem, verifyEvidence } from "./her-core/review-evidence.ts";
 import { cancelWakeup, fireDueWakeups, listWakeups, scheduleWakeup } from "./her-core/self-wakeup.ts";
+import { buildWidgetMessage } from "./her-core/widget.ts";
 import { appendAuditLog } from "./lib/audit.ts";
 import { evaluate, policyEnvelope, resolveToolCallAnchor } from "./lib/cedar.ts";
 import { governedTools, resolveGovernedTool } from "./lib/governed-tools.ts";
@@ -1342,6 +1343,42 @@ export default function her(pi: ExtensionAPI): void {
 				return textResult("选项卡已弹出;本回合到此,等 Fei 点选,不要替他作答。", { phase: "G-375" });
 			} catch (error) {
 				return textResult(errorMessage(error), { phase: "G-375", status: "error" });
+			}
+		},
+	});
+
+	pi.registerTool({
+		name: "her_widget",
+		label: "Her Widget",
+		description:
+			"内联可视化。要留存有地址用 her_publish;要 Fei 批注用 preview_open_review。动手前读 widget 技能的 references/widget-contract.txt。",
+		parameters: Type.Object({
+			title: Type.String({ description: "snake_case widget id, at most 64 characters" }),
+			widget_code: Type.String({ description: "SVG or HTML fragment, at most 200000 characters" }),
+			loading_messages: Type.Optional(
+				Type.Array(Type.String({ description: "Loading message, at most 60 characters" }), {
+					minItems: 1,
+					maxItems: 4,
+					description: "Optional 1 to 4 loading messages",
+				}),
+			),
+		}),
+		async execute(_toolCallId, params) {
+			try {
+				const { content, details } = buildWidgetMessage({
+					title: params.title,
+					widget_code: params.widget_code,
+					loading_messages: params.loading_messages,
+				});
+				pi.sendMessage({
+					customType: "her-widget",
+					content,
+					display: true,
+					details,
+				});
+				return textResult(`已渲染:${details.title}`, { phase: "G-378" });
+			} catch (error) {
+				return textResult(errorMessage(error), { phase: "G-378", status: "error" });
 			}
 		},
 	});
