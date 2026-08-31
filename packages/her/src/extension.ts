@@ -1326,11 +1326,29 @@ export default function her(pi: ExtensionAPI): void {
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			try {
 				if (params.action === "set") {
+					let sessionDir: string | undefined;
+					try {
+						if (typeof ctx.sessionManager.getSessionDir === "function") {
+							const dir = ctx.sessionManager.getSessionDir();
+							if (typeof dir === "string" && dir.trim()) sessionDir = dir.trim();
+						}
+					} catch {
+						sessionDir = undefined;
+					}
+					if (!sessionDir) {
+						try {
+							const file = ctx.sessionManager.getSessionFile();
+							if (typeof file === "string" && file.trim()) sessionDir = dirname(file.trim());
+						} catch {
+							/* omit — self-start covers the default session-dir only */
+						}
+					}
 					const result = await scheduleWakeup(memoryDir, {
 						...(params.at !== undefined ? { at: params.at } : {}),
 						...(params.inMinutes !== undefined ? { inMinutes: params.inMinutes } : {}),
 						note: params.note ?? "",
 						ownerSessionId: ctx.sessionManager.getSessionId(),
+						...(sessionDir ? { sessionDir } : {}),
 					});
 					return textResult(JSON.stringify(result), { phase: "G-368", action: "set", ...result });
 				}

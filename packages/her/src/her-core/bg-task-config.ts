@@ -53,6 +53,11 @@ export type TasksConfig = {
 	messageWakeMinBatch: number;
 	/** G-373 — non-urgent cross-session wake: max age in minutes (maybeWake maxAgeMs). */
 	messageWakeMaxAgeMinutes: number;
+	/**
+	 * G-374 — CLI tick alarm self-start daily cap (UTC). Independent of event-wake.
+	 * 0 disables self-start.
+	 */
+	alarmSelfStartDailyMax: number;
 };
 
 export type PublishConfig = {
@@ -91,6 +96,7 @@ export const DEFAULT_TASKS_CONFIG: TasksConfig = {
 	probeMaxAgeHours: 24, // probe_max_age_hours — G-356: spawn 闸窗口小时;0 = 关
 	messageWakeMinBatch: 3, // message_wake_min_batch — G-373: non-urgent wake batch; 1 = immediate
 	messageWakeMaxAgeMinutes: 30, // message_wake_max_age_minutes — G-373: non-urgent wake max age
+	alarmSelfStartDailyMax: 6, // alarm_self_start_daily_max — G-374: CLI tick self-start UTC day cap; 0 = off
 };
 
 export const DEFAULT_PUBLISH_CONFIG: PublishConfig = {
@@ -124,6 +130,13 @@ export function loadRuntimeConfig(memoryRoot: string, opts?: { failLoud?: boolea
 	}
 	if (!(tasks.messageWakeMaxAgeMinutes >= 0)) {
 		tasks.messageWakeMaxAgeMinutes = DEFAULT_TASKS_CONFIG.messageWakeMaxAgeMinutes;
+	}
+	if (
+		!(typeof tasks.alarmSelfStartDailyMax === "number") ||
+		!Number.isFinite(tasks.alarmSelfStartDailyMax) ||
+		tasks.alarmSelfStartDailyMax < 0
+	) {
+		tasks.alarmSelfStartDailyMax = DEFAULT_TASKS_CONFIG.alarmSelfStartDailyMax;
 	}
 	const publish = { ...DEFAULT_PUBLISH_CONFIG, ...(raw.publish ?? {}) };
 	const failLoud = opts?.failLoud === true || process.env.HER_TASKS_FAIL_LOUD === "1";

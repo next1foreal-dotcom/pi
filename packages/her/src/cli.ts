@@ -105,6 +105,7 @@ import {
 	UsageError,
 } from "./cli/utils.ts";
 import { getSessionAgentToolRegistry } from "./her-core/agent-tools.ts";
+import { loadRuntimeConfig } from "./her-core/bg-task-config.ts";
 import { applyDreamProposal, rejectDreamProposal } from "./her-core/evidence-apply.ts";
 import { runDreamScan } from "./her-core/evidence-scan.ts";
 import {
@@ -164,7 +165,7 @@ import {
 	type WorldNoteData,
 	writeText,
 } from "./her-core/index.ts";
-import { fireDueWakeups } from "./her-core/self-wakeup.ts";
+import { fireDueWakeups, listWakeups, selfStartForFiredWakeups } from "./her-core/self-wakeup.ts";
 import { redactSecrets } from "./her-core/store.ts";
 import { createSummaryModel } from "./summary-model.ts";
 
@@ -433,13 +434,29 @@ export async function runHerCli(
 		try {
 			const events = await reconcileBgTasks(memoryDir);
 			let wakeupsFired: string[] = [];
+			let selfStart: Awaited<ReturnType<typeof selfStartForFiredWakeups>> | undefined;
 			try {
-				wakeupsFired = (await fireDueWakeups(memoryDir, new Date())).fired;
+				const now = new Date();
+				const due = await listWakeups(memoryDir);
+				wakeupsFired = (await fireDueWakeups(memoryDir, now)).fired;
+				if (wakeupsFired.length > 0) {
+					try {
+						const firedRows = due.filter((row) => wakeupsFired.includes(row.id));
+						selfStart = await selfStartForFiredWakeups(memoryDir, firedRows, loadRuntimeConfig(memoryDir).tasks, {
+							now,
+						});
+					} catch (error) {
+						writeLine(io.stderr, `task-reconcile self-start: ${errorMessage(error)}`);
+					}
+				}
 			} catch (error) {
 				writeLine(io.stderr, `task-reconcile wakeups: ${errorMessage(error)}`);
 			}
-			writePayload(io.stdout, { events, wakeupsFired }, command.json, (payload) =>
-				renderTaskReconcile(payload.events),
+			writePayload(
+				io.stdout,
+				{ events, wakeupsFired, ...(selfStart ? { selfStart } : {}) },
+				command.json,
+				(payload) => renderTaskReconcile(payload.events),
 			);
 			return 0;
 		} catch (error) {

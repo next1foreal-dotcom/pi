@@ -1,11 +1,20 @@
+import { spawn as defaultSpawn, type SpawnOptions } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { readdir, unlink } from "node:fs/promises";
-import { join } from "node:path";
+import { closeSync, openSync } from "node:fs";
+import { appendFile, mkdir, readdir, readFile, unlink } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import type { TasksConfig } from "./bg-task-config.ts";
 import { writeMessage } from "./messages.ts";
 import { readJson, redactSecrets, retryOnFsContention, writeJson } from "./store.ts";
 
 export const MAX_WAKEUP_AHEAD_MS = 7 * 24 * 60 * 60 * 1000;
 export const MAX_WAKEUP_NOTE_CHARS = 500;
+export const SELF_START_PROMPT = "闹钟自启回合:读你的收件箱与唤醒信息,按技能行事;本回合不 spawn 新后台任务的规矩照旧。";
+export const SELF_START_LEDGER_NAME = "self-start-ledger.jsonl";
+
+/** packages/her/src/her-core → repo root. Tick cwd is System32; do not fall back to process.cwd(). */
+const DEFAULT_CODE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
 
 export interface WakeupRecord {
 	at: string;
@@ -13,6 +22,7 @@ export interface WakeupRecord {
 	id: string;
 	note: string;
 	ownerSessionId: string;
+	sessionDir?: string;
 }
 
 export interface ScheduleWakeupInput {
@@ -20,7 +30,33 @@ export interface ScheduleWakeupInput {
 	inMinutes?: number;
 	note: string;
 	ownerSessionId: string;
+	sessionDir?: string;
 }
+
+export type SelfStartStatus = "launched" | "skipped";
+export type SelfStartReason = "disabled" | "daily_cap" | "in_flight" | "spawn_error";
+
+export type SelfStartResult = {
+	at: string;
+	wakeupIds: string[];
+	sessionId: string;
+	pid: number | null;
+	status: SelfStartStatus;
+	reason?: SelfStartReason;
+};
+
+export type SelfStartSpawnFn = (
+	command: string,
+	args: readonly string[],
+	options: SpawnOptions,
+) => { pid?: number; unref: () => void };
+
+export type SelfStartOptions = {
+	now?: Date;
+	spawn?: SelfStartSpawnFn;
+	pidAlive?: (pid: number) => boolean;
+	codeRoot?: string;
+};
 
 function wakeupsDir(root: string): string {
 	return join(root, ".her", "wakeups");
@@ -91,12 +127,14 @@ export async function scheduleWakeup(root: string, input: ScheduleWakeupInput): 
 	if (!note) throw new Error("wakeup note is required");
 	if (note.length > MAX_WAKEUP_NOTE_CHARS) throw new Error("wakeup note must be at most 500 characters");
 	const id = newWakeupId(now);
+	const sessionDir = input.sessionDir?.trim();
 	const record: WakeupRecord = {
 		id,
 		at,
 		note,
 		ownerSessionId,
 		created: now.toISOString(),
+		...(sessionDir ? { sessionDir } : {}),
 	};
 	await writeJson(wakeupPath(root, id), record);
 	return { id, at };
@@ -165,4 +203,160 @@ export async function fireDueWakeups(root: string, now: Date): Promise<{ fired: 
 		fired.push(row.id);
 	}
 	return { fired };
+}
+
+function selfStartLedgerPath(root: string): string {
+	return join(wakeupsDir(root), SELF_START_LEDGER_NAME);
+}
+
+function resolveSelfStartCodeRoot(explicit?: string): string {
+	const fromEnv = process.env.HER_CODE_ROOT?.trim() || process.env.HER_PI_DIR?.trim();
+	return resolve(explicit?.trim() || fromEnv || DEFAULT_CODE_ROOT);
+}
+
+function defaultPidAlive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (error) {
+		const code =
+			error && typeof error === "object" && "code" in error ? String((error as { code: unknown }).code) : "";
+		if (code === "EPERM") return true;
+		return false;
+	}
+}
+
+function selfStartLogName(at: string): string {
+	return `${at.replace(/[:.]/g, "-")}.selfstart.log`;
+}
+
+type LedgerRow = {
+	at?: unknown;
+	wakeupIds?: unknown;
+	sessionId?: unknown;
+	pid?: unknown;
+	status?: unknown;
+	reason?: unknown;
+};
+
+async function readSelfStartLedger(root: string): Promise<LedgerRow[]> {
+	let text: string;
+	try {
+		text = await readFile(selfStartLedgerPath(root), "utf8");
+	} catch {
+		return [];
+	}
+	const rows: LedgerRow[] = [];
+	for (const line of text.split(/\r?\n/)) {
+		if (!line.trim()) continue;
+		try {
+			const row = JSON.parse(line) as LedgerRow;
+			if (row && typeof row === "object") rows.push(row);
+		} catch {}
+	}
+	return rows;
+}
+
+function countLaunchedToday(rows: LedgerRow[], now: Date): number {
+	const today = now.toISOString().slice(0, 10);
+	let count = 0;
+	for (const row of rows) {
+		if (row.status === "launched" && typeof row.at === "string" && row.at.slice(0, 10) === today) count += 1;
+	}
+	return count;
+}
+
+function latestLaunchedPid(rows: LedgerRow[]): number | null {
+	for (let i = rows.length - 1; i >= 0; i--) {
+		const row = rows[i];
+		const pid = row?.pid;
+		if (row?.status === "launched" && typeof pid === "number" && Number.isInteger(pid) && pid > 0) return pid;
+	}
+	return null;
+}
+
+async function appendSelfStartRow(root: string, row: SelfStartResult): Promise<void> {
+	await mkdir(wakeupsDir(root), { recursive: true });
+	const ledger: Record<string, unknown> = {
+		at: row.at,
+		wakeupIds: row.wakeupIds,
+		sessionId: row.sessionId,
+		pid: row.pid,
+		status: row.status,
+	};
+	if (row.reason) ledger.reason = row.reason;
+	await appendFile(selfStartLedgerPath(root), `${JSON.stringify(ledger)}\n`, "utf8");
+}
+
+/**
+ * G-374 — CLI tick only: after fireDueWakeups has due rings, spawn one detached
+ * headless session for the owner. Independent daily cap from event-wake.
+ */
+export async function selfStartForFiredWakeups(
+	root: string,
+	fired: WakeupRecord[],
+	cfg: TasksConfig,
+	opts?: SelfStartOptions,
+): Promise<SelfStartResult> {
+	const now = opts?.now ?? new Date();
+	const at = now.toISOString();
+	const wakeupIds = fired.map((row) => row.id);
+	const sessionId = fired[0]?.ownerSessionId ?? "";
+	const sessionDir = fired.find((row) => row.ownerSessionId === sessionId && row.sessionDir)?.sessionDir;
+	const finish = async (row: SelfStartResult): Promise<SelfStartResult> => {
+		await appendSelfStartRow(root, row);
+		return row;
+	};
+	if (fired.length === 0 || !sessionId) {
+		return { at, wakeupIds, sessionId, pid: null, status: "skipped", reason: "disabled" };
+	}
+
+	const dailyMax = cfg.alarmSelfStartDailyMax;
+	if (dailyMax === 0) {
+		return finish({ at, wakeupIds, sessionId, pid: null, status: "skipped", reason: "disabled" });
+	}
+
+	const rows = await readSelfStartLedger(root);
+	const pidAlive = opts?.pidAlive ?? defaultPidAlive;
+	const inFlightPid = latestLaunchedPid(rows);
+	if (inFlightPid !== null && pidAlive(inFlightPid)) {
+		return finish({ at, wakeupIds, sessionId, pid: null, status: "skipped", reason: "in_flight" });
+	}
+	if (countLaunchedToday(rows, now) >= dailyMax) {
+		return finish({ at, wakeupIds, sessionId, pid: null, status: "skipped", reason: "daily_cap" });
+	}
+
+	const codeRoot = resolveSelfStartCodeRoot(opts?.codeRoot);
+	const cliPath = join(codeRoot, "packages", "coding-agent", "dist", "cli.js");
+	const args = ["-p", "--mode", "text", "--session-id", sessionId];
+	if (sessionDir) args.push("--session-dir", sessionDir);
+	args.push("--provider", "deepseek", "--model", "deepseek-v4-flash", SELF_START_PROMPT);
+	const argv = [cliPath, ...args];
+	const spawnFn = opts?.spawn ?? ((command, spawnArgs, options) => defaultSpawn(command, spawnArgs, options));
+
+	await mkdir(wakeupsDir(root), { recursive: true });
+	const logPath = join(wakeupsDir(root), selfStartLogName(at));
+	let fd: number | undefined;
+	try {
+		fd = openSync(logPath, "a");
+		const child = spawnFn(process.execPath, argv, {
+			cwd: codeRoot,
+			detached: true,
+			stdio: ["ignore", fd, fd],
+			windowsHide: true,
+		});
+		child.unref();
+		const pid = typeof child.pid === "number" ? child.pid : null;
+		return finish({ at, wakeupIds, sessionId, pid, status: "launched" });
+	} catch {
+		return finish({ at, wakeupIds, sessionId, pid: null, status: "skipped", reason: "spawn_error" });
+	} finally {
+		if (fd !== undefined) {
+			try {
+				closeSync(fd);
+			} catch {
+				/* child inherited the fd */
+			}
+		}
+	}
 }
