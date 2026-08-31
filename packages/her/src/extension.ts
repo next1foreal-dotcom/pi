@@ -2290,8 +2290,7 @@ export default function her(pi: ExtensionAPI): void {
 		name: "her_task_continue",
 		label: "Her Background Task Continue",
 		description:
-			"Continue a completed Codex background task by its captured session id. " +
-			"Non-Codex, non-terminal, or legacy tasks fail explicitly; never starts a silent replacement task.",
+			"Continue a completed Codex (captured session id) or grok (worktree --continue) background task. Non-continuable tasks fail explicitly; never starts a silent replacement.",
 		parameters: Type.Object({
 			taskId: Type.String(),
 			message: Type.String(),

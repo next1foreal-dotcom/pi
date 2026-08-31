@@ -2,7 +2,7 @@
  * G-120/G-122/G-125 — spawn / stop / list harness background tasks (+ gates / worktree).
  */
 
-import { readdir } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import { hostname as osHostname } from "node:os";
 import { basename, join, resolve } from "node:path";
 import {
@@ -37,6 +37,7 @@ import { claimWarmWorktree, clampWarmWorktreePoolSize, ensureWarmWorktreePool } 
 import {
 	buildCodexResumeCommand,
 	buildWorkerEnv,
+	isGrokInvocation,
 	prepareWorkerCommand,
 	resolveWorkerInvocation,
 	resolveWorkerModel,
@@ -82,6 +83,15 @@ export type SpawnBgTaskInput = {
 	gates?: AcceptanceGate[];
 	/** Test hook: skip budget/concurrency gates (spend/concurrency, not acceptance gates) */
 	skipGates?: boolean;
+	/**
+	 * G-365 — run in this existing worktree as cwd. Never creates or claims a slot.
+	 * The child record copies the path and sets `worktreeReused`.
+	 */
+	reuseWorktree?: string;
+	reuseWorktreeBranch?: string;
+	reuseWorktreeBaseSha?: string;
+	/** Extra argv tokens appended to the worker profile before prepareWorkerCommand. */
+	workerExtraArgs?: string[];
 	/** Internal trusted command path: allow the configured CLI shim chain in command mode. */
 	allowComspec?: boolean;
 	/**
@@ -320,6 +330,9 @@ export async function spawnBgTask(
 	}
 	if (!dependencyPending && record.blockedBy?.length) record.unlockedAt = Date.now();
 	if (mode === "worker" && workerProfile && workerName) {
+		if (input.workerExtraArgs?.length) {
+			workerProfile = { ...workerProfile, argv: [...workerProfile.argv, ...input.workerExtraArgs] };
+		}
 		command = prepareWorkerCommand(workerName, workerProfile, tasksDir(memoryRoot), record.id);
 		record.command = [...command];
 	} else {
@@ -419,7 +432,15 @@ export async function spawnBgTask(
 	let workerCwd: string | undefined;
 	let worktreePath: string | undefined;
 	let gatePlan: GatePlan | null = taskGatePlan;
-	if (useWorktree) {
+	if (input.reuseWorktree) {
+		workerCwd = input.reuseWorktree;
+		worktreePath = input.reuseWorktree;
+		record.worktree = input.reuseWorktree;
+		record.worktreeReused = true;
+		if (input.codeRoot) record.codeRoot = resolveCodeRoot(input.codeRoot);
+		if (input.reuseWorktreeBranch) record.worktreeBranch = input.reuseWorktreeBranch;
+		if (input.reuseWorktreeBaseSha) record.worktreeBaseSha = input.reuseWorktreeBaseSha;
+	} else if (useWorktree) {
 		const codeRoot = resolveCodeRoot(input.codeRoot);
 		if (resolve(codeRoot) === resolve(memoryRoot)) {
 			const failed = migrateBgStatus(record, "failed", {
@@ -612,6 +633,37 @@ export async function continueBgTask(
 	if (!isTerminal(record.status)) {
 		throw new Error(`该任务暂不支持续跑: 原任务未处于终态（当前状态 ${record.status}）`);
 	}
+	const cfg = loadRuntimeConfig(memoryRoot);
+	const grokProfile = cfg.workers[record.worker];
+	const invokeArgv = grokProfile?.argv ?? record.command;
+	if (isGrokInvocation(record.worker, invokeArgv)) {
+		const worktree = typeof record.worktree === "string" ? record.worktree : "";
+		if (!worktree) throw new Error("该任务暂不支持续跑: grok 续跑需要原任务的 worktree");
+		let live = false;
+		try {
+			live = (await stat(worktree)).isDirectory();
+		} catch {
+			live = false;
+		}
+		if (!live) throw new Error("该任务暂不支持续跑: 原任务的 worktree 已被回收");
+		const safeMessage = redactSecrets(message);
+		return spawnBgTask(memoryRoot, {
+			objective: `Continue ${record.id}`,
+			brief: safeMessage,
+			worker: record.worker,
+			parentTask: record.id,
+			ownerSessionId,
+			reuseWorktree: worktree,
+			...(typeof record.codeRoot === "string" && record.codeRoot ? { codeRoot: record.codeRoot } : {}),
+			...(typeof record.worktreeBranch === "string" && record.worktreeBranch
+				? { reuseWorktreeBranch: record.worktreeBranch }
+				: {}),
+			...(typeof record.worktreeBaseSha === "string" && record.worktreeBaseSha
+				? { reuseWorktreeBaseSha: record.worktreeBaseSha }
+				: {}),
+			workerExtraArgs: ["--continue"],
+		});
+	}
 	if (!record.codexSessionId) throw new Error("该任务暂不支持续跑: 原任务没有 codexSessionId");
 	if (record.worker.toLowerCase() !== "codex") throw new Error("该任务暂不支持续跑: 任务类型不是 codex");
 
@@ -627,7 +679,7 @@ export async function continueBgTask(
 	//
 	// worker 的 cwd 是 `<memoryRoot>/.her/tasks`(bare command 模式实测,不是调用方的 cwd),
 	// 所以 codex 的 git 仓库门由 prepareWorkerCommand 注入的 --skip-git-repo-check 显式放行。
-	const profile = resolveWorkerInvocation(loadRuntimeConfig(memoryRoot).workers, record.worker);
+	const profile = resolveWorkerInvocation(cfg.workers, record.worker);
 	return spawnBgTask(memoryRoot, {
 		objective: `Continue ${record.id}`,
 		command: buildCodexResumeCommand(profile.argv, record.codexSessionId, safeMessage),

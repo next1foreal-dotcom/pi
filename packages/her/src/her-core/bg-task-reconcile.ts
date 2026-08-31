@@ -759,6 +759,7 @@ async function cleanupEmptyWorktree(record: BgTaskRecord): Promise<{
 	event: Pick<WakeEvent, "worktreeRemoved" | "worktreeKept" | "handoff">;
 	recordPatch: Partial<BgTaskRecord>;
 } | null> {
+	if (record.worktreeReused === true) return null;
 	const worktree = typeof record.worktree === "string" ? record.worktree : null;
 	const codeRoot = typeof record.codeRoot === "string" ? record.codeRoot : null;
 	const baseSha = typeof record.worktreeBaseSha === "string" ? record.worktreeBaseSha : null;

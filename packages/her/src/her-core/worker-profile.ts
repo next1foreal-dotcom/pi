@@ -256,7 +256,7 @@ export function workerCliName(file: string | undefined): string {
  * G-354 — fire on the worker name `grok`, the recommended archive name `grok_build`,
  * or an argv whose binary is grok (bare-command fallback keys off argv[0] the same way).
  */
-function isGrokInvocation(workerName: string, argv: readonly string[]): boolean {
+export function isGrokInvocation(workerName: string, argv: readonly string[]): boolean {
 	const name = workerName.toLowerCase();
 	if (name === "grok" || name === "grok_build") return true;
 	return workerCliName(argv[0]) === "grok";

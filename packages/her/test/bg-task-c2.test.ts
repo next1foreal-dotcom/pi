@@ -1,14 +1,20 @@
 import assert from "node:assert/strict";
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
+import { copyFile, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { hostname, tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
+import { promisify } from "node:util";
 import { herTaskOutput } from "../src/her-core/bg-task-output.ts";
 import { parseCodexSessionId, reconcileBgTasks } from "../src/her-core/bg-task-reconcile.ts";
 import { type BgTaskRecord, loadBgTask, saveBgTask, tasksDir } from "../src/her-core/bg-task-record.ts";
 import { continueBgTask } from "../src/her-core/bg-task-spawn.ts";
+import { ensureTaskWorktree } from "../src/her-core/long-task-worktree.ts";
 import { prepareWorkerCommand, type WorkerProfile } from "../src/her-core/worker-profile.ts";
+
+const execFileAsync = promisify(execFile);
 
 async function memoryRoot(): Promise<string> {
 	const root = await mkdtemp(join(tmpdir(), "her-c2-"));
@@ -192,4 +198,170 @@ test("C2 continue spawns a normal child with parentTask, ownerSessionId, and red
 		if (oldPath === undefined) delete process.env.PATH;
 		else process.env.PATH = oldPath;
 	}
+});
+
+function sameDir(a: string, b: string): boolean {
+	return resolve(a).toLowerCase() === resolve(b).toLowerCase();
+}
+
+async function git(cwd: string, ...args: string[]): Promise<void> {
+	await execFileAsync("git", args, { cwd });
+}
+
+async function tempGitRepo(): Promise<string> {
+	const root = await mkdtemp(join(tmpdir(), "her-c2-repo-"));
+	await git(root, "init", "-q");
+	await git(root, "config", "user.email", "c2@example.com");
+	await git(root, "config", "user.name", "Her C2 Test");
+	await writeFile(join(root, "README.md"), "# repo\n", "utf8");
+	await git(root, "add", "-A");
+	await git(root, "commit", "-q", "-m", "initial commit");
+	return root;
+}
+
+async function withWorktreeRoot<T>(worktreeRoot: string, fn: () => Promise<T>): Promise<T> {
+	const prev = process.env.HER_LONGTASK_WORKTREE_ROOT;
+	process.env.HER_LONGTASK_WORKTREE_ROOT = worktreeRoot;
+	try {
+		return await fn();
+	} finally {
+		if (prev === undefined) delete process.env.HER_LONGTASK_WORKTREE_ROOT;
+		else process.env.HER_LONGTASK_WORKTREE_ROOT = prev;
+	}
+}
+
+async function writeGrokPromptFixture(dir: string): Promise<string> {
+	const path = join(dir, "read-prompt-file.mjs");
+	await writeFile(
+		path,
+		[
+			"import { readFileSync } from 'node:fs';",
+			"const i = process.argv.indexOf('--prompt-file');",
+			"if (i < 0 || !process.argv[i + 1]) {",
+			"  process.stderr.write('NO_PROMPT_FILE\\n');",
+			"  process.exit(2);",
+			"}",
+			"process.stdout.write('CWD=' + process.cwd() + '\\n');",
+			"process.stdout.write(readFileSync(process.argv[i + 1], 'utf8'));",
+			"",
+		].join("\n"),
+		"utf8",
+	);
+	return path;
+}
+
+test("C2 grok continue reuses parent worktree and injects --continue via prompt-file", async () => {
+	const root = await memoryRoot();
+	const fixture = await writeGrokPromptFixture(root);
+	const parentWorktree = await mkdtemp(join(tmpdir(), "her-c2-grok-wt-"));
+	const pool = await mkdtemp(join(tmpdir(), "her-c2-wt-pool-"));
+	await writeConfig(
+		root,
+		[
+			"workers:",
+			"  grok:",
+			`    argv: ["${process.execPath.replace(/\\/g, "/")}", "${fixture.replace(/\\/g, "/")}"]`,
+			"tasks:",
+			"  max_concurrent: 3",
+			"  budget_daily_cap: 100",
+			"  probe_max_age_hours: 0",
+			"",
+		].join("\n"),
+	);
+	const oldId = "t-20260802-grok-parent";
+	await saveBgTask(
+		root,
+		record({
+			id: oldId,
+			worker: "grok",
+			command: ["grok"],
+			worktree: parentWorktree,
+		}),
+		"# fixture\n",
+	);
+	await withWorktreeRoot(pool, async () => {
+		const result = await continueBgTask(root, oldId, "keep going", "owner-2");
+		assert.equal(result.status, "running");
+		if (result.status !== "running") return;
+		await waitForDone(root, result.id);
+		const child = await loadBgTask(root, result.id);
+		assert.equal(child?.record.parentTask, oldId);
+		assert.equal(child?.record.ownerSessionId, "owner-2");
+		assert.equal(child?.record.worker, "grok");
+		assert.equal(child?.record.worktreeReused, true);
+		assert.ok(typeof child?.record.worktree === "string" && sameDir(String(child.record.worktree), parentWorktree));
+		assert.ok(
+			child?.record.command.includes("--continue"),
+			`expected --continue in ${JSON.stringify(child?.record.command)}`,
+		);
+		assert.ok(
+			child?.record.command.includes("--prompt-file"),
+			`expected --prompt-file in ${JSON.stringify(child?.record.command)}`,
+		);
+		const briefPath = join(tasksDir(root), `${result.id}.brief`);
+		assert.equal(child.record.command[child.record.command.indexOf("--prompt-file") + 1], briefPath);
+		assert.equal(await readFile(briefPath, "utf8"), "keep going");
+		const log = await readFile(join(tasksDir(root), `${result.id}.log`), "utf8");
+		const cwdLine = log.split("\n").find((line) => line.startsWith("CWD="));
+		assert.ok(cwdLine, `expected CWD= in log, got ${JSON.stringify(log)}`);
+		assert.ok(sameDir(cwdLine.slice(4), parentWorktree), `cwd ${cwdLine.slice(4)} !== parent ${parentWorktree}`);
+		assert.deepEqual(await readdir(pool), [], "grok continue must not create or claim a worktree");
+	});
+});
+
+test("C2 grok continue rejects missing worktree and a recycled worktree explicitly", async () => {
+	const root = await memoryRoot();
+	await saveBgTask(root, record({ id: "t-grok-none", worker: "grok", command: ["grok"] }), "# fixture\n");
+	await assert.rejects(
+		() => continueBgTask(root, "t-grok-none", "hello", "owner-1"),
+		(error: Error) => error.message === "该任务暂不支持续跑: grok 续跑需要原任务的 worktree",
+	);
+
+	const gone = join(root, "already-reclaimed");
+	await saveBgTask(
+		root,
+		record({ id: "t-grok-gone", worker: "grok", command: ["grok"], worktree: gone }),
+		"# fixture\n",
+	);
+	await assert.rejects(
+		() => continueBgTask(root, "t-grok-gone", "hello", "owner-1"),
+		(error: Error) => error.message === "该任务暂不支持续跑: 原任务的 worktree 已被回收",
+	);
+});
+
+test("C2 reused worktree survives child settlement", async () => {
+	const root = await memoryRoot();
+	await writeConfig(root, ["tasks:", "  max_concurrent: 5", "  max_retries: 0", ""].join("\n"));
+	const repo = await tempGitRepo();
+	const worktreeRoot = await mkdtemp(join(tmpdir(), "her-c2-reuse-"));
+	const childId = "t-20260802-reuse";
+	await withWorktreeRoot(worktreeRoot, async () => {
+		const wt = await ensureTaskWorktree(repo, childId);
+		await saveBgTask(
+			root,
+			record({
+				id: childId,
+				status: "running",
+				endedAt: undefined,
+				worker: "grok",
+				command: ["grok"],
+				worktree: wt.worktreePath,
+				codeRoot: repo,
+				worktreeBranch: wt.branch,
+				worktreeBaseSha: wt.baseSha,
+				worktreeReused: true,
+			}),
+			"# reused child\n",
+		);
+		await writeFile(
+			join(tasksDir(root), `${childId}.done`),
+			JSON.stringify({ exitCode: 0, endedAt: "2026-08-02T00:00:02.000Z" }),
+			"utf8",
+		);
+		await reconcileBgTasks(root, { hostname: hostname(), skipRetry: true });
+		assert.equal(existsSync(wt.worktreePath), true, "shared parent worktree must survive child settlement");
+		const loaded = await loadBgTask(root, childId);
+		assert.equal(loaded?.record.status, "completed");
+		assert.ok(typeof loaded?.record.worktree === "string" && loaded.record.worktree.length > 0);
+	});
 });
