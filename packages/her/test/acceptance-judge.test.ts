@@ -20,6 +20,7 @@ import { runHerCli } from "../src/cli.ts";
 import {
 	ACCEPT_INPUT_BUDGET_CHARS,
 	ACCEPT_JUDGE_SYSTEM_PROMPT,
+	ACCEPT_MODEL_MAX_TOKENS,
 	ACCEPT_MODEL_TIMEOUT_MS,
 	acceptanceJudgeFilename,
 	assembleAcceptanceEvidence,
@@ -181,6 +182,20 @@ test("appendix A judge prompt is verbatim", () => {
 	assert.equal(ACCEPT_JUDGE_SYSTEM_PROMPT, APPENDIX_A);
 	assert.equal(ACCEPT_INPUT_BUDGET_CHARS, 48_000);
 	assert.equal(ACCEPT_MODEL_TIMEOUT_MS, 10 * 60 * 1000);
+});
+
+test("judge model call includes maxTokens = ACCEPT_MODEL_MAX_TOKENS (4096)", async () => {
+	const memory = await tempMemory();
+	const id = await writeTask(memory);
+	const model = new FakeModel(PASS_JSON);
+	await runAcceptanceJudge(memory, id, { model, now: NOW });
+	assert.equal(model.calls.length, 1, "judge must call model exactly once");
+	assert.equal(
+		model.calls[0]?.maxTokens,
+		ACCEPT_MODEL_MAX_TOKENS,
+		"judge must pass maxTokens to prevent output truncation",
+	);
+	assert.equal(ACCEPT_MODEL_MAX_TOKENS, 4096, "constant must be 4096");
 });
 
 test("parseArgs accept <taskId> [--json] [--force]", () => {

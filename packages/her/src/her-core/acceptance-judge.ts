@@ -18,6 +18,7 @@ const execFileAsync = promisify(execFile);
 
 export const ACCEPT_INPUT_BUDGET_CHARS = 48_000;
 export const ACCEPT_MODEL_TIMEOUT_MS = 10 * 60 * 1000;
+export const ACCEPT_MODEL_MAX_TOKENS = 4096;
 export const ACCEPT_LOG_TAIL_CHARS = 8_000;
 const GIT_READ_TIMEOUT_MS = 60_000;
 const GIT_READ_VERBS = new Set(["diff", "log", "status", "merge-base", "rev-parse", "show"]);
@@ -125,7 +126,11 @@ export async function runAcceptanceJudge(
 	let completion: CompletionResult;
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), timeoutMs);
-	const call = invokeCompletion(opts.model, prompt, { strong: true, signal: controller.signal });
+	const call = invokeCompletion(opts.model, prompt, {
+		strong: true,
+		maxTokens: ACCEPT_MODEL_MAX_TOKENS,
+		signal: controller.signal,
+	});
 	void call.catch(() => {});
 	try {
 		completion = await Promise.race([call, timeoutRejection(controller.signal, timeoutMs)]);
