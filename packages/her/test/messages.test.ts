@@ -7,10 +7,13 @@ import { DEFAULT_TASKS_CONFIG, type TasksConfig } from "../src/her-core/bg-task-
 import { recordEventWake } from "../src/her-core/event-wake.ts";
 import {
 	archiveInbox,
+	deliverIdleNotice,
 	deliveryDecision,
+	drainIdleWatches,
 	drainInbox,
 	formatInbox,
 	maybeWake,
+	requestIdleNotice,
 	resolveTargetSource,
 	writeMessage,
 } from "../src/her-core/messages.ts";
@@ -329,4 +332,51 @@ test("Cedar: her_session_send is allowed by its named permit and stays denied on
 	const unattended = evaluate(call("heartbeat"));
 	assert.equal(unattended.decision, "deny");
 	assert.deepEqual(unattended.matched, ["heartbeat_forbid_destructive_tools"]);
+});
+
+test("idle watch subscribe then drain is one-shot", async () => {
+	const root = await rootStore();
+	assert.deepEqual(await drainIdleWatches(root, PI_ID), []);
+	await requestIdleNotice(root, REAL_FROM, PI_ID);
+	await requestIdleNotice(root, REAL_FROM, PI_ID);
+	const watchPath = join(root, "messages", ".idle-watch", `${PI_ID}--${REAL_FROM}.json`);
+	const row = JSON.parse(await readFile(watchPath, "utf8")) as { from: string; to: string; at: string };
+	assert.equal(row.from, REAL_FROM);
+	assert.equal(row.to, PI_ID);
+	assert.ok(Number.isFinite(Date.parse(row.at)));
+	assert.deepEqual(await drainIdleWatches(root, PI_ID), [REAL_FROM]);
+	assert.deepEqual(await drainIdleWatches(root, PI_ID), []);
+	await assert.rejects(() => stat(watchPath));
+});
+
+test("deliverIdleNotice writes an urgent receipt into the subscriber inbox", async () => {
+	const root = await rootStore();
+	const config = await configWithSessions(root);
+	await requestIdleNotice(root, PI_ID, REAL_FROM);
+	await deliverIdleNotice(root, REAL_FROM, PI_ID, config);
+	const [message] = await drainInbox(root, PI_ID);
+	assert.ok(message);
+	assert.equal(message.from, REAL_FROM);
+	assert.equal(message.to, PI_ID);
+	assert.equal(message.urgent, true);
+	assert.equal(message.origin, `${REAL_FROM}-idle-notice`);
+	assert.equal(message.body, `[idle notice] 会话 ${REAL_FROM} 已收工(一次性回执,不必回复)`);
+	assert.deepEqual(await drainIdleWatches(root, REAL_FROM), []);
+});
+
+test("deliverIdleNotice consumes the watch when the target cannot be resolved", async () => {
+	const root = await rootStore();
+	const config = await configWithSessions(root);
+	const missing = "no-such-session";
+	await requestIdleNotice(root, missing, REAL_FROM);
+	await deliverIdleNotice(root, REAL_FROM, missing, config);
+	assert.deepEqual(await drainIdleWatches(root, REAL_FROM), []);
+	assert.deepEqual(await drainInbox(root, missing), []);
+});
+
+test("idle watch ids are rejected by safeSegment", async () => {
+	const root = await rootStore();
+	await assert.rejects(() => requestIdleNotice(root, "bad/id", PI_ID), /must be a safe session id/);
+	await assert.rejects(() => requestIdleNotice(root, PI_ID, "has space"), /must be a safe session id/);
+	await assert.rejects(() => requestIdleNotice(root, "", PI_ID), /must be a safe session id/);
 });

@@ -99,6 +99,7 @@ import {
 	writeCostReport,
 	writeMessage,
 } from "./her-core/index.ts";
+import { deliverIdleNotice, drainIdleWatches, requestIdleNotice } from "./her-core/messages.ts";
 import { type ReviewEvidenceItem, verifyEvidence } from "./her-core/review-evidence.ts";
 import { appendAuditLog } from "./lib/audit.ts";
 import { evaluate, policyEnvelope, resolveToolCallAnchor } from "./lib/cedar.ts";
@@ -959,6 +960,25 @@ export default function her(pi: ExtensionAPI): void {
 				memoryDir,
 			});
 		} finally {
+			try {
+				// G-366 idle receipts. Same availability gate as her_session_send: G-245
+				// registered it destructive, and her-trust-heartbeat.cedar
+				// heartbeat_forbid_destructive_tools denies destructive tools on the
+				// unattended profile. Reuse that Cedar check so heartbeat turn_end
+				// cannot write inbox receipts (watches stay for the next attended turn).
+				const sendTool = resolveGovernedTool("her_session_send");
+				const sendAllowed =
+					evaluate(toolAuthorizationCall("her_session_send", sendTool.destructive)).decision === "allow";
+				if (sendAllowed) {
+					const subscribers = await drainIdleWatches(memoryDir, sessionId);
+					const idleConfig = resolveSessionReadConfig(undefined, undefined, { archiveDir: memoryDir });
+					for (const subscriber of subscribers) {
+						await deliverIdleNotice(memoryDir, sessionId, subscriber, idleConfig);
+					}
+				}
+			} catch (error) {
+				console.warn(`[her] idle-notice dispatch skipped: ${errorMessage(error)}`);
+			}
 			await publishSyncStatus(ctx);
 			scheduleSync("capture", ctx);
 		}
@@ -1168,13 +1188,19 @@ export default function her(pi: ExtensionAPI): void {
 		name: "her_session_send",
 		label: "Her Session Send",
 		description:
-			"Queue a message for another pi session. Claude Code, Codex, Cursor, and archive targets are rejected; delivery is storage-mediated and the recipient reads it on its next turn.",
+			"Queue a message for another pi session. Claude Code, Codex, Cursor, and archive targets are rejected; delivery is storage-mediated and the recipient reads it on its next turn. notify_when_idle: one-shot — 对方下次收工你会收到一条 [idle notice];不带正文=纯订阅。",
 		parameters: Type.Object({
 			to: Type.String({ description: "Recipient pi session id" }),
-			body: Type.String({ description: "Message body; the recipient treats it as untrusted data" }),
+			body: Type.Optional(Type.String({ description: "Message body; the recipient treats it as untrusted data" })),
 			urgent: Type.Optional(Type.Boolean({ description: "Request immediate gated wake instead of batching" })),
+			notify_when_idle: Type.Optional(Type.Boolean()),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			const notifyWhenIdle = params.notify_when_idle === true;
+			const body = params.body ?? "";
+			if (!notifyWhenIdle && !body.trim()) {
+				return textResult("her_session_send: body is required", { phase: "G-245", status: "error" });
+			}
 			const from = ctx.sessionManager.getSessionId();
 			const config = resolveSessionReadConfig(undefined, undefined, { archiveDir: memoryDir });
 			const source = await resolveTargetSource(config, params.to);
@@ -1182,19 +1208,33 @@ export default function her(pi: ExtensionAPI): void {
 			if (!decision.ok) {
 				return textResult(decision.reason, { phase: "G-245", status: "rejected", to: params.to, source });
 			}
-			const stored = await writeMessage(memoryDir, {
-				from,
-				to: params.to,
-				at: new Date().toISOString(),
-				urgent: params.urgent ?? false,
-				origin: from,
-				body: params.body,
-			});
+			let stored: { path: string } | undefined;
 			let wake: Awaited<ReturnType<typeof maybeWake>> = { woke: false, reason: "not-attempted" };
-			try {
-				wake = await maybeWake(memoryDir, params.to, loadRuntimeConfig(memoryDir).tasks);
-			} catch (error) {
-				console.warn(`[her] message wake check skipped: ${errorMessage(error)}`);
+			if (body.trim()) {
+				stored = await writeMessage(memoryDir, {
+					from,
+					to: params.to,
+					at: new Date().toISOString(),
+					urgent: params.urgent ?? false,
+					origin: from,
+					body,
+				});
+				try {
+					wake = await maybeWake(memoryDir, params.to, loadRuntimeConfig(memoryDir).tasks);
+				} catch (error) {
+					console.warn(`[her] message wake check skipped: ${errorMessage(error)}`);
+				}
+			}
+			if (notifyWhenIdle) {
+				await requestIdleNotice(memoryDir, from, params.to);
+			}
+			if (!stored) {
+				return textResult(`Idle notice subscribed for ${params.to}.`, {
+					phase: "G-245",
+					status: "subscribed",
+					from,
+					to: params.to,
+				});
 			}
 			return textResult(`Message queued for ${params.to}.`, {
 				phase: "G-245",
@@ -1203,6 +1243,7 @@ export default function her(pi: ExtensionAPI): void {
 				to: params.to,
 				path: stored.path,
 				wake,
+				...(notifyWhenIdle ? { notifyWhenIdle: true } : {}),
 			});
 		},
 	});

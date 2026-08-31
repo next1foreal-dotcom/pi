@@ -1,8 +1,8 @@
-import { mkdir, readdir, rename } from "node:fs/promises";
+import { mkdir, readdir, rename, unlink } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import type { TasksConfig } from "./bg-task-config.ts";
 import { recordEventWake, shouldEventWake } from "./event-wake.ts";
-import type { SessionReadConfig, SessionSourceName } from "./session-read.ts";
+import { resolveSessionReadConfig, type SessionReadConfig, type SessionSourceName } from "./session-read.ts";
 import { listSessionFiles } from "./session-roster.ts";
 import {
 	fenceUntrusted,
@@ -12,6 +12,7 @@ import {
 	redactSecrets,
 	retryOnFsContention,
 	writeNewText,
+	writeText,
 } from "./store.ts";
 
 export const MIN_BATCH = 3;
@@ -202,4 +203,82 @@ export async function maybeWake(
 	const taskIds = [...new Set(fresh.map((message) => `message:${message.origin}`))];
 	await recordEventWake(root, taskIds, "sent", now);
 	return { woke: true };
+}
+
+function idleWatchDir(root: string): string {
+	return join(root, "messages", ".idle-watch");
+}
+
+function idleWatchFile(root: string, watched: string, subscriber: string): string {
+	return join(
+		idleWatchDir(root),
+		`${safeSegment(watched, "session id")}--${safeSegment(subscriber, "session id")}.json`,
+	);
+}
+
+export async function requestIdleNotice(root: string, subscriber: string, watched: string): Promise<void> {
+	const from = safeSegment(subscriber, "session id");
+	const to = safeSegment(watched, "session id");
+	const at = new Date().toISOString();
+	await writeText(idleWatchFile(root, to, from), `${JSON.stringify({ from, to, at })}\n`);
+}
+
+export async function drainIdleWatches(root: string, selfId: string): Promise<string[]> {
+	const dir = idleWatchDir(root);
+	const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+	const subscribers: string[] = [];
+	for (const entry of entries) {
+		if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+		const path = join(dir, entry.name);
+		const text = await readText(path);
+		if (text === undefined) continue;
+		let row: { from?: unknown; to?: unknown };
+		try {
+			row = JSON.parse(text) as { from?: unknown; to?: unknown };
+		} catch {
+			continue;
+		}
+		if (typeof row.to !== "string" || row.to !== selfId) continue;
+		try {
+			await retryOnFsContention(() => unlink(path), { label: `drainIdleWatches:${entry.name}` });
+		} catch (error) {
+			if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") continue;
+			throw error;
+		}
+		if (typeof row.from === "string" && row.from.trim()) subscribers.push(row.from);
+	}
+	return subscribers;
+}
+
+export async function deliverIdleNotice(
+	root: string,
+	selfId: string,
+	subscriber: string,
+	config?: SessionReadConfig,
+): Promise<void> {
+	const from = safeSegment(selfId, "session id");
+	const to = safeSegment(subscriber, "session id");
+	try {
+		await retryOnFsContention(() => unlink(idleWatchFile(root, from, to)), {
+			label: `deliverIdleNotice:${from}--${to}`,
+		});
+	} catch (error) {
+		if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT")) throw error;
+	}
+	const sessionConfig = config ?? resolveSessionReadConfig(undefined, undefined, { archiveDir: root });
+	const source = await resolveTargetSource(sessionConfig, to);
+	const decision = deliveryDecision(source);
+	if (!decision.ok) {
+		console.warn(`[her] idle-notice: cannot deliver from ${from} to ${to}`);
+		return;
+	}
+	await writeMessage(root, {
+		from,
+		to,
+		at: new Date().toISOString(),
+		urgent: true,
+		// writeMessage/safeSegment rejects `:`; keep the spec tag without that character.
+		origin: `${from}-idle-notice`,
+		body: `[idle notice] 会话 ${from} 已收工(一次性回执,不必回复)`,
+	});
 }
