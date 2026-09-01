@@ -114,6 +114,10 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	// Deny-by-default until Fei grants a named Cedar permit (her_session_send
 	// precedent). her_mcp_list stays read-only.
 	her_mcp_call: { destructive: true },
+	// Authorizes an external service in a browser and persists the grant — an
+	// unconstrained, hard-to-reverse side effect in the her_mcp_call family, and
+	// exactly the kind of thing that must never happen in an unattended round.
+	her_mcp_login: { destructive: true },
 	// G-284 agent-made tool ladder. Both destructive on purpose, and it is not the
 	// fail-safe default doing the work - it is a choice. Declaring alone has no side
 	// effect (the registry is in-memory and dies with the process), so the read-only

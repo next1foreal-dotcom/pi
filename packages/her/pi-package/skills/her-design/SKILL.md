@@ -46,7 +46,7 @@ over-read, never under-read.
 | Tokens before drawing anything | process/tokens-first |
 | The owner sent a reference | process/references |
 | Screen flows and prototypes | process/flows |
-| Judging a render before calling it done | review/rubric · review/refine-order · design/details |
+| Judging a render before calling it done | review/rubric · review/refine-order · design/details — and `design_lab_still` first: judge the frame, not your memory of writing it |
 | Verifying a live screen / responsive sweep | review/rendered-page-verify |
 | Landing a design into code — export, handoff | process/to-code |
 | Ending a design session | process/filing — file decisions, patterns, tool notes, debt before you stop |
