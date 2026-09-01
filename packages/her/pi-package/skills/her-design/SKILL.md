@@ -40,6 +40,7 @@ over-read, never under-read.
 | Charts, dashboards, KPI tiles | the matching charts/* file(s) |
 | Gradients, shadows, glass, glow | effects/gradients · effects/shadows · effects/svg-filters |
 | Dark surfaces | effects/dark-mode |
+| Anything that moves — transitions, entrances, scroll, a dynamic page | design/motion (what earns movement · values have sources · reduced motion) |
 | Rebuild from a screenshot | recreation/from-image |
 | Build from a one-line brief | recreation/from-description |
 | Tokens before drawing anything | process/tokens-first |

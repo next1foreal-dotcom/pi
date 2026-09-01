@@ -39,6 +39,7 @@ const HER_DESIGN_REFERENCE_FILES = [
 	"process/wireframe.md",
 	"research/positive-samples.md",
 	"design/arrangement.md",
+	"design/motion.md",
 	"process/to-code.md",
 	"review/rubric.md",
 	"review/refine-order.md",
@@ -62,7 +63,7 @@ async function mustBeFile(path: string): Promise<void> {
 	assert.equal(info.isFile(), true, `${path} must be a file`);
 }
 
-test("her-design skill exists with frontmatter name, 36 references, and her.md owned-skills entry", async () => {
+test("her-design skill exists with frontmatter name, 37 references, and her.md owned-skills entry", async () => {
 	const skillPath = join(skillRoot, "SKILL.md");
 	const skill = await readFile(skillPath, "utf8");
 	const normalized = skill.replace(/\r\n/g, "\n");
