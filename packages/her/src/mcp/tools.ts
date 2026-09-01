@@ -5,6 +5,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { Type } from "typebox";
+import { HeadlessAuthRequired, HerOAuthProvider, openInBrowser, startLoginCallback } from "./oauth.ts";
 import {
 	type CachedTool,
 	describeRemoteTool,
@@ -52,6 +53,14 @@ export interface ReadyHttpConnector extends ConnectorBase {
 	headers: Record<string, string>;
 	transport: "http";
 	url: string;
+	/**
+	 * "oauth" means the grant is obtained by browser login and kept in
+	 * .her/oauth/<slug>.json — no header, nothing to paste, nothing in the
+	 * manifest. Absent means the older static-header form.
+	 */
+	auth?: "oauth";
+	/** Where the grant lives; the manifest's directory, carried for the client. */
+	repoRoot?: string;
 }
 
 export type ReadyConnector = ReadyStdioConnector | ReadyHttpConnector;
@@ -166,6 +175,7 @@ function parseConnector(value: unknown, env: NodeJS.ProcessEnv): LoadedConnector
 
 	if (type === "http") {
 		const urlProblem = httpUrlProblem(url);
+		const wantsOAuth = value.auth === "oauth";
 		if (urlProblem) return connectorProblem(slug, label, urlProblem);
 		const headers = resolveEnvRefs(declaredHeaders, "headers", env);
 		if (headers.kind === "bad") return connectorProblem(slug, label, headers.reason);
@@ -180,6 +190,7 @@ function parseConnector(value: unknown, env: NodeJS.ProcessEnv): LoadedConnector
 			url: (url as string).trim(),
 			headers: headers.values,
 			secrets: Object.values(headers.values),
+			...(wantsOAuth ? { auth: "oauth" as const } : {}),
 		};
 	}
 
@@ -226,7 +237,15 @@ export async function loadConnectors(repoRoot: string, env: NodeJS.ProcessEnv = 
 		return { kind: "manifest_error", message: `不支持的外接清单 version：${String(manifest.version)}（仅支持 1）。` };
 	if (!Array.isArray(manifest.connectors))
 		return { kind: "manifest_error", message: "外接清单 connectors 必须是数组。" };
-	return { kind: "loaded", connectors: manifest.connectors.map((connector) => parseConnector(connector, env)) };
+	return {
+		kind: "loaded",
+		connectors: manifest.connectors.map((connector) => {
+			const parsed = parseConnector(connector, env);
+			// The grant lives beside the manifest, so the client needs to know
+			// which manifest this came from.
+			return parsed.status === "ready" && parsed.transport === "http" ? { ...parsed, repoRoot } : parsed;
+		}),
+	};
 }
 
 function transportEnv(connector: ReadyStdioConnector): Record<string, string> {
@@ -250,6 +269,18 @@ async function withClient<T>(
 		connector.transport === "http"
 			? new StreamableHTTPClientTransport(new URL(connector.url), {
 					requestInit: { headers: connector.headers },
+					// No interactive half here on purpose: this path runs inside
+					// scheduled work, so an expired grant must say "log in again"
+					// rather than try to open a browser nobody can see.
+					...(connector.auth === "oauth"
+						? {
+								authProvider: new HerOAuthProvider(
+									connector.repoRoot ?? process.cwd(),
+									connector.slug,
+									connector.label,
+								),
+							}
+						: {}),
 				})
 			: new StdioClientTransport({
 					command: connector.command,
@@ -426,6 +457,7 @@ export function registerMcpTools(pi: ExtensionAPI): void {
 	registerCachedRemoteTools(pi);
 	registerRefreshTool(pi);
 	registerStartupStatus(pi);
+	registerLoginTool(pi);
 }
 
 /**
@@ -601,5 +633,80 @@ export function registerStartupStatus(pi: ExtensionAPI): void {
 		return {
 			messages: [...event.messages, { role: "user" as const, content: text, timestamp: Date.now() }],
 		};
+	});
+}
+
+/**
+ * Log in to one external service in a browser.
+ *
+ * This is the interactive half, and the only place allowed to open a browser.
+ * Everything scheduled uses the stored grant and refreshes it silently; when
+ * that is no longer possible it says to run this, rather than hanging on a
+ * login page nobody is looking at.
+ */
+export function registerLoginTool(pi: ExtensionAPI): void {
+	pi.registerTool({
+		name: "her_mcp_login",
+		label: "Her MCP Login",
+		description: "Authorize one configured external service in the browser, and remember the grant.",
+		parameters: Type.Object({ connector: Type.String() }),
+		async execute(_id, params, signal, _onUpdate, ctx) {
+			const loaded = await loadConnectors(ctx.cwd);
+			if (loaded.kind === "not_configured") return textResult("未配置任何外接。");
+			if (loaded.kind === "manifest_error") return textResult(loaded.message);
+			const connector = loaded.connectors.find((item) => item.slug === params.connector);
+			if (!connector) return textResult(`未找到外接服务：${params.connector}。`);
+			if (connector.status !== "ready") return textResult(`${connector.slug}：${connector.reason}`);
+			if (connector.transport !== "http" || connector.auth !== "oauth") {
+				return textResult(
+					`${connector.slug} 不是浏览器登录型外接。要用登录授权，请把它的清单条目改成 "auth": "oauth" 并去掉 headers。`,
+				);
+			}
+
+			const { auth } = await import("@modelcontextprotocol/sdk/client/auth.js");
+			const callback = await startLoginCallback();
+			let authorizationUrl: URL | null = null;
+			const provider = new HerOAuthProvider(ctx.cwd, connector.slug, connector.label, {
+				redirectUrl: callback.redirectUrl,
+				onAuthorizationUrl: (url) => {
+					authorizationUrl = url;
+				},
+			});
+
+			try {
+				const first = await auth(provider, { serverUrl: connector.url });
+				if (first === "AUTHORIZED") {
+					callback.close();
+					return textResult(`${connector.slug}（${connector.label}）已经是授权状态，无需重新登录。`);
+				}
+				if (!authorizationUrl) {
+					callback.close();
+					return textResult(`${connector.slug}：没有拿到授权地址，这个服务可能不支持浏览器登录。`);
+				}
+				openInBrowser(String(authorizationUrl));
+				const code = await callback.waitForCode;
+				const done = await auth(provider, { serverUrl: connector.url, authorizationCode: code });
+				if (done !== "AUTHORIZED") return textResult(`${connector.slug}：授权没有完成（${done}）。`);
+
+				// Prove it end to end rather than trusting the handshake: a grant
+				// that cannot list tools is not a working connection.
+				const tools = await withClient({ ...connector }, signal, async (client) => {
+					const listed = await client.listTools(undefined, { signal });
+					return listed.tools.map((tool) => tool.name);
+				});
+				return textResult(
+					[
+						`${connector.slug}（${connector.label}）登录成功，令牌已存在 .her/oauth/${connector.slug}.json（不进版本库）。`,
+						`它提供 ${tools.length} 个工具：${tools.slice(0, 20).join(", ")}`,
+						"跑一次 her_mcp_refresh 再重启，它们就会出现在工具列表里。",
+					].join("\n"),
+				);
+			} catch (error) {
+				if (error instanceof HeadlessAuthRequired) return textResult(error.message);
+				return textResult(`${connector.slug} 登录失败：${redactError(error, connector)}`);
+			} finally {
+				callback.close();
+			}
+		},
 	});
 }
