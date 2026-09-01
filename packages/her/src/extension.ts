@@ -128,6 +128,7 @@ import { governedTools, resolveGovernedTool } from "./lib/governed-tools.ts";
 import { CONTEXT_INJECTION_SOURCES, injectLoggedContent } from "./lib/injection-ledger.ts";
 import { registerMcpTools } from "./mcp/tools.ts";
 import { registerExtractDesignTools } from "./preview/extract-design.ts";
+import { registerLabStillTools } from "./preview/lab-still.ts";
 import { registerPreviewStillTools } from "./preview/still-tools.ts";
 import { registerPreviewTools } from "./preview/tools.ts";
 import { registerRelayProviderTools } from "./providers-relay/tools.ts";
@@ -2694,6 +2695,7 @@ export default function her(pi: ExtensionAPI): void {
 	registerDesignProjectTools(pi);
 	registerPreviewStillTools(pi);
 	registerExtractDesignTools(pi);
+	registerLabStillTools(pi);
 	registerShowWidgetTools(pi);
 	registerTodoWriteTools(pi);
 	registerRelayProviderTools(pi);

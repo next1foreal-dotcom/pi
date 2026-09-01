@@ -85,6 +85,7 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	her_mcp_refresh: { destructive: false },
 	browser_navigate: { destructive: false },
 	design_lab_open: { destructive: false },
+	design_lab_still: { destructive: false },
 	design_project_create: { destructive: false },
 	design_project_get: { destructive: false },
 	design_project_list: { destructive: false },
