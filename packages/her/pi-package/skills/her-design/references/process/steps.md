@@ -9,10 +9,10 @@ The constitution applied over time: lock structure while disagreement is cheap; 
 
 | # | Step | What exists after it | Gate |
 |---|---|---|---|
-| 1 | Idea | a brief: what problem, what success looks like | — |
-| 2 | Research | observed values, not style words — extract real sites, read what the owner sent | — |
-| 3 | Moodboard | 2–3 directions, one sentence each | soft gate: owner picks the direction (async, non-blocking) |
-| 4 | Wireframe | gray boxes: true hierarchy, real copy skeleton, zero visual polish | **HARD gate: structure agreed** |
+| 1 | Idea | a brief: what problem, what success looks like (process/brief) | — |
+| 2 | Research | observed values, not style words — extract real sites, read what the owner sent (process/research) | — |
+| 3 | Moodboard | 2–3 directions, one sentence each (process/direction-first · process/variants) | soft gate: owner picks the direction (async, non-blocking) |
+| 4 | Wireframe | gray boxes: true hierarchy, real copy skeleton, zero visual polish (process/wireframe) | **HARD gate: structure agreed** |
 | 5 | First draft | the chosen direction rendered | enter only with the wireframe gate approved |
 | 6 | Iterations | each round removes before it adds; log what changed | — |
 | 7 | Final design | self-review report first, then the owner's eye | **HARD gate: final approval** |

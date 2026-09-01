@@ -26,6 +26,9 @@ over-read, never under-read.
 | Task | Read |
 |---|---|
 | Starting any design project / which step am I in | process/steps |
+| Turning an idea into a brief | process/brief |
+| Researching before designing | process/research |
+| Wireframing toward the structure gate | process/wireframe · design/composition |
 | Any new design | design/foundations · design/colors · design/typography · design/composition · review/anti-generic · process/direction-first |
 | Deciding scope — what gets in, what gets cut | design/composition (entry test: earned its way in? which five get the permanent place?) |
 | Important / multi-direction work | process/direction-first · process/variants |
