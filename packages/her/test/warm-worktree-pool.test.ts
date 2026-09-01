@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, readFile, realpath, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -295,4 +295,95 @@ test("spawnBgTask worktree=true claims warm slot when pool ready", async () => {
 		if (prev === undefined) delete process.env.HER_LONGTASK_WORKTREE_ROOT;
 		else process.env.HER_LONGTASK_WORKTREE_ROOT = prev;
 	}
+});
+
+const JUNCTION_TYPE = process.platform === "win32" ? "junction" : "dir";
+
+async function seedHostNodeModules(repo: string): Promise<string> {
+	const hostNm = join(repo, "node_modules");
+	const files: Array<[string, string]> = [
+		[join(".bin", "probe-1.txt"), "one\n"],
+		[join(".bin", "probe-2.txt"), "two\n"],
+		[join(".bin", "probe-3.txt"), "three\n"],
+		["keep-me.txt", "keep\n"],
+		[join("nested", "deep.txt"), "deep\n"],
+	];
+	for (const [rel, body] of files) {
+		const abs = join(hostNm, rel);
+		await mkdir(join(abs, ".."), { recursive: true });
+		await writeFile(abs, body, "utf8");
+	}
+	return hostNm;
+}
+
+async function snapshotFiles(root: string): Promise<Record<string, string>> {
+	const out: Record<string, string> = {};
+	const stack = [""];
+	while (stack.length > 0) {
+		const rel = stack.pop() ?? "";
+		const abs = rel ? join(root, rel) : root;
+		let entries: Array<{ isDirectory(): boolean; isFile(): boolean; isSymbolicLink(): boolean; name: string }>;
+		try {
+			entries = await readdir(abs, { withFileTypes: true });
+		} catch {
+			continue;
+		}
+		for (const entry of entries) {
+			const childRel = rel ? `${rel.replace(/\\/g, "/")}/${entry.name}` : entry.name;
+			if (entry.isSymbolicLink()) continue;
+			if (entry.isDirectory()) {
+				stack.push(childRel);
+				continue;
+			}
+			if (entry.isFile()) out[childRel] = await readFile(join(abs, entry.name), "utf8");
+		}
+	}
+	return out;
+}
+
+async function ensureJunction(source: string, dest: string): Promise<void> {
+	try {
+		await lstat(dest);
+		return;
+	} catch {
+		/* dest missing */
+	}
+	await symlink(source, dest, JUNCTION_TYPE);
+}
+
+test(
+	"G-364a drainWarmWorktreePool unlinks junctions and does not delete host node_modules",
+	{ timeout: 60_000 },
+	async () => {
+		const repo = await tempGitRepo();
+		const worktreeRoot = await tempWorktreeRoot();
+		const env = { ...process.env, HER_LONGTASK_WORKTREE_ROOT: worktreeRoot };
+		const hostNm = await seedHostNodeModules(repo);
+		const before = await snapshotFiles(hostNm);
+		assert.equal(Object.keys(before).length, 5);
+		await ensureWarmWorktreePool(repo, 1, { env });
+		await ensureJunction(hostNm, join(worktreeRoot, ".warm", "w0", "node_modules"));
+
+		await drainWarmWorktreePool(repo, { env });
+
+		const after = await snapshotFiles(hostNm);
+		assert.deepEqual(after, before, "host node_modules files must survive warm-pool drain");
+	},
+);
+
+test("G-364b warm-pool prebuilt slot junctions codeRoot node_modules", async () => {
+	const repo = await tempGitRepo();
+	const worktreeRoot = await tempWorktreeRoot();
+	const env = { ...process.env, HER_LONGTASK_WORKTREE_ROOT: worktreeRoot };
+	const hostNm = await seedHostNodeModules(repo);
+
+	await ensureWarmWorktreePool(repo, 1, { env });
+
+	const dest = join(worktreeRoot, ".warm", "w0", "node_modules");
+	const st = await lstat(dest);
+	assert.ok(st.isSymbolicLink(), "expected warm slot node_modules to be a junction (win32) or dir symlink");
+	assert.equal(await realpath(dest), await realpath(hostNm));
+	await drainWarmWorktreePool(repo, { env });
+	const after = await snapshotFiles(hostNm);
+	assert.equal(after["keep-me.txt"], "keep\n");
 });

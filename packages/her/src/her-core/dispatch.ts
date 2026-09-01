@@ -573,24 +573,8 @@ async function createDispatchWorktree(
  * worktree and branch in place for the acceptor to merge/cherry-pick and clean up.
  */
 async function removeDispatchWorktree(cwd: string, worktree: DispatchWorktree): Promise<void> {
-	const warnings: string[] = [];
 	const worktreePath = worktree.worktreePath;
-	try {
-		await unlinkJunction(join(worktreePath, "node_modules"));
-	} catch (error) {
-		if (!isMissing(error)) warnings.push(`unlink-junction: ${errorMessage(error)}`);
-	}
-	try {
-		for (const leftover of await scanJunctions(worktreePath)) {
-			try {
-				await unlinkJunction(leftover);
-			} catch (error) {
-				if (!isMissing(error)) warnings.push(`scan-unlink ${leftover}: ${errorMessage(error)}`);
-			}
-		}
-	} catch (error) {
-		if (!isMissing(error)) warnings.push(`scan-junctions: ${errorMessage(error)}`);
-	}
+	const warnings = await unlinkWorktreeJunctions(worktreePath);
 	try {
 		await git(cwd, "worktree", "remove", worktreePath, "--force");
 	} catch (error) {
@@ -619,7 +603,7 @@ function dispatchNodeModulesSource(env: NodeJS.ProcessEnv): string | undefined {
 	return join(SAMANTHA_REPO_ROOT, "node_modules");
 }
 
-async function junctionNodeModules(worktreePath: string, source: string | undefined): Promise<void> {
+export async function junctionNodeModules(worktreePath: string, source: string | undefined): Promise<void> {
 	if (!source) return;
 	const dest = join(worktreePath, "node_modules");
 	if (!(await pathExists(source)) || (await pathExists(dest))) return;
@@ -627,7 +611,28 @@ async function junctionNodeModules(worktreePath: string, source: string | undefi
 	await symlink(source, dest, type);
 }
 
-async function unlinkJunction(path: string): Promise<void> {
+export async function unlinkWorktreeJunctions(worktreePath: string): Promise<string[]> {
+	const warnings: string[] = [];
+	try {
+		await unlinkJunction(join(worktreePath, "node_modules"));
+	} catch (error) {
+		if (!isMissing(error)) warnings.push(`unlink-junction: ${errorMessage(error)}`);
+	}
+	try {
+		for (const leftover of await scanJunctions(worktreePath)) {
+			try {
+				await unlinkJunction(leftover);
+			} catch (error) {
+				if (!isMissing(error)) warnings.push(`scan-unlink ${leftover}: ${errorMessage(error)}`);
+			}
+		}
+	} catch (error) {
+		if (!isMissing(error)) warnings.push(`scan-junctions: ${errorMessage(error)}`);
+	}
+	return warnings;
+}
+
+export async function unlinkJunction(path: string): Promise<void> {
 	try {
 		await rmdir(path);
 	} catch (error) {
@@ -636,7 +641,7 @@ async function unlinkJunction(path: string): Promise<void> {
 	}
 }
 
-async function scanJunctions(root: string): Promise<string[]> {
+export async function scanJunctions(root: string): Promise<string[]> {
 	const found: string[] = [];
 	const stack = [root];
 	while (stack.length > 0) {

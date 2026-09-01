@@ -4,7 +4,9 @@
  */
 
 import { accessSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { junctionNodeModules, unlinkWorktreeJunctions } from "./dispatch.ts";
 import { type GitRun, longTaskWorktreeRoot, type TaskWorktree } from "./long-task-worktree.ts";
 import { git as defaultGit } from "./memory-utils.ts";
 
@@ -151,10 +153,21 @@ async function cleanupWarmSlot(
 
 	const paths = [...new Set([slotPath(env, slotId), ...extraPaths])];
 	for (const path of paths) {
+		const warnings = await unlinkWorktreeJunctions(path);
+		for (const warning of warnings) {
+			console.error(`[her] warm slot ${slotId} ${warning}`);
+		}
 		try {
 			await gitRun(repoRoot, "worktree", "remove", path, "--force");
 		} catch (error) {
 			console.error(`[her] warm slot ${slotId} worktree cleanup failed for ${path}: ${errorText(error)}`);
+		}
+		try {
+			await rm(path, { force: true, recursive: true });
+		} catch (error) {
+			if (!isMissingPathError(error)) {
+				console.error(`[her] warm slot ${slotId} remove-tree failed for ${path}: ${errorText(error)}`);
+			}
 		}
 	}
 	try {
@@ -191,8 +204,14 @@ async function createWarmSlot(
 	const branch = slotBranch(slotId);
 
 	// Clean stale branch/path from a previous crashed replenish.
+	await unlinkWorktreeJunctions(path).catch(() => undefined);
 	try {
 		await gitRun(repoRoot, "worktree", "remove", path, "--force");
+	} catch {
+		/* absent */
+	}
+	try {
+		await rm(path, { force: true, recursive: true });
 	} catch {
 		/* absent */
 	}
@@ -204,6 +223,13 @@ async function createWarmSlot(
 	await gitRun(repoRoot, "worktree", "prune");
 
 	await gitRun(repoRoot, "worktree", "add", path, "-b", branch, opts.baseRef ?? "HEAD");
+	try {
+		await junctionNodeModules(path, join(repoRoot, "node_modules"));
+	} catch (error) {
+		console.warn(
+			`[her] warm slot ${slotId} node_modules junction failed: ${error instanceof Error ? error.message : String(error)}`,
+		);
+	}
 	// ready is deliberately the last write: a slot is claimable only after add succeeds.
 	writeFileSync(
 		readyMarker(env, slotId),
@@ -332,8 +358,14 @@ export async function drainWarmWorktreePool(
 	for (const name of names) {
 		if (/^w\d+$/.test(name)) {
 			const path = join(root, name);
+			await unlinkWorktreeJunctions(path).catch(() => undefined);
 			try {
 				await gitRun(repoRoot, "worktree", "remove", path, "--force");
+			} catch {
+				/* ignore */
+			}
+			try {
+				await rm(path, { force: true, recursive: true });
 			} catch {
 				/* ignore */
 			}
