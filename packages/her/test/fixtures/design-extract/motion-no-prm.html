@@ -1,0 +1,33 @@
+<!doctype html>
+<html>
+<head>
+<style>
+:root {
+  --brand-primary: #3366ff;
+  --duration-fast: 150ms;
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+}
+.hero {
+  color: #111;
+  transition: opacity .3s cubic-bezier(0.4, 0, 0.2, 1);
+  animation-duration: 500ms;
+  animation-timing-function: ease-in-out;
+  animation-name: fade-in;
+  scroll-behavior: smooth;
+}
+.card {
+  transition-duration: 200ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes slide-up {
+  from { transform: translateY(8px); }
+  to { transform: none; }
+}
+</style>
+</head>
+<body></body>
+</html>
