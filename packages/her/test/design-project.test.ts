@@ -113,6 +113,21 @@ test("entering draft is blocked until the wireframe gate is approved, then allow
 	assert.equal(allowed.stage, "draft");
 });
 
+test("entering code is blocked until the final gate is approved, then allowed", async (t) => {
+	const dir = await tempDir(t);
+	await createProject("final-gate", "the second hard gate holds too", dir);
+	await advanceTo(dir, "final-gate", "final", { approveFinal: false });
+
+	await assert.rejects(() => setStage("final-gate", "code", {}, dir), /final/i);
+
+	const blocked = await getProject("final-gate", dir);
+	assert.equal(blocked?.stage, "final");
+
+	await recordGateVerdict("final-gate", "final", "approved", FINAL_EVIDENCE, dir);
+	const allowed = await setStage("final-gate", "code", { note: "final signed" }, dir);
+	assert.equal(allowed.stage, "code");
+});
+
 test("approved gate with empty or blank evidence is refused", async (t) => {
 	const dir = await tempDir(t);
 	await createProject("empty-evidence", "must quote Fei", dir);
