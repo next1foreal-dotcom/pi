@@ -603,7 +603,7 @@ function dispatchNodeModulesSource(env: NodeJS.ProcessEnv): string | undefined {
 	return join(SAMANTHA_REPO_ROOT, "node_modules");
 }
 
-async function junctionNodeModules(worktreePath: string, source: string | undefined): Promise<void> {
+export async function junctionNodeModules(worktreePath: string, source: string | undefined): Promise<void> {
 	if (!source) return;
 	const dest = join(worktreePath, "node_modules");
 	if (!(await pathExists(source)) || (await pathExists(dest))) return;

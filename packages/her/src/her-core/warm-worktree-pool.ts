@@ -6,7 +6,7 @@
 import { accessSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { unlinkWorktreeJunctions } from "./dispatch.ts";
+import { junctionNodeModules, unlinkWorktreeJunctions } from "./dispatch.ts";
 import { type GitRun, longTaskWorktreeRoot, type TaskWorktree } from "./long-task-worktree.ts";
 import { git as defaultGit } from "./memory-utils.ts";
 
@@ -223,6 +223,13 @@ async function createWarmSlot(
 	await gitRun(repoRoot, "worktree", "prune");
 
 	await gitRun(repoRoot, "worktree", "add", path, "-b", branch, opts.baseRef ?? "HEAD");
+	try {
+		await junctionNodeModules(path, join(repoRoot, "node_modules"));
+	} catch (error) {
+		console.warn(
+			`[her] warm slot ${slotId} node_modules junction failed: ${error instanceof Error ? error.message : String(error)}`,
+		);
+	}
 	// ready is deliberately the last write: a slot is claimable only after add succeeds.
 	writeFileSync(
 		readyMarker(env, slotId),

@@ -1,7 +1,19 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import {
+	lstat,
+	mkdir,
+	mkdtemp,
+	readdir,
+	readFile,
+	realpath,
+	rm,
+	rmdir,
+	stat,
+	symlink,
+	writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -286,3 +298,67 @@ test(
 		assert.deepEqual(after, before, "host node_modules files must survive partial discard");
 	},
 );
+
+test("G-364b ensureTaskWorktree junctions codeRoot node_modules into the new tree", async () => {
+	const repo = await tempGitRepo();
+	const worktreeRoot = await tempWorktreeRoot();
+	const env = { ...process.env, HER_LONGTASK_WORKTREE_ROOT: worktreeRoot };
+	const hostNm = await seedHostNodeModules(repo);
+
+	const worktree = await ensureTaskWorktree(repo, "g364-link", { env });
+
+	const dest = join(worktree.worktreePath, "node_modules");
+	const st = await lstat(dest);
+	assert.ok(st.isSymbolicLink(), "expected node_modules to be a junction (win32) or dir symlink");
+	assert.equal(await realpath(dest), await realpath(hostNm));
+	assert.equal(existsSync(join(dest, "keep-me.txt")), true);
+});
+
+test("G-364b ensureTaskWorktree is idempotent when the junction already exists", async () => {
+	const repo = await tempGitRepo();
+	const worktreeRoot = await tempWorktreeRoot();
+	const env = { ...process.env, HER_LONGTASK_WORKTREE_ROOT: worktreeRoot };
+	const hostNm = await seedHostNodeModules(repo);
+
+	const first = await ensureTaskWorktree(repo, "g364-idem", { env });
+	const second = await ensureTaskWorktree(repo, "g364-idem", { env });
+
+	assert.equal(second.worktreePath, first.worktreePath);
+	const dest = join(second.worktreePath, "node_modules");
+	assert.ok((await lstat(dest)).isSymbolicLink());
+	assert.equal(await realpath(dest), await realpath(hostNm));
+});
+
+test("G-364b ensureTaskWorktree does not throw when codeRoot has no node_modules and the tree stays usable", async () => {
+	const repo = await tempGitRepo();
+	const worktreeRoot = await tempWorktreeRoot();
+	const env = { ...process.env, HER_LONGTASK_WORKTREE_ROOT: worktreeRoot };
+
+	const worktree = await ensureTaskWorktree(repo, "g364-missing", { env });
+
+	await stat(worktree.worktreePath);
+	assert.equal(existsSync(join(worktree.worktreePath, "README.md")), true);
+	assert.equal(existsSync(join(worktree.worktreePath, "node_modules")), false);
+	assert.equal(await statusPorcelain(repo), "");
+});
+
+test("G-364b ensureTaskWorktree junctions after reattaching a lost worktree directory", async () => {
+	const repo = await tempGitRepo();
+	const worktreeRoot = await tempWorktreeRoot();
+	const env = { ...process.env, HER_LONGTASK_WORKTREE_ROOT: worktreeRoot };
+	const hostNm = await seedHostNodeModules(repo);
+	const first = await ensureTaskWorktree(repo, "g364-reattach", { env });
+	try {
+		await rmdir(join(first.worktreePath, "node_modules"));
+	} catch {
+		/* not yet linked */
+	}
+	await rm(first.worktreePath, { force: true, recursive: true });
+
+	const second = await ensureTaskWorktree(repo, "g364-reattach", { env });
+
+	assert.equal(second.resumed, true);
+	const dest = join(second.worktreePath, "node_modules");
+	assert.ok((await lstat(dest)).isSymbolicLink());
+	assert.equal(await realpath(dest), await realpath(hostNm));
+});

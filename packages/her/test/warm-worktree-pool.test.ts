@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { lstat, mkdir, mkdtemp, readdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, readFile, realpath, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -370,3 +370,20 @@ test(
 		assert.deepEqual(after, before, "host node_modules files must survive warm-pool drain");
 	},
 );
+
+test("G-364b warm-pool prebuilt slot junctions codeRoot node_modules", async () => {
+	const repo = await tempGitRepo();
+	const worktreeRoot = await tempWorktreeRoot();
+	const env = { ...process.env, HER_LONGTASK_WORKTREE_ROOT: worktreeRoot };
+	const hostNm = await seedHostNodeModules(repo);
+
+	await ensureWarmWorktreePool(repo, 1, { env });
+
+	const dest = join(worktreeRoot, ".warm", "w0", "node_modules");
+	const st = await lstat(dest);
+	assert.ok(st.isSymbolicLink(), "expected warm slot node_modules to be a junction (win32) or dir symlink");
+	assert.equal(await realpath(dest), await realpath(hostNm));
+	await drainWarmWorktreePool(repo, { env });
+	const after = await snapshotFiles(hostNm);
+	assert.equal(after["keep-me.txt"], "keep\n");
+});

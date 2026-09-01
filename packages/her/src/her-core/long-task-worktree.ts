@@ -3,7 +3,7 @@ import { mkdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { unlinkWorktreeJunctions } from "./dispatch.ts";
+import { junctionNodeModules, unlinkWorktreeJunctions } from "./dispatch.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -92,11 +92,23 @@ export async function ensureTaskWorktree(
 		await gitRun(repoRoot, "worktree", "prune");
 		await mkdir(dirname(location.worktreePath), { recursive: true });
 		await gitRun(repoRoot, "worktree", "add", location.worktreePath, location.branch);
+		await junctionCodeRootNodeModules(location.worktreePath, repoRoot);
 		return taskWorktree(location, true, gitRun);
 	}
 	await mkdir(dirname(location.worktreePath), { recursive: true });
 	await gitRun(repoRoot, "worktree", "add", location.worktreePath, "-b", location.branch, opts.baseRef ?? "HEAD");
+	await junctionCodeRootNodeModules(location.worktreePath, repoRoot);
 	return taskWorktree(location, false, gitRun);
+}
+
+async function junctionCodeRootNodeModules(worktreePath: string, repoRoot: string): Promise<void> {
+	try {
+		await junctionNodeModules(worktreePath, join(repoRoot, "node_modules"));
+	} catch (error) {
+		console.warn(
+			`[her] task worktree node_modules junction failed: ${error instanceof Error ? error.message : String(error)}`,
+		);
+	}
 }
 
 export async function isWorktreeDirty(worktreePath: string, opts: { gitRun?: GitRun } = {}): Promise<boolean> {
