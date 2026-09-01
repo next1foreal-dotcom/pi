@@ -127,6 +127,7 @@ export interface CompactionSettings {
 	enabled: boolean;
 	reserveTokens: number;
 	keepRecentTokens: number;
+	customInstructions?: string;
 }
 
 export const DEFAULT_COMPACTION_SETTINGS: CompactionSettings = {

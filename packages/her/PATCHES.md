@@ -1,5 +1,8 @@
 # PATCHES
 
+- 2026-09-01: Auto-compaction reads optional `compaction.customInstructions` from settings (`CompactionSettings` in `packages/coding-agent/src/core/compaction/compaction.ts` and `packages/coding-agent/src/core/settings-manager.ts`) and passes it through `packages/coding-agent/src/core/agent-session.ts` into `session_before_compact` and `compact()`, so automatic summaries append `Additional focus:` the same way `/compact <text>` already does. Default remains unset; `SUMMARIZATION_PROMPT` is unchanged.
+  - Why: auto-compaction previously hardcoded `customInstructions: undefined`, so a durable settings.json focus could not reach the summarizer. Any pi user can now configure summary emphasis without forking the prompt.
+  - Upstream: generic seam, candidate for an upstream PR. Not Her-specific; Her only supplies the instruction text in `.pi/settings.json`.
 - 2026-08-11: `packages/coding-agent/src/core/agent-session.ts` classifies OAuth 401/token-expired assistant errors, forces the existing OAuth resolver with a one-hour validity window, and continues the same turn once with freshly resolved request auth.
   - Why: provider-side token expiry can disagree with the locally stored OAuth expiry; the main `ModelRuntime.streamSimple` request resolves auth on each invocation, so a post-error continuation can use the refreshed token without changing `resolveStoredOAuth`.
   - Upstream: candidate for an upstream PR; the behavior is isolated to the coding-agent session retry seam and preserves the existing generic retry policy for all other errors.
