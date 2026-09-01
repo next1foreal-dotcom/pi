@@ -1,7 +1,7 @@
 ---
 name: code-reviewer
 description: Review code for bugs, regressions, security, and missing verification.
-model: her-gateway/xai/grok-4.5
+model: her-gateway/xai/grok-4.6
 systemPromptMode: append
 inheritProjectContext: true
 defaultContext: fork

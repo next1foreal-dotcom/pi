@@ -1,7 +1,7 @@
 ---
 name: claim-verifier
 description: Independently verify research intake claims before Her memory persistence.
-model: her-gateway/xai/grok-4.5
+model: her-gateway/xai/grok-4.6
 systemPromptMode: append
 inheritProjectContext: true
 defaultContext: fork

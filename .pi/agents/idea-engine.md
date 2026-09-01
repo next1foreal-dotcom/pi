@@ -1,7 +1,7 @@
 ---
 name: idea-engine
 description: Find non-obvious connections and persist candidate ideas into Her memory.
-model: her-gateway/xai/grok-4.5
+model: her-gateway/xai/grok-4.6
 systemPromptMode: append
 inheritProjectContext: true
 defaultContext: fork

@@ -1,7 +1,7 @@
 ---
 name: reviewer
 description: Review memory or narrative updates before approval.
-model: her-gateway/xai/grok-4.5
+model: her-gateway/xai/grok-4.6
 systemPromptMode: append
 inheritProjectContext: true
 defaultContext: fork
