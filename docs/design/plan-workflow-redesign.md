@@ -43,7 +43,7 @@
 |---|---|---|---|
 | **W1 流程骨架** | manifest + 5 工具 + 门机制 + 阶段 lint + INDEX 重排 | 实现包,外派 | 小题走 8 步:越阶被 lint 逮、两门真停、无证据 approve 巡检红 |
 | **W2 前半段器官** | process/brief·research·wireframe 三篇新知识 + direction-first 改版 + **W-10 参考库首批 6 条正面样本 ✅ 2026-09-01 落 `research/positive-samples`(323fa8ebe)**:rico×2/vercel/Timestate/YORK/Lightspark,每条标实测或目测+绑定既有规则。handoff/会话状态教材以 references/figma-to-webflow-workflow/templates/PROJECT-HANDOFF-template.md 为基准件(重写不追加/事实活验不抄前/显式改错/开局五分钟) | 知识与榨取,Fable 亲手 | 同题重跑,方向板与线框质量过 Owner 眼 |
-| **W3 构图教材 + 骨架偏差** | 构图知识(Fable 亲写,7/4 授权内);wireframe→draft 布局偏差检查 | 教材亲手;偏差检查外派 | 教材过 Owner 读;偏差检查双侧用例 |
+| **W3 构图教材 + 骨架偏差** | 构图知识 ✅ 2026-09-01 落 `design/arrangement`(b2ecc1b4d,焦点/重量预算/脊柱/密度反差/视线路径,锚正样本 1/3/5);wireframe→draft 布局偏差检查——**Fable 垫的调整(随时可翻):并入 G-375·3 门迁移包一起做**,不在冻结的 loora 单独加新机器 | 教材亲手 ✅;偏差检查随 ·3 外派 | 教材过 Owner 读;偏差检查双侧用例 |
 | **W4 出码薄档** | handoff 交接清单 + 导出规范。**教义(2026-08-31 进料 #7,Matt Vidal 定稿)**:①设计文件是参考,项目系统才是规格——两者冲突时**系统赢、设计弯**(为后面九页买单;"一个类用十二处是系统,用一处只是一页");②未做的决策禁止被静默做掉——模型替你"合理地"补的每个决定都要显影进 handoff,页面看着没事时规则正悄悄积累成没人选过的架构;③工具调用成功≠写入落地——"请求不是收据",发布出来的页面才是唯一证据 | 外派,薄 | 一次真导出 + 清单核对(含决策显影核对) |
 | **毕业重考** | 真题 8 步全程 | 她跑,Owner 终审 | Owner 的眼 |
 
