@@ -8,7 +8,43 @@ export const SYNTHESIZE_PACK_RATIO = 0.8;
 /** Same chars/4 heuristic dsh uses; Her does not add a tokenizer. */
 export const CHARS_PER_TOKEN = 4;
 export const DEFAULT_SYNTHESIZE_WINDOW_TOKENS = 128_000;
-export const DEFAULT_SYNTHESIZE_MAX_TOKENS = 8_192;
+/**
+ * Output budget for the CONTEXT.md rewrite.
+ *
+ * This was 8_192, which is smaller than the document synthesize has to
+ * produce: on 2026-08-30 CONTEXT.md was 38,052 bytes and the draft reached
+ * 40,587 before the model hit its output limit — so every run ended in
+ * finish_reason=length, the code correctly refused to write a truncated
+ * narrative, and synthesize had not succeeded since 2026-08-02. Four weekly
+ * failures in a row, unnoticed, because nothing surfaced them.
+ *
+ * 16_384 was verified against her strong model (deepseek-v4-pro) by running
+ * the real job: it completed and wrote proposals/2026-09-01-narrative-update.
+ *
+ * This buys headroom, it does not remove the ceiling. At ~4 chars/token the
+ * cap covers a CONTEXT.md of roughly 65 KB; past that the same deadlock
+ * returns. contextHeadroom() below exists so it is seen coming.
+ */
+export const DEFAULT_SYNTHESIZE_MAX_TOKENS = 16_384;
+
+/** Warn once the rewrite is within this fraction of the output budget. */
+export const CONTEXT_HEADROOM_WARN_RATIO = 0.75;
+
+/**
+ * How close CONTEXT.md is to the cap that would break the rewrite.
+ *
+ * The failure mode this guards is silent and weekly: the document grows a
+ * little each time until one run cannot emit it, and the only symptom is an
+ * exit code nobody reads.
+ */
+export function contextHeadroom(
+	currentBytes: number,
+	maxTokens: number = DEFAULT_SYNTHESIZE_MAX_TOKENS,
+): { usedRatio: number; capBytes: number; tight: boolean } {
+	const capBytes = maxTokens * CHARS_PER_TOKEN;
+	const usedRatio = capBytes === 0 ? 1 : currentBytes / capBytes;
+	return { usedRatio, capBytes, tight: usedRatio >= CONTEXT_HEADROOM_WARN_RATIO };
+}
 
 export type SemanticNoteRecord = {
 	key: string;

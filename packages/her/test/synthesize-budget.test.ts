@@ -5,6 +5,8 @@ import { join } from "node:path";
 import test from "node:test";
 import {
 	CHARS_PER_TOKEN,
+	DEFAULT_SYNTHESIZE_MAX_TOKENS,
+	DEFAULT_SYNTHESIZE_WINDOW_TOKENS,
 	listSemanticNotes,
 	packSynthesizeNotes,
 	type SemanticNoteRecord,
@@ -27,9 +29,13 @@ test("note budget is window*0.8 minus output tokens, then minus reserved chars",
 });
 
 test("synthesizeLimits reads env and rejects non-positive values", () => {
+	// Against the exported defaults, not literals: this test is about reading
+	// the environment, and pinning the numbers here is what made it fail when
+	// the output budget was raised to a value that can actually emit
+	// CONTEXT.md. synthesize-headroom.test.ts is what guards the value itself.
 	assert.deepEqual(synthesizeLimits({}), {
-		windowTokens: 128_000,
-		maxTokens: 8_192,
+		windowTokens: DEFAULT_SYNTHESIZE_WINDOW_TOKENS,
+		maxTokens: DEFAULT_SYNTHESIZE_MAX_TOKENS,
 	});
 	assert.deepEqual(synthesizeLimits({ HER_SYNTHESIZE_WINDOW_TOKENS: "2000", HER_SYNTHESIZE_MAX_TOKENS: "200" }), {
 		windowTokens: 2000,

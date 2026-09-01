@@ -143,6 +143,7 @@ import {
 } from "./store.ts";
 import { storeLock } from "./store-lock.ts";
 import {
+	contextHeadroom,
 	listSemanticNotes,
 	packSynthesizeNotes,
 	synthesizeLimits,
@@ -1535,6 +1536,19 @@ export class Memory {
 			...(completion.model ? { model: completion.model } : {}),
 			...(completion.provider ? { provider: completion.provider } : {}),
 		});
+		{
+			// Say it BEFORE it breaks. This deadlock arrived silently: CONTEXT.md
+			// grew past what one completion could emit, and the only symptom was
+			// a weekly exit code nobody read.
+			const headroom = contextHeadroom(Buffer.byteLength(prepared.current, "utf8"), limits.maxTokens);
+			if (headroom.tight) {
+				console.warn(
+					`[her] synthesize: CONTEXT.md is ${(headroom.usedRatio * 100).toFixed(0)}% of what one rewrite can emit ` +
+						`(cap ~${headroom.capBytes} bytes at ${limits.maxTokens} output tokens). Raise ` +
+						`HER_SYNTHESIZE_MAX_TOKENS or shrink CONTEXT.md before it stops fitting.`,
+				);
+			}
+		}
 		if (completion.finishReason === "length") {
 			throw new FinishReasonLengthError({
 				finishReason: completion.finishReason,
