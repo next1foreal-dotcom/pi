@@ -29,15 +29,31 @@ async function writeManifest(repoRoot: string, manifest: unknown): Promise<void>
 	await writeFile(join(repoRoot, ".her", "connectors.json"), JSON.stringify(manifest, null, 2), "utf8");
 }
 
-function mcpHarness(): Map<string, ToolDefinition> {
+/**
+ * registerMcpTools also subscribes to events now (the startup status report),
+ * so the stand-in has to offer `on` — captured rather than dropped, so a test
+ * can drive a handler instead of only proving registration did not throw.
+ */
+/** Loose stand-in for an extension event handler; the tests drive them by hand. */
+type ExtHandler = (event: unknown, ctx?: unknown) => unknown;
+
+function mcpHarnessFull(): { tools: Map<string, ToolDefinition>; handlers: Map<string, ExtHandler[]> } {
 	const tools = new Map<string, ToolDefinition>();
+	const handlers = new Map<string, ExtHandler[]>();
 	const pi = {
 		registerTool(tool: ToolDefinition) {
 			tools.set(tool.name, tool);
 		},
+		on(event: string, handler: ExtHandler) {
+			handlers.set(event, [...(handlers.get(event) ?? []), handler]);
+		},
 	} as unknown as ExtensionAPI;
 	registerMcpTools(pi);
-	return tools;
+	return { tools, handlers };
+}
+
+function mcpHarness(): Map<string, ToolDefinition> {
+	return mcpHarnessFull().tools;
 }
 
 type ToolContent = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
@@ -652,4 +668,96 @@ test("integration smoke: refresh caches a live server's tools, and they register
 	} finally {
 		await new Promise<void>((resolve) => httpServer.close(() => resolve()));
 	}
+});
+
+test("the startup report names what is wrong, and says nothing when nothing is", async () => {
+	const { buildReport, renderReport, probeAll, EMPTY_REPORT, isEmptyReport } = await import("../src/mcp/status.ts");
+
+	const ready = (slug: string) => ({
+		slug,
+		label: slug.toUpperCase(),
+		status: "ready" as const,
+		transport: "http" as const,
+		url: "https://example.com/mcp",
+		headers: {},
+		secrets: [],
+	});
+
+	// Nothing wrong → no note at all. A banner that speaks every session
+	// teaches her to ignore it, which is worse than not having one.
+	const clean = buildReport([ready("a")], new Map(), new Set(["a"]));
+	assert.equal(isEmptyReport(clean), true);
+	assert.equal(renderReport(clean), null);
+	assert.equal(renderReport(EMPTY_REPORT), null);
+
+	// Unreachable, missing credentials, and discovered-but-not-cached are
+	// three different problems with three different fixes.
+	const report = buildReport(
+		[
+			ready("down"),
+			ready("fresh"),
+			{ slug: "nokey", label: "NoKey", status: "missing_credentials", reason: "缺少凭据环境变量：X" },
+		],
+		new Map([["down", "connect ECONNREFUSED"]]),
+		new Set([]),
+	);
+	assert.deepEqual(
+		report.unreachable.map((f) => f.slug),
+		["down"],
+	);
+	assert.deepEqual(
+		report.missingCredentials.map((f) => f.slug),
+		["nokey"],
+	);
+	assert.deepEqual(
+		report.undiscovered.map((f) => f.slug),
+		["fresh"],
+	);
+
+	const text = renderReport(report) ?? "";
+	assert.match(text, /down（DOWN）连不上：connect ECONNREFUSED/);
+	assert.match(text, /缺少凭据环境变量：X/);
+	assert.match(text, /her_mcp_refresh/);
+
+	// A probe that throws must not take the report down with it.
+	const failures = await probeAll([ready("boom")], async () => {
+		throw new Error("kaboom");
+	});
+	assert.equal(failures.get("boom"), "kaboom");
+});
+
+test("integration smoke: a dead connector really reaches her context, once", async () => {
+	const { createServer } = await import("node:http");
+	// A port that nothing is listening on: bind one, learn the number, release it.
+	const probeServer = createServer(() => {});
+	await new Promise<void>((resolve) => probeServer.listen(0, "127.0.0.1", resolve));
+	const { port: deadPort } = probeServer.address() as { port: number };
+	await new Promise<void>((resolve) => probeServer.close(() => resolve()));
+
+	const repoRoot = await tempRoot();
+	await writeManifest(repoRoot, {
+		version: 1,
+		connectors: [{ slug: "dead", label: "没人在听", type: "http", url: `http://127.0.0.1:${deadPort}/mcp` }],
+	});
+
+	const { handlers } = mcpHarnessFull();
+	const onSessionStart = handlers.get("session_start")?.[0];
+	const onContext = handlers.get("context")?.[0];
+	assert.ok(onSessionStart, "registerMcpTools must subscribe to session_start");
+	assert.ok(onContext, "registerMcpTools must subscribe to context");
+
+	// Before the probe there is nothing to say — the note must not appear
+	// merely because a connector is configured.
+	assert.equal(onContext?.({ type: "context", messages: [] }), undefined);
+
+	await onSessionStart?.({ type: "session_start" }, { cwd: repoRoot });
+
+	const injected = onContext?.({ type: "context", messages: [] }) as { messages: unknown[] } | undefined;
+	assert.ok(injected, "a broken connector must produce a note");
+	assert.equal(injected?.messages.length, 1);
+	const note = (injected?.messages[0] as { content: string }).content;
+	assert.match(note, /dead（没人在听）连不上/);
+
+	// Once. A banner on every request is a banner she learns to skip.
+	assert.equal(onContext?.({ type: "context", messages: [] }), undefined);
 });

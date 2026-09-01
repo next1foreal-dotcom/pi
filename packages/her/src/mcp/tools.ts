@@ -13,6 +13,7 @@ import {
 	toolNameFor,
 	writeToolCache,
 } from "./registry.ts";
+import { buildReport, EMPTY_REPORT, probeAll, renderReport, type StartupReport } from "./status.ts";
 
 const ENV_REFERENCE_RE = /^\$([A-Za-z_][A-Za-z0-9_]*)$/;
 const SLUG_RE = /^[a-z0-9][a-z0-9-]*$/;
@@ -424,6 +425,7 @@ export function registerMcpTools(pi: ExtensionAPI): void {
 
 	registerCachedRemoteTools(pi);
 	registerRefreshTool(pi);
+	registerStartupStatus(pi);
 }
 
 /**
@@ -555,5 +557,49 @@ function registerRefreshTool(pi: ExtensionAPI): void {
 				].join("\n"),
 			);
 		},
+	});
+}
+
+/**
+ * Probe her external services once per session and, if anything is wrong, say
+ * so in her context — the way my harness reports a server that failed to
+ * connect. Silence about a broken connector is indistinguishable from a
+ * connector that simply has nothing to offer.
+ */
+export function registerStartupStatus(pi: ExtensionAPI): void {
+	let report: StartupReport = EMPTY_REPORT;
+	let announced = false;
+
+	pi.on("session_start", async (_event, ctx) => {
+		try {
+			const loaded = await loadConnectors(ctx.cwd);
+			if (loaded.kind !== "loaded") return;
+			const failures = await probeAll(loaded.connectors, async (connector) => {
+				try {
+					// listTools is the cheapest call that proves the whole path —
+					// transport, credentials and protocol — actually works.
+					await withClient(connector, undefined, async (client) => client.listTools());
+					return null;
+				} catch (error) {
+					return redactError(error, connector);
+				}
+			});
+			const cached = new Set(readToolCacheSync(ctx.cwd).connectors.map((entry) => entry.slug));
+			report = buildReport(loaded.connectors, failures, cached);
+			announced = false;
+		} catch {
+			// A status report must never be able to break startup.
+			report = EMPTY_REPORT;
+		}
+	});
+
+	pi.on("context", (event) => {
+		if (announced) return;
+		const text = renderReport(report);
+		if (!text) return;
+		announced = true;
+		return {
+			messages: [...event.messages, { role: "user" as const, content: text, timestamp: Date.now() }],
+		};
 	});
 }
