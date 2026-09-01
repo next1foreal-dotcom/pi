@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { Type } from "typebox";
 
 const ENV_REFERENCE_RE = /^\$([A-Za-z_][A-Za-z0-9_]*)$/;
@@ -15,15 +16,36 @@ const BASE64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
 
 export type ConnectorStatus = "ready" | "missing_credentials" | "invalid";
 
-export interface ReadyConnector {
-	args: string[];
-	command: string;
-	env: Record<string, string>;
+interface ConnectorBase {
 	label: string;
+	/** Every resolved credential, so errors can be redacted before they surface. */
 	secrets: string[];
 	slug: string;
 	status: "ready";
 }
+
+/** A server she launches herself. */
+export interface ReadyStdioConnector extends ConnectorBase {
+	args: string[];
+	command: string;
+	env: Record<string, string>;
+	transport: "stdio";
+}
+
+/**
+ * A server she reaches over the network (MCP streamable HTTP).
+ *
+ * v1 was stdio-only, which ruled out every hosted server — GitHub's npm
+ * package is deprecated and its supported path is remote. The SDK we already
+ * ship (1.29.0) carries this transport; the restriction was ours.
+ */
+export interface ReadyHttpConnector extends ConnectorBase {
+	headers: Record<string, string>;
+	transport: "http";
+	url: string;
+}
+
+export type ReadyConnector = ReadyStdioConnector | ReadyHttpConnector;
 
 export interface ConnectorProblem {
 	label: string;
@@ -76,53 +98,101 @@ function connectorProblem(slug: unknown, label: unknown, reason: string): Connec
 	};
 }
 
+/**
+ * Resolve a `{ key: "$VAR" }` map against the environment. Values are never
+ * written literally in the manifest — a token in a committed file is a leaked
+ * token — so anything that is not a single $VAR reference is rejected outright.
+ */
+function resolveEnvRefs(
+	declared: unknown,
+	field: string,
+	env: NodeJS.ProcessEnv,
+):
+	| { kind: "bad"; reason: string }
+	| { kind: "missing"; names: string[] }
+	| { kind: "ok"; values: Record<string, string> } {
+	if (declared !== undefined && !isRecord(declared)) return { kind: "bad", reason: `${field} 必须是对象。` };
+	const values: Record<string, string> = {};
+	const missing: string[] = [];
+	for (const [key, reference] of Object.entries(declared ?? {})) {
+		if (typeof reference !== "string") return { kind: "bad", reason: `${field}.${key} 必须引用环境变量。` };
+		const match = reference.match(ENV_REFERENCE_RE);
+		if (!match) {
+			return {
+				kind: "bad",
+				reason: reference.startsWith("$") ? `${field}.${key} 必须是单个 $VAR 引用。` : "密钥必须走环境变量。",
+			};
+		}
+		const resolved = env[match[1]];
+		if (!resolved) {
+			missing.push(match[1]);
+			continue;
+		}
+		values[key] = resolved;
+	}
+	return missing.length > 0 ? { kind: "missing", names: missing } : { kind: "ok", values };
+}
+
+/** https everywhere; plain http only for a server on this machine. */
+function httpUrlProblem(url: unknown): string | null {
+	if (typeof url !== "string" || !url.trim()) return "url 不能为空。";
+	let parsed: URL;
+	try {
+		parsed = new URL(url);
+	} catch {
+		return "url 不是合法地址。";
+	}
+	if (parsed.protocol === "https:") return null;
+	if (parsed.protocol === "http:" && (parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost")) return null;
+	return "url 必须是 https（本机 127.0.0.1 / localhost 可用 http）。";
+}
+
 function parseConnector(value: unknown, env: NodeJS.ProcessEnv): LoadedConnector {
 	if (!isRecord(value)) return connectorProblem(undefined, undefined, "条目必须是对象。");
-	const { args, command, env: declaredEnv, label, slug, type } = value;
+	const { args, command, env: declaredEnv, headers: declaredHeaders, label, slug, type, url } = value;
 	if (typeof slug !== "string" || !SLUG_RE.test(slug))
 		return connectorProblem(slug, label, "slug 必须为小写字母、数字或连字符。");
 	if (typeof label !== "string" || !label.trim()) return connectorProblem(slug, label, "label 不能为空。");
-	if (type !== "stdio") return connectorProblem(slug, label, "v1 只支持 stdio connector。");
+	if (type !== "stdio" && type !== "http") return connectorProblem(slug, label, "type 只支持 stdio 或 http。");
+
+	if (type === "http") {
+		const urlProblem = httpUrlProblem(url);
+		if (urlProblem) return connectorProblem(slug, label, urlProblem);
+		const headers = resolveEnvRefs(declaredHeaders, "headers", env);
+		if (headers.kind === "bad") return connectorProblem(slug, label, headers.reason);
+		if (headers.kind === "missing") {
+			return { slug, label, status: "missing_credentials", reason: `缺少凭据环境变量：${headers.names.join(", ")}` };
+		}
+		return {
+			slug,
+			label,
+			status: "ready",
+			transport: "http",
+			url: (url as string).trim(),
+			headers: headers.values,
+			secrets: Object.values(headers.values),
+		};
+	}
+
 	if (typeof command !== "string" || !command.trim()) return connectorProblem(slug, label, "command 不能为空。");
 	if (!Array.isArray(args) || args.some((arg) => typeof arg !== "string")) {
 		return connectorProblem(slug, label, "args 必须是字符串数组。");
 	}
-	if (declaredEnv !== undefined && !isRecord(declaredEnv)) {
-		return connectorProblem(slug, label, "env 必须是对象。");
-	}
-
-	const resolvedEnv: Record<string, string> = {};
-	const missing: string[] = [];
-	for (const [key, reference] of Object.entries(declaredEnv ?? {})) {
-		if (typeof reference !== "string") return connectorProblem(slug, label, `env.${key} 必须引用环境变量。`);
-		const match = reference.match(ENV_REFERENCE_RE);
-		if (!match) {
-			return connectorProblem(
-				slug,
-				label,
-				reference.startsWith("$") ? `env.${key} 必须是单个 $VAR 引用。` : "密钥必须走环境变量。",
-			);
-		}
-		const name = match[1];
-		const resolved = env[name];
-		if (!resolved) {
-			missing.push(name);
-			continue;
-		}
-		resolvedEnv[key] = resolved;
-	}
-	if (missing.length > 0) {
-		return { slug, label, status: "missing_credentials", reason: `缺少凭据环境变量：${missing.join(", ")}` };
+	const resolved = resolveEnvRefs(declaredEnv, "env", env);
+	if (resolved.kind === "bad") return connectorProblem(slug, label, resolved.reason);
+	if (resolved.kind === "missing") {
+		return { slug, label, status: "missing_credentials", reason: `缺少凭据环境变量：${resolved.names.join(", ")}` };
 	}
 
 	return {
 		slug,
 		label,
 		status: "ready",
+		transport: "stdio",
 		command: command.trim(),
 		args,
-		env: resolvedEnv,
-		secrets: Object.values(resolvedEnv),
+		env: resolved.values,
+		secrets: Object.values(resolved.values),
 	};
 }
 
@@ -150,28 +220,40 @@ export async function loadConnectors(repoRoot: string, env: NodeJS.ProcessEnv = 
 	return { kind: "loaded", connectors: manifest.connectors.map((connector) => parseConnector(connector, env)) };
 }
 
-function transportEnv(connector: ReadyConnector): Record<string, string> {
+function transportEnv(connector: ReadyStdioConnector): Record<string, string> {
 	const inherited = Object.fromEntries(
 		Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
 	);
 	return { ...inherited, ...connector.env };
 }
 
+/** What callers can report about a live connection. A remote server has no pid. */
+export interface ConnectionInfo {
+	pid: number | null;
+}
+
 async function withClient<T>(
 	connector: ReadyConnector,
 	signal: AbortSignal | undefined,
-	work: (client: Client, transport: StdioClientTransport) => Promise<T>,
+	work: (client: Client, info: ConnectionInfo) => Promise<T>,
 ): Promise<T> {
-	const transport = new StdioClientTransport({
-		command: connector.command,
-		args: connector.args,
-		env: transportEnv(connector),
-		stderr: "pipe",
-	});
+	const transport =
+		connector.transport === "http"
+			? new StreamableHTTPClientTransport(new URL(connector.url), {
+					requestInit: { headers: connector.headers },
+				})
+			: new StdioClientTransport({
+					command: connector.command,
+					args: connector.args,
+					env: transportEnv(connector),
+					stderr: "pipe",
+				});
 	const client = new Client({ name: "her-mcp-client", version: "1.0.0" }, { capabilities: {} });
 	try {
 		await client.connect(transport, { signal });
-		return await work(client, transport);
+		return await work(client, {
+			pid: transport instanceof StdioClientTransport ? (transport.pid ?? null) : null,
+		});
 	} finally {
 		await client.close().catch(() => undefined);
 	}
@@ -302,11 +384,11 @@ export function registerMcpTools(pi: ExtensionAPI): void {
 				return textResult(`${connector.slug}（${connector.label}）当前不可用：${connector.reason}`);
 
 			try {
-				return await withClient(connector, signal, async (client, transport) => {
+				return await withClient(connector, signal, async (client, info) => {
 					const tools = (await client.listTools(undefined, { signal })).tools;
 					const target = tools.find((item) => item.name === params.tool);
 					if (!target)
-						return textResult(`外接服务 ${connector.slug} 不存在工具：${params.tool}。`, { pid: transport.pid });
+						return textResult(`外接服务 ${connector.slug} 不存在工具：${params.tool}。`, { pid: info.pid });
 					const result = await client.callTool({ name: params.tool, arguments: params.params ?? {} }, undefined, {
 						signal,
 					});
@@ -319,10 +401,10 @@ export function registerMcpTools(pi: ExtensionAPI): void {
 								first?.type === "text"
 									? [{ type: "text" as const, text: prefix + first.text }, ...content.slice(1)]
 									: [{ type: "text" as const, text: prefix }, ...content],
-							details: { pid: transport.pid },
+							details: { pid: info.pid },
 						};
 					}
-					return { content, details: { pid: transport.pid } };
+					return { content, details: { pid: info.pid } };
 				});
 			} catch (error) {
 				return textResult(

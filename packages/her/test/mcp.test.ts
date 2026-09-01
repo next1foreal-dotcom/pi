@@ -211,7 +211,9 @@ test("her_mcp_list surfaces two independent per-connector problems through the t
 				args: [],
 				env: { TOKEN: "hardcoded-plaintext-not-a-var-reference-1234567890" },
 			},
-			{ slug: "http-unsupported", label: "HTTP Connector", type: "http", command: "node", args: [] },
+			// Was "http is unsupported"; http is supported now, so the second
+			// problem is a genuinely malformed http entry — one with no url.
+			{ slug: "http-nourl", label: "HTTP Connector", type: "http" },
 		],
 	});
 	const tools = mcpHarness();
@@ -219,7 +221,105 @@ test("her_mcp_list surfaces two independent per-connector problems through the t
 	const text = await run(tools.get("her_mcp_list"), {}, repoRoot);
 
 	assert.match(text, /leaky（Leaky Connector）：坏配置，密钥必须走环境变量。/);
-	assert.match(text, /http-unsupported（HTTP Connector）：坏配置，v1 只支持 stdio connector。/);
+	assert.match(text, /http-nourl（HTTP Connector）：坏配置，url 不能为空。/);
+});
+
+test("http connector: resolves $VAR headers and reports ready", async () => {
+	const repoRoot = await tempRoot();
+	await writeManifest(repoRoot, {
+		version: 1,
+		connectors: [
+			{
+				slug: "github",
+				label: "GitHub",
+				type: "http",
+				url: "https://api.example.com/mcp/",
+				headers: { Authorization: "$HER_TEST_GH_TOKEN" },
+			},
+		],
+	});
+
+	const loaded = await loadConnectors(repoRoot, { HER_TEST_GH_TOKEN: "Bearer secret-token" });
+
+	assert.equal(loaded.kind, "loaded");
+	if (loaded.kind !== "loaded") return;
+	const [connector] = loaded.connectors;
+	assert.equal(connector.status, "ready");
+	if (connector.status !== "ready") return;
+	assert.equal(connector.transport, "http");
+	if (connector.transport !== "http") return;
+	assert.equal(connector.url, "https://api.example.com/mcp/");
+	assert.equal(connector.headers.Authorization, "Bearer secret-token");
+	// The token must be registered for redaction, or it can leak through an error.
+	assert.ok(connector.secrets.includes("Bearer secret-token"));
+});
+
+test("http connector: a literal header value is refused, same as env", async () => {
+	const repoRoot = await tempRoot();
+	await writeManifest(repoRoot, {
+		version: 1,
+		connectors: [
+			{
+				slug: "leaky-http",
+				label: "Leaky HTTP",
+				type: "http",
+				url: "https://api.example.com/mcp/",
+				headers: { Authorization: "Bearer ghp-hardcoded-token-value-1234567890" },
+			},
+		],
+	});
+
+	const loaded = await loadConnectors(repoRoot, {});
+
+	assert.equal(loaded.kind, "loaded");
+	if (loaded.kind !== "loaded") return;
+	assert.equal(loaded.connectors[0].status, "invalid");
+	assert.match((loaded.connectors[0] as { reason: string }).reason, /密钥必须走环境变量/);
+});
+
+test("http connector: names the unset env var instead of connecting without it", async () => {
+	const repoRoot = await tempRoot();
+	await writeManifest(repoRoot, {
+		version: 1,
+		connectors: [
+			{
+				slug: "github",
+				label: "GitHub",
+				type: "http",
+				url: "https://api.example.com/mcp/",
+				headers: { Authorization: "$HER_TEST_ABSENT_TOKEN" },
+			},
+		],
+	});
+
+	const loaded = await loadConnectors(repoRoot, {});
+
+	assert.equal(loaded.kind, "loaded");
+	if (loaded.kind !== "loaded") return;
+	assert.equal(loaded.connectors[0].status, "missing_credentials");
+	assert.match((loaded.connectors[0] as { reason: string }).reason, /HER_TEST_ABSENT_TOKEN/);
+});
+
+test("http connector: plaintext http is refused off-machine, allowed on loopback", async () => {
+	// Both sides: a rule that only ever rejects is the same bug as one that
+	// only ever accepts. A token in an Authorization header over plain http to
+	// a remote host is the token on the wire.
+	const repoRoot = await tempRoot();
+	await writeManifest(repoRoot, {
+		version: 1,
+		connectors: [
+			{ slug: "remote-plain", label: "Remote plaintext", type: "http", url: "http://api.example.com/mcp/" },
+			{ slug: "loopback", label: "Loopback", type: "http", url: "http://127.0.0.1:9000/mcp/" },
+		],
+	});
+
+	const loaded = await loadConnectors(repoRoot, {});
+
+	assert.equal(loaded.kind, "loaded");
+	if (loaded.kind !== "loaded") return;
+	assert.equal(loaded.connectors[0].status, "invalid");
+	assert.match((loaded.connectors[0] as { reason: string }).reason, /必须是 https/);
+	assert.equal(loaded.connectors[1].status, "ready");
 });
 
 test("loadConnectors marks a connector missing_credentials and names the unset env var, without crashing", async () => {
@@ -383,4 +483,92 @@ test("her_mcp_call reports a human error for an unknown connector slug, without 
 	const text = await run(tools.get("her_mcp_call"), { connector: "does-not-exist", tool: "whatever" }, repoRoot);
 
 	assert.match(text, /未找到外接服务/);
+});
+
+/**
+ * The transport seam, live. Mocks cannot prove a transport works: the failure
+ * mode that matters here is silent — headers not actually reaching the server
+ * turns every real connector into an unexplained 401. So this stands up a real
+ * MCP server over streamable HTTP on loopback and drives the whole path.
+ */
+test("integration smoke: an http connector really lists and calls tools, and its headers arrive", async () => {
+	const { createServer } = await import("node:http");
+	const { McpServer } = await import("@modelcontextprotocol/sdk/server/mcp.js");
+	const { StreamableHTTPServerTransport } = await import("@modelcontextprotocol/sdk/server/streamableHttp.js");
+	const { z } = await import("zod");
+
+	const AUTH = "Bearer seam-token-must-not-leak";
+	let sawAuth: string | undefined;
+
+	// Stateless mode wants a fresh server + transport per request.
+	const httpServer = createServer((rq, rs) => {
+		if (rq.headers.authorization) sawAuth = rq.headers.authorization;
+		let body = "";
+		rq.on("data", (c) => {
+			body += c;
+		});
+		rq.on("end", async () => {
+			let parsed: unknown;
+			try {
+				parsed = body ? JSON.parse(body) : undefined;
+			} catch {
+				parsed = undefined;
+			}
+			const mcp = new McpServer({ name: "seam-test", version: "1.0.0" });
+			mcp.registerTool(
+				"echo",
+				{ description: "echo back", inputSchema: { text: z.string() } },
+				async ({ text }: { text: string }) => ({ content: [{ type: "text" as const, text: `echoed:${text}` }] }),
+			);
+			const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+			rs.on("close", () => void transport.close().catch(() => undefined));
+			try {
+				await mcp.connect(transport);
+				await transport.handleRequest(rq, rs, parsed);
+			} catch {
+				if (!rs.headersSent) rs.writeHead(500).end();
+			}
+		});
+	});
+	await new Promise<void>((resolve) => httpServer.listen(0, "127.0.0.1", resolve));
+	const { port } = httpServer.address() as { port: number };
+
+	try {
+		const repoRoot = await tempRoot();
+		await writeManifest(repoRoot, {
+			version: 1,
+			connectors: [
+				{
+					slug: "seam",
+					label: "Seam",
+					type: "http",
+					url: `http://127.0.0.1:${port}/mcp`,
+					headers: { Authorization: "$HER_TEST_SEAM_TOKEN" },
+				},
+			],
+		});
+		const tools = mcpHarness();
+		const previous = process.env.HER_TEST_SEAM_TOKEN;
+		process.env.HER_TEST_SEAM_TOKEN = AUTH;
+		try {
+			const listed = await run(tools.get("her_mcp_list"), {}, repoRoot);
+			assert.match(listed, /seam/);
+
+			const called = await run(
+				tools.get("her_mcp_call"),
+				{ connector: "seam", tool: "echo", params: { text: "hello-from-her" } },
+				repoRoot,
+			);
+			assert.match(called, /echoed:hello-from-her/);
+			// The header must actually go out; a dropped one reads as a 401.
+			assert.equal(sawAuth, AUTH);
+			// And the token must never appear in what the tool hands back.
+			assert.equal(called.includes(AUTH), false);
+		} finally {
+			if (previous === undefined) delete process.env.HER_TEST_SEAM_TOKEN;
+			else process.env.HER_TEST_SEAM_TOKEN = previous;
+		}
+	} finally {
+		await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+	}
 });

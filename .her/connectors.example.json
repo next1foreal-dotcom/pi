@@ -2,6 +2,15 @@
   "version": 1,
   "connectors": [
     {
+      "slug": "github",
+      "label": "GitHub",
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "headers": {
+        "Authorization": "$HER_CONNECTOR_GITHUB_TOKEN"
+      }
+    },
+    {
       "slug": "filesystem",
       "label": "本地文件目录",
       "type": "stdio",
