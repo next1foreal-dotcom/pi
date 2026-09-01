@@ -81,6 +81,18 @@ must survive the removal of the movement:
 
 Script-driven sequences check the same query before they start, and skip or shorten.
 
+## Looking, and the assets you look at
+
+Two tools close the loop this file assumes:
+
+- `design_lab_still <screenId>` photographs your own screen and hands back the path — **read it**.
+  A screen you have not looked at is not verified, and no amount of correct reasoning substitutes
+  for the frame.
+- `design_asset_shot` photographs a locally running app into a real asset. For a product page the
+  product is the hero asset: run the real thing and place that frame, rather than leaving a gray
+  box where the proof should be. Each shot carries a receipt naming its source — an asset whose
+  origin you cannot state does not belong in a design.
+
 ## Verifying motion in the lab
 
 Motion is the one thing a still frame cannot show, and the pane lies about it in a specific way:
