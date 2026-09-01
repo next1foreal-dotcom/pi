@@ -10,7 +10,9 @@ import { basename, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { PublishConfig } from "./bg-task-config.ts";
 import { DEFAULT_PUBLISH_CONFIG } from "./bg-task-config.ts";
+import { type HerMessage, writeMessage } from "./messages.ts";
 import { externalizeLargeDataUris } from "./publish-assets.ts";
+import { archiveExistingPublish, buildPublishWakeMessage, recordCurrentPublisher } from "./publish-versions.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -49,7 +51,9 @@ export async function herPublish(
 		description: string;
 		slug?: string;
 		label?: string;
+		sessionId?: string;
 		publish?: PublishConfig;
+		sendMessage?: (root: string, msg: Omit<HerMessage, "path">) => Promise<unknown>;
 	},
 ): Promise<PublishResult> {
 	const cfg = input.publish ?? DEFAULT_PUBLISH_CONFIG;
@@ -78,8 +82,35 @@ export async function herPublish(
 
 	const wrapped = wrapPublishedHtml(html, input.title, input.description);
 	const lifted = await externalizeLargeDataUris(wrapped, dir, cfg.inlineThresholdBytes);
+	const archived = await archiveExistingPublish({ publishedRoot: dir, slug });
 	await writeFile(resolvedOut, lifted.html, "utf8");
 	const bytes = Buffer.byteLength(lifted.html, "utf8");
+	const label = input.label?.trim() || undefined;
+	await recordCurrentPublisher({
+		publishedRoot: dir,
+		slug,
+		sessionId: input.sessionId,
+		label,
+	});
+	const previousSessionId = archived?.previousSessionId;
+	const currentSessionId = input.sessionId;
+	if (archived && previousSessionId && currentSessionId && previousSessionId !== currentSessionId) {
+		try {
+			const send = input.sendMessage ?? writeMessage;
+			await send(
+				memoryRoot,
+				buildPublishWakeMessage({
+					slug,
+					archivedN: archived.entry.n,
+					label,
+					fromSessionId: currentSessionId,
+					toSessionId: previousSessionId,
+				}),
+			);
+		} catch (err) {
+			console.warn(`[her-publish] wake previous publisher failed: ${err}`);
+		}
+	}
 
 	await ensurePublishServer(dir, cfg);
 	const url = `http://${cfg.bind}:${cfg.port}/${slug}.html`;
