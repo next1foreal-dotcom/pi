@@ -20,7 +20,8 @@ node -e "const s=require(require('os').homedir()+'/.pi/agent/settings.json');con
 ```
 
 写这页时的读数:HEAD `7d9577006` · 分支 `her/phase-0-pi-hygiene` · ahead 0 ·
-考试 `wireframe` / 门 `returned` · lab 活在 5180 · 大脑 `deepseek / deepseek-v4-flash-vision-exp`。
+考试 `wireframe` / 门 `returned` · lab 活在 5180 · 大脑 **写这页时**是 `deepseek / deepseek-v4-flash-vision-exp`,
+**9/1 深夜已被改成 `her-gateway / xai/grok-4.6`** —— 所以第四条自检命令务必自己跑,别抄这行。
 
 ## 三、系统长什么样(五层,不再加层)
 
@@ -32,7 +33,7 @@ node -e "const s=require(require('os').homedir()+'/.pi/agent/settings.json');con
 | 研究 | `extract_design_md`(**含 Motion 节**:时长/缓动/cubic-bezier/reduced-motion)+ `research/positive-samples` 6 条 | 通电 |
 | 语言 | `design/composition` · `design/arrangement` · `design/motion` · `review/anti-generic` | 通电 |
 
-**当晚新增的两只手**(她的眼睛与素材,今晚刚建、尚未被她真用过):
+**当晚新增的两只手**(她的眼睛与素材;**眼睛已在新大脑上验通** —— 接手会话交叉核过:她描述实拍图里有「Esc to exit / Reset layout」,这两个词 grep 她的 `screen.tsx` 命中 0、只存在于 design-lab 外壳,**只有真读了 PNG 才知道**,不是从源码倒推):
 - `design_lab_still <screenId>` — 拍她自己的屏,交回 PNG 路径让她读。lab 没开=skip;错屏名会列出画布上真实的屏名单。
 - `design_asset_shot` — 拍**本地跑着的应用**成为真素材(产品页的英雄素材就是产品本身),每图带出处收据;只许本机 http(s)。
 
@@ -49,16 +50,20 @@ node -e "const s=require(require('os').homedir()+'/.pi/agent/settings.json');con
 ## 五、雷区(今晚踩过,别再踩)
 
 1. **无头长跑会停,而且"进程活着"骗人**(卡 G-417)。首轮考试跑通 35 分钟;之后两次重做,一次 43 分钟只烧 32 秒 CPU、一次 19.6 分钟只烧 19 秒,**产物零动静**。
-   **真因已更正(别再怀疑模型)**:共享的 `her-gateway :18130` 被掐——网关实例曾挂在某个会话的信号组里,一次工具取消的 `^C` 顺着信号组把它掐死,**4 秒后**她的跑就报 `terminated`;看门狗已用计划任务把它拉起为**分离进程**。**上游被掐时,调用方表现为静默挂起而不是报错**,这正是「CPU 极低 + 产物零动静」的成因。复发时**先查 :18130 的实例是不是分离进程**,别先怀疑大脑。
+   **归因经两轮更正,最终版**:不是模型的问题。**根机制 = git-bash 的 `timeout` 到点时会往控制台组喷 `^C`,把同组里的东西连坐掐死。** 实证:另一会话用 `Start-Process cmd /c start-gateway.bat` 手起的网关(没脱离工具会话控制台组),被一个 `timeout 180` 探针到点掐死,4 秒后走网关的跑即报 `terminated`。
+   ⚠️ **我那两次是 deepseek 直连、不经网关,所以严格说不是同一个凶手,但同一族**:上游/自身被掐时,**走网关的立刻报错,直连的静默挂起**——我测到的 0.4–1.9 秒/分正是后者的样子。**高度怀疑我自己就是凶手**:派工在飞期间我用 git-bash 跑过多条 `timeout N ...` 的探针,若共享控制台组,等于我自己朝自己的跑喷了 `^C`。**未逐条对时间线证实,标为强嫌疑。**
+   **纪律(照做,别复现)**:①派工一律**分离进程**起(`.bat` + 嵌套 `cmd /c start "" /min`),别让它和工具会话同组;②**派工在飞期间不要用 git-bash 的 `timeout`** 做探针,改用 PowerShell 或 `sleep`+轮询;③复发时先查上游实例是不是分离进程,别先怀疑大脑。
    判据:**CPU 增速**(停滞 0.4–0.7 秒/分 vs 健康 ≈1.9)**+ 产物文件时间戳**,两条并看;首轮 8–14 分钟即见产物,超窗零动静就止损。
    **下次第一步:先用短任务(如「只做第 1 步 brief 并写盘」)验通道健康,再上完整重做。别盲目重派。**
-2. **她的默认大脑是临时切的**。`openai-codex` 的刷新令牌作废(`refresh_token_reused`),我切到 `deepseek-v4-flash-vision-exp`(三款里唯一带 image 输入)。锚点 `~/.pi/agent/settings.json.pre-deepseek-20260901`。
+2. **她的默认大脑被换过两次,自检里必须自己读**。`openai-codex` 的刷新令牌作废(`refresh_token_reused`)→ 我临时切 `deepseek-v4-flash-vision-exp`(锚点 `~/.pi/agent/settings.json.pre-deepseek-20260901`)→ **9/1 深夜又被切成 `her-gateway / xai/grok-4.6`**。
+   ⚠️ 切到 her-gateway 当时是**断的**:`models.json` 里该 provider 的 apiKey 写作 `$HER_GATEWAY_LOCAL_KEY`,而该环境变量哪儿都没定义 → 不带旗启动会**悄悄回落 anthropic**、撞过期 token、30 秒锁死运行时(**G-406/G-410 那条"一把坏钥匙锁死整机"的复发**)。占位值已经 Fei 拍板落进 `.env`。**换大脑后务必先跑一次 ALIVE 探针再派活。**
    **重登卡在端口**:codex 回调端口 1455 写死在 OpenAI 侧,而本机 Windows 排除段 1357–1456 盖住它 → 授权页转完但回调无人接。放行要改系统网络设置,**必须 Fei 自己在管理员终端做**,凭据一律不经我们的手。
 3. **一把坏钥匙曾锁死整个运行时**(卡 G-410,已修一半):`--provider X` 在不给 `--model` 时**被静默忽略**,所以"换个大脑跑"这条绕路当时无效且误导诊断。已修 `7d9577006`(先见红,resolver 套件 51/51,记进 `packages/her/PATCHES.md`)。⚠️ **她跑的是编译好的 `dist/cli.js`,此修复要等下次 build 才进她的运行时。**
 4. **活树是共享的**,别的会话整夜在提交:只许 `git commit -- <pathspec>`,**禁 `git add -A`**;撞上索引锁或别人的脏文件**一律不碰只上报**;新工具**必须**同步登记 `packages/her/src/lib/governed-tools.ts`,否则 Cedar 覆盖测试对所有人变红(今晚代偿过两笔别人的:`her_mcp_refresh`、`her_mcp_login`)。
-5. **拆 junction 别用 bash→cmd 引号层**(会静默假成功)。用 PowerShell `[System.IO.Directory]::Delete($path,$false)` 再 `Test-Path` 回验。
-6. **收起的 Browser pane 是坏量具**:rAF 冻结、定时器节流,好动效会被读成死的。判动效前先确认 pane 可见,或断言状态而非用眼看。
-7. **画布默认 24% 全览**,直接截图小到没法判——要"点一下屏 + 回车"锁进去(`design_lab_still` 已内置这套动作)。
+5. **改共享文件前先 `git status -- <文件>`**。`git commit -- <pathspec>` 提交的是**工作树内容**,会把别人**尚未提交**的改动一起带走。9/1 我就这么把接手会话正在写的 5 行 BACKLOG 扫进了自己的提交(内容没丢,但那笔提交里有别人的字)。看见 `M` 就别提交那个文件,改用消息告诉对方让他自己收。
+6. **拆 junction 别用 bash→cmd 引号层**(会静默假成功)。用 PowerShell `[System.IO.Directory]::Delete($path,$false)` 再 `Test-Path` 回验。
+7. **收起的 Browser pane 是坏量具**:rAF 冻结、定时器节流,好动效会被读成死的。判动效前先确认 pane 可见,或断言状态而非用眼看。
+8. **画布默认 24% 全览**,直接截图小到没法判——要"点一下屏 + 回车"锁进去(`design_lab_still` 已内置这套动作)。
 
 ## 六、下一步(按顺序,别跳)
 
