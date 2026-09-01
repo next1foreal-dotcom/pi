@@ -23,6 +23,13 @@ import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult
 
 const MAX_TIMEOUT_MS = 2_147_483_647;
 const MAX_TIMEOUT_SECONDS = MAX_TIMEOUT_MS / 1000;
+/**
+ * Applied when the model passes no timeout. A command that never returns used to
+ * block the turn forever, and from the outside that is indistinguishable from a
+ * hung model. Ten minutes is long enough for installs and test suites; anything
+ * longer should say so with an explicit timeout.
+ */
+export const DEFAULT_TIMEOUT_SECONDS = 600;
 
 function resolveTimeoutMs(timeout: number | undefined): number | undefined {
 	if (timeout === undefined) return undefined;
@@ -39,7 +46,11 @@ function resolveTimeoutMs(timeout: number | undefined): number | undefined {
 
 const bashSchema = Type.Object({
 	command: Type.String({ description: "Bash command to execute" }),
-	timeout: Type.Optional(Type.Number({ description: "Timeout in seconds (optional, no default timeout)" })),
+	timeout: Type.Optional(
+		Type.Number({
+			description: `Timeout in seconds (optional; commands without one are killed after ${DEFAULT_TIMEOUT_SECONDS}s, so pass a larger value for long-running work)`,
+		}),
+	),
 });
 
 export type BashToolInput = Static<typeof bashSchema>;
@@ -194,6 +205,8 @@ export interface BashToolOptions {
 	exposeSessionEnvironment?: boolean;
 	/** Hook to adjust command, cwd, or env before execution */
 	spawnHook?: BashSpawnHook;
+	/** Timeout applied when the model passes none. 0 disables it. Default: DEFAULT_TIMEOUT_SECONDS */
+	defaultTimeoutSeconds?: number;
 }
 
 const BASH_PREVIEW_LINES = 5;
@@ -321,10 +334,11 @@ export function createBashToolDefinition(
 	const commandPrefix = options?.commandPrefix;
 	const exposeSessionEnvironment = options?.exposeSessionEnvironment ?? true;
 	const spawnHook = options?.spawnHook;
+	const defaultTimeoutSeconds = options?.defaultTimeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS;
 	return {
 		name: "bash",
 		label: "bash",
-		description: `Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.`,
+		description: `Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds; without one the command is killed after ${DEFAULT_TIMEOUT_SECONDS} seconds.`,
 		promptSnippet: "Execute bash commands (ls, grep, find, etc.)",
 		promptGuidelines: exposeSessionEnvironment
 			? ["Inspect PI_* environment variables for current model and session details."]
@@ -338,6 +352,7 @@ export function createBashToolDefinition(
 			ctx?,
 		) {
 			const resolvedCommand = commandPrefix ? `${commandPrefix}\n${command}` : command;
+			const effectiveTimeout = timeout ?? (defaultTimeoutSeconds > 0 ? defaultTimeoutSeconds : undefined);
 			const spawnContext = resolveSpawnContext(resolvedCommand, cwd, spawnHook, exposeSessionEnvironment, ctx);
 			const output = new OutputAccumulator({ tempFilePrefix: "pi-bash" });
 			let acceptingOutput = true;
@@ -429,7 +444,7 @@ export function createBashToolDefinition(
 					const result = await ops.exec(spawnContext.command, spawnContext.cwd, {
 						onData: handleData,
 						signal,
-						timeout,
+						timeout: effectiveTimeout,
 						env: spawnContext.env,
 					});
 					exitCode = result.exitCode;
