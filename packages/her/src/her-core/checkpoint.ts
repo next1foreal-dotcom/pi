@@ -18,6 +18,8 @@ export type GitRunner = (argv: string[]) => GitRunResult;
 export type CheckpointMeta = {
 	sessionId?: string;
 	label?: string;
+	/** G-403.1 — stage only these paths (hot path); empty = whole tree. */
+	paths?: string[];
 };
 
 export type CaptureResult = {
@@ -117,7 +119,15 @@ export function captureCheckpoint(
 	const gitDir = ensureStore(memoryRoot, repoRoot, runner);
 	const workTree = resolve(repoRoot);
 	const at = new Date().toISOString();
-	runGit(runner, gitDir, workTree, ["add", "-A"]);
+	// G-403.1 — stage only what this checkpoint is about. `add -A` walks the whole
+	// tree, which measured **7m20s** on the samantha monorepo (live, 2026-09-01) and
+	// therefore blew the 60s budget on EVERY mutating turn: the snapshot never
+	// landed and each turn paid a minute for nothing. Scoped paths make the hot
+	// path O(files she is about to touch). `meta.paths` empty/absent still means
+	// whole-tree, which is what an explicit "snapshot everything" caller wants —
+	// it is just never the per-turn caller any more.
+	const scoped = (meta.paths ?? []).filter((p) => p.trim().length > 0);
+	runGit(runner, gitDir, workTree, scoped.length > 0 ? ["add", "--", ...scoped] : ["add", "-A"]);
 	const dirty = runGit(runner, gitDir, workTree, ["diff", "--cached", "--quiet"], [0, 1]);
 	if (dirty.status === 0) {
 		return { id: headId(runner, gitDir, workTree), at, changedFiles: [], created: false };

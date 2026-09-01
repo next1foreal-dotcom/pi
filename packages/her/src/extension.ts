@@ -117,7 +117,7 @@ import {
 	readPresenceMap,
 	recordPresence,
 } from "./her-core/presence.ts";
-import { createReadGuard, type ReadGuard } from "./her-core/read-before-edit.ts";
+import { createReadGuard, extractPath, type ReadGuard } from "./her-core/read-before-edit.ts";
 import { type ReviewEvidenceItem, verifyEvidence } from "./her-core/review-evidence.ts";
 import { cancelWakeup, fireDueWakeups, listWakeups, scheduleWakeup } from "./her-core/self-wakeup.ts";
 import { buildWidgetMessage } from "./her-core/widget.ts";
@@ -1183,7 +1183,14 @@ export default function her(pi: ExtensionAPI): void {
 			const sessionId = sessionIdOf(ctx);
 			const name = event.toolName.toLowerCase();
 			if ((name === "write" || name.includes("edit")) && !capturedThisTurn.has(sessionId)) {
-				captureCheckpoint(memoryDir, ctx.cwd || process.cwd(), { sessionId });
+				// G-403.1 — scope the snapshot to the file about to change. Whole-tree
+				// staging measured 7m20s on this monorepo and blew the 60s budget every
+				// turn; the target path is the only thing a per-turn checkpoint needs.
+				const target = extractPath(event.input);
+				captureCheckpoint(memoryDir, ctx.cwd || process.cwd(), {
+					sessionId,
+					...(target ? { paths: [target] } : {}),
+				});
 				capturedThisTurn.add(sessionId);
 			}
 		} catch (error) {

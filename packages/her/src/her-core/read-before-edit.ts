@@ -22,7 +22,9 @@ export function normalizeFilePath(filePath: string): string {
 	return resolve(filePath).replace(/^([A-Za-z]):/, (_, letter: string) => `${letter.toLowerCase()}:`);
 }
 
-function extractPath(input: unknown): string | undefined {
+/** G-403.1 — exported so the checkpoint hot path scopes to the same target this
+ * guard resolves; two extractors would drift apart the first time either changed. */
+export function extractPath(input: unknown): string | undefined {
 	if (input === null || typeof input !== "object") return undefined;
 	const record = input as Record<string, unknown>;
 	for (const key of PATH_KEYS) {
