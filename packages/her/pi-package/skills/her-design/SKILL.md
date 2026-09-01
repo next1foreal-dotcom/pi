@@ -30,7 +30,8 @@ over-read, never under-read.
 | Researching before designing | process/research |
 | Needing a sourced example / building a direction board | research/positive-samples |
 | Wireframing toward the structure gate | process/wireframe · design/composition |
-| Any new design | design/foundations · design/colors · design/typography · design/composition · review/anti-generic · process/direction-first |
+| Any new design | design/foundations · design/colors · design/typography · design/composition · design/arrangement · review/anti-generic · process/direction-first |
+| Arranging a screen — nothing reads first, no hierarchy | design/arrangement (focal point · weight budget · spine · density contrast · eye path) |
 | Deciding scope — what gets in, what gets cut | design/composition (entry test: earned its way in? which five get the permanent place?) |
 | Important / multi-direction work | process/direction-first · process/variants |
 | Pages, heroes, sections | design/blocks/layout |
