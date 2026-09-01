@@ -206,3 +206,45 @@ test("extract_design_md tool rejects non-http(s) without fetching", async () => 
 		assert.equal(fetchImpl.calls.length, 0);
 	});
 });
+
+test("a site's own asset subdomain is fetched; a third-party host is skipped and said so", async (t) => {
+	const dir = await mkdtemp(join(tmpdir(), "her-extract-samesite-"));
+	t.after(() => rm(dir, { recursive: true, force: true }));
+	const page = [
+		'<link rel="stylesheet" href="https://static.example.com/app.css">',
+		'<link rel="stylesheet" href="https://someone-elses-cdn.io/vendor.css">',
+	].join("\n");
+	const impl = fakeFetch((url) => {
+		if (url.includes("static.example.com")) {
+			return htmlResponse(":root{--brand:#123456;transition-duration:240ms}", "text/css");
+		}
+		if (url.includes("someone-elses-cdn.io")) return htmlResponse(".v{color:#abcdef}", "text/css");
+		return htmlResponse(page);
+	});
+	const { markdown } = await extractDesignMd({ url: "https://example.com" }, { fetchImpl: impl, repoRoot: dir });
+
+	// the site's own subdomain came through
+	assert.match(markdown, /--brand/);
+	assert.match(markdown, /240ms/);
+	assert.ok(impl.calls.some((c) => c.url.includes("static.example.com")));
+	// the third party was not fetched, and the report says which host was dropped
+	assert.ok(!impl.calls.some((c) => c.url.includes("someone-elses-cdn.io")));
+	assert.match(markdown, /skipped by host policy \(someone-elses-cdn\.io\)/);
+	// and it must not blame JavaScript when links existed
+	assert.ok(!/injected by JavaScript/.test(markdown));
+});
+
+test("more linked stylesheets than the cap is reported, never silently dropped", async (t) => {
+	const dir = await mkdtemp(join(tmpdir(), "her-extract-cap-"));
+	t.after(() => rm(dir, { recursive: true, force: true }));
+	const links = Array.from(
+		{ length: 13 },
+		(_, i) => `<link rel="stylesheet" href="https://example.com/s${i}.css">`,
+	).join("\n");
+	const impl = fakeFetch((url) =>
+		url.endsWith(".css") ? htmlResponse(".a{color:#101010}", "text/css") : htmlResponse(links),
+	);
+	const { markdown } = await extractDesignMd({ url: "https://example.com" }, { fetchImpl: impl, repoRoot: dir });
+
+	assert.match(markdown, /Linked stylesheets capped at 10; 3 further stylesheet\(s\) not fetched/);
+});
