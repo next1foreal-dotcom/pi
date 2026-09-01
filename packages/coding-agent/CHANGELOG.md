@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Fixed `--provider <name>` without `--model` being silently ignored. The flag now selects that provider's default catalog model (or its first model if the default is missing) and errors loudly for unknown providers or providers with no models.
+- Fixed OAuth/auth failures reporting as a raw provider JSON blob. The request path now names the failing provider and model, says it is an authentication failure, and lists other configured providers (or `--provider <name>`) without switching brains.
+
 ## [0.83.0] - 2026-07-29
 
 ### New Features
