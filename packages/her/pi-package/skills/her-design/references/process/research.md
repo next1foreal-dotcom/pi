@@ -11,6 +11,9 @@ when they didn't look. "`#0A0A0A` text on `#FAFAF7`, one 72px display size, thre
 hairlines, 8px rhythm" is what looking produces. If a research note could caption any moodboard
 on the internet, it observed nothing.
 
+Before any new extraction, open research/positive-samples — the house library of pre-reduced,
+sourced entries. An entry that covers the neighborhood saves the fetch.
+
 ## Three sources, in order
 
 1. **What the owner sent.** Highest weight — it carries their taste. Reduce each piece per
