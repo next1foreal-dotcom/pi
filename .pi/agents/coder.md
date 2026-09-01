@@ -1,7 +1,7 @@
 ---
 name: coder
 description: Implement scoped code changes while carrying Fei's durable context.
-model: deepseek/deepseek-v4-pro
+model: her-gateway/xai/grok-4.5
 systemPromptMode: append
 inheritProjectContext: true
 defaultContext: fork

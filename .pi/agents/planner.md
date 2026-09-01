@@ -1,7 +1,7 @@
 ---
 name: planner
 description: Turn fuzzy goals into staged plans with verification gates.
-model: deepseek/deepseek-v4-pro
+model: her-gateway/xai/grok-4.5
 systemPromptMode: append
 inheritProjectContext: true
 defaultContext: fork
