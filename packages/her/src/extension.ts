@@ -110,6 +110,7 @@ import {
 	readPresenceMap,
 	recordPresence,
 } from "./her-core/presence.ts";
+import { createReadGuard, type ReadGuard } from "./her-core/read-before-edit.ts";
 import { type ReviewEvidenceItem, verifyEvidence } from "./her-core/review-evidence.ts";
 import { cancelWakeup, fireDueWakeups, listWakeups, scheduleWakeup } from "./her-core/self-wakeup.ts";
 import { buildWidgetMessage } from "./her-core/widget.ts";
@@ -633,7 +634,28 @@ export default function her(pi: ExtensionAPI): void {
 	const summaryModel = createSummaryModel();
 	const mem = new Memory(memoryDir, { model: summaryModel, semanticSearch: createEmbeddingSearch() });
 	let syncTimer: ReturnType<typeof setTimeout> | undefined;
+	const readGuards = new Map<string, ReadGuard>();
 	registerProviderPool(pi);
+
+	const sessionIdOf = (ctx: ExtensionContext): string => {
+		try {
+			const id = ctx.sessionManager?.getSessionId();
+			if (typeof id === "string" && id.length > 0) return id;
+		} catch {
+			// Missing session manager is not a guard failure; share one bucket.
+		}
+		return "default";
+	};
+
+	const readGuardFor = (ctx: ExtensionContext): ReadGuard => {
+		const sessionId = sessionIdOf(ctx);
+		let guard = readGuards.get(sessionId);
+		if (!guard) {
+			guard = createReadGuard();
+			readGuards.set(sessionId, guard);
+		}
+		return guard;
+	};
 
 	const runSync = async (reason: string, ctx?: ExtensionContext): Promise<MemorySyncResult | undefined> => {
 		try {
@@ -783,6 +805,7 @@ export default function her(pi: ExtensionAPI): void {
 
 	pi.on("session_start", async (_event, ctx) => {
 		lastEventWakeCtx = ctx;
+		readGuardFor(ctx);
 		try {
 			await recordPresence(memoryDir, {
 				sessionId: ctx.sessionManager.getSessionId(),
@@ -817,6 +840,7 @@ export default function her(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_shutdown", (_event, ctx) => {
+		readGuards.delete(sessionIdOf(ctx));
 		try {
 			void clearPresence(memoryDir, ctx.sessionManager.getSessionId()).catch((error) => {
 				console.warn(`[her] presence clear skipped: ${errorMessage(error)}`);
@@ -1104,7 +1128,6 @@ export default function her(pi: ExtensionAPI): void {
 				const reason = rule ? `cedar: deny (matched ${rule})` : "cedar: deny (no permit matched)";
 				return { block: true, reason };
 			}
-			return undefined;
 		} catch (error) {
 			const reason = `cedar: evaluation failed (${errorMessage(error)})`;
 			appendAuditLog({
@@ -1118,6 +1141,18 @@ export default function her(pi: ExtensionAPI): void {
 			});
 			return { block: true, reason };
 		}
+
+		// G-401: unread files cannot be edited this session. Guard errors never
+		// block the call — a broken fence must not freeze the agent.
+		try {
+			const guard = readGuardFor(ctx);
+			const checked = guard.checkToolCall(event.toolName, event.input);
+			if (checked.block) return { block: true, reason: checked.reason };
+			guard.noteToolCall(event.toolName, event.input);
+		} catch (error) {
+			console.warn(`[her] read-before-edit guard skipped: ${errorMessage(error)}`);
+		}
+		return undefined;
 	});
 
 	pi.registerTool({
