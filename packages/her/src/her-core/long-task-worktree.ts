@@ -1,8 +1,9 @@
 import { execFile } from "node:child_process";
-import { mkdir, stat } from "node:fs/promises";
+import { mkdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
+import { unlinkWorktreeJunctions } from "./dispatch.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -140,10 +141,23 @@ export async function removeTaskWorktree(
 	if (!opts.force && (await isWorktreeDirty(location.worktreePath, { gitRun }))) {
 		throw new WorktreeDirtyError(location.worktreePath);
 	}
+	const warnings = await unlinkWorktreeJunctions(location.worktreePath);
+	for (const warning of warnings) {
+		console.error(`[her] task worktree teardown: ${warning}`);
+	}
 	const args = opts.force
 		? ["worktree", "remove", location.worktreePath, "--force"]
 		: ["worktree", "remove", location.worktreePath];
 	await removeWorktreeWithRetry(gitRun, repoRoot, args);
+	try {
+		await rm(location.worktreePath, { force: true, recursive: true });
+	} catch (error) {
+		if (!isMissingPath(error)) {
+			console.error(
+				`[her] task worktree teardown: remove-tree: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
+	}
 	await gitRun(repoRoot, "branch", "-D", location.branch);
 	return { removed: true };
 }
@@ -163,7 +177,9 @@ export async function discardPartialTaskWorktree(
 ): Promise<void> {
 	const gitRun = opts.gitRun ?? defaultGitRun(opts.env);
 	const location = taskWorktreeLocation(taskId, opts.env);
+	await unlinkWorktreeJunctions(location.worktreePath).catch(() => undefined);
 	await gitRun(repoRoot, "worktree", "remove", location.worktreePath, "--force").catch(() => undefined);
+	await rm(location.worktreePath, { force: true, recursive: true }).catch(() => undefined);
 	await gitRun(repoRoot, "worktree", "prune").catch(() => undefined);
 	await gitRun(repoRoot, "branch", "-D", location.branch).catch(() => undefined);
 }
@@ -366,9 +382,13 @@ async function pathExists(path: string): Promise<boolean> {
 		await stat(path);
 		return true;
 	} catch (error) {
-		if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return false;
+		if (isMissingPath(error)) return false;
 		throw error;
 	}
+}
+
+function isMissingPath(error: unknown): boolean {
+	return Boolean(error && typeof error === "object" && "code" in error && error.code === "ENOENT");
 }
 
 function taskWorktreeLocation(taskId: string, env: NodeJS.ProcessEnv | undefined): TaskWorktreeLocation {
