@@ -23,6 +23,7 @@ export const ACCEPT_LOG_TAIL_CHARS = 8_000;
 const GIT_READ_TIMEOUT_MS = 60_000;
 const GIT_READ_VERBS = new Set(["diff", "log", "status", "merge-base", "rev-parse", "show"]);
 const NO_DIFF_GAP = "无 diff:非隔离任务";
+const BOTH_LAYERS_EMPTY_GAP = "两层皆空:无已提交改动也无未提交改动";
 const NO_GATES_NOTE = "无门禁记录,verdict 不得引用门禁绿";
 
 export type AcceptanceJudgeVerdict = "PASS" | "FIX" | "ESCALATE";
@@ -200,6 +201,10 @@ async function assembleFromRecord(
 	record: BgTaskRecord,
 	gitRun: GitRead,
 ): Promise<AssembledAcceptanceEvidence> {
+	const read: GitRead = (cwd, args) => {
+		assertReadOnlyGit(args);
+		return gitRun(cwd, args);
+	};
 	const gaps: string[] = [];
 	const dir = tasksDir(memoryRoot);
 	const brief = (await readText(join(dir, `${record.id}.brief`))) ?? "";
@@ -245,29 +250,37 @@ async function assembleFromRecord(
 	let logKept = Math.min(ACCEPT_LOG_TAIL_CHARS, rawLog.length);
 	let logTruncated = rawLog.length > ACCEPT_LOG_TAIL_CHARS;
 
-	const diffs: Array<{ path: string; raw: string; kept: number }> = [];
-	let statText = "";
+	const diffs: AssembledDiff[] = [];
+	let committedStatText = "";
+	let uncommittedText = "";
+	let committedObserved = false;
+	let committedHasChanges = false;
+	let uncommittedObserved = false;
+	let uncommittedHasChanges = false;
 
 	if (hasWorktree) {
-		const baseline = await resolveBaseline(worktree, record, gitRun, gaps);
+		const baseline = await resolveBaseline(worktree, record, read, gaps);
 		if (baseline) {
 			try {
-				const stat = await gitRun(worktree, ["diff", "--stat", `${baseline}...HEAD`]);
-				statText = `## git diff --stat\n\n${stat.stdout.trim() || "(empty)"}`;
+				const stat = await read(worktree, ["diff", "--stat", `${baseline}...HEAD`]);
+				committedStatText = `## 已提交层(git diff ${baseline}...HEAD)\n\n## git diff --stat\n\n${stat.stdout.trim() || "(empty)"}`;
+				committedObserved = true;
 			} catch (error) {
 				gaps.push(`git diff --stat failed: ${errorMessage(error)}`);
 			}
 			try {
-				const names = await gitRun(worktree, ["diff", "--name-only", `${baseline}...HEAD`]);
+				const names = await read(worktree, ["diff", "--name-only", `${baseline}...HEAD`]);
 				const files = names.stdout
 					.split(/\r?\n/)
 					.map((line) => line.trim())
 					.filter(Boolean);
+				committedObserved = true;
+				if (files.length > 0) committedHasChanges = true;
 				for (const path of files) {
 					try {
-						const diff = await gitRun(worktree, ["diff", `${baseline}...HEAD`, "--", path]);
+						const diff = await read(worktree, ["diff", `${baseline}...HEAD`, "--", path]);
 						const raw = diff.stdout;
-						diffs.push({ path, raw, kept: raw.length });
+						diffs.push({ path, raw, kept: raw.length, layer: "committed" });
 					} catch (error) {
 						gaps.push(`git diff -- ${path} failed: ${errorMessage(error)}`);
 					}
@@ -278,14 +291,62 @@ async function assembleFromRecord(
 		} else if (!gaps.some((gap) => gap.includes("基线"))) {
 			gaps.push("基线 commit 缺失,无法 diff");
 		}
+
+		const uncommittedParts: string[] = ["## 未提交层(git diff HEAD)"];
+		try {
+			const status = await read(worktree, ["status", "--porcelain"]);
+			const porcelain = status.stdout.trim();
+			uncommittedObserved = true;
+			if (porcelain) uncommittedHasChanges = true;
+			uncommittedParts.push(`git status --porcelain\n\n${porcelain || "(empty)"}`);
+		} catch (error) {
+			gaps.push(`git status --porcelain failed: ${errorMessage(error)}`);
+		}
+		try {
+			const stat = await read(worktree, ["diff", "--stat", "HEAD"]);
+			uncommittedParts.push(`git diff --stat HEAD\n\n${stat.stdout.trim() || "(empty)"}`);
+		} catch (error) {
+			gaps.push(`git diff --stat HEAD failed: ${errorMessage(error)}`);
+		}
+		try {
+			const names = await read(worktree, ["diff", "--name-only", "HEAD"]);
+			const files = names.stdout
+				.split(/\r?\n/)
+				.map((line) => line.trim())
+				.filter(Boolean);
+			if (files.length > 0) uncommittedHasChanges = true;
+			for (const path of files) {
+				try {
+					const diff = await read(worktree, ["diff", "HEAD", "--", path]);
+					const raw = diff.stdout;
+					diffs.push({ path, raw, kept: raw.length, layer: "uncommitted" });
+				} catch (error) {
+					gaps.push(`git diff HEAD -- ${path} failed: ${errorMessage(error)}`);
+				}
+			}
+		} catch (error) {
+			gaps.push(`git diff --name-only HEAD failed: ${errorMessage(error)}`);
+		}
+		uncommittedText = uncommittedParts.join("\n\n");
+		if (committedObserved && uncommittedObserved && !committedHasChanges && !uncommittedHasChanges) {
+			gaps.push(BOTH_LAYERS_EMPTY_GAP);
+			uncommittedText += `\n\n${BOTH_LAYERS_EMPTY_GAP}`;
+		}
 	} else {
 		fixed.push(`## git diff\n\n${NO_DIFF_GAP}`);
 	}
 
 	const render = (): string => {
 		const logSection = renderLog(rawLog, logKept, logTruncated);
-		const diffSections = diffs.map((item) => renderDiff(item.path, item.raw, item.kept));
-		return [...fixed, logSection, statText, ...diffSections].filter((part) => part.length > 0).join("\n\n");
+		const committedDiffs = diffs
+			.filter((item) => item.layer === "committed")
+			.map((item) => renderDiff(item.path, item.raw, item.kept, item.layer));
+		const uncommittedDiffs = diffs
+			.filter((item) => item.layer === "uncommitted")
+			.map((item) => renderDiff(item.path, item.raw, item.kept, item.layer));
+		return [...fixed, logSection, committedStatText, ...committedDiffs, uncommittedText, ...uncommittedDiffs]
+			.filter((part) => part.length > 0)
+			.join("\n\n");
 	};
 
 	let text = render();
@@ -313,7 +374,7 @@ async function assembleFromRecord(
 	};
 }
 
-type AssembledDiff = { path: string; raw: string; kept: number };
+type AssembledDiff = { path: string; raw: string; kept: number; layer: "committed" | "uncommitted" };
 
 function renderLog(raw: string, kept: number, truncated: boolean): string {
 	if (!raw && !truncated) return "## 日志\n\n(missing)";
@@ -322,8 +383,8 @@ function renderLog(raw: string, kept: number, truncated: boolean): string {
 	return `## 日志\n\n[日志截断:只含尾部 ${Math.max(0, kept)} 字符]\n${tail}`;
 }
 
-function renderDiff(path: string, raw: string, kept: number): string {
-	const header = `## git diff -- ${path}\n\n`;
+function renderDiff(path: string, raw: string, kept: number, layer: "committed" | "uncommitted"): string {
+	const header = layer === "uncommitted" ? `## git diff HEAD -- ${path}\n\n` : `## git diff -- ${path}\n\n`;
 	if (kept >= raw.length) return header + raw;
 	const slice = kept <= 0 ? "" : raw.slice(0, kept);
 	return `${header}${slice}\n[diff 截断: ${path} 只含前 ${Math.max(0, kept)} 字符,原长 ${raw.length}]`;
@@ -360,11 +421,18 @@ function gitVerb(args: readonly string[]): string {
 	return "";
 }
 
-async function defaultGitRead(cwd: string, args: readonly string[]): Promise<{ stdout: string; stderr: string }> {
+function assertReadOnlyGit(args: readonly string[]): void {
 	const verb = gitVerb(args);
 	if (!GIT_READ_VERBS.has(verb)) {
 		throw new Error(`accept judge refused non-read git verb: ${verb || args.join(" ")}`);
 	}
+}
+
+export async function defaultGitRead(
+	cwd: string,
+	args: readonly string[],
+): Promise<{ stdout: string; stderr: string }> {
+	assertReadOnlyGit(args);
 	const { stdout, stderr } = await execFileAsync("git", [...args], { cwd, timeout: GIT_READ_TIMEOUT_MS });
 	return { stdout, stderr };
 }

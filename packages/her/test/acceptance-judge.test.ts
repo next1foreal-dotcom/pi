@@ -24,6 +24,7 @@ import {
 	ACCEPT_MODEL_TIMEOUT_MS,
 	acceptanceJudgeFilename,
 	assembleAcceptanceEvidence,
+	defaultGitRead,
 	extractJudgeJson,
 	runAcceptanceJudge,
 } from "../src/her-core/acceptance-judge.ts";
@@ -252,6 +253,78 @@ test("assemble: over-budget keeps --stat and labels per-file diff cuts", async (
 	assert.match(assembled.text, /huge\.txt/);
 	assert.match(assembled.text, /diff --stat/);
 	assert.match(assembled.text, /\[diff 截断:/);
+});
+
+test("assemble: uncommitted working-tree layer includes dirty filename", async () => {
+	const repo = await tempGitRepo();
+	await writeFile(join(repo.root, "README.md"), "# repo\ndirty working tree\n", "utf8");
+	await writeFile(join(repo.root, "untracked-g355f3.txt"), "loose\n", "utf8");
+	const memory = await tempMemory();
+	const id = await writeTask(memory, {
+		worktree: repo.root,
+		worktreeBaseSha: repo.baseSha,
+		brief: "评分册:改 README.md\n",
+	});
+	const assembled = await assembleAcceptanceEvidence(memory, id);
+	assert.match(assembled.text, /## 未提交层\(git diff HEAD\)/);
+	assert.match(assembled.text, /README\.md/);
+	assert.match(assembled.text, /untracked-g355f3\.txt/);
+	assert.equal(assembled.evidence_gaps.includes("无 diff:非隔离任务"), false);
+	assert.equal(assembled.evidence_gaps.includes("两层皆空:无已提交改动也无未提交改动"), false);
+});
+
+test("assemble: committed-only changes include both labeled layers", async () => {
+	const repo = await tempGitRepo();
+	await writeFile(join(repo.root, "src.txt"), "alpha\n", "utf8");
+	await git(repo.root, "add", "-A");
+	await git(repo.root, "commit", "-q", "-m", "change");
+	const memory = await tempMemory();
+	const id = await writeTask(memory, {
+		worktree: repo.root,
+		worktreeBaseSha: repo.baseSha,
+		brief: "评分册:改 src.txt\n",
+	});
+	const assembled = await assembleAcceptanceEvidence(memory, id);
+	assert.match(assembled.text, /已提交层\(git diff /);
+	assert.match(assembled.text, /src\.txt/);
+	assert.match(assembled.text, /diff --stat/);
+	const uncommittedAt = assembled.text.indexOf("## 未提交层(git diff HEAD)");
+	assert.ok(uncommittedAt >= 0, "working-tree layer heading must be present");
+	const uncommitted = assembled.text.slice(uncommittedAt);
+	assert.match(uncommitted, /git status --porcelain/);
+	assert.match(uncommitted, /\(empty\)/);
+	assert.equal(
+		uncommitted.includes("src.txt"),
+		false,
+		"committed file must not appear in the empty working-tree layer",
+	);
+	assert.equal(assembled.evidence_gaps.includes("无 diff:非隔离任务"), false);
+	assert.equal(assembled.evidence_gaps.includes("两层皆空:无已提交改动也无未提交改动"), false);
+});
+
+test("assemble: both layers empty uses 两层皆空 gap, not 非隔离任务", async () => {
+	const repo = await tempGitRepo();
+	const memory = await tempMemory();
+	const id = await writeTask(memory, {
+		worktree: repo.root,
+		worktreeBaseSha: repo.baseSha,
+		brief: "评分册:无改动\n",
+	});
+	const assembled = await assembleAcceptanceEvidence(memory, id);
+	assert.equal(
+		assembled.evidence_gaps.includes("两层皆空:无已提交改动也无未提交改动"),
+		true,
+		JSON.stringify(assembled.evidence_gaps),
+	);
+	assert.equal(assembled.evidence_gaps.includes("无 diff:非隔离任务"), false);
+	assert.equal(assembled.text.includes("两层皆空:无已提交改动也无未提交改动"), true);
+	assert.equal(assembled.text.includes("无 diff:非隔离任务"), false);
+	assert.match(assembled.text, /## 未提交层\(git diff HEAD\)/);
+	assert.match(assembled.text, /已提交层\(git diff /);
+});
+
+test("defaultGitRead refuses a write verb", async () => {
+	await assert.rejects(() => defaultGitRead(".", ["commit", "-m", "nope"]), /refused non-read git verb: commit/);
 });
 
 test("verdict JSON is written with required fields and CLI --json emits it", async () => {
