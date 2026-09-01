@@ -223,6 +223,68 @@ describe("parseModelPattern", () => {
 	});
 });
 
+describe("findInitialModel with --provider but no --model", () => {
+	const brainA: Model<"anthropic-messages"> = {
+		id: "brain-a",
+		name: "Brain A",
+		api: "anthropic-messages",
+		provider: "alpha",
+		baseUrl: "https://alpha.test/v1",
+		reasoning: false,
+		input: ["text"],
+		cost: { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 1 },
+		contextWindow: 128000,
+		maxTokens: 8192,
+	};
+	const brainB: Model<"anthropic-messages"> = { ...brainA, id: "brain-b", provider: "beta" };
+
+	const registry = {
+		getModel: (provider: string, modelId: string) =>
+			[brainA, brainB].find((m) => m.provider === provider && m.id === modelId),
+		hasConfiguredAuth: () => true,
+		getAvailable: async (providerId?: string) =>
+			[brainA, brainB].filter((m) => !providerId || m.provider === providerId),
+		getModels: () => [brainA, brainB],
+	} as unknown as Parameters<typeof findInitialModel>[0]["modelRuntime"];
+
+	// Asking for a brain by name and silently getting a different one is how an
+	// hour disappears: the flag looks honoured, the failure comes from elsewhere.
+	test("honours the named provider instead of falling through to the saved default", async () => {
+		const result = await findInitialModel({
+			cliProvider: "beta",
+			scopedModels: [],
+			isContinuing: false,
+			defaultProvider: "alpha",
+			defaultModelId: "brain-a",
+			modelRuntime: registry,
+		});
+
+		expect(result.model?.provider).toBe("beta");
+	});
+
+	test("an unknown provider is refused out loud, not ignored", async () => {
+		const exit = vi.spyOn(process, "exit").mockImplementation((() => {
+			throw new Error("process.exit called");
+		}) as never);
+		const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		await expect(
+			findInitialModel({
+				cliProvider: "definitely-not-a-provider",
+				scopedModels: [],
+				isContinuing: false,
+				defaultProvider: "alpha",
+				defaultModelId: "brain-a",
+				modelRuntime: registry,
+			}),
+		).rejects.toThrow("process.exit called");
+		expect(errors.mock.calls.flat().join(" ")).toMatch(/definitely-not-a-provider/);
+
+		exit.mockRestore();
+		errors.mockRestore();
+	});
+});
+
 describe("resolveModelScopeWithDiagnostics", () => {
 	test("returns scoped models and structured diagnostics without writing console warnings", async () => {
 		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});

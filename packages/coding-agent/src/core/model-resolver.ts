@@ -648,6 +648,24 @@ export async function findInitialModel(options: {
 		if (resolved.model) {
 			return { model: resolved.model, thinkingLevel: DEFAULT_THINKING_LEVEL, fallbackMessage: undefined };
 		}
+	} else if (cliProvider) {
+		// --provider on its own used to fall through to the saved default, so the
+		// session silently ran on a different brain than the one that was asked for
+		// — and when that default was the broken one, the failure looked like it
+		// came from the requested provider. Honour the flag, or say why not.
+		const available = await modelRuntime.getAvailable(cliProvider);
+		const preferred = defaultModelPerProvider[cliProvider as KnownProvider];
+		const model = (preferred && available.find((entry) => entry.id === preferred)) ?? available[0];
+		if (!model) {
+			console.error(
+				chalk.red(
+					`No usable model for provider "${cliProvider}". Use --list-models to see configured providers, ` +
+						"or pass --model to name one explicitly.",
+				),
+			);
+			process.exit(1);
+		}
+		return { model, thinkingLevel: defaultThinkingLevel ?? DEFAULT_THINKING_LEVEL, fallbackMessage: undefined };
 	}
 
 	// 2. Use first model from scoped models (skip if continuing/resuming)
