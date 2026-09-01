@@ -67,8 +67,8 @@ loora = 本地无限设计画布(原 brilliant-local),8/31 已判为独立产品
 ## 开考前置(考官侧,Fable 负责)
 
 - [x] 教材齐:她的 `her-design` skill 37 篇,含 `process/steps`、`design/arrangement`、`design/motion`、`research/positive-samples`
-- [ ] 门机制在她家:manifest + 六个工具 + 巡检(G-375·3,已派工)
-- [ ] 提取器在她家、且抓得到动效值(G-375·2,已派工)
+- [x] 门机制在她家:manifest + 八阶段 + 两硬门一轻门 + 六工具 + 巡检(G-375·3,合流 `9da91e6e8`;两硬门均双侧钉死,空证据 approved 被拒且巡检判红)
+- [x] 提取器在她家、且抓得到动效值(G-375·2,合流 `26e6eb0e6`;真站实弹 linear.app:交互档 160–220ms/装饰档 1600–3200ms steps、89 段 keyframes、reduced-motion 存在——被丢弃的样式表必须点名记账,禁无声丢失)
 - [ ] Fei 拍板:题目就用 loora,还是换成别的真需求
 
 前两条落地即开考。开考后 Fable 只做两件事:**当门的传令兵**(把产物摆到 Fei 眼前、把 Fei 的话记回项目档),
