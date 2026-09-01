@@ -1,6 +1,30 @@
 {
+  "_readme": [
+    "外接服务清单。复制成 connectors.json（那个文件不进版本库）。",
+    "三种认证写法，按服务支持什么来选：",
+    "",
+    "1. headers + $变量名 —— 服务发 PAT 的情况。值永远来自环境变量，绝不写进这个文件。",
+    "2. auth: oauth —— 服务支持动态客户端注册时，跑一次 her_mcp_login 弹浏览器授权即可，",
+    "   不用你手里有任何令牌；令牌存在 .her/oauth/<slug>.json，会自己续期。",
+    "3. auth: oauth + clientId —— 服务支持 OAuth 但拒绝动态注册（GitHub 就是这样，会答",
+    "   'does not support dynamic client registration'）。先去它的开发者设置建一个 OAuth",
+    "   应用，把 client_id 填在这里；需要 client_secret 的话仍然走环境变量。",
+    "",
+    "计划任务里永远不会弹浏览器：令牌过期时它会明说去跑 her_mcp_login，而不是卡在一个没人",
+    "看得见的登录页上。"
+  ],
   "version": 1,
   "connectors": [
+    {
+      "slug": "filesystem",
+      "label": "本地文件目录",
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "C:/path/to/read-only-directory"],
+      "env": {
+        "EXAMPLE_TOKEN": "$HER_CONNECTOR_FILESYSTEM_TOKEN"
+      }
+    },
     {
       "slug": "github",
       "label": "GitHub",
@@ -11,14 +35,19 @@
       }
     },
     {
-      "slug": "filesystem",
-      "label": "本地文件目录",
-      "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "C:/path/to/read-only-directory"],
-      "env": {
-        "EXAMPLE_TOKEN": "$HER_CONNECTOR_FILESYSTEM_TOKEN"
-      }
+      "slug": "some-hosted-service",
+      "label": "支持浏览器登录的托管服务",
+      "type": "http",
+      "url": "https://example.com/mcp/",
+      "auth": "oauth"
+    },
+    {
+      "slug": "service-without-dcr",
+      "label": "支持 OAuth 但要先注册应用的服务",
+      "type": "http",
+      "url": "https://example.com/mcp/",
+      "auth": "oauth",
+      "clientId": "Iv1.abc123def456"
     }
   ]
 }

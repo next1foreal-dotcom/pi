@@ -59,6 +59,13 @@ export interface ReadyHttpConnector extends ConnectorBase {
 	 * manifest. Absent means the older static-header form.
 	 */
 	auth?: "oauth";
+	/**
+	 * client_id for servers that refuse dynamic registration (GitHub is one).
+	 * The id is public; a secret, if the service needs one, comes from the
+	 * environment like every other credential — never from the manifest.
+	 */
+	clientId?: string;
+	clientSecret?: string;
 	/** Where the grant lives; the manifest's directory, carried for the client. */
 	repoRoot?: string;
 }
@@ -191,6 +198,10 @@ function parseConnector(value: unknown, env: NodeJS.ProcessEnv): LoadedConnector
 			headers: headers.values,
 			secrets: Object.values(headers.values),
 			...(wantsOAuth ? { auth: "oauth" as const } : {}),
+			...(wantsOAuth && typeof value.clientId === "string" ? { clientId: value.clientId } : {}),
+			...(wantsOAuth && typeof headers.values.clientSecret === "string"
+				? { clientSecret: headers.values.clientSecret }
+				: {}),
 		};
 	}
 
@@ -278,6 +289,10 @@ async function withClient<T>(
 									connector.repoRoot ?? process.cwd(),
 									connector.slug,
 									connector.label,
+									undefined,
+									connector.clientId
+										? { clientId: connector.clientId, clientSecret: connector.clientSecret }
+										: undefined,
 								),
 							}
 						: {}),
@@ -666,12 +681,18 @@ export function registerLoginTool(pi: ExtensionAPI): void {
 			const { auth } = await import("@modelcontextprotocol/sdk/client/auth.js");
 			const callback = await startLoginCallback();
 			let authorizationUrl: URL | null = null;
-			const provider = new HerOAuthProvider(ctx.cwd, connector.slug, connector.label, {
-				redirectUrl: callback.redirectUrl,
-				onAuthorizationUrl: (url) => {
-					authorizationUrl = url;
+			const provider = new HerOAuthProvider(
+				ctx.cwd,
+				connector.slug,
+				connector.label,
+				{
+					redirectUrl: callback.redirectUrl,
+					onAuthorizationUrl: (url) => {
+						authorizationUrl = url;
+					},
 				},
-			});
+				connector.clientId ? { clientId: connector.clientId, clientSecret: connector.clientSecret } : undefined,
+			);
 
 			try {
 				const first = await auth(provider, { serverUrl: connector.url });

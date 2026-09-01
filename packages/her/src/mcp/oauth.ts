@@ -67,6 +67,15 @@ export class HerOAuthProvider {
 	private readonly repoRoot: string;
 	private readonly slug: string;
 	private readonly label: string;
+	/**
+	 * A client this connector registered by hand.
+	 *
+	 * Not every authorization server supports dynamic registration — GitHub's
+	 * answers "Incompatible auth server: does not support dynamic client
+	 * registration" — so those need a client_id created once in the service's
+	 * own developer settings and named in the manifest.
+	 */
+	private readonly preRegistered?: { clientId: string; clientSecret?: string };
 	/** Set only while a person is waiting; absent means a scheduled run. */
 	private readonly interactive?: { redirectUrl: string; onAuthorizationUrl: (url: URL) => void };
 
@@ -75,11 +84,13 @@ export class HerOAuthProvider {
 		slug: string,
 		label: string,
 		interactive?: { redirectUrl: string; onAuthorizationUrl: (url: URL) => void },
+		preRegistered?: { clientId: string; clientSecret?: string },
 	) {
 		this.repoRoot = repoRoot;
 		this.slug = slug;
 		this.label = label;
 		this.interactive = interactive;
+		this.preRegistered = preRegistered;
 	}
 
 	get redirectUrl(): string | undefined {
@@ -115,6 +126,14 @@ export class HerOAuthProvider {
 	}
 
 	async clientInformation(): Promise<OAuthClientInformationMixed | undefined> {
+		// A hand-registered client wins: it is what the server will accept, and
+		// re-registering against a server that refuses to register is a loop.
+		if (this.preRegistered) {
+			return {
+				client_id: this.preRegistered.clientId,
+				...(this.preRegistered.clientSecret ? { client_secret: this.preRegistered.clientSecret } : {}),
+			} as OAuthClientInformationMixed;
+		}
 		return (await this.load()).clientInformation;
 	}
 
