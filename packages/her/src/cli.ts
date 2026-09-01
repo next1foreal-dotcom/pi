@@ -173,6 +173,25 @@ export { parseArgs } from "./cli/parse.ts";
 
 const execFileAsync = promisify(execFile);
 
+/**
+ * The exit code of a command that actually did work.
+ *
+ * Every command used to end with `payload.status.status === "unknown" ? 1 : 0`
+ * — the git-sync probe of her-memory. That made each run's success contingent
+ * on an unrelated `git status`: on 2026-09-01 at 02:00 a consolidate batch
+ * digested its episodes, quarantined what would not fit, and still exited 1
+ * because the probe could not read git at that instant. ops/scheduled/
+ * her-growth.ps1 breaks the whole run on a non-zero batch, so one hiccup cost
+ * the remaining 29 batches and her memory pipeline stalled for the day —
+ * silently, because nothing surfaced the exit code.
+ *
+ * Work that returns has succeeded; real failures throw and are caught above.
+ * The sync status is still reported in the payload, where it is information
+ * rather than a verdict. `her status` keeps the old behaviour: for that
+ * command, "cannot read the state" IS the answer.
+ */
+const WORK_OK = 0;
+
 export async function runHerCli(
 	argv = process.argv.slice(2),
 	env: NodeJS.ProcessEnv = process.env,
@@ -324,7 +343,7 @@ export async function runHerCli(
 		});
 		const payload = { ...(await buildFreshStatusPayload(memoryDir, env)), result };
 		writePayload(io.stdout, payload, command.json, renderTelegramPoll);
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 
 	if (command.kind === "telegram-bridge") {
@@ -372,8 +391,8 @@ export async function runHerCli(
 			consecutiveFailures = 0;
 			const payload = { ...(await buildFreshStatusPayload(memoryDir, env)), result };
 			writePayload(io.stdout, payload, command.json, renderTelegramBridge);
-			if (command.once) return payload.status.status === "unknown" ? 1 : 0;
-			if (maxCycles !== undefined && cycles >= maxCycles) return payload.status.status === "unknown" ? 1 : 0;
+			if (command.once) return WORK_OK;
+			if (maxCycles !== undefined && cycles >= maxCycles) return WORK_OK;
 			await sleep(command.intervalSeconds * 1000);
 		}
 	}
@@ -388,7 +407,7 @@ export async function runHerCli(
 		});
 		const payload = { ...(await buildFreshStatusPayload(memoryDir, env)), result };
 		writePayload(io.stdout, payload, command.json, renderTelegramOutbox);
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 
 	if (command.kind === "telegram-confirm-request") {
@@ -401,21 +420,21 @@ export async function runHerCli(
 		});
 		const payload = { ...(await buildFreshStatusPayload(memoryDir, env)), result };
 		writePayload(io.stdout, payload, command.json, renderTelegramConfirmation);
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 
 	if (command.kind === "voice-task-enqueue") {
 		const result = await queueVoiceTask(memoryDir, command.objective);
 		const payload: CliVoiceTaskEnqueuePayload = { ...(await buildFreshStatusPayload(memoryDir, env)), result };
 		writePayload(io.stdout, payload, command.json, renderVoiceTaskEnqueue);
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 
 	if (command.kind === "voice-task-notify-complete") {
 		const result = await queueVoiceTaskCompletion(memoryDir, command.objective, command.outcome, command.taskPath);
 		const payload: CliVoiceTaskCompleteNotifyPayload = { ...(await buildFreshStatusPayload(memoryDir, env)), result };
 		writePayload(io.stdout, payload, command.json, renderVoiceTaskCompleteNotify);
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 
 	if (command.kind === "reingest") {
@@ -483,28 +502,28 @@ export async function runHerCli(
 		});
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderBackfill);
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 
 	if (command.kind === "consolidate") {
 		const result = await memory.consolidate(command.limit);
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderConsolidate);
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 
 	if (command.kind === "cost") {
 		const result = await summarizeCostBreakdown(memoryDir, { now: command.now });
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderCost);
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 
 	if (command.kind === "decay") {
 		const result = await memory.decaySweep({ olderThanDays: command.olderThanDays, now: command.now });
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderDecay);
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 
 	if (command.kind === "dispatch") {
@@ -520,7 +539,6 @@ export async function runHerCli(
 		});
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderDispatch);
-		if (payload.status.status === "unknown") return 1;
 		return result.status === "completed" ? 0 : 1;
 	}
 
@@ -528,7 +546,6 @@ export async function runHerCli(
 		const result = await runGoldenEvals(memoryDir, { now: command.now, writeBaseline: command.writeBaseline });
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderGoldenEval);
-		if (payload.status.status === "unknown") return 1;
 		return result.status === "pass" ? 0 : 1;
 	}
 
@@ -536,41 +553,41 @@ export async function runHerCli(
 		const report = await runEvalTrend(memoryDir);
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), report };
 		writePayload(io.stdout, payload, command.json, renderEvalTrend);
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 
 	if (command.kind === "trigger-stats") {
 		const result = await readTriggerStats(new StorePaths(memoryDir));
 		const payload: CliTriggerStatsPayload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderTriggerStats);
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 	if (command.kind === "lint") {
 		const result = await runMemoryLint(memoryDir);
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderLint);
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 
 	if (command.kind === "restore") {
 		const result = await memory.restoreArchivedSemantic(command.semanticKey, { now: command.now });
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderRestore);
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 
 	if (command.kind === "goal-start") {
 		const result = await startLongTask(memoryDir, command);
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderGoal);
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 
 	if (command.kind === "goal-checkpoint") {
 		const result = await checkpointLongTask(memoryDir, command.id, command);
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderGoal);
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 
 	if (command.kind === "goal-complete") {
@@ -581,21 +598,21 @@ export async function runHerCli(
 			result: { task, ...(memoryNoteId ? { memoryNoteId } : {}) },
 		};
 		writePayload(io.stdout, payload, command.json, renderGoalComplete);
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 
 	if (command.kind === "goal-list") {
 		const result = await listLongTasks(memoryDir, command.status);
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderGoalList);
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 
 	if (command.kind === "goal-next") {
 		const result = (await claimNextLongTask(memoryDir, command)) ?? null;
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderGoalNext);
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 
 	if (command.kind === "approve") {
@@ -605,7 +622,7 @@ export async function runHerCli(
 			result: { proposalId: command.proposalId, approved: true as const },
 		};
 		writePayload(io.stdout, payload, command.json, renderApprove);
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 
 	if (command.kind === "capture") {
@@ -619,7 +636,7 @@ export async function runHerCli(
 		});
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result: { id } };
 		writePayload(io.stdout, payload, command.json, renderCapture);
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 
 	if (command.kind === "recall") {
@@ -629,7 +646,7 @@ export async function runHerCli(
 		const receipts = buildRecallReceipts(result);
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result, receipts };
 		writePayload(io.stdout, payload, command.json, renderRecall);
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 
 	if (command.kind === "review-narrative") {
@@ -641,14 +658,14 @@ export async function runHerCli(
 			result: { action: command.action, ...(command.id ? { id: command.id } : {}), updates },
 		};
 		writePayload(io.stdout, payload, command.json, renderReviewNarrative);
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 
 	if (command.kind === "synthesize-due") {
 		const result = await memory.synthesizeDue();
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderSynthesizeDue);
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 
 	if (command.kind === "surface") {
@@ -657,14 +674,14 @@ export async function runHerCli(
 		const note = await memory.surface({ sessionId: "samantha-ui", cooldownMinutes: 0 });
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result: { note: note ?? null } };
 		writePayload(io.stdout, payload, command.json, renderSurface);
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 
 	if (command.kind === "reflect") {
 		const result = await memory.reflect({ ifDue: command.ifDue });
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderReflect);
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 
 	if (command.kind === "synthesize") {
@@ -672,21 +689,21 @@ export async function runHerCli(
 		const proposalId = due?.due === false ? null : await memory.synthesize();
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result: { proposalId, due } };
 		writePayload(io.stdout, payload, command.json, renderSynthesize);
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 
 	if (command.kind === "topic-maps") {
 		const result = await memory.buildTopicMaps();
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderTopicMaps);
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 
 	if (command.kind === "ideas") {
 		const result = await memory.generateIdeas();
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderIdeas);
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 
 	if (command.kind === "intake-path") {
@@ -717,7 +734,7 @@ export async function runHerCli(
 			},
 		};
 		writePayload(io.stdout, payload, command.json, renderIntakePath);
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 
 	if (command.kind === "bootstrap-feed") {
@@ -738,7 +755,7 @@ export async function runHerCli(
 		const surfaces = await updateSurfaces(memory, command.updateSurfaces);
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result: { files: results, surfaces } };
 		writePayload(io.stdout, payload, command.json, renderBootstrapFeed);
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 
 	if (command.kind === "intake-source") {
@@ -757,7 +774,7 @@ export async function runHerCli(
 			},
 		};
 		writePayload(io.stdout, payload, command.json, renderIntakeSource);
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 
 	if (command.kind === "intake-taste") {
@@ -819,7 +836,7 @@ export async function runHerCli(
 				},
 			};
 			writePayload(io.stdout, payload, command.json, renderIntakeTaste);
-			return payload.status.status === "unknown" ? 1 : 0;
+			return WORK_OK;
 		} catch (error) {
 			await appendTasteIntakeLog(memory.paths, {
 				ts: new Date().toISOString(),
@@ -859,7 +876,7 @@ export async function runHerCli(
 			},
 		};
 		writePayload(io.stdout, payload, command.json, renderIntakeUrl);
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 
 	if (command.kind === "judgment") {
@@ -869,7 +886,7 @@ export async function runHerCli(
 			result: { noteId: command.noteId, recorded: true as const },
 		};
 		writePayload(io.stdout, payload, command.json, renderJudgment);
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 
 	if (command.kind === "journal") {
@@ -883,7 +900,7 @@ export async function runHerCli(
 		});
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderJournal);
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 
 	if (command.kind === "taste") {
@@ -897,7 +914,7 @@ export async function runHerCli(
 		});
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderTaste);
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 
 	if (command.kind === "taste-weekly") {
@@ -907,7 +924,7 @@ export async function runHerCli(
 		});
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderTasteWeekly);
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 
 	if (command.kind === "taste-board-apply") {
@@ -935,7 +952,7 @@ export async function runHerCli(
 		};
 		writePayload(io.stdout, payload, command.json, renderTasteBoardApply);
 		if (summary.rejected > 0 || summary.notFound > 0) return 1;
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 
 	if (command.kind === "memory-status") {
@@ -945,7 +962,7 @@ export async function runHerCli(
 			result: { noteId: command.noteId, status: command.status },
 		};
 		writePayload(io.stdout, payload, command.json, renderMemoryStatus);
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 
 	if (command.kind === "accept") {
@@ -1003,7 +1020,7 @@ export async function runHerCli(
 		const result = await classifyMemoryCorpus(memoryDir);
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderPrivacyAudit);
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 
 	if (command.kind === "privacy-check") {
@@ -1017,14 +1034,14 @@ export async function runHerCli(
 		const result = await memory.synthesizeChoiceModel();
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderChoiceModel);
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 
 	if (command.kind === "self-narrative") {
 		const result = await memory.synthesizeSelfNarrative();
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderSelfNarrative);
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	}
 
 	// G-170: give choice model synthesis the same automatic rhythm narrative synthesis gets from its own
@@ -1048,7 +1065,7 @@ export async function runHerCli(
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result };
 		writePayload(io.stdout, payload, command.json, renderSync);
 		if (choiceModelSynthesisError) return 1;
-		return payload.status.status === "unknown" ? 1 : 0;
+		return WORK_OK;
 	} catch (error) {
 		writeLine(io.stderr, `Her memory sync failed: ${errorMessage(error)}`);
 		return 1;
