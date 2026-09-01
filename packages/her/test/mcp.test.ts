@@ -572,3 +572,84 @@ test("integration smoke: an http connector really lists and calls tools, and its
 		await new Promise<void>((resolve) => httpServer.close(() => resolve()));
 	}
 });
+
+/**
+ * Remote tools as first-class tools — the gap against Claude Code, which
+ * surfaces every connected server's tools directly instead of making you ask
+ * a generic caller what exists.
+ */
+test("integration smoke: refresh caches a live server's tools, and they register as mcp__slug__tool", async () => {
+	const { createServer } = await import("node:http");
+	const { McpServer } = await import("@modelcontextprotocol/sdk/server/mcp.js");
+	const { StreamableHTTPServerTransport } = await import("@modelcontextprotocol/sdk/server/streamableHttp.js");
+	const { z } = await import("zod");
+	const { readToolCacheSync, toolNameFor } = await import("../src/mcp/registry.ts");
+	const { registerCachedRemoteTools } = await import("../src/mcp/tools.ts");
+
+	const httpServer = createServer((rq, rs) => {
+		let body = "";
+		rq.on("data", (c) => {
+			body += c;
+		});
+		rq.on("end", async () => {
+			let parsed: unknown;
+			try {
+				parsed = body ? JSON.parse(body) : undefined;
+			} catch {
+				parsed = undefined;
+			}
+			const mcp = new McpServer({ name: "reg-test", version: "1.0.0" });
+			mcp.registerTool(
+				"echo",
+				{ description: "echo back", inputSchema: { text: z.string() } },
+				async ({ text }: { text: string }) => ({ content: [{ type: "text" as const, text: `echoed:${text}` }] }),
+			);
+			const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+			rs.on("close", () => void transport.close().catch(() => undefined));
+			try {
+				await mcp.connect(transport);
+				await transport.handleRequest(rq, rs, parsed);
+			} catch {
+				if (!rs.headersSent) rs.writeHead(500).end();
+			}
+		});
+	});
+	await new Promise<void>((resolve) => httpServer.listen(0, "127.0.0.1", resolve));
+	const { port } = httpServer.address() as { port: number };
+
+	try {
+		const repoRoot = await tempRoot();
+		await writeManifest(repoRoot, {
+			version: 1,
+			connectors: [{ slug: "seam", label: "Seam", type: "http", url: `http://127.0.0.1:${port}/mcp` }],
+		});
+
+		// Nothing is cached yet, so nothing registers — she has no remote tools.
+		const before = mcpHarness();
+		registerCachedRemoteTools({ registerTool: (t: ToolDefinition) => before.set(t.name, t) } as never, repoRoot);
+		assert.equal(before.has(toolNameFor("seam", "echo")), false, "no cache means no remote tools");
+
+		const refreshed = await run(mcpHarness().get("her_mcp_refresh"), {}, repoRoot);
+		assert.match(refreshed, /seam：1 个工具/);
+		// It must say the tools are not live until the next start; claiming
+		// otherwise would have her reach for a tool that is not registered.
+		assert.match(refreshed, /下次启动/);
+
+		const cache = readToolCacheSync(repoRoot);
+		assert.equal(cache.connectors.length, 1);
+		assert.equal(cache.connectors[0].tools[0].name, "echo");
+		assert.ok(cache.connectors[0].tools[0].inputSchema, "the remote schema is cached, not re-invented");
+
+		// Now registration finds it, and the first-class tool really calls out.
+		const after = new Map<string, ToolDefinition>();
+		registerCachedRemoteTools({ registerTool: (t: ToolDefinition) => after.set(t.name, t) } as never, repoRoot);
+		const direct = after.get(toolNameFor("seam", "echo"));
+		assert.ok(direct, "the remote tool must be registered under mcp__seam__echo");
+		assert.match(direct?.description ?? "", /外接 Seam/, "she should see where a tool came from");
+
+		const called = await run(direct, { text: "hello-from-her" }, repoRoot);
+		assert.match(called, /echoed:hello-from-her/);
+	} finally {
+		await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+	}
+});

@@ -5,6 +5,14 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { Type } from "typebox";
+import {
+	type CachedTool,
+	describeRemoteTool,
+	readToolCacheSync,
+	type ToolCache,
+	toolNameFor,
+	writeToolCache,
+} from "./registry.ts";
 
 const ENV_REFERENCE_RE = /^\$([A-Za-z_][A-Za-z0-9_]*)$/;
 const SLUG_RE = /^[a-z0-9][a-z0-9-]*$/;
@@ -411,6 +419,141 @@ export function registerMcpTools(pi: ExtensionAPI): void {
 					`调用外接服务 ${connector.slug} 的 ${params.tool} 失败。\ntechnical: ${redactError(error, connector)}`,
 				);
 			}
+		},
+	});
+
+	registerCachedRemoteTools(pi);
+	registerRefreshTool(pi);
+}
+
+/**
+ * Call one remote tool. Shared by the generic her_mcp_call and by every
+ * first-class mcp__slug__tool, so both take exactly the same path — a remote
+ * tool cannot behave one way when she reaches for it directly and another way
+ * when she goes through the generic caller.
+ */
+async function invokeRemote(
+	cwd: string,
+	slug: string,
+	tool: string,
+	args: Record<string, unknown>,
+	signal: AbortSignal | undefined,
+) {
+	const loaded = await loadConnectors(cwd);
+	if (loaded.kind === "not_configured") return textResult("未配置任何外接。请先创建 .her/connectors.json。");
+	if (loaded.kind === "manifest_error") return textResult(loaded.message);
+	const connector = loaded.connectors.find((item) => item.slug === slug);
+	if (!connector) return textResult(`未找到外接服务：${slug}。`);
+	if (connector.status !== "ready") return textResult(`${slug}（${connector.label}）当前不可用：${connector.reason}`);
+
+	try {
+		return await withClient(connector, signal, async (client, info) => {
+			const result = await client.callTool({ name: tool, arguments: args }, undefined, { signal });
+			const content = renderToolContent(result.content);
+			if (result.isError) {
+				const first = content[0];
+				const prefix = `外接工具 ${tool} 返回失败：\n`;
+				return {
+					content:
+						first?.type === "text"
+							? [{ type: "text" as const, text: prefix + first.text }, ...content.slice(1)]
+							: [{ type: "text" as const, text: prefix }, ...content],
+					details: { pid: info.pid },
+				};
+			}
+			return { content, details: { pid: info.pid } };
+		});
+	} catch (error) {
+		return textResult(`调用外接服务 ${slug} 的 ${tool} 失败。\ntechnical: ${redactError(error, connector)}`);
+	}
+}
+
+/**
+ * Register every remote tool the last refresh discovered.
+ *
+ * Reads a cache rather than connecting: registration is synchronous, and
+ * dialling every configured server at activation would make her startup wait
+ * on someone else's network.
+ */
+export function registerCachedRemoteTools(pi: ExtensionAPI, root: string = process.cwd()): void {
+	const cache = readToolCacheSync(root);
+	for (const connector of cache.connectors) {
+		for (const tool of connector.tools) {
+			pi.registerTool({
+				name: toolNameFor(connector.slug, tool.name),
+				label: `${connector.label} · ${tool.name}`,
+				description: describeRemoteTool(connector.label, tool),
+				// The remote's own schema, passed through. Restating it here would
+				// drift from the server the moment the server changed.
+				parameters: (tool.inputSchema ?? Type.Object({})) as never,
+				async execute(_id, params, signal, _onUpdate, ctx) {
+					return invokeRemote(
+						ctx.cwd,
+						connector.slug,
+						tool.name,
+						(params ?? {}) as Record<string, unknown>,
+						signal,
+					);
+				},
+			});
+		}
+	}
+}
+
+/** Rebuild the cache by asking every ready connector what it offers. */
+function registerRefreshTool(pi: ExtensionAPI): void {
+	pi.registerTool({
+		name: "her_mcp_refresh",
+		label: "Her MCP Refresh",
+		description: "Reconnect to every configured external service, re-read its tool list, and cache it.",
+		parameters: Type.Object({}),
+		async execute(_id, _params, signal, _onUpdate, ctx) {
+			const loaded = await loadConnectors(ctx.cwd);
+			if (loaded.kind === "not_configured") return textResult("未配置任何外接。");
+			if (loaded.kind === "manifest_error") return textResult(loaded.message);
+
+			const cache: ToolCache = { version: 1, connectors: [] };
+			const lines: string[] = [];
+			for (const connector of loaded.connectors) {
+				if (connector.status !== "ready") {
+					lines.push(`- ${connector.slug}：跳过（${connector.reason}）`);
+					continue;
+				}
+				try {
+					const tools = await withClient(connector, signal, async (client) => {
+						const listed = await client.listTools(undefined, { signal });
+						return listed.tools.map(
+							(tool): CachedTool => ({
+								name: tool.name,
+								description: tool.description,
+								inputSchema: tool.inputSchema,
+							}),
+						);
+					});
+					cache.connectors.push({
+						slug: connector.slug,
+						label: connector.label,
+						tools,
+						discoveredAt: new Date().toISOString(),
+					});
+					lines.push(`- ${connector.slug}：${tools.length} 个工具`);
+				} catch (error) {
+					lines.push(`- ${connector.slug}：连不上（${redactError(error, connector)}）`);
+				}
+			}
+
+			await writeToolCache(ctx.cwd, cache);
+			const total = cache.connectors.reduce((sum, entry) => sum + entry.tools.length, 0);
+			return textResult(
+				[
+					`已刷新外接工具缓存，共 ${total} 个工具。`,
+					...lines,
+					"",
+					// The same honesty my own harness owes about a restart: tools are
+					// registered at startup, so they are not in this session's list yet.
+					"这些工具会在下次启动时出现在工具列表里（注册发生在启动时）。本次会话仍用 her_mcp_call。",
+				].join("\n"),
+			);
 		},
 	});
 }
