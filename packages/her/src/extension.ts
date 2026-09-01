@@ -14,6 +14,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { summarizeForCompaction } from "./compaction.ts";
+import { registerDesignProjectTools } from "./design-project/tools.ts";
 import { CuaCliDriver } from "./hands/driver.ts";
 import { resolveHandsConfig } from "./hands/policy.ts";
 import { registerHandsTools } from "./hands/tools.ts";
@@ -2689,6 +2690,7 @@ export default function her(pi: ExtensionAPI): void {
 		},
 	});
 	registerPreviewTools(pi);
+	registerDesignProjectTools(pi);
 	registerPreviewStillTools(pi);
 	registerShowWidgetTools(pi);
 	registerTodoWriteTools(pi);
