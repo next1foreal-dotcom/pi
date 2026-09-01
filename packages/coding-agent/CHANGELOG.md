@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Fixed `--provider <name>` without `--model` being silently ignored. The flag now selects that provider's default catalog model (or its first model if the default is missing) and errors loudly for unknown providers or providers with no models.
+
 ## [0.83.0] - 2026-07-29
 
 ### New Features
