@@ -31,6 +31,10 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	// message — same side-effect family as her_session_send. Heartbeat forbids
 	// destructive tools, so this stays out of unattended rounds.
 	her_schedule_wakeup: { destructive: true },
+	// G-403 shadow-git checkpoints. Listing is read-only (Cedar :6 covers it).
+	// Rewind writes files, so it stays destructive until the named permit.
+	her_checkpoints: { destructive: false },
+	her_rewind: { destructive: true },
 	her_feedback: { destructive: false },
 	her_sync: { destructive: false },
 	her_task_create: { destructive: false },

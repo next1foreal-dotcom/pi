@@ -110,6 +110,19 @@ permit(
   resource == Tool::"her_schedule_wakeup"
 );
 
+// G-403 — file-scoped rewind. her_rewind restores worktree files from a
+// shadow-git checkpoint (destructive:true), so allow_memory_tools does not
+// cover it. Heartbeat stays closed the same way as her_schedule_wakeup:
+// her-trust-heartbeat.cedar is a separate policy set that permits only
+// destructive == false and forbids destructive; this tool is catalogued
+// destructive, so the named permit cannot leak into an unattended round.
+@id("permit_her_rewind")
+permit(
+  principal == Agent::"samantha",
+  action == Action::"CallTool",
+  resource == Tool::"her_rewind"
+);
+
 // subagent 来自 fei-pi-preset 的 pi-subagents 包(非 extension 注册):single/parallel/chain
 // 三模召唤 .pi/agents 八员班子。子代理按各自定义持工具(coder 可写码),故按 destructive
 // 对待;心跳档策略集无具名 permit,本证不漏无人值守轮。发证:Fei 2026-08-31(迁移对等 G-372)。

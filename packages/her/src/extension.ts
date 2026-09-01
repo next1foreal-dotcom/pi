@@ -23,6 +23,13 @@ import { canDeliverWake, formatOwnerTakeoverNote } from "./her-core/bg-task-owne
 import { listBgTaskPs, renderBgTaskPs } from "./her-core/bg-task-ps.ts";
 import { BG_TASK_STATUSES } from "./her-core/bg-task-record.ts";
 import {
+	type CheckpointInfo,
+	captureCheckpoint,
+	listCheckpoints,
+	type RestoreReport,
+	restoreCheckpoint,
+} from "./her-core/checkpoint.ts";
+import {
 	EVENT_WAKE_SPAWN_REFUSAL,
 	eventWakeSpawnBlocked,
 	recordEventWake,
@@ -337,6 +344,30 @@ function textResult(text: string, details: Record<string, unknown> = {}) {
 	};
 }
 
+function renderCheckpointTable(rows: CheckpointInfo[]): string {
+	if (rows.length === 0) return "(no checkpoints)";
+	return rows
+		.map((row) => {
+			const parts = [row.id, row.at, `${row.changedCount} files`];
+			if (row.label) parts.push(row.label);
+			if (row.sessionId) parts.push(row.sessionId);
+			return parts.join(" · ");
+		})
+		.join("\n");
+}
+
+function renderRestoreReport(report: RestoreReport): string {
+	const lines = [`还原了 ${report.restored.length} 个文件。`, `自拍点: ${report.preRewindCheckpointId}`];
+	if (report.restored.length > 0) lines.push(`还原: ${report.restored.join(", ")}`);
+	if (report.skipped.length === 0) {
+		lines.push("跳过: 无");
+	} else {
+		lines.push("跳过:");
+		for (const row of report.skipped) lines.push(`- ${row.path}: ${row.reason}`);
+	}
+	return lines.join("\n");
+}
+
 function wrapChannelUnavailable(error: unknown): AgentToolWrappedResult {
 	const detail = error instanceof Error ? error.message : String(error);
 	return { ok: false, reason: `wraps-channel-unavailable: ${detail}` };
@@ -635,6 +666,7 @@ export default function her(pi: ExtensionAPI): void {
 	const mem = new Memory(memoryDir, { model: summaryModel, semanticSearch: createEmbeddingSearch() });
 	let syncTimer: ReturnType<typeof setTimeout> | undefined;
 	const readGuards = new Map<string, ReadGuard>();
+	const capturedThisTurn = new Set<string>();
 	registerProviderPool(pi);
 
 	const sessionIdOf = (ctx: ExtensionContext): string => {
@@ -856,6 +888,7 @@ export default function her(pi: ExtensionAPI): void {
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
+		capturedThisTurn.delete(sessionIdOf(ctx));
 		try {
 			await recordPresence(memoryDir, {
 				sessionId: ctx.sessionManager.getSessionId(),
@@ -926,6 +959,7 @@ export default function her(pi: ExtensionAPI): void {
 
 	pi.on("turn_end", async (event, ctx) => {
 		const sessionId = ctx.sessionManager.getSessionId();
+		capturedThisTurn.delete(sessionId);
 		const session: SessionMeta = {
 			sessionId,
 			sessionFile: ctx.sessionManager.getSessionFile(),
@@ -1140,6 +1174,20 @@ export default function her(pi: ExtensionAPI): void {
 				context: { destructive: tool.destructive },
 			});
 			return { block: true, reason };
+		}
+
+		// G-403: first write/edit of the turn snapshots the worktree. Capture
+		// failure must not block her from working. Write/edit family matches
+		// G-401: exact "write", or the tool name contains "edit".
+		try {
+			const sessionId = sessionIdOf(ctx);
+			const name = event.toolName.toLowerCase();
+			if ((name === "write" || name.includes("edit")) && !capturedThisTurn.has(sessionId)) {
+				captureCheckpoint(memoryDir, ctx.cwd || process.cwd(), { sessionId });
+				capturedThisTurn.add(sessionId);
+			}
+		} catch (error) {
+			console.warn(`[her] checkpoint capture skipped: ${errorMessage(error)}`);
 		}
 
 		// G-401: unread files cannot be edited this session. Guard errors never
@@ -1470,6 +1518,43 @@ export default function her(pi: ExtensionAPI): void {
 			} catch (error) {
 				const message = errorMessage(error);
 				return textResult(JSON.stringify({ error: message }), { phase: "G-368", status: "error", error: message });
+			}
+		},
+	});
+
+	pi.registerTool({
+		name: "her_checkpoints",
+		label: "Her Checkpoints",
+		description: "List file-scoped shadow-git checkpoints for this workspace, newest first.",
+		parameters: Type.Object({
+			limit: Type.Optional(
+				Type.Integer({ minimum: 1, maximum: 100, description: "Maximum checkpoints to return (1..100)" }),
+			),
+		}),
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			try {
+				const rows = listCheckpoints(memoryDir, ctx.cwd || process.cwd(), params.limit ?? 50);
+				return textResult(renderCheckpointTable(rows), { phase: "G-403", checkpoints: rows, memoryDir });
+			} catch (error) {
+				return textResult(errorMessage(error), { phase: "G-403", status: "error" });
+			}
+		},
+	});
+
+	pi.registerTool({
+		name: "her_rewind",
+		label: "Her Rewind",
+		description:
+			"Restore files that changed since a checkpoint. Only overwrites files unchanged since a pre-rewind snapshot. Does not rewrite session history.",
+		parameters: Type.Object({
+			id: Type.String({ description: "Checkpoint id from her_checkpoints" }),
+		}),
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			try {
+				const report = restoreCheckpoint(memoryDir, ctx.cwd || process.cwd(), params.id);
+				return textResult(renderRestoreReport(report), { phase: "G-403", ...report, memoryDir });
+			} catch (error) {
+				return textResult(errorMessage(error), { phase: "G-403", status: "error" });
 			}
 		},
 	});
