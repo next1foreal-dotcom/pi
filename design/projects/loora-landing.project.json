@@ -8,7 +8,7 @@
     },
     "wireframe": {
       "at": "2026-09-02T13:22:43.216Z",
-      "evidence": "Fei(2026-09-02 09:05 本地,看过 finish7 之后 Fable 用 Playwright 在 lab 5180 重拍的线框图):在 Fable 摆的选项题「线框门怎么判」里选了「过,进 step 5 皮肤」——选项原文,非自由打字;由 Fable 会话 9ab7753b 代记。",
+      "evidence": "Fei(2026-09-02 09:05 本地,看过 finish7 之后 Fable 用 Playwright 在 lab 5180 重拍的线框图):在 Fable 摆的选项题「线框门怎么判」里选了「过,进 step 5 皮肤」——选项原文,非自由打字;由 Fable 会话 9ab7753b 代记。 追记:Fei 2026-09-02 约 13:30 本地在另一 Fable 会话(charming-meninsky)看过 v1/v2 并排页后**打字**「过」「继续」——自由打字,非选项;由 Fable 会话 70ea23ae 代记。",
       "status": "approved"
     }
   },
@@ -37,5 +37,5 @@
       "at": "2026-09-01T11:55:27.937Z"
     }
   },
-  "updatedAt": "2026-09-02T13:22:43.216Z"
+  "updatedAt": "2026-09-02T17:38:20.000Z"
 }
