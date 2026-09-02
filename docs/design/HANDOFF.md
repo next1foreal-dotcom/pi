@@ -134,3 +134,13 @@ node -e "const s=require(require('os').homedir()+'/.pi/agent/settings.json');con
 
 **下一步**:①令牌活着(到 07:24)且没别的写手时,派短收尾包(只修她点名那一项 + 收口 notes,不重做);②她交卷后 `design_lab_still` 拍图摆到 Fei 眼前,原话记回项目档;③网关刷新缺口 + checkpoint 仓零提交 + still 分片同字节,三张卡待 Fei 拍。
 
+
+## 十一、9/2 上午接手记录(Fable 会话 9ab7753b)——门开了,顺序是 tsc → commit → step 5
+
+- **finish6(02:04–02:14)零改动**:第二种死法——pi-automode 快分类器 `deepseek/deepseek-v4-pro` 十分钟 503 `Server Overloaded`,fail-closed 拦了全部非只读工具(33 block / 34 allow)。她如实报「卡住了」。
+- **finish7(08:44–08:55)跑通**:n-text `w 168→112`、`wireframe-notes.md` 收口节、project.json 一条 iteration。Fable 亲用 Playwright 重拍 5180 看图核过。
+- **门:Fei 09:05 判「过,进 step 5 皮肤」**(选项原文),已经 `recordGateVerdict` 写进 `loora-landing.project.json`(wireframe → approved,evidence 带出处)。stage 仍 wireframe,进 step 5 时由她 `setStage`。
+- **进 step 5 前的唯一欠账**:design-lab `npx tsc -b tsconfig.app.json --noEmit` 退出码 1(`canvas.tsx:197/:200`,`dataset.node` 未收窄,9/1 遗留;当时自检 `| head -5` 吞了退出码)。已派她五分钟微包 `tscfix`,Fable 验收后按 pathspec commit 整个线框写集(目前全部 untracked;外部 tar 快照在会话 scratchpad)。
+- **派前四项预检(每次都做)**:xAI 令牌余量(`GET :18130/api/oauth/status?provider=xai` 顺手刷新)· deepseek 真实最小调用 200 · samantha 目录无任何 `-p` pi 进程(同目录启动锁,邻座只读探针也算)· 写集 mtime 未动。判活看会话 JSONL 增长,不看 CPU。
+- **别把日志关键字数当重试数**:automode 日志的 `recentDenials` 会重复计入,finish6 实际拍照 12 次、调用 71 次,不是 grep 出来的两百多。
+- **协调纸条**:`design/probe/DISPATCH-NOTICE.md`(两会话来回追记,先读它再派 loora-landing 的写任务)。
