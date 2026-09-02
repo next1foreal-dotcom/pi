@@ -19,7 +19,7 @@
     }
   ],
   "slug": "loora-landing",
-  "stage": "wireframe",
+  "stage": "draft",
   "steps": {
     "idea": {
       "artifact": "design/projects/loora-landing/brief.md (step 1 产物)",
@@ -35,7 +35,12 @@
       "artifact": "design/projects/loora-landing/moodboard.md (3 方向各一句 + 推荐 A + 理由)",
       "note": "Step 3 情绪板完成:三方向(画室石墨/纸面编辑台/午夜石灰),色姿全部来自产品自身三主题(tokens 有出处,零发明)。轻门:方向发给 Fei,异步不阻塞;本轮按推荐方向 A 跑线框,标记我垫的、可翻。",
       "at": "2026-09-01T11:55:27.937Z"
+    },
+    "wireframe": {
+      "artifact": "packages/design-lab/src/screens/loora-landing (wireframe: canvas.tsx / screen.tsx / styles/wireframe.css)",
+      "note": "Wireframe gate approved (Fei 选项「过,进 step 5 皮肤」, 2026-09-02T13:22:43Z). Entering step 5 first draft. Direction A 画室石墨. Structure locked: live micro-canvas as ground, copy in four corners. Skin only.",
+      "at": "2026-09-02T17:40:11.552Z"
     }
   },
-  "updatedAt": "2026-09-02T17:38:20.000Z"
+  "updatedAt": "2026-09-02T17:40:11.552Z"
 }

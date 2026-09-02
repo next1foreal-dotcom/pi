@@ -54,7 +54,7 @@ const SEED: CanvasNode[] = [
   { id: "n-frame", kind: "frame", x: 488, y: 220, w: 464, h: 312, label: "frame" },
   { id: "n-rect-a", kind: "rect", x: 512, y: 252, w: 176, h: 104, label: "rect" },
   { id: "n-rect-b", kind: "rect", x: 720, y: 284, w: 160, h: 88, label: "rect" },
-  { id: "n-text", kind: "text", x: 512, y: 472, w: 112, h: 36, label: "真节点 · 能拖" },
+  { id: "n-text", kind: "text", x: 512, y: 472, w: 132, h: 28, label: "真节点 · 能拖" },
 ];
 
 let seq = 0;

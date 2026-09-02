@@ -1,20 +1,35 @@
-/* loora landing — wireframe v2 look-pass. Gray, size+weight, zero polish.
-   Ground IS the canvas. HUD is small type on the edge. */
+/* loora landing — step 5 first draft (direction A · 画室石墨)
+   Structure unchanged: the page IS the canvas; HUD stays four-corner type.
+   Tokens: product studio [measured · research.md §0]. No invented hex. */
 
-:root {
-  --wf-ground: #262626;
-  --wf-dot: #3a3a3a;
-  --wf-node: #3a3a3a;
-  --wf-node-frame: transparent;
-  --wf-selected: #4a4a4a;
-  --wf-hairline: #4a4a4a;
-  --wf-handle: #d0d0d0;
-  --wf-text: #e6e6e6;
-  --wf-text-2: #a8a8a8;
-  --wf-text-3: #7d7d7d;
-  --wf-cmd-bg: #202020;
-  --wf-font: "Segoe UI", system-ui, -apple-system, sans-serif;
-  --wf-mono: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, monospace;
+@font-face {
+  font-family: "Merrion Sans";
+  src:
+    url("/fonts/merrion-sans/regular.woff2") format("woff2"),
+    url("/fonts/merrion-sans/regular.woff") format("woff");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Merrion Sans";
+  src:
+    url("/fonts/merrion-sans/semibold.woff2") format("woff2"),
+    url("/fonts/merrion-sans/semibold.woff") format("woff");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Merrion Sans";
+  src:
+    url("/fonts/merrion-sans/bold.woff2") format("woff2"),
+    url("/fonts/merrion-sans/bold.woff") format("woff");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
 }
 
 .sr-only {
@@ -30,13 +45,33 @@
 }
 
 .wf-page {
+  --ll-bg: #393d3c;
+  --ll-panel: #414544;
+  --ll-inset: #4a4e4d;
+  --ll-float: #545857;
+  --ll-line: #575c5a;
+  --ll-text: #e5e6e6;
+  --ll-text-2: #b4b7b6;
+  --ll-text-3: #8b8f8d;
+  --ll-accent: #dfe2e1;
+  --ll-accent-fg: #2b2f2e;
+  --ll-radius-sm: 5px;
+  --ll-radius: 7px;
+  --ll-radius-lg: 10px;
+  --ll-ease: cubic-bezier(0.2, 0, 0, 1);
+  --ll-dur: 120ms;
+  --ll-dur-2: 190ms;
+  --ll-font: "Merrion Sans", system-ui, sans-serif;
+  --ll-mono: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, monospace;
+
   position: relative;
   width: 100%;
   min-height: 100%;
   overflow: hidden;
-  background: var(--wf-ground);
-  color: var(--wf-text);
-  font-family: var(--wf-font);
+  background: var(--ll-bg);
+  color: var(--ll-text);
+  font-family: var(--ll-font);
+  -webkit-font-smoothing: antialiased;
   user-select: none;
 }
 
@@ -65,7 +100,7 @@
   top: -4000px;
   width: 10000px;
   height: 10000px;
-  background-image: radial-gradient(var(--wf-dot) 1px, transparent 1px);
+  background-image: radial-gradient(var(--ll-inset) 1px, transparent 1px);
   background-size: 24px 24px;
   pointer-events: none;
 }
@@ -73,52 +108,68 @@
 .wf-node {
   position: absolute;
   box-sizing: border-box;
-  background: var(--wf-node);
-  border: 1px solid var(--wf-hairline);
+  background: var(--ll-panel);
+  border: 1px solid var(--ll-line);
+  border-radius: var(--ll-radius);
 }
 
 .wf-node-frame {
-  background: var(--wf-node-frame);
+  background: transparent;
+  border-radius: var(--ll-radius-lg);
+}
+
+.wf-node-frame > .wf-caption,
+.wf-node-rect > .wf-caption {
+  display: none;
 }
 
 .wf-node-text {
   display: flex;
   align-items: center;
   background: transparent;
-  border-style: dashed;
+  border-color: transparent;
+  border-radius: 0;
 }
 
 .wf-node.is-selected {
-  border-color: var(--wf-handle);
+  border-color: var(--ll-accent);
 }
 
 .wf-node-rect.is-selected {
-  background: var(--wf-selected);
+  background: var(--ll-float);
+}
+
+.wf-node-text.is-selected {
+  border-color: transparent;
 }
 
 .wf-caption {
   position: absolute;
   left: 8px;
   top: 8px;
-  font-family: var(--wf-mono);
+  font-family: var(--ll-mono);
   font-size: 11px;
   line-height: 1;
-  color: var(--wf-text-3);
+  letter-spacing: 0.02em;
+  color: var(--ll-text-3);
   pointer-events: none;
 }
 
 .wf-node-text .wf-caption {
   position: static;
-  padding: 0 8px;
-  font-size: 13px;
-  color: var(--wf-text-2);
+  padding: 0 4px;
+  font-family: var(--ll-font);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--ll-text);
 }
 
 .wf-handle {
   position: absolute;
   width: 8px;
   height: 8px;
-  background: var(--wf-handle);
+  background: var(--ll-accent);
   box-sizing: border-box;
   pointer-events: auto;
   z-index: 1;
@@ -160,41 +211,57 @@
   left: 24px;
   font-size: 16px;
   font-weight: 700;
-  letter-spacing: -0.2px;
+  letter-spacing: -0.04em;
+  color: var(--ll-text);
 }
 
 .wf-fact {
-  top: 48px;
+  top: 52px;
   left: 24px;
   width: 360px;
   margin: 0;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 400;
   line-height: 1.5;
-  color: var(--wf-text-2);
+  color: var(--ll-text-2);
+  text-wrap: pretty;
 }
 
 .wf-fact span {
   display: block;
-  margin-top: 4px;
-  color: var(--wf-text-3);
+  margin-top: 8px;
+  font-size: 14px;
+  color: var(--ll-text-3);
 }
 
 .wf-link {
   top: 26px;
   right: 24px;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
-  color: var(--wf-text-2);
+  color: var(--ll-text-2);
   text-decoration: none;
+  transition:
+    color var(--ll-dur) var(--ll-ease);
+}
+
+.wf-link:hover,
+.wf-link:focus-visible {
+  color: var(--ll-text);
+}
+
+.wf-link:focus-visible {
+  outline: 1px solid var(--ll-accent);
+  outline-offset: 4px;
 }
 
 .wf-hint {
   left: 24px;
   bottom: 24px;
   margin: 0;
-  font-size: 11px;
-  color: var(--wf-text-3);
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--ll-text-3);
 }
 
 .wf-cmd {
@@ -205,24 +272,52 @@
   justify-content: space-between;
   gap: 16px;
   height: 40px;
-  padding: 0 14px;
-  background: var(--wf-cmd-bg);
-  border: 1px solid var(--wf-hairline);
+  padding: 4px 4px 4px 14px;
+  background: var(--ll-panel);
+  border: 1px solid var(--ll-line);
+  border-radius: var(--ll-radius-lg);
   color: inherit;
   font: inherit;
   cursor: pointer;
+  transition:
+    background-color var(--ll-dur) var(--ll-ease),
+    border-color var(--ll-dur) var(--ll-ease);
+}
+
+.wf-cmd:hover {
+  background: var(--ll-inset);
+}
+
+.wf-cmd:focus-visible {
+  outline: 1px solid var(--ll-accent);
+  outline-offset: 2px;
 }
 
 .wf-cmd code {
-  font-family: var(--wf-mono);
-  font-size: 12px;
-  color: var(--wf-text);
+  font-family: var(--ll-mono);
+  font-size: 14px;
+  color: var(--ll-text-2);
 }
 
 .wf-cmd span {
-  font-size: 11px;
-  color: var(--wf-text-3);
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: var(--ll-radius-sm);
+  background: var(--ll-accent);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ll-accent-fg);
   white-space: nowrap;
+  transition:
+    background-color var(--ll-dur) var(--ll-ease),
+    color var(--ll-dur) var(--ll-ease);
+}
+
+.wf-cmd.is-copied span {
+  background: var(--ll-float);
+  color: var(--ll-text);
 }
 
 .wf-page.is-narrow .wf-mark {
@@ -251,4 +346,12 @@
   left: 16px;
   right: 16px;
   bottom: 16px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wf-link,
+  .wf-cmd,
+  .wf-cmd span {
+    transition-duration: 0.01ms;
+  }
 }

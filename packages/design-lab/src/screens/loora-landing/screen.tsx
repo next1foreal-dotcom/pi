@@ -3,14 +3,15 @@ import { useScreen } from "../../lab/screen-context";
 import LiveCanvas from "./canvas";
 import "./styles/wireframe.css";
 
-export const name = "loora landing (wireframe)";
+export const name = "loora landing";
 export const width = 1440;
 export const height = 900;
 export const position = { x: 3400, y: 0 };
 
 /*
- * Wireframe v2 after returned gate. The page is the canvas.
- * HUD is edge type. Look-pass 1 cut the leftover hero sentence.
+ * Step 5 first draft · direction A 画室石墨.
+ * Structure locked at the wireframe gate: the page is the live canvas;
+ * copy stays in the corners. This file only skins states (copied class).
  */
 
 const CMD = "npm install && npm run dev";
@@ -56,7 +57,12 @@ export default function LooraLandingWireframe() {
         拖空白平移 · 滚轮缩放 · 点空白落一个矩形
         {active ? "" : " · 双击画面进入"}
       </p>
-      <button type="button" className="wf-cmd" data-hud onClick={onRun}>
+      <button
+        type="button"
+        className={copied ? "wf-cmd is-copied" : "wf-cmd"}
+        data-hud
+        onClick={onRun}
+      >
         <code>{CMD}</code>
         <span>{copied ? "已复制" : "本机运行"}</span>
       </button>
