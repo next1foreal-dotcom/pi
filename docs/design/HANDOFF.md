@@ -137,6 +137,7 @@ node -e "const s=require(require('os').homedir()+'/.pi/agent/settings.json');con
 
 ## 十一、9/2 上午接手记录(Fable 会话 9ab7753b)——门开了,顺序是 tsc → commit → step 5
 
+- **网关根因措辞(9/2 09:35 邻座核证后修正)**:不是「单账号 provider 永不刷新」,是**请求路径从不刷新活跃账号**(多账号同理),刷新只在 `getOAuthProviderStatus` 与 `pickAlternate` 的兄弟账号分支;修 `f12b832`(活跃账号同待遇 + 60s 余量 + 每 provider 单飞刷新),**进程重启后才生效**。
 - **finish6(02:04–02:14)零改动**:第二种死法——pi-automode 快分类器 `deepseek/deepseek-v4-pro` 十分钟 503 `Server Overloaded`,fail-closed 拦了全部非只读工具(33 block / 34 allow)。她如实报「卡住了」。
 - **finish7(08:44–08:55)跑通**:n-text `w 168→112`、`wireframe-notes.md` 收口节、project.json 一条 iteration。Fable 亲用 Playwright 重拍 5180 看图核过。
 - **门:Fei 09:05 判「过,进 step 5 皮肤」**(选项原文),已经 `recordGateVerdict` 写进 `loora-landing.project.json`(wireframe → approved,evidence 带出处)。stage 仍 wireframe,进 step 5 时由她 `setStage`。
