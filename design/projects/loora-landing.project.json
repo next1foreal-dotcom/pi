@@ -1,0 +1,41 @@
+{
+  "brief": "给 loora(本地无限设计画布,原 brilliant-local)做动态 landing page。毕业考题目;本轮跑到线框硬门为止。八步流程,两硬门(线框/终审)由 Fei 把门,证据记原话。",
+  "createdAt": "2026-09-01T11:47:41.539Z",
+  "gates": {
+    "moodboard": {
+      "status": "informed",
+      "at": "2026-09-01T11:55:13.656Z"
+    },
+    "wireframe": {
+      "at": "2026-09-02T13:22:43.216Z",
+      "evidence": "Fei(2026-09-02 09:05 本地,看过 finish7 之后 Fable 用 Playwright 在 lab 5180 重拍的线框图):在 Fable 摆的选项题「线框门怎么判」里选了「过,进 step 5 皮肤」——选项原文,非自由打字;由 Fable 会话 9ab7753b 代记。",
+      "status": "approved"
+    }
+  },
+  "iterations": [
+    {
+      "at": "2026-09-02T12:53:33.000Z",
+      "note": "收尾：确认磁盘即 09-01 形态重做稿；n-text w 168→112（虚线文字框贴字，不再空一大截）。再拍确认。门仍 returned，等 Fei 原话。未进 step 5。"
+    }
+  ],
+  "slug": "loora-landing",
+  "stage": "wireframe",
+  "steps": {
+    "idea": {
+      "artifact": "design/projects/loora-landing/brief.md (step 1 产物)",
+      "note": "Step 1 想法完成:brie f 六字段(问题/给谁/可切割成功标准/约束/范围外/无方向提示),我垫的默认值 6 条明确标记。进研究。",
+      "at": "2026-09-01T11:54:59.306Z"
+    },
+    "research": {
+      "artifact": "design/projects/loora-landing/research.md (真站抽取 3 家 + 产品自身材料)",
+      "note": "Step 2 研究完成:linear.app/tldraw.com/excalidraw.com 三站 extract_design_md 实测(含 Motion 节:linear 交互档 160-220ms+装饰档 1600/2800/3200ms steps(1,end)、tldraw 80-200ms+cubic-bezier(.785,.135,.15,.86)、excalidraw 100-200ms/500-1000ms;三家均尊重 reduced-motion),家库 positive-samples 引用 5 条;产品自身 tokens 全量记录。完成度测试通过(方向句可写而零发明数值)。进情绪板。",
+      "at": "2026-09-01T11:55:13.656Z"
+    },
+    "moodboard": {
+      "artifact": "design/projects/loora-landing/moodboard.md (3 方向各一句 + 推荐 A + 理由)",
+      "note": "Step 3 情绪板完成:三方向(画室石墨/纸面编辑台/午夜石灰),色姿全部来自产品自身三主题(tokens 有出处,零发明)。轻门:方向发给 Fei,异步不阻塞;本轮按推荐方向 A 跑线框,标记我垫的、可翻。",
+      "at": "2026-09-01T11:55:27.937Z"
+    }
+  },
+  "updatedAt": "2026-09-02T13:22:43.216Z"
+}
