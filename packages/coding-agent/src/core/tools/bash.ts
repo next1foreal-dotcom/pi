@@ -340,9 +340,14 @@ export function createBashToolDefinition(
 		label: "bash",
 		description: `Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds; without one the command is killed after ${DEFAULT_TIMEOUT_SECONDS} seconds.`,
 		promptSnippet: "Execute bash commands (ls, grep, find, etc.)",
-		promptGuidelines: exposeSessionEnvironment
-			? ["Inspect PI_* environment variables for current model and session details."]
-			: undefined,
+		promptGuidelines: [
+			// Two 40-minute runs died on a recursive grep/find that walked node_modules; the
+			// default timeout now bounds the damage, this line prevents it.
+			"Recursive searches (grep -r, find, rg) must exclude node_modules and .git (--exclude-dir=node_modules, -prune, or rg's defaults); walking a whole tree blocks the turn until the timeout.",
+			...(exposeSessionEnvironment
+				? ["Inspect PI_* environment variables for current model and session details."]
+				: []),
+		],
 		parameters: bashSchema,
 		async execute(
 			_toolCallId,

@@ -64,6 +64,15 @@ describe("bash tool default timeout", () => {
 		expect(seen).toEqual([undefined]);
 	});
 
+	it("tells the model to keep recursive searches out of node_modules, in both env modes", () => {
+		for (const exposeSessionEnvironment of [true, false]) {
+			const tool = createBashToolDefinition(process.cwd(), { exposeSessionEnvironment });
+			const text = (tool.promptGuidelines ?? []).join(" ");
+			expect(text).toMatch(/node_modules/);
+			expect(text.includes("PI_*")).toBe(exposeSessionEnvironment);
+		}
+	});
+
 	it("a defaulted timeout really kills a hanging command", async () => {
 		const tool = createBashToolDefinition(process.cwd(), {
 			defaultTimeoutSeconds: 2,
