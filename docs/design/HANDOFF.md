@@ -100,3 +100,37 @@ node -e "const s=require(require('os').homedir()+'/.pi/agent/settings.json');con
 
 另一句:她的门、她的诚实栏、她"像素我没看过"那句坦白,是这套系统**最值钱的部分**。
 接手时可以改任何东西,但别为了让流程好看而放松它们。
+
+## 十、9/2 接手记录(01:30 本地,Fable 会话 9ab7753b)——G-417 真相 + 第六轮结果
+
+**先说结论:三次「重做跑不完」是三个不同的死因,只有第三个被证死。**
+
+| 轮 | 时间(本地) | 死法 | 死因 | 证据 |
+|---|---|---|---|---|
+| 第四轮 | 13:08→13:21 | `terminated` | 网关被别的会话的 ^C 掐死(§5-1 已记) | 看门狗日志 ^C 行 |
+| 第五轮 | 13:32→13:58 | `Stream ended without finish_reason` | **未查明**(网关当时健康且已分离) | 会话 JSONL 末条 |
+| 第六轮 | 15:28→16:12 | `unauthenticated:bad-credentials / The OAuth2 access token could not be validated` | **网关的 xAI OAuth 令牌到点过期,且没人续** | 见下 |
+
+**第六轮的证据链(每条都亲手读的)**:
+- `~/.her-gateway/auth.json` 里 `xai.accounts[0].credential.expires = 2026-09-01T20:08:33Z`。
+- 我的跑(会话 01a05e71)死于 20:12:04Z;**另一个会话 15:34 起的同一份重做**(会话 01a05e77,他们的提示词更长)死于 20:11:59Z——**同一秒、同一错**。过期后三分半。
+- 9 小时后(9/2 05:24Z)令牌**仍是过期状态**:没有任何东西刷它。
+- 代码原因:`services/her-gateway/src/account-rotation.ts` 的 `resolveRoutableAsync` 只在活跃账号 **cooling** 时才走 `pickAlternate`,而 `pickAlternate` 明确 `excludeId = 活跃账号`——**刷新只给「兄弟账号」,单账号 provider 的活跃令牌永远没人续**。没有后台刷新器(全仓 grep 无 setInterval 刷新)。
+- 修好它的现成路径:`GET http://127.0.0.1:18130/api/oauth/status?provider=xai` 走 `getOAuthProviderStatus`,它对过期凭据**自愈**(拿 refresh token 续)。我 05:26Z 调了一次:`state=connected`,新到期 **2026-09-02T11:24:32Z(07:24 本地)**。令牌寿命约 6 小时。
+- **推论(与三轮都对得上)**:不是「长跑会死」,是「**跨过失效时刻的跑会死**」。首轮 35 分钟成、体检 2 分钟成、第六轮 43 分钟死,差别只是有没有撞上那一秒。长效修法=请求路径上活跃账号过期就刷(一处分支)或起一个定时自愈调用;**待 Fei 拍,我没改网关代码**。
+
+**第六轮不是白跑——她交出了「页面即产品」**:`screen.tsx` 17KB→1.8KB,新 `canvas.tsx` 345 行 = 真能平移/滚轮缩放/拖节点/四角柄改尺寸/点空白落矩形的活画布;HUD 退成边缘小字;砍了底栏英雄句。`npx tsc --noEmit` exit 0。她用 `design_lab_still` 自看了 4 次。她最后一句:「虚线文字框太宽、空着一大截——这是现在最像没做完的地方」,死在修它的路上。**门未动**(wireframe 仍 returned,那是对的,她不能自己开)。
+- ⚠️ 两个写手:她在 16:02 自己发现另一会话在写同批文件,用 `her_session_send` 发了两封协调信(G-367 名册机制在野外真响了)。磁盘上是两个写手交替写出来的,但读起来是一份连贯的稿。
+- ⚠️ 她两张 still(top/bottom)**字节相同**(sha256 632221940b12…),`design_lab_still` 的分片可能有 bug,待查。
+
+**这轮顺手修的三件事**:
+1. Studio 4800 重启后假死(Turbopack 缓存中毒第四例):按安全序清(摘 playwright junction→删 .next\dev→760 包 0 断)→冷 79s→热 87–114ms。**看门狗救不了这一类**:它第一道闸是「端口还在听就不重起」,连报 18 次 `probe dead but LISTENING`。
+2. lab 5180 重启后没人拉,按 design_lab_open 同款 .bat 分离拉起。
+3. `her-memory/.her/checkpoints/d---Her-Her-repo-samantha.git/index.lock` 从 07:56 起卡着(0 字节、早于重启、无进程持有),她全天的 checkpoint 捕获都在 skip——已删。**更深一层:那个 checkpoint 仓从来没有过一个 commit**(`git log` 报 branch 无提交),这条机制从没真跑通过,待立卡。
+
+**两条新雷(别再踩)**:
+- **分离派工的 PATH 坑**:`cmd start` 起的 `bash.exe` 是非登录 shell,`/usr/bin` 不在 PATH,`cat`/`date` 全失踪 → `-p "$(cat prompt)"` 展开成空串 → pi 秒退 **EXIT=0** 冒充成功。正向证据是 meta 里 `START=` 后面是空的。修法:脚本开头 `export PATH="/usr/bin:/mingw64/bin:$PATH"`。
+- **CPU 增速是错的尺子**(推翻 §5-1 的判据):她大部分时间阻塞在模型上,健康跑也只烧 0.3–0.6 秒/分——我的监控对着一个正在真干活的 43 分钟跑连报 11 次 STALL?。**真的活性信号是会话 JSONL 的增长**(45 秒 +11.9KB)+ 产物时间戳。CPU 只当旁证。
+
+**下一步**:①令牌活着(到 07:24)且没别的写手时,派短收尾包(只修她点名那一项 + 收口 notes,不重做);②她交卷后 `design_lab_still` 拍图摆到 Fei 眼前,原话记回项目档;③网关刷新缺口 + checkpoint 仓零提交 + still 分片同字节,三张卡待 Fei 拍。
+
