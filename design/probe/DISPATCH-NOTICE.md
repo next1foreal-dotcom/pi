@@ -114,3 +114,10 @@
 - 验收:tsc 退出 0(她/我各一读);我独立重拍 5180,与她的 still **sha256 一致**(157623 B);ledger audit 0 findings;她的自述与磁盘、与日志三处对得上。
 - **提交受阻(非她的问题)**:samantha 主克隆从 07:33:40 起立着别人的合并(MERGE_HEAD `35891654c`,G-419 pi 升级 665 提交,冲突已解未提交),合并期间 git 拒绝 partial commit。我误在查 MERGE_HEAD 之前跑了 `git add`,已 `git restore --staged` 只退回那 5 条(worktree 未动、合并完好、暂存 800 不变),并把 5 个产物外部快照到 `scratchpad/step6c-rescue/`(防 abort 蒸发)。等合并落地后按 pathspec 提交。
 - 下一步:把这一帧和自审报告摆给 Fei 判**终门**(step 7 硬门,只有他能判)。**其他会话请勿派 loora-landing 写任务。**
+
+## 2026-09-03 08:14 · 终门 approved(Fei 选项原文)→ 08:17:04 派 step 8 出码(会话 9ab7753b)
+- Fei 看过 Fable 独立重拍的 loora-landing-top.png 与她的 step7-self-review.md 后,在选项题「终门怎么判」里选 **「过,进 step 8 出码」**(选项原文,非打字)。已由 `recordGateVerdict` 写进 project.json(gates.final = approved,12:14:47Z,evidence 含出处与代记人),audit 0 红。
+- step 8 边界(Fable 划的,理由写明):真 loora = `D:\@APPProject\brilliant-local`,**那棵树不是 git 仓、无回退锚点、且在她写集之外** → 本轮**只读**它的真实 token 系统,产出忠实导出与交接清单 `design/projects/loora-landing/to-code.md`,**不落地**。真要写进那个 app 是单独一次 Fei 的决定。
+- 预检口径已改(Fei 9/3 把分类器从 deepseek 换成 her-gateway/xai/grok-build-0.1):**deepseek ping 不再构成证据**,改探 automode.json 的 `autoMode.classifierModel` + 网关 xai state=connected + 令牌 ≥45 分钟(分类器和她的脑现在共用同一条网关路,令牌一死两头全断)。lab 5180 在听。
+- pi session 01a06733-8941-7585-b483-5c86cae87771 · node PID 35912(08:17:05)。
+- 仍卡着:samantha 的 G-419 合并(MERGE_HEAD 35891654c)自 07:33 立着,她 step6c 的 5 个产物按 pathspec 提交被 git 拒(合并期不许 partial commit),已外部快照 `scratchpad/step6c-rescue/`。合并落地后立即补提。

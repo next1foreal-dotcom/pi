@@ -12,8 +12,9 @@
       "status": "approved"
     },
     "final": {
-      "status": "pending",
-      "at": "2026-09-03T11:49:21.362Z"
+      "at": "2026-09-03T12:14:47.673Z",
+      "evidence": "Fei(2026-09-03 08:0x 本地,看过 Fable 独立重拍的 design/stills/loora-landing-top.png 与她的 step7-self-review.md 之后):在 Fable 摆的选项题「loora-landing 终门(step 7 硬门)怎么判」里选了「过,进 step 8 出码」——选项原文,非自由打字;由 Fable 会话 9ab7753b 代记。",
+      "status": "approved"
     }
   },
   "iterations": [
@@ -39,7 +40,7 @@
     }
   ],
   "slug": "loora-landing",
-  "stage": "final",
+  "stage": "code",
   "steps": {
     "idea": {
       "artifact": "design/projects/loora-landing/brief.md (step 1 产物)",
@@ -70,7 +71,12 @@
       "artifact": "design/projects/loora-landing/step7-self-review.md",
       "note": "构成两刀已落(右砖、外框);自审对着 loora-landing-top.png,终门等 Fei。",
       "at": "2026-09-03T11:49:21.362Z"
+    },
+    "final": {
+      "artifact": "design/projects/loora-landing/to-code.md",
+      "note": "忠实导出：53 项映射，8 条 token 债，17 处偏离；本轮不落地，渲染未验证。",
+      "at": "2026-09-03T12:33:15.451Z"
     }
   },
-  "updatedAt": "2026-09-03T11:49:21.362Z"
+  "updatedAt": "2026-09-03T12:33:15.451Z"
 }

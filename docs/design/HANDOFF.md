@@ -152,3 +152,15 @@ node -e "const s=require(require('os').homedir()+'/.pi/agent/settings.json');con
 - **台账手改事故 + 工具缺口修复 8a8773cdc**:她手改 project.json——迭代记录字段写成 note(schema 是 summary),时间戳编成未来 6 小时(12:00Z/12:20Z)。根因:已在 iterations 阶段时 design_project_set_stage(iterations) 抛「already at stage」,没有工具路径能再记一轮,她只能手改。修:set_stage 在 iterations 带 note 即追加一轮(工具盖时间);audit 新增两条红(迭代记录缺 summary / 任何时间戳在未来 5 分钟以上;修前副本 7 红、修后 0);steps.md 第 6 行点名调用方式、Never 加「不许手改 manifest」。验收方只改字段名与时间戳(按真实写盘时间 05:30:38Z / 05:37:10Z),她的文字未动。**下一轮派前把这条讲给她**:记一轮 = design_project_set_stage(stage: iterations, note),别碰 JSON。
 - **接手时小心的三件**:①samantha 目录 .git/index.lock 常被邻座的提交占几十秒,等它消失再 commit,别删锁;②等 EXIT 的脚本别用 ^EXIT= 锚点——run-her.sh 的 meta 把 END=… EXIT=0 写在同一行(我的 waiter 因此误报 NO_PI_NO_EXIT,monitor3 的 DONE 才是准的);③pre-commit 的 npm run check 偶发 Segmentation fault(npm 进程本身),原样重试一次即过,不是代码红。
 - **她的 stdout 里的杂音**:「[her] checkpoint capture skipped: git add … did not match any files」——新建文件写前快照拿不到前像,extension.ts:1201 把它当错误 warn 出来;无害,但新文件场景该静默跳过。小债,未修。
+
+## 十二、9/3 毕业考收官段(Fable 会话 9ab7753b)——两刀落完,终门过,进 step 8
+
+- **step 6 第一轮(01:19–01:37,session 01a065b5,EXIT=0)**:砍等重右砖 n-rect-b、簇放大居中;补 step 5 欠的 draft-notes.md;stage → iterations。写集 commit `cd8491772`。分类器 deepseek-v4-flash 71 allow / 1 block(第四种签名「response was not 0 or 1」)。
+- **台账手改事故 + 工具缺口修复 `8a8773cdc`**:她手改 project.json(字段写成 note、时间戳编到未来 6 小时),根因是 iterations 阶段没有工具路径再记一轮。修后 set_stage(iterations, note) 追加一轮、audit 新增两条红。**验收方只改字段名与时间戳,她的文字不动。**
+- **step 6 第二轮第一次(02:31–02:38,session 01a065f7,EXIT=0)零落地**:34 次调用、32 allow/0 block、无报错,拍了帧、写下「第一刀:砍外框」——**然后以计划句结束回合**。死法第五种,这次在她:**宣布即停**。处置=任务包把交工标准钉死(有 diff + 看过新帧 + set_stage 记一轮 + TSC_RC,不许以计划句收尾)。
+- **网关瞎眼真因(07:1x–07:39)**:xAI 令牌过期后刷新必败。取证:api.x.ai 直连超时、走 127.0.0.1:7890 通;`ops/scheduled/bin/start-her-gateway-18130.bat` **只设 HER_GATEWAY_PORT,网关源码里没有任何代理处理**,所以看门狗拉起来的网关对 xAI 从来是瞎的,只是令牌没过期时看不出来。本会话按 PID 核身份后停掉旧实例,用同脚本 + NODE_USE_ENV_PROXY=1 + HTTPS_PROXY=7890 重拉(PID 29728),刷新即 ok。**启动器要不要带代理是 Fei 的决定(网络分流),未擅改。**
+- **step 6 第二轮重派(07:39–07:50,session 01a06710,EXIT=0)**:砍 n-frame(「砍右砖后只剩画框,间距已经在分组」),砖 @(584,360) 与文案 @(584,532) 左缘对齐、20px 成簇;没加东西;两轮 iteration 全用工具记(audit 0 红);写 step7-self-review.md;set_stage → final,**没碰 design_project_gate**。分类器已是 **her-gateway/xai/grok-build-0.1**,33 allow / 0 block。
+- **终门(08:14)**:Fei 在选项题里选「过,进 step 8 出码」(选项原文),`recordGateVerdict` 入档,evidence 写明看的是哪一帧与哪份自审。
+- **step 8 边界(Fable 划)**:真 loora = `D:\@APPProject\brilliant-local`,**非 git 仓、无回退锚点、在她写集之外** → 本轮只读它的 token 系统,产出 `to-code.md`(映射表/token 债/偏离/交接清单),**不落地**;落地是 Fei 单独一次决定。
+- **预检口径变更**:分类器换成网关那条路之后,**deepseek ping 不再构成证据**。新四项 = automode.json 的 `autoMode.classifierModel` 是谁 · 网关 `/api/oauth/status?provider=xai` state=connected · 令牌 ≥45 分钟(分类器与她的脑共用这条路,一死两头断) · 无 `-p` 进程 + 写集 mtime。
+- **接手注意**:samantha 主克隆 07:33:40 起立着 G-419 合并(MERGE_HEAD `35891654c`),**合并期间 git 拒绝 partial commit**,step6c 的 5 个产物因此未入库,外部快照在 `scratchpad/step6c-rescue/`;合并落地后按 pathspec 补提。**别在别人 MERGE_HEAD 立着时 `git add`**——我犯了一次,已用 `git restore --staged` 只退回自己那几条。
