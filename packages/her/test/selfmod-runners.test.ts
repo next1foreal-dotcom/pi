@@ -46,13 +46,28 @@ test("defaultRunTests spawns node --import tsx --test with the pinned file list"
 	assert.ok(result.passed >= 1);
 });
 
-test("defaultRunTests treats non-zero spawn and thrown spawn as testsFailed>=1", async () => {
-	const nonzero = await defaultRunTests("/tmp/wt", [], async () => ({ code: 7 }));
-	assert.ok(nonzero.failed >= 1);
-	const boom = await defaultRunTests("/tmp/wt", [], async () => {
-		throw new Error("spawn exploded");
-	});
-	assert.ok(boom.failed >= 1);
+test("defaultRunTests rejects a non-zero run with the exit code and the stderr tail, so the gate ledger carries a reason", async () => {
+	await assert.rejects(
+		defaultRunTests("/tmp/wt", [], async () => ({
+			code: 7,
+			stderr: "...lots of output..." + " assertion boom at anchor-commit-gate.test.ts:242",
+		})),
+		(error: unknown) => {
+			const message = error instanceof Error ? error.message : String(error);
+			assert.match(message, /exit 7/);
+			assert.match(message, /assertion boom at anchor-commit-gate\.test\.ts:242/);
+			return true;
+		},
+	);
+});
+
+test("defaultRunTests lets a thrown spawn propagate with its own message", async () => {
+	await assert.rejects(
+		defaultRunTests("/tmp/wt", [], async () => {
+			throw new Error("spawn exploded");
+		}),
+		/spawn exploded/,
+	);
 });
 
 test("zero eval fixture files is fail-closed", async () => {

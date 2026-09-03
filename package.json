@@ -48,7 +48,7 @@
 		"release:minor": "node scripts/release.mjs minor",
 		"release:major": "node scripts/release.mjs major",
 		"release:fix-links": "node scripts/release-notes.mjs fix-github-releases",
-		"prepare": "husky"
+		"prepare": "git config core.hooksPath .githooks"
 	},
 	"devDependencies": {
 		"@anthropic-ai/sandbox-runtime": "0.0.26",

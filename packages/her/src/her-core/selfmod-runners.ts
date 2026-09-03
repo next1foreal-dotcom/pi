@@ -59,15 +59,17 @@ export async function defaultRunTests(
 	_targetPaths: string[] = [],
 	spawn: SelfmodTestSpawn = spawnNodeTest,
 ): Promise<{ failed: number; passed: number }> {
-	try {
-		const result = await spawn("node", ["--import", "tsx", "--test", ...SELFMOD_GATE_TEST_FILES], {
-			cwd: worktreePath,
-		});
-		if (result.code !== 0) return { failed: 1, passed: 0 };
-		return { failed: 0, passed: 1 };
-	} catch {
-		return { failed: 1, passed: 0 };
+	// Resolve only on a green run. Anything else rejects with the exit code and the tail of the
+	// output, so runTestsStep records a reason and the ledger stops showing a bare
+	// { failed: 1, passed: 0 } sentinel that reads the same for a broken worktree and a real failure.
+	const result = await spawn("node", ["--import", "tsx", "--test", ...SELFMOD_GATE_TEST_FILES], {
+		cwd: worktreePath,
+	});
+	if (result.code !== 0) {
+		const tail = (result.stderr?.trim() || result.stdout?.trim() || "(no output)").slice(-600);
+		throw new Error(`node --test exit ${result.code}: ${tail}`);
 	}
+	return { failed: 0, passed: 1 };
 }
 
 export async function defaultRunEvalFixtures(opts: DefaultEvalOptions): Promise<boolean> {
