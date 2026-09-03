@@ -20,10 +20,20 @@ export interface CaptureRequest {
 	port: number;
 }
 
+/** What the scroll-to-tail attempt actually did. `before === after` means the page has no tail. */
+export interface ScrollReadout {
+	before: number;
+	after: number;
+	scrollHeight: number;
+	clientHeight: number;
+}
+
 export interface CaptureResult {
 	/** Every screen id found on the canvas — the useful answer when the requested one is absent. */
 	screenIds: string[];
 	shots: Array<{ part: StillPart; bytes: Buffer }>;
+	/** Present once a bottom shot was attempted, so the caller can say why there is only one frame. */
+	scroll?: ScrollReadout;
 }
 
 export interface LabStillDeps {
@@ -98,10 +108,14 @@ export function registerLabStillTools(pi: ExtensionAPI, deps: LabStillDeps = {})
 				await writeFile(absolute, shot.bytes);
 				paths.push(relative);
 			}
-			return textResult(`Wrote ${paths.join(" and ")}. Read the image(s) now and look before you call this done.`, {
-				ok: true,
-				paths,
-			});
+			const noTail = result.scroll ? result.scroll.after === result.scroll.before : false;
+			const tail = noTail
+				? ` This screen does not scroll (content ${result.scroll?.scrollHeight}px, viewport ${result.scroll?.clientHeight}px), so one frame is the whole page and there is no second half to shoot.`
+				: "";
+			return textResult(
+				`Wrote ${paths.join(" and ")}.${tail} Read the image(s) now and look before you call this done.`,
+				{ ok: true, paths, scrolls: !noTail, scroll: result.scroll },
+			);
 		},
 	});
 }
@@ -166,7 +180,7 @@ interface BrowserLike {
 const COLLECT_SCREEN_IDS = `[...new Set([...document.querySelectorAll("[data-screen-id]")].map((el) => el.getAttribute("data-screen-id") || ""))]`;
 
 const scrollToTail = (screenId: string) =>
-	`(() => { const host = document.querySelector('[data-screen-id="${screenId}"] [data-screen-scroll]') || document.querySelector('[data-screen-id="${screenId}"]'); if (host) host.scrollTop = host.scrollHeight; })()`;
+	`(() => { const host = document.querySelector('[data-screen-id="${screenId}"] [data-screen-scroll]') || document.querySelector('[data-screen-id="${screenId}"]'); if (!host) return null; const before = host.scrollTop; host.scrollTop = host.scrollHeight; return { before, after: host.scrollTop, scrollHeight: host.scrollHeight, clientHeight: host.clientHeight }; })()`;
 
 async function captureWithPlaywright(request: CaptureRequest): Promise<CaptureResult> {
 	const requireFrom = createRequire(PLAYWRIGHT_HOST);
@@ -194,14 +208,22 @@ async function captureWithPlaywright(request: CaptureRequest): Promise<CaptureRe
 		}
 
 		const shots: CaptureResult["shots"] = [];
+		let scroll: ScrollReadout | undefined;
 		for (const part of request.parts) {
 			if (part === "bottom") {
-				await page.evaluate(scrollToTail(request.screenId));
+				scroll = ((await page.evaluate(scrollToTail(request.screenId))) as ScrollReadout | null) ?? undefined;
+				// A page with no tail hands back the same frame. Writing it a second time under
+				// another name reads as two pieces of evidence when there is only one.
+				if (scroll && scroll.after === scroll.before) {
+					if (!shots.some((shot) => shot.part === "top"))
+						shots.push({ part: "top", bytes: await page.screenshot() });
+					continue;
+				}
 				await page.waitForTimeout(900);
 			}
 			shots.push({ part, bytes: await page.screenshot() });
 		}
-		return { screenIds, shots };
+		return { screenIds, shots, scroll };
 	} finally {
 		await browser.close();
 	}

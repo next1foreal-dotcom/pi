@@ -102,3 +102,53 @@ test("both parts is the default and produces two stills", async (t) => {
 test("design_lab_still is registered as a governed non-destructive tool", () => {
 	assert.equal(governedTools.design_lab_still?.destructive, false);
 });
+
+test("a screen with no tail yields one frame and says why", async (t) => {
+	const root = await tempRoot(t);
+	const png = Buffer.from("89504e470d0a1a0a", "hex");
+	const tools = harness({
+		repoRoot: root,
+		probePort: async () => true,
+		// The lab host is a fixed 900px box: scrollTop cannot move, so the tail shot is the same frame.
+		capture: async ({ screenId }) => ({
+			screenIds: [screenId],
+			shots: [{ part: "top" as const, bytes: png }],
+			scroll: { before: 0, after: 0, scrollHeight: 900, clientHeight: 900 },
+		}),
+	});
+	const { text, details } = await run(tools.get("design_lab_still"), { screenId: "loora-landing" });
+
+	assert.equal(details.ok, true);
+	assert.equal(details.scrolls, false);
+	assert.deepEqual(details.paths, ["design/stills/loora-landing-top.png"]);
+	// The whole point: the evidence itself says which of the two reasons it is.
+	assert.match(text, /does not scroll/);
+});
+
+test("a screen that really scrolls yields two different frames and claims no such thing", async (t) => {
+	const root = await tempRoot(t);
+	const top = Buffer.from("89504e470d0a1a0a", "hex");
+	const bottom = Buffer.from("89504e470d0a1a0b", "hex");
+	const tools = harness({
+		repoRoot: root,
+		probePort: async () => true,
+		capture: async ({ screenId }) => ({
+			screenIds: [screenId],
+			shots: [
+				{ part: "top" as const, bytes: top },
+				{ part: "bottom" as const, bytes: bottom },
+			],
+			scroll: { before: 0, after: 1200, scrollHeight: 2100, clientHeight: 900 },
+		}),
+	});
+	const { text, details } = await run(tools.get("design_lab_still"), { screenId: "product-list" });
+
+	assert.equal(details.scrolls, true);
+	assert.equal((details.paths as string[]).length, 2);
+	assert.doesNotMatch(text, /does not scroll/);
+	// Two frames must be two frames, not the same bytes twice.
+	assert.notDeepEqual(
+		await readFile(join(root, "design/stills/product-list-top.png")),
+		await readFile(join(root, "design/stills/product-list-bottom.png")),
+	);
+});
