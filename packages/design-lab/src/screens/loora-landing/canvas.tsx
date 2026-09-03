@@ -51,10 +51,9 @@ const MIN_NODE = 32;
 const CORNERS: Corner[] = ["nw", "ne", "sw", "se"];
 
 const SEED: CanvasNode[] = [
-  { id: "n-frame", kind: "frame", x: 488, y: 220, w: 464, h: 312, label: "frame" },
-  { id: "n-rect-a", kind: "rect", x: 512, y: 252, w: 176, h: 104, label: "rect" },
-  { id: "n-rect-b", kind: "rect", x: 720, y: 284, w: 160, h: 88, label: "rect" },
-  { id: "n-text", kind: "text", x: 512, y: 472, w: 132, h: 28, label: "真节点 · 能拖" },
+  { id: "n-frame", kind: "frame", x: 552, y: 268, w: 336, h: 280, label: "frame" },
+  { id: "n-rect-a", kind: "rect", x: 584, y: 300, w: 272, h: 152, label: "rect" },
+  { id: "n-text", kind: "text", x: 584, y: 480, w: 132, h: 32, label: "真节点 · 能拖" },
 ];
 
 let seq = 0;

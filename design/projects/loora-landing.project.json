@@ -15,11 +15,19 @@
   "iterations": [
     {
       "at": "2026-09-02T12:53:33.000Z",
-      "note": "收尾：确认磁盘即 09-01 形态重做稿；n-text w 168→112（虚线文字框贴字，不再空一大截）。再拍确认。门仍 returned，等 Fei 原话。未进 step 5。"
+      "summary": "收尾：确认磁盘即 09-01 形态重做稿；n-text w 168→112（虚线文字框贴字，不再空一大截）。再拍确认。门仍 returned，等 Fei 原话。未进 step 5。"
+    },
+    {
+      "at": "2026-09-03T05:30:38.000Z",
+      "summary": "补 step 5 欠账：draft-notes.md 落盘。首稿相对线框加了 studio 令牌皮肤 / Merrion / 产品 radius 与 motion / 砍 frame·rect 标签 / 已复制态；结构未动。最不确定三点写入该文件。真产品帧本机拍不到，不拿假图充数。"
+    },
+    {
+      "at": "2026-09-03T05:37:10.000Z",
+      "summary": "step 6 第一轮。减：砍掉等重右砖 n-rect-b（没独立挣到位置）。加：同一簇放大居中（frame 336×280 / 选中砖 272×152 / 文案贴字），主从一眼可读。看过 loora-landing-top.png 放大后那一帧。真产品帧仍无。不进 step 7。"
     }
   ],
   "slug": "loora-landing",
-  "stage": "draft",
+  "stage": "iterations",
   "steps": {
     "idea": {
       "artifact": "design/projects/loora-landing/brief.md (step 1 产物)",
@@ -40,7 +48,12 @@
       "artifact": "packages/design-lab/src/screens/loora-landing (wireframe: canvas.tsx / screen.tsx / styles/wireframe.css)",
       "note": "Wireframe gate approved (Fei 选项「过,进 step 5 皮肤」, 2026-09-02T13:22:43Z). Entering step 5 first draft. Direction A 画室石墨. Structure locked: live micro-canvas as ground, copy in four corners. Skin only.",
       "at": "2026-09-02T17:40:11.552Z"
+    },
+    "draft": {
+      "artifact": "design/projects/loora-landing/draft-notes.md",
+      "note": "Step 5 首稿说明补记：相对线框的加法与出处、构成失败(两块等重灰砖)、不确定三点、无真产品帧。代码本身已入库 9dc818ca2。",
+      "at": "2026-09-03T05:30:38.000Z"
     }
   },
-  "updatedAt": "2026-09-02T17:40:11.552Z"
+  "updatedAt": "2026-09-03T05:37:10.000Z"
 }
