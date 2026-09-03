@@ -121,3 +121,10 @@
 - 预检口径已改(Fei 9/3 把分类器从 deepseek 换成 her-gateway/xai/grok-build-0.1):**deepseek ping 不再构成证据**,改探 automode.json 的 `autoMode.classifierModel` + 网关 xai state=connected + 令牌 ≥45 分钟(分类器和她的脑现在共用同一条网关路,令牌一死两头全断)。lab 5180 在听。
 - pi session 01a06733-8941-7585-b483-5c86cae87771 · node PID 35912(08:17:05)。
 - 仍卡着:samantha 的 G-419 合并(MERGE_HEAD 35891654c)自 07:33 立着,她 step6c 的 5 个产物按 pathspec 提交被 git 拒(合并期不许 partial commit),已外部快照 `scratchpad/step6c-rescue/`。合并落地后立即补提。
+
+## 2026-09-03 08:43:45 · 分支已推上 origin —— 这一脚是谁踩的、依据什么
+- **执行者**:会话「她与我的差距」(local_83658291)。**依据**:Fei 08:4x **直接下令「commit push」**;该会话在执行前把「**一推就是六百多个提交连同那个合并永久落 origin、重写余地当场归零**」这句原样摆给了他,他看过之后回的这句。**不是任何会话代拍的。**
+- 范围:`f3af7949f..1c3b1ebd9`,676 个提交、34 个合并提交,含 G-419 上游合并 `346e461ca`(以及它卷进的 step6c 产物与那批 automode 日志)、`ddd2472af`(step 8 to-code)、`1045f4a26`、`31ab2626d`、`1c3b1ebd9`。
+- **不是 9ab7753b 推的**:本会话自 08:0x 起明确挂起不推,理由是「这一脚不可逆、属合并主人 her-0f 的决定」,并已直接问过 her-0f;her-0f 的回复是「许可我给不了,题在 Fei 手上」。两条线在同一时间窗里各自推进,消息擦肩。
+- 复核(9ab7753b 亲跑,非转述):`git fetch` 后 ahead/behind = **0/0**;origin HEAD = `1c3b1ebd9`;本会话五笔 `cd8491772 / 8a8773cdc / f3af7949f / ddd2472af / 1c3b1ebd9` 逐个 `merge-base --is-ancestor` 全为真;origin 上 `to-code.md` 17386 B 可读,`loora-landing-bottom.png` 已不存在,台账读回 `stage code / final approved / 5 轮`。
+- **留档理由**:今天出现过两个会话拿到相反裁决(分类器 402 那题),所以「决定从哪来」不能留空白。此处写明:**推是 Fei 的决定,执行者是「她与我的差距」,知情条件已在事前摆明。**
