@@ -99,6 +99,16 @@ function git(
 	};
 }
 
+// Spreading process.env yields a plain object that keeps the parent's key case. Native Windows
+// spells it Path, so assigning env.PATH adds a second key and leaves the inherited entries
+// unreachable — the child then resolves nothing but the stub. Under git-bash the key is already
+// PATH, which is why this only ever failed when the pipeline ran the gate from a scheduled task.
+export function withStubOnPath(base: NodeJS.ProcessEnv, stubDir: string): NodeJS.ProcessEnv {
+	const env: NodeJS.ProcessEnv = { ...base };
+	const pathKey = Object.keys(env).find((key) => key.toUpperCase() === "PATH") ?? "PATH";
+	env[pathKey] = `${stubDir}${delimiter}${env[pathKey] ?? ""}`;
+	return env;
+}
 // A null status puts its cause in error/signal and leaves both streams empty, so an assertion
 // message built from the streams alone reads the same for a failed spawn and a silent success.
 function outputOf(result: { stdout: string; stderr: string; error?: string; signal?: string }): string {
@@ -230,8 +240,7 @@ test.describe("ADR-0002 worktree git gate", { concurrency: false }, () => {
 			...extraEnv,
 		};
 		if (!("FEI_ANCHOR_OVERRIDE" in extraEnv)) delete env.FEI_ANCHOR_OVERRIDE;
-		env.PATH = `${stubDir}${delimiter}${env.PATH ?? ""}`;
-		return env;
+		return withStubOnPath(env, stubDir);
 	}
 
 	function commit(
@@ -354,4 +363,12 @@ test("git() surfaces a spawn failure instead of a bare null status", () => {
 	assert.equal(result.stdout, "");
 	assert.equal(result.stderr, "");
 	assert.match(outputOf(result), /ENOENT/);
+});
+
+test("stub PATH prepend keeps inherited entries when the parent env spells the key Path", () => {
+	const env = withStubOnPath({ Path: "C:\real\bin", OTHER: "x" }, "C:stub");
+
+	const pathKeys = Object.keys(env).filter((key) => key.toUpperCase() === "PATH");
+	assert.deepEqual(pathKeys, ["Path"], `expected one PATH key, got ${JSON.stringify(pathKeys)}`);
+	assert.equal(env.Path, `C:stub${delimiter}C:\real\bin`);
 });
