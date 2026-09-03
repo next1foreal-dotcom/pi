@@ -49,3 +49,9 @@ plans/
 .pi/git/
 .pi/npm/
 collect.sh
+
+# Session scratch a stray `git add -A` swept into a commit on 2026-09-03: the
+# automode classifier's per-run log and the semantic-grep index. Both are
+# regenerated on demand and must never be tracked.
+*-pi-automode.jsonl
+.pi/semantic-grep.sqlite
