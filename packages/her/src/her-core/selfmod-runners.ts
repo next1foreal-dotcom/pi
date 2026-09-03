@@ -66,7 +66,7 @@ export async function defaultRunTests(
 		cwd: worktreePath,
 	});
 	if (result.code !== 0) {
-		const tail = (result.stderr?.trim() || result.stdout?.trim() || "(no output)").slice(-600);
+		const tail = (result.stderr?.trim() || result.stdout?.trim() || "(no output)").slice(-12000);
 		throw new Error(`node --test exit ${result.code}: ${tail}`);
 	}
 	return { failed: 0, passed: 1 };
