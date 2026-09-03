@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Agent } from "@earendil-works/pi-agent-core";
 import {
+	type Api,
+	type ApiStreamOptions,
 	type AssistantMessage,
 	type Context,
 	createAssistantMessageEventStream,
@@ -102,8 +104,8 @@ async function createTestSession(mode: TestMode): Promise<TestSession> {
 		toAuth: async (credential: OAuthCredential) => ({ apiKey: credential.access }),
 	};
 
-	const stream = (_model: Model<"openai-completions">, _context: Context, options?: SimpleStreamOptions) => {
-		requestKeys.push(options?.apiKey ?? "");
+	const stream = <T extends Api>(_model: Model<T>, _context: Context, options?: ApiStreamOptions<T>) => {
+		requestKeys.push((options as SimpleStreamOptions | undefined)?.apiKey ?? "");
 		const eventStream = createAssistantMessageEventStream();
 		queueMicrotask(() => {
 			const requestNumber = requestKeys.length;

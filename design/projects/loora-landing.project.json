@@ -10,6 +10,10 @@
       "at": "2026-09-02T13:22:43.216Z",
       "evidence": "Fei(2026-09-02 09:05 本地,看过 finish7 之后 Fable 用 Playwright 在 lab 5180 重拍的线框图):在 Fable 摆的选项题「线框门怎么判」里选了「过,进 step 5 皮肤」——选项原文,非自由打字;由 Fable 会话 9ab7753b 代记。 追记:Fei 2026-09-02 约 13:30 本地在另一 Fable 会话(charming-meninsky)看过 v1/v2 并排页后**打字**「过」「继续」——自由打字,非选项;由 Fable 会话 70ea23ae 代记。",
       "status": "approved"
+    },
+    "final": {
+      "status": "pending",
+      "at": "2026-09-03T11:49:21.362Z"
     }
   },
   "iterations": [
@@ -24,10 +28,18 @@
     {
       "at": "2026-09-03T05:37:10.000Z",
       "summary": "step 6 第一轮。减：砍掉等重右砖 n-rect-b（没独立挣到位置）。加：同一簇放大居中（frame 336×280 / 选中砖 272×152 / 文案贴字），主从一眼可读。看过 loora-landing-top.png 放大后那一帧。真产品帧仍无。不进 step 7。"
+    },
+    {
+      "summary": "减: n-frame 外框(砍右砖后只剩画框,没独立挣到位置)。加:无。砖 272×152 @584,360 与文案「真节点 · 能拖」按 20px 间距收成一簇、左缘对齐,光学居中于 1440×900 可用场。看过重拍的 design/stills/loora-landing-top.png。",
+      "at": "2026-09-03T11:48:42.477Z"
+    },
+    {
+      "summary": "构成两刀已落(右砖、外框);自审对着 loora-landing-top.png,终门等 Fei。",
+      "at": "2026-09-03T11:49:21.362Z"
     }
   ],
   "slug": "loora-landing",
-  "stage": "iterations",
+  "stage": "final",
   "steps": {
     "idea": {
       "artifact": "design/projects/loora-landing/brief.md (step 1 产物)",
@@ -53,7 +65,12 @@
       "artifact": "design/projects/loora-landing/draft-notes.md",
       "note": "Step 5 首稿说明补记：相对线框的加法与出处、构成失败(两块等重灰砖)、不确定三点、无真产品帧。代码本身已入库 9dc818ca2。",
       "at": "2026-09-03T05:30:38.000Z"
+    },
+    "iterations": {
+      "artifact": "design/projects/loora-landing/step7-self-review.md",
+      "note": "构成两刀已落(右砖、外框);自审对着 loora-landing-top.png,终门等 Fei。",
+      "at": "2026-09-03T11:49:21.362Z"
     }
   },
-  "updatedAt": "2026-09-03T05:37:10.000Z"
+  "updatedAt": "2026-09-03T11:49:21.362Z"
 }

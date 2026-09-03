@@ -50,10 +50,12 @@ const MAX_NODES = 24;
 const MIN_NODE = 32;
 const CORNERS: Corner[] = ["nw", "ne", "sw", "se"];
 
+/* Cluster by proximity, no wrapping frame. Brick optically centered
+ * on 1440×900 (mass center ~720,440); caption hangs 20px under the
+ * left edge — the gap is the group, not a box. */
 const SEED: CanvasNode[] = [
-  { id: "n-frame", kind: "frame", x: 552, y: 268, w: 336, h: 280, label: "frame" },
-  { id: "n-rect-a", kind: "rect", x: 584, y: 300, w: 272, h: 152, label: "rect" },
-  { id: "n-text", kind: "text", x: 584, y: 480, w: 132, h: 32, label: "真节点 · 能拖" },
+  { id: "n-rect-a", kind: "rect", x: 584, y: 360, w: 272, h: 152, label: "rect" },
+  { id: "n-text", kind: "text", x: 584, y: 532, w: 132, h: 32, label: "真节点 · 能拖" },
 ];
 
 let seq = 0;

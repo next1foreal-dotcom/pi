@@ -324,3 +324,16 @@ test.describe("ADR-0002 worktree git gate", { concurrency: false }, () => {
 		});
 	});
 });
+
+test("git() surfaces a spawn failure instead of a bare null status", () => {
+	// A null status carries its cause in error/signal, never in the streams. Without this the
+	// gate ledger shows an assertion whose message is the empty string, which reads exactly like
+	// a silent success and cost two blind selfmod rejections on 2026-09-03.
+	const missingCwd = join(tmpdir(), `her-adr2-nocwd-${process.pid}-${Date.now()}`);
+	const result = git(missingCwd, ["--version"]);
+
+	assert.equal(result.status, null);
+	assert.equal(result.stdout, "");
+	assert.equal(result.stderr, "");
+	assert.match(outputOf(result), /ENOENT/);
+});
