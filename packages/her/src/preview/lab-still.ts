@@ -208,6 +208,9 @@ async function captureWithPlaywright(request: CaptureRequest): Promise<CaptureRe
 		}
 
 		const shots: CaptureResult["shots"] = [];
+		// Every screen on the canvas fits the 900px host, so none of them scroll. Verify
+		// changes here with packages/her/scripts/lab-still-livefire.mjs, which serves a page
+		// that does: checking only against the canvas proves one branch and hides the other.
 		let scroll: ScrollReadout | undefined;
 		for (const part of request.parts) {
 			if (part === "bottom") {
