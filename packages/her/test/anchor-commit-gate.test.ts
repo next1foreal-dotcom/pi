@@ -80,6 +80,8 @@ function git(
 	status: number | null;
 	stdout: string;
 	stderr: string;
+	error?: string;
+	signal?: string;
 } {
 	const result = spawnSync("git", args, {
 		cwd,
@@ -87,15 +89,31 @@ function git(
 		env: { ...process.env, ...extraEnv },
 		windowsHide: true,
 	});
+	const failure = result.error as NodeJS.ErrnoException | undefined;
 	return {
 		status: result.status,
 		stdout: result.stdout ?? "",
 		stderr: result.stderr ?? "",
+		...(failure ? { error: `${failure.code ?? ""} ${failure.message}`.trim() } : {}),
+		...(result.signal ? { signal: result.signal } : {}),
 	};
 }
 
-function outputOf(result: { stdout: string; stderr: string }): string {
-	return `${result.stdout}${result.stderr}`;
+// A null status puts its cause in error/signal and leaves both streams empty, so an assertion
+// message built from the streams alone reads the same for a failed spawn and a silent success.
+function outputOf(result: { stdout: string; stderr: string; error?: string; signal?: string }): string {
+	const streams = `${result.stdout}${result.stderr}`;
+	const cause = [
+		result.error ? `spawn failed: ${result.error}` : undefined,
+		result.signal ? `killed by signal ${result.signal}` : undefined,
+	]
+		.filter(Boolean)
+		.join(" ");
+	if (!cause) return streams;
+	return streams
+		? `${streams}
+${cause}`
+		: cause;
 }
 
 function repoRoot(): string {
