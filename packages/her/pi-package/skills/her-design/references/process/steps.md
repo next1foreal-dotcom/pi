@@ -14,7 +14,7 @@ The constitution applied over time: lock structure while disagreement is cheap; 
 | 3 | Moodboard | 2–3 directions, one sentence each (process/direction-first · process/variants) | soft gate: owner picks the direction (async, non-blocking) |
 | 4 | Wireframe | gray boxes: true hierarchy, real copy skeleton, zero visual polish (process/wireframe) | **HARD gate: structure agreed** |
 | 5 | First draft | the chosen direction rendered | enter only with the wireframe gate approved |
-| 6 | Iterations | each round removes before it adds; log what changed | — |
+| 6 | Iterations | each round removes before it adds; log what changed with `design_project_set_stage(stage: iterations, note)` — one call per round, the tool stamps the clock | — |
 | 7 | Final design | self-review report first, then the owner's eye | **HARD gate: final approval** |
 | 8 | To code | faithful export + handoff checklist; the system wins, the design bends (process/to-code) | — |
 
@@ -31,3 +31,4 @@ Steps 1–4: load process/* and the constitution only — detail knowledge stays
 - Enter step 5 with an unapproved wireframe — the gate audit flags evidence-free approvals.
 - Polish a detail in steps 1–4 — non-gray fills, shadows, imagery at the wireframe stage are 越阶.
 - End any session without process/filing.
+- Hand-edit `design/projects/<slug>.project.json`. The ledger is written by the `design_project_*` tools only: field names come from the schema, timestamps from the tool's clock. A made-up `at` is a false record, and the audit flags it.

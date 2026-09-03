@@ -107,7 +107,9 @@ export function registerDesignProjectTools(pi: ExtensionAPI, deps: DesignProject
 			"Move a design workshop project one step forward, or back to any earlier stage. Writes design/projects/<slug>.project.json. " +
 			"Entering draft is refused unless the wireframe hard gate is already approved — the reply names what is missing. " +
 			"Entering code is refused unless the final hard gate is approved. Moodboard is a light gate: recorded on arrival, never blocks. " +
-			"Skipping stages is refused.",
+			"Skipping stages is refused. " +
+			'At iterations, calling again with stage "iterations" and a note appends one round to the iteration log ' +
+			"(the tool stamps the time) — the only sanctioned way to log a round; never hand-edit the manifest.",
 		parameters: Type.Object({
 			slug: Type.String(),
 			stage: StringEnum(DESIGN_STAGES),
@@ -176,7 +178,8 @@ export function registerDesignProjectTools(pi: ExtensionAPI, deps: DesignProject
 		label: "Design Project Audit",
 		description:
 			"Audit every design/projects/*.project.json. Reports red findings for approved gates with missing or blank evidence, " +
-			"and for a stage past a hard gate that is not approved. Read-only — does not write or repair files.",
+			"for a stage past a hard gate that is not approved, for hand-edited iteration records without a summary, " +
+			"and for timestamps in the future. Read-only — does not write or repair files.",
 		parameters: Type.Object({}),
 		async execute() {
 			try {

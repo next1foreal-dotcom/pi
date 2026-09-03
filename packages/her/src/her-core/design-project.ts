@@ -236,10 +236,19 @@ export async function setStage(
 		if (!isStage(manifest.stage)) throw new Error(`Project "${slug}" has invalid stage "${String(manifest.stage)}"`);
 		const currentIndex = stageIndex(manifest.stage);
 		const targetIndex = stageIndex(stage);
-		if (targetIndex === currentIndex) {
-			throw new Error(`Project "${slug}" is already at stage "${stage}"`);
-		}
 		const at = nowIso();
+		if (targetIndex === currentIndex) {
+			// A round at "iterations" is logged by calling set_stage again with a note; no other stage is re-entered.
+			if (stage === "iterations" && opts?.note && opts.note.trim() !== "") {
+				manifest.iterations.push({ summary: opts.note, at });
+				manifest.updatedAt = at;
+				await writeManifest(slug, manifest, root);
+				return manifest;
+			}
+			throw new Error(
+				`Project "${slug}" is already at stage "${stage}"${stage === "iterations" ? "; pass a note to log another round" : ""}`,
+			);
+		}
 		if (targetIndex > currentIndex) {
 			if (targetIndex !== currentIndex + 1) {
 				throw new Error(
@@ -333,6 +342,41 @@ function approvedWithoutEvidence(gate: Record<string, unknown> | undefined): boo
 	return typeof evidence !== "string" || !evidence.trim();
 }
 
+const FUTURE_TOLERANCE_MS = 5 * 60 * 1000;
+
+function isFuture(value: unknown): boolean {
+	if (typeof value !== "string") return false;
+	const ms = Date.parse(value);
+	return Number.isFinite(ms) && ms > Date.now() + FUTURE_TOLERANCE_MS;
+}
+
+/** Every `at`-like field a manifest carries, labelled by where it sits. */
+function timestampFields(manifest: Record<string, unknown>): Array<[string, unknown]> {
+	const out: Array<[string, unknown]> = [
+		["createdAt", manifest.createdAt],
+		["updatedAt", manifest.updatedAt],
+	];
+	const steps = manifest.steps;
+	if (steps && typeof steps === "object" && !Array.isArray(steps)) {
+		for (const [name, step] of Object.entries(steps as Record<string, unknown>)) {
+			out.push([`steps.${name}.at`, (step as { at?: unknown } | null)?.at]);
+		}
+	}
+	const gates = manifest.gates;
+	if (gates && typeof gates === "object" && !Array.isArray(gates)) {
+		for (const [name, gate] of Object.entries(gates as Record<string, unknown>)) {
+			out.push([`gates.${name}.at`, (gate as { at?: unknown } | null)?.at]);
+		}
+	}
+	const iterations = manifest.iterations;
+	if (Array.isArray(iterations)) {
+		iterations.forEach((record, index) => {
+			out.push([`iterations[${index}].at`, (record as { at?: unknown } | null)?.at]);
+		});
+	}
+	return out;
+}
+
 export async function auditProjects(directory?: string): Promise<AuditFinding[]> {
 	const root = projectsDirectory(directory);
 	let entries: Dirent[];
@@ -404,6 +448,29 @@ export async function auditProjects(directory?: string): Promise<AuditFinding[]>
 			if (fgStatus !== "approved") {
 				findings.push({
 					message: `Stage is "${stageValue}" but final gate is not approved (status: ${String(fgStatus ?? "missing")})`,
+					severity: "red",
+					slug: entrySlug,
+				});
+			}
+		}
+		// Hand-edited manifests: the ledger is written by the tools only, so a wrong field name or a made-up clock is a red.
+		const iterations = manifest.iterations;
+		if (Array.isArray(iterations)) {
+			iterations.forEach((record, index) => {
+				const summary = (record as { summary?: unknown } | null)?.summary;
+				if (typeof summary !== "string" || summary.trim() === "") {
+					findings.push({
+						message: `Iteration #${index + 1} has no "summary" (hand-edited manifest? rounds are logged with design_project_set_stage)`,
+						severity: "red",
+						slug: entrySlug,
+					});
+				}
+			});
+		}
+		for (const [where, value] of timestampFields(manifest)) {
+			if (isFuture(value)) {
+				findings.push({
+					message: `Timestamp ${where} = "${String(value)}" is in the future (hand-edited manifest? timestamps come from the tool's clock)`,
 					severity: "red",
 					slug: entrySlug,
 				});

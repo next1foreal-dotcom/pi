@@ -192,6 +192,88 @@ test("audit flags on-disk approved-without-evidence as red, and does not flag ev
 	);
 });
 
+test("at iterations, set_stage(iterations) with a note appends a round instead of refusing", async (t) => {
+	const dir = await tempDir(t);
+	await createProject("rounds", "landing exam", dir);
+	await advanceTo(dir, "rounds", "iterations");
+	const before = await getProject("rounds", dir);
+	assert.ok(before);
+	const rounds = before.iterations.length;
+	const t0 = Date.now();
+
+	const after = await setStage("rounds", "iterations", { note: "round 2: removed the twin brick" }, dir);
+	assert.equal(after.stage, "iterations");
+	assert.equal(after.iterations.length, rounds + 1);
+	const last = after.iterations[after.iterations.length - 1];
+	assert.ok(last);
+	assert.equal(last.summary, "round 2: removed the twin brick");
+	const stamped = Date.parse(last.at);
+	assert.ok(stamped >= t0 - 1000 && stamped <= Date.now() + 1000, `at must be the tool's clock, got ${last.at}`);
+	assert.equal(after.updatedAt, last.at);
+
+	// Same stage without a note is still a refusal, at iterations and everywhere else.
+	await assert.rejects(() => setStage("rounds", "iterations", undefined, dir), /already at stage/);
+	await assert.rejects(() => setStage("rounds", "iterations", { note: "   " }, dir), /already at stage/);
+	await createProject("still-idea", "planted", dir);
+	await assert.rejects(() => setStage("still-idea", "idea", { note: "a note" }, dir), /already at stage/);
+
+	// Through the tool: the reply is ok and carries the appended round.
+	const tools = harness(dir);
+	const viaTool = await run(tools.get("design_project_set_stage"), {
+		slug: "rounds",
+		stage: "iterations",
+		note: "round 3: label snug to the brick",
+	});
+	assert.equal(viaTool.details.ok, true, viaTool.text);
+	const manifest = viaTool.details.manifest as { iterations: Array<{ summary: string }> };
+	assert.equal(manifest.iterations.length, rounds + 2);
+	assert.equal(manifest.iterations[manifest.iterations.length - 1]?.summary, "round 3: label snug to the brick");
+});
+
+test("audit flags hand-edited iteration records (no summary) and timestamps in the future", async (t) => {
+	const dir = await tempDir(t);
+	const now = new Date().toISOString();
+	const future = new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString();
+	const plant = (slug: string, body: Record<string, unknown>) =>
+		writeFile(join(dir, `${slug}.project.json`), `${JSON.stringify(body, null, 2)}\n`, "utf8");
+	await plant("hand-edited", {
+		slug: "hand-edited",
+		brief: "planted",
+		stage: "iterations",
+		createdAt: now,
+		updatedAt: future,
+		steps: { draft: { note: "written by hand", at: future } },
+		gates: { wireframe: { status: "approved", evidence: EVIDENCE, at: now } },
+		iterations: [{ at: future, note: "round written by hand with the wrong field name" }],
+	});
+	await plant("clean", {
+		slug: "clean",
+		brief: "planted ok",
+		stage: "iterations",
+		createdAt: now,
+		updatedAt: now,
+		steps: { draft: { note: "tool-written", at: now } },
+		gates: { wireframe: { status: "approved", evidence: EVIDENCE, at: now } },
+		iterations: [{ at: now, summary: "round 1" }],
+	});
+
+	const findings = await auditProjects(dir);
+	const bad = findings.filter((row) => row.slug === "hand-edited");
+	assert.ok(
+		bad.some((row) => row.severity === "red" && /summary/i.test(row.message)),
+		`expected a missing-summary finding, got ${JSON.stringify(bad)}`,
+	);
+	assert.ok(
+		bad.some((row) => row.severity === "red" && /future/i.test(row.message)),
+		`expected a future-timestamp finding, got ${JSON.stringify(bad)}`,
+	);
+	assert.equal(
+		findings.some((row) => row.slug === "clean"),
+		false,
+		`clean manifest must not be flagged: ${JSON.stringify(findings)}`,
+	);
+});
+
 test("slug path traversal and non-slug names are refused", async (t) => {
 	const dir = await tempDir(t);
 	const bad = ["../escape", "..\\escape", "foo/bar", "foo\\bar", "Foo", "", ".", "..", "foo bar", "/abs", "a_b"];
