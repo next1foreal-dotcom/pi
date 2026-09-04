@@ -1,8 +1,8 @@
 /**
  * Canvas-true rulers & guides for the Interaction Lab.
  *
- * Reference UX (viewport rulers): `references/ruler-mode/` — snapshot with no
- * LICENSE file; private use / vendor only, do not redistribute.
+ * Reference UX (viewport rulers): github.com/timothymaarv/ruler-mode @ f5fa50b —
+ * no LICENSE file; read for mechanism, do not vendor.
  * This module is NOT that overlay: ticks and guides are page units, rendered
  * in screen space at `(pos + camera) * z` so they stay glued to canvas content.
  */

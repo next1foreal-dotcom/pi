@@ -1,8 +1,8 @@
 /**
  * Page-space handwritten labels for the Interaction Lab.
  *
- * Reference UX (viewport labels): `references/label-maker/` — snapshot with no
- * LICENSE file; private use / vendor only, do not redistribute.
+ * Reference UX (viewport labels): github.com/timothymaarv/label-maker @ 82df5ba —
+ * no LICENSE file; read for mechanism, do not vendor.
  * Positions are page units and live inside the camera-transformed layer, so
  * arrows pan/zoom with canvas content (Shift+L spawns at the viewport-center
  * page point).

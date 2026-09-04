@@ -1,12 +1,20 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it } from "vitest";
+import { CanvasRuler } from "./core/canvas-ruler";
+import { Labels } from "./core/page-labels";
+import { StickyNotes } from "./core/page-notes";
 import {
   buildRegistry,
+  checkApiDocs,
   type LabPlugin,
   type LabPluginHandle,
+  type PluginApiDoc,
   publishPluginApis,
 } from "./plugin-api";
+import { plugin as labelsPlugin } from "./plugins/labels/plugin";
+import { plugin as notesPlugin } from "./plugins/notes/plugin";
+import { plugin as rulerPlugin } from "./plugins/ruler/plugin";
 
 const stub = (id: string, order?: number): LabPlugin => ({
   id,
@@ -69,6 +77,7 @@ describe("buildRegistry", () => {
 });
 
 const handle = (api?: unknown): LabPluginHandle => ({ api, destroy: () => {} });
+const quiet = () => {};
 
 describe("publishPluginApis", () => {
   afterEach(() => {
@@ -79,19 +88,19 @@ describe("publishPluginApis", () => {
     publishPluginApis([
       { id: "ruler", handle: handle({ addGuide: () => 1 }) },
       { id: "coords", handle: handle() },
-    ]);
+    ], quiet);
     expect(window.lab?.plugins()).toEqual(["ruler"]);
     expect(window.lab?.plugin("coords")).toBeUndefined();
   });
 
   it("hands back the very object the plugin published", () => {
     const api = { addGuide: () => 1 };
-    publishPluginApis([{ id: "ruler", handle: handle(api) }]);
+    publishPluginApis([{ id: "ruler", handle: handle(api) }], quiet);
     expect(window.lab?.plugin("ruler")).toBe(api);
   });
 
   it("teardown clears the bridge", () => {
-    const off = publishPluginApis([{ id: "ruler", handle: handle({}) }]);
+    const off = publishPluginApis([{ id: "ruler", handle: handle({}) }], quiet);
     off();
     expect(window.lab).toBeUndefined();
   });
@@ -99,9 +108,91 @@ describe("publishPluginApis", () => {
   it("a stale teardown leaves a newer bridge alone", () => {
     // StrictMode remounts overlap: the old session's cleanup runs after the
     // new session has already published. It must not blank the live one.
-    const off = publishPluginApis([{ id: "ruler", handle: handle({ n: 1 }) }]);
-    publishPluginApis([{ id: "ruler", handle: handle({ n: 2 }) }]);
+    const off = publishPluginApis(
+      [{ id: "ruler", handle: handle({ n: 1 }) }],
+      quiet,
+    );
+    publishPluginApis([{ id: "ruler", handle: handle({ n: 2 }) }], quiet);
     off();
     expect(window.lab?.plugin("ruler")).toEqual({ n: 2 });
+  });
+});
+
+const doc = (name: string): PluginApiDoc => ({
+  name,
+  signature: `${name}()`,
+  summary: "",
+});
+
+describe("checkApiDocs", () => {
+  it("passes docs that match the api", () => {
+    expect(checkApiDocs("x", { a: () => 1 }, [doc("a")])).toEqual([]);
+  });
+
+  it("catches a documented name the api does not have", () => {
+    const [problem] = checkApiDocs("ruler", { a: () => 1 }, [doc("b")]);
+    expect(problem).toContain('documents "b"');
+  });
+
+  it("catches a name documented twice", () => {
+    const problems = checkApiDocs("x", { a: () => 1 }, [doc("a"), doc("a")]);
+    expect(problems.some((p) => p.includes("twice"))).toBe(true);
+  });
+
+  it("catches an api published with no docs at all", () => {
+    expect(checkApiDocs("x", { a: () => 1 }, undefined)).toEqual([
+      '[lab] plugin "x" publishes an api but describes nothing',
+    ]);
+  });
+
+  it("says nothing about a plugin that publishes no api", () => {
+    expect(checkApiDocs("coords", undefined, undefined)).toEqual([]);
+  });
+});
+
+describe("shipped plugins describe what they publish", () => {
+  // Drift gate: rename or drop a method and the docs go red with it.
+  const cases: [LabPlugin, object][] = [
+    [rulerPlugin, CanvasRuler.prototype],
+    [notesPlugin, StickyNotes.prototype],
+    [labelsPlugin, Labels.prototype],
+  ];
+  for (const [plugin, proto] of cases) {
+    it(`${plugin.id} documents only methods that exist`, () => {
+      const docs = plugin.describe ?? [];
+      expect(docs.length).toBeGreaterThan(0);
+      const bag = proto as Record<string, unknown>;
+      const phantom = docs
+        .filter((d) => typeof bag[d.name] !== "function")
+        .map((d) => d.name);
+      expect(phantom).toEqual([]);
+      for (const d of docs) {
+        expect(d.signature).toContain(d.name);
+        expect(d.summary.length).toBeGreaterThan(0);
+      }
+    });
+  }
+});
+
+describe("the bridge hands the docs over", () => {
+  afterEach(() => {
+    window.lab = undefined;
+  });
+
+  it("describe returns one plugin's docs, help returns all of them", () => {
+    publishPluginApis(
+      [
+        { id: "ruler", handle: handle({ a: () => 1 }), docs: [doc("a")] },
+        { id: "notes", handle: handle({ b: () => 1 }), docs: [doc("b")] },
+      ],
+      quiet,
+    );
+    expect(window.lab?.describe("ruler").map((d) => d.name)).toEqual(["a"]);
+    expect(Object.keys(window.lab?.help() ?? {})).toEqual(["ruler", "notes"]);
+  });
+
+  it("describe is empty for a plugin that published nothing", () => {
+    publishPluginApis([{ id: "coords", handle: handle() }], quiet);
+    expect(window.lab?.describe("coords")).toEqual([]);
   });
 });

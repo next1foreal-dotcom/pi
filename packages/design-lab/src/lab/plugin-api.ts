@@ -9,6 +9,16 @@ import type { Camera, Point } from "./core/types";
  * lab-view by name are now just the first three entries here.
  */
 
+/** One callable on a plugin's published api. */
+export interface PluginApiDoc {
+  /** Method name on the api object. */
+  name: string;
+  /** How to call it, e.g. `addGuide(axis: "x" | "y", pos: number): Guide`. */
+  signature: string;
+  /** What it does, and anything a caller would otherwise learn the hard way. */
+  summary: string;
+}
+
 /** What the lab hands a plugin at mount time. */
 export interface LabPluginContext {
   /** The element this plugin owns and mounts into. */
@@ -45,6 +55,12 @@ export interface LabPluginHandle {
 
 export interface LabPlugin {
   id: string;
+  /**
+   * What this plugin's published api can do. Required whenever `mount`
+   * publishes one — an api nobody can read is an api nobody uses. Lists the
+   * calling surface only, not the lab-owned lifecycle (handleKey, destroy…).
+   */
+  describe?: PluginApiDoc[];
   /** Key-broker order; lower is asked first. Defaults to 100. */
   order?: number;
   /**
@@ -104,6 +120,10 @@ export type LabBridge = {
   plugin(id: string): unknown;
   /** Ids of the plugins that published one. */
   plugins(): string[];
+  /** What one plugin's api can do. Empty for an id that published none. */
+  describe(id: string): PluginApiDoc[];
+  /** Every published api, keyed by plugin id. Start here. */
+  help(): Record<string, PluginApiDoc[]>;
 };
 
 declare global {
@@ -113,20 +133,60 @@ declare global {
 }
 
 /**
+ * Docs that disagree with the api are worse than none. Checks the half that
+ * can be checked: every documented name must be a real method. The other
+ * direction (an undocumented method) is unreachable at runtime — TypeScript's
+ * `private` is erased, so every internal is on the prototype too.
+ */
+export function checkApiDocs(
+  id: string,
+  api: unknown,
+  docs: PluginApiDoc[] | undefined,
+): string[] {
+  if (api === undefined) return [];
+  if (!docs || docs.length === 0) {
+    return [`[lab] plugin "${id}" publishes an api but describes nothing`];
+  }
+  if (typeof api !== "object" || api === null) return [];
+  const bag = api as Record<string, unknown>;
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const d of docs) {
+    if (seen.has(d.name)) {
+      out.push(`[lab] plugin "${id}" documents "${d.name}" twice`);
+    }
+    seen.add(d.name);
+    if (typeof bag[d.name] !== "function") {
+      out.push(
+        `[lab] plugin "${id}" documents "${d.name}", which its api does not have`,
+      );
+    }
+  }
+  return out;
+}
+
+/**
  * Publish the mounted plugins' APIs on `window.lab`, so a tool can be used
  * without pressing its keys. Returns the teardown, which only clears the
  * bridge if it is still the one it installed (StrictMode remounts overlap).
  */
 export function publishPluginApis(
-  mounted: { id: string; handle: LabPluginHandle }[],
+  mounted: { id: string; handle: LabPluginHandle; docs?: PluginApiDoc[] }[],
+  warn: (message: string) => void = (m) => console.warn(m),
 ): () => void {
   const apis = new Map<string, unknown>();
+  const docs = new Map<string, PluginApiDoc[]>();
   for (const m of mounted) {
-    if (m.handle.api !== undefined) apis.set(m.id, m.handle.api);
+    if (m.handle.api === undefined) continue;
+    for (const problem of checkApiDocs(m.id, m.handle.api, m.docs)) warn(problem);
+    apis.set(m.id, m.handle.api);
+    docs.set(m.id, m.docs ?? []);
   }
   const bridge: LabBridge = {
     plugin: (id) => apis.get(id),
     plugins: () => [...apis.keys()],
+    describe: (id) => docs.get(id) ?? [],
+    help: () => Object.fromEntries(docs),
   };
   window.lab = bridge;
   return () => {

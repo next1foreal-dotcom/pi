@@ -1,8 +1,8 @@
 /**
  * Page-space sticky notes for the Interaction Lab.
  *
- * Reference UX (viewport notes): `references/sticky-notes/` — snapshot with no
- * LICENSE file; private use / vendor only, do not redistribute.
+ * Reference UX (viewport notes): github.com/timothymaarv/sticky-notes @ 7db1bbb —
+ * no LICENSE file; read for mechanism, do not vendor.
  * Positions are page units and live inside the camera-transformed layer, so
  * notes pan/zoom with canvas content (Shift+N spawns at the viewport-center
  * page point).

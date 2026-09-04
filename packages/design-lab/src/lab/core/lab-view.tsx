@@ -38,6 +38,7 @@ import type { Mode } from "./types";
 import {
   LAB_PLUGINS,
   type LabPluginHandle,
+  type PluginApiDoc,
   publishPluginApis,
 } from "../plugin-api";
 import { dispatchLabKey } from "./keyboard-dispatch";
@@ -211,7 +212,11 @@ export function InteractionLab() {
       },
     });
     const owned: HTMLElement[] = [];
-    const mounted: { id: string; handle: LabPluginHandle }[] = [];
+    const mounted: {
+      id: string;
+      handle: LabPluginHandle;
+      docs?: PluginApiDoc[];
+    }[] = [];
     for (const def of LAB_PLUGINS) {
       let host: HTMLElement | null = null;
       if (def.hostSelector) {
@@ -229,7 +234,7 @@ export function InteractionLab() {
       const handle = def.mount(ctxFor(host));
       if (handle) {
         session.plugins.push(handle);
-        mounted.push({ id: def.id, handle });
+        mounted.push({ id: def.id, handle, docs: def.describe });
       }
     }
     const unpublish = publishPluginApis(mounted);
