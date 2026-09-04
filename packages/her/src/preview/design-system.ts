@@ -149,7 +149,8 @@ function docCommentBefore(css: string, selector: string): string | undefined {
 	if (!before.endsWith("*/")) return undefined;
 	const open = before.lastIndexOf("/*");
 	if (open < 0) return undefined;
-	return before.slice(open);
+	// The source may be CRLF; a generated artifact should not inherit that.
+	return stripCarriageReturns(before.slice(open));
 }
 
 /** Index of the start of the line on which `selector {` opens, or -1. */
@@ -170,6 +171,13 @@ function trimTrailingWhitespace(value: string): string {
 	let end = value.length;
 	while (end > 0 && /\s/.test(value[end - 1]!)) end--;
 	return value.slice(0, end);
+}
+function stripCarriageReturns(value: string): string {
+	let out = "";
+	for (const ch of value) {
+		if (ch !== "\r") out += ch;
+	}
+	return out;
 }
 
 interface CssRule {
@@ -312,10 +320,34 @@ function customProperties(body: string): Array<{ name: string; value: string }> 
 	const re = /(--[A-Za-z_0-9-]+)\s*:\s*([^;]*);/g;
 	let match = re.exec(src);
 	while (match) {
-		out.push({ name: match[1]!, value: match[2]!.trim() });
+		out.push({ name: match[1]!, value: foldValue(match[2]!) });
 		match = re.exec(src);
 	}
 	return out;
+}
+
+/**
+ * A value wrapped across lines is still one value. Carried through with its raw
+ * newline it snaps a markdown table row in half, and a CRLF source drags CR into
+ * generated files. Fold the wrap; leave spacing inside a line alone.
+ */
+function foldValue(value: string): string {
+	let out = "";
+	let pendingSpace = false;
+	for (const ch of value) {
+		if (ch === "\r") continue;
+		if (ch === "\n") {
+			pendingSpace = out.length > 0;
+			continue;
+		}
+		if (pendingSpace) {
+			if (ch === " " || ch === "\t") continue;
+			out += " ";
+			pendingSpace = false;
+		}
+		out += ch;
+	}
+	return out.trim();
 }
 
 function withoutNestedBlocks(body: string): string {

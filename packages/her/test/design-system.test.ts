@@ -206,3 +206,30 @@ test("the doc comment sitting above the light selector is carried across, even b
 	const md = await readFile(join(root, "design/system/samantha-ui/tokens.md"), "utf8");
 	assert.match(md, /One accent, carried by content and state, never by chrome\./);
 });
+
+// A shipped stylesheet wraps long values (shadows, gradients) across lines, and
+// on Windows those lines end in CRLF. Carried through verbatim they put a raw
+// newline inside a markdown table cell, which snaps the row in half — she would
+// read shredded values for exactly the tokens that are hardest to guess.
+test("a value wrapped across lines is folded onto one line, in both the table and the css", async (t) => {
+	const root = await tempRoot(t);
+	const wrapped =
+		"/* doc */\r\n:root {\r\n\t--shadow: 0 1px 2px rgba(0,0,0,0.04),\r\n\t\t0 12px 32px rgba(0,0,0,0.08);\r\n}\r\n.dark {\r\n\t--shadow: none;\r\n}\r\n";
+	const tools = harness({
+		repoRoot: root,
+		now: () => ISO,
+		headOf: async () => HEAD,
+		readSource: async () => wrapped,
+	});
+	const { details } = await run(tools.get("design_system_load"), {});
+	assert.equal(details.ok, true);
+
+	const md = await readFile(join(root, "design/system/samantha-ui/tokens.md"), "utf8");
+	const rows = md.split("\n").filter((line) => line.startsWith("| --") && !line.startsWith("| --- |"));
+	assert.equal(rows.length, 1, `expected one table row, got:\n${rows.join("\n")}`);
+	assert.equal(rows[0], "| --shadow | 0 1px 2px rgba(0,0,0,0.04), 0 12px 32px rgba(0,0,0,0.08) | none |");
+
+	const css = await readFile(join(root, "design/system/samantha-ui/tokens.css"), "utf8");
+	assert.ok(!css.includes("\r"), "generated css must not carry CR from the source");
+	assert.ok(!md.includes("\r"), "generated markdown must not carry CR from the source");
+});
