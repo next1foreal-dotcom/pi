@@ -43,10 +43,16 @@
   pointer-events: none;
 }
 
+/*
+ * Locked in, the screen is a live app, so the layer holding it takes events.
+ * The chrome layer must NOT: it is inset 0 over the whole viewport, above the
+ * layer at z-index 5, so making it auto swallows every click before it reaches
+ * the screen — "locked in" then looks live and answers nothing. Its items are
+ * `pointer-events: auto` on their own and stay clickable inside a `none`
+ * parent, which is exactly how explore mode already works.
+ */
 .root[data-mode="focus"] .layer,
-.root[data-mode="fill"] .layer,
-.root[data-mode="focus"] .chrome,
-.root[data-mode="fill"] .chrome {
+.root[data-mode="fill"] .layer {
   pointer-events: auto;
 }
 
