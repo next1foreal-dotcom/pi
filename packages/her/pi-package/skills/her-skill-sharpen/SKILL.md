@@ -35,7 +35,7 @@ Never keep a change just because it sounds cleaner. The challenger must help on 
    - challenger draft
    - rubric
    - verdict
-4. If the verdict is **keep**, edit only the package-local skill file and add or update tests that lock the new behavior.
+4. If the verdict is **keep**, write a unified diff of the challenger and drop a selfmod proposal JSON into `her-memory/proposals/selfmod/` targeting only the package-local skill file. Do not edit the live skill file (an ungated working-tree change is unattributed drift). Do not add or update tests -- they live outside the selfmod allowlist. Capture the diff, restore the file, then submit.
 5. If the verdict is **discard**, make no file edits and report why.
 6. If the change touches Samantha's identity, face, voice, SOUL, memory boundary, permission tiers, or protected zones, stop and ask for Samantha review first.
 
