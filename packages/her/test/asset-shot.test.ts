@@ -40,6 +40,8 @@ test("a shot lands the png and a provenance file beside it", async (t) => {
 	const tools = harness({
 		repoRoot: root,
 		now: () => "2026-09-01T12:00:00.000Z",
+		// The lab is not required to be running for this unit test to mean something.
+		probePort: async () => true,
 		capture: async () => PNG,
 	});
 	const { text, details } = await run(tools.get("design_asset_shot"), {
@@ -102,6 +104,8 @@ test("viewport is carried into both the capture and the receipt", async (t) => {
 	const tools = harness({
 		repoRoot: root,
 		now: () => "2026-09-01T12:00:00.000Z",
+		// The lab is not required to be running for this unit test to mean something.
+		probePort: async () => true,
 		capture: async (request) => {
 			seen = { width: request.width, height: request.height };
 			return PNG;
