@@ -90,10 +90,12 @@ export function bindCanvasInput(
       if (h.onPointerDown(e)) return;
       return;
     }
-    if (h.onPointerDown(e)) return;
+    // Middle-drag and space-drag pan from anywhere. A plain left press pans
+    // only where nothing else claims it — see the handle's onPointerDown.
+    const forcePan = space || e.button === 1;
+    if (!forcePan && h.onPointerDown(e)) return;
     if (h.isLocked()) return;
-    const pan = e.button === 1 || e.button === 0 || (space && e.button === 0);
-    if (!pan) return;
+    if (e.button !== 0 && e.button !== 1) return;
     e.preventDefault();
     panning = true;
     panPointer = e.pointerId;
@@ -125,6 +127,7 @@ export function bindCanvasInput(
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.code === "Space" && !e.repeat) {
       space = true;
+      root.setAttribute("data-space", "");
       if (!h.isLocked() && !panning) root.style.cursor = "grab";
     }
   };
@@ -132,12 +135,14 @@ export function bindCanvasInput(
   const onKeyUp = (e: KeyboardEvent) => {
     if (e.code === "Space") {
       space = false;
+      root.removeAttribute("data-space");
       if (!panning) root.style.cursor = "";
     }
   };
 
   const onBlur = () => {
     space = false;
+    root.removeAttribute("data-space");
     if (!panning) root.style.cursor = "";
   };
 

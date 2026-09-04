@@ -284,9 +284,18 @@ export function InteractionLab() {
         session.lastMove = performance.now();
       },
       onPointerDown: (e) => {
+        // True means "this press is spoken for, do not pan". Screens belong
+        // here too: the canvas used to pan while a frame was being dragged
+        // (the frame moved AND everything slid under it), and the pointer
+        // capture the pan took retargeted the click, so a frame never saw
+        // its own double-click and lock-in was unreachable by mouse.
         const t = e.target;
         if (!(t instanceof Element)) return false;
-        if (t.closest("[data-lab-chrome], [data-notes-host], [data-labels-host]"))
+        if (
+          t.closest(
+            "[data-screen-id], [data-lab-chrome], [data-notes-host], [data-labels-host], [data-ruler-host]",
+          )
+        )
           return true;
         return Boolean(session.drag);
       },
@@ -708,6 +717,8 @@ export function InteractionLab() {
 
   const startMove = (e: React.PointerEvent, id: string, ghost: boolean) => {
     if (session.mode !== "explore") return;
+    // Space is held: the canvas is panning from wherever the press landed.
+    if (session.root?.hasAttribute("data-space")) return;
     e.stopPropagation();
     session.selectedId = id;
     bump();

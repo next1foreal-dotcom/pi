@@ -1,10 +1,16 @@
 // @vitest-environment jsdom
 
 /**
- * A press is not a drag until the pointer travels. Without the threshold a
- * one-pixel tremor on a click moved the screen — and because a client pixel
- * is `1 / zoom` page units, at a fit-all zoom that is tens of page units,
- * written to the layout and persisted. This is the guard for that.
+ * What a press on the canvas is allowed to do.
+ *
+ * Two bugs lived here. A press became a drag with no threshold, so a
+ * one-pixel tremor moved the screen — and a client pixel is `1 / zoom` page
+ * units, so at a fit-all zoom that is tens of page units, persisted. And a
+ * press on a screen ALSO started a canvas pan, so the frame moved while
+ * everything slid under it; the pan's pointer capture then retargeted the
+ * click, which is why double-click lock-in was unreachable by mouse. The
+ * retargeting itself is browser-only (jsdom has no pointer capture), so the
+ * guard here is the pan — same cause, and it is the half jsdom can see.
  */
 
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -62,6 +68,7 @@ if (!HTMLElement.prototype.setPointerCapture) {
 	HTMLElement.prototype.hasPointerCapture = () => false;
 }
 
+import { getCamera } from "./camera";
 import { DRAG_THRESHOLD_PX } from "./interaction-lab";
 import { InteractionLab } from "./lab-view";
 
@@ -141,5 +148,84 @@ describe("a click is not a drag", () => {
 	it("moves the screen once the pointer passes the threshold", async () => {
 		const { before, after } = await press(DRAG_THRESHOLD_PX + 40, 30);
 		expect(after).not.toBe(before);
+	});
+});
+
+describe("only the background pans the canvas", () => {
+	let container: HTMLDivElement;
+	let root: Root;
+	let shield: HTMLElement;
+	let labRoot: HTMLElement;
+
+	beforeAll(async () => {
+		container = document.createElement("div");
+		document.body.appendChild(container);
+		root = createRoot(container);
+		await act(() => {
+			root.render(
+				createElement(StrictMode, null, createElement(InteractionLab)),
+			);
+		});
+		const g = [...container.querySelectorAll("[data-screen-id]")].find(
+			(el) => el instanceof HTMLElement && el.querySelector("[data-screen-scroll]"),
+		);
+		const s = g instanceof HTMLElement && g.querySelector('[class*="shield"]');
+		if (!(s instanceof HTMLElement)) throw new Error("no shield rendered");
+		shield = s;
+		const lr = container.querySelector("[data-mode]");
+		if (!(lr instanceof HTMLElement)) throw new Error("no lab root");
+		labRoot = lr;
+	});
+
+	afterAll(() => {
+		act(() => root.unmount());
+		container.remove();
+	});
+
+	async function dragFrom(el: HTMLElement, dx: number, dy: number) {
+		const before = getCamera();
+		await act(() => {
+			el.dispatchEvent(pointer("pointerdown", 500, 400));
+		});
+		// Moves go to the lab root and bubble on to window: the pan listener is
+		// on the root (the real browser routes there via pointer capture, which
+		// jsdom does not have), the frame-drag listener is on window.
+		await act(() => {
+			labRoot.dispatchEvent(pointer("pointermove", 500 + dx, 400 + dy));
+		});
+		await act(() => {
+			labRoot.dispatchEvent(pointer("pointerup", 500 + dx, 400 + dy));
+		});
+		const after = getCamera();
+		return { dx: +(after.x - before.x).toFixed(2), dy: +(after.y - before.y).toFixed(2) };
+	}
+
+	it("does not pan while a screen is being dragged", async () => {
+		const moved = await dragFrom(shield, 60, 40);
+		expect(moved).toEqual({ dx: 0, dy: 0 });
+	});
+
+	it("pans when the press lands on empty canvas", async () => {
+		const moved = await dragFrom(labRoot, 60, 40);
+		expect(Math.abs(moved.dx)).toBeGreaterThan(1);
+		expect(Math.abs(moved.dy)).toBeGreaterThan(1);
+	});
+
+	it("pans from a screen while Space is held, without moving it", async () => {
+		const group = shield.closest("[data-screen-id]") as HTMLElement;
+		const before = group.style.transform;
+		await act(() => {
+			window.dispatchEvent(
+				new KeyboardEvent("keydown", { code: "Space", key: " ", bubbles: true }),
+			);
+		});
+		const moved = await dragFrom(shield, 50, 0);
+		await act(() => {
+			window.dispatchEvent(
+				new KeyboardEvent("keyup", { code: "Space", key: " ", bubbles: true }),
+			);
+		});
+		expect(Math.abs(moved.dx)).toBeGreaterThan(1);
+		expect(group.style.transform).toBe(before);
 	});
 });
