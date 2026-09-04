@@ -35,9 +35,7 @@ import { applyResize, cleanupRow } from "./frame-ops";
 import { ScreenFrame, type ResizeEdge } from "./screen-frame";
 import { SCREENS, screenById, type ScreenDef } from "../screens";
 import type { Mode } from "./types";
-import { CanvasRuler } from "./canvas-ruler";
-import { NOTE_H, NOTE_W, StickyNotes } from "./page-notes";
-import { Labels } from "./page-labels";
+import { LAB_PLUGINS } from "../plugin-api";
 import { dispatchLabKey } from "./keyboard-dispatch";
 import {
   attachLabSpotlight,
@@ -129,10 +127,8 @@ export function InteractionLab() {
       escapers: new Map(),
       bump: () => {},
       getGuides: () => [] as { axis: "x" | "y"; pos: number }[],
-      rulerKey: () => false,
-      notesKey: () => false,
-      labelsKey: () => false,
-      rulerRefresh: () => {},
+      plugins: [],
+      pluginsOnCameraWrite: () => {},
       disposeExtras: () => {},
       getSnapshot: () => snapshotOf(s as Session),
     } as Session;
@@ -190,72 +186,58 @@ export function InteractionLab() {
     applyCamera(session, getCamera());
     flushCoarse();
 
-    const rulerHost = el.querySelector("[data-ruler-host]");
-    const ruler =
-      rulerHost instanceof HTMLElement
-        ? new CanvasRuler({
-            host: rulerHost,
-            getCamera,
-            getOrigin: () => session.origin,
-            getViewport: () => session.viewport,
-            getAppearance: () =>
-              luminance(session.canvasColor) < 0.5 ? "dark" : "light",
-          })
-        : null;
-    if (ruler) {
-      session.rulerKey = (e) => ruler.handleKey(e);
-      session.getGuides = () => ruler.getGuides();
-      session.rulerRefresh = () => ruler.refresh();
+    // ── Plugins: the lab is a host, design-time tools are plugins ──────
+    const pluginLayer = el.querySelector("[data-plugin-layer]");
+    const ctxFor = (host: HTMLElement) => ({
+      host,
+      getCamera,
+      getOrigin: () => session.origin,
+      getViewport: () => session.viewport,
+      getAppearance: (): "light" | "dark" =>
+        luminance(session.canvasColor) < 0.5 ? "dark" : "light",
+      getZoom: () => getCamera().z,
+      viewportCenterPage: () => {
+        const vp = session.viewport;
+        const origin = session.origin;
+        return screenToPage(
+          { x: origin.x + vp.width / 2, y: origin.y + vp.height / 2 },
+          getCamera(),
+          origin,
+        );
+      },
+    });
+    const owned: HTMLElement[] = [];
+    for (const def of LAB_PLUGINS) {
+      let host: HTMLElement | null = null;
+      if (def.hostSelector) {
+        const found = el.querySelector(def.hostSelector);
+        host = found instanceof HTMLElement ? found : null;
+      } else if (pluginLayer instanceof HTMLElement) {
+        // No bespoke host in the JSX: the lab makes one. This is the path a
+        // new plugin takes, with no edit to the lab itself.
+        host = document.createElement("div");
+        host.dataset.plugin = def.id;
+        pluginLayer.appendChild(host);
+        owned.push(host);
+      }
+      if (!host) continue;
+      const handle = def.mount(ctxFor(host));
+      if (handle) session.plugins.push(handle);
     }
-
-    const notesHost = el.querySelector("[data-notes-host]");
-    const notes =
-      notesHost instanceof HTMLElement
-        ? new StickyNotes({
-            host: notesHost,
-            getZoom: () => getCamera().z,
-          })
-        : null;
-    if (notes) {
-      session.notesKey = (e) =>
-        notes.handleKey(e, () => {
-          const cam = getCamera();
-          const vp = session.viewport;
-          const origin = session.origin;
-          const center = screenToPage(
-            { x: origin.x + vp.width / 2, y: origin.y + vp.height / 2 },
-            cam,
-            origin,
-          );
-          return { x: center.x - NOTE_W / 2, y: center.y - NOTE_H / 2 };
-        });
-    }
-
-    const labelsHost = el.querySelector("[data-labels-host]");
-    const labels =
-      labelsHost instanceof HTMLElement
-        ? new Labels({
-            host: labelsHost,
-            getZoom: () => getCamera().z,
-          })
-        : null;
-    if (labels) {
-      session.labelsKey = (e) =>
-        labels.handleKey(e, () => {
-          const cam = getCamera();
-          const vp = session.viewport;
-          const origin = session.origin;
-          return screenToPage(
-            { x: origin.x + vp.width / 2, y: origin.y + vp.height / 2 },
-            cam,
-            origin,
-          );
-        });
-    }
+    session.pluginsOnCameraWrite = () => {
+      for (const p of session.plugins) p.onCameraWrite?.();
+    };
+    session.getGuides = () => {
+      for (const p of session.plugins) {
+        const g = p.getGuides?.();
+        if (g) return g;
+      }
+      return [];
+    };
     session.disposeExtras = () => {
-      ruler?.destroy();
-      notes?.destroy();
-      labels?.destroy();
+      for (const p of session.plugins) p.destroy();
+      session.plugins.length = 0;
+      for (const host of owned) host.remove();
     };
 
     const ro = new ResizeObserver(() => {
@@ -411,10 +393,12 @@ export function InteractionLab() {
 
     // ── Keyboard: all lab shortcuts (capture phase, keydown only) ──────
     const onKeyDown = (e: KeyboardEvent) => {
-      // Ruler & notes get first refusal in explore mode
-      if (session.mode === "explore" && session.rulerKey(e)) return;
-      if (session.mode === "explore" && session.notesKey(e)) return;
-      if (session.mode === "explore" && session.labelsKey(e)) return;
+      // Plugins get first refusal, in registry order, explore mode only.
+      if (session.mode === "explore") {
+        for (const p of session.plugins) {
+          if (p.handleKey?.(e)) return;
+        }
+      }
 
       // Alt tracking for measurement overlay
       onKeyMeta(e);
@@ -811,6 +795,10 @@ export function InteractionLab() {
         }}
       />
       <div className={styles.rulerHost} data-ruler-host />
+      <div
+        data-plugin-layer
+        style={{ position: "absolute", inset: 0, pointerEvents: "none" }}
+      />
       {pickerOpen ? (
         <div className={styles.popover} data-lab-chrome>
           <div className={styles.swatchRow}>

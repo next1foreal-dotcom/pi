@@ -27,6 +27,7 @@ import { pushHistory, setNotice, type HistoryCommand } from "./history";
 import { labFs } from "./fs-client";
 import type { ResizeEdge } from "./screen-frame";
 import { SCREENS, screenById } from "../screens";
+import type { LabPluginHandle } from "../plugin-api";
 import type { Camera, Mode, PersistedV1, Point, ScreenLayout } from "./types";
 
 export const SHOW_PIXEL_GRID = true;
@@ -131,10 +132,9 @@ export type Session = {
   escapers: Map<string, () => boolean>;
   bump: () => void;
   getGuides: () => { axis: "x" | "y"; pos: number }[];
-  rulerKey: (e: KeyboardEvent) => boolean;
-  notesKey: (e: KeyboardEvent) => boolean;
-  labelsKey: (e: KeyboardEvent) => boolean;
-  rulerRefresh: () => void;
+  /** Mounted design-time plugins, in key-broker order. */
+  plugins: LabPluginHandle[];
+  pluginsOnCameraWrite: () => void;
   disposeExtras: () => void;
   getSnapshot: () => PersistedV1;
 };
@@ -179,7 +179,7 @@ function placeChrome(s: Session): void {
     el.style.transform = `translate(${x}px, ${y}px)`;
     el.style.width = `${l.width * cam.z}px`;
   }
-  s.rulerRefresh();
+  s.pluginsOnCameraWrite();
 }
 
 function showSnap(s: Session, lines: { axis: "x" | "y"; pos: number }[]): void {
