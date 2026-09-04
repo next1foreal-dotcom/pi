@@ -13,6 +13,7 @@ export const plugin: LabPlugin = {
     });
     return {
       handleKey: (e) => labels.handleKey(e, () => ctx.viewportCenterPage()),
+      api: labels,
       destroy: () => labels.destroy(),
     };
   },

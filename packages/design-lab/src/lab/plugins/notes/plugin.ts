@@ -17,6 +17,7 @@ export const plugin: LabPlugin = {
           const c = ctx.viewportCenterPage();
           return { x: c.x - NOTE_W / 2, y: c.y - NOTE_H / 2 };
         }),
+      api: notes,
       destroy: () => notes.destroy(),
     };
   },

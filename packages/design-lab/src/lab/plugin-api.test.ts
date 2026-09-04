@@ -1,5 +1,12 @@
-import { describe, expect, it } from "vitest";
-import { buildRegistry, type LabPlugin } from "./plugin-api";
+// @vitest-environment jsdom
+
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  buildRegistry,
+  type LabPlugin,
+  type LabPluginHandle,
+  publishPluginApis,
+} from "./plugin-api";
 
 const stub = (id: string, order?: number): LabPlugin => ({
   id,
@@ -58,5 +65,43 @@ describe("buildRegistry", () => {
       },
     });
     expect(out.map((p) => p.id)).toEqual(["from-folder"]);
+  });
+});
+
+const handle = (api?: unknown): LabPluginHandle => ({ api, destroy: () => {} });
+
+describe("publishPluginApis", () => {
+  afterEach(() => {
+    window.lab = undefined;
+  });
+
+  it("exposes only the plugins that published an api", () => {
+    publishPluginApis([
+      { id: "ruler", handle: handle({ addGuide: () => 1 }) },
+      { id: "coords", handle: handle() },
+    ]);
+    expect(window.lab?.plugins()).toEqual(["ruler"]);
+    expect(window.lab?.plugin("coords")).toBeUndefined();
+  });
+
+  it("hands back the very object the plugin published", () => {
+    const api = { addGuide: () => 1 };
+    publishPluginApis([{ id: "ruler", handle: handle(api) }]);
+    expect(window.lab?.plugin("ruler")).toBe(api);
+  });
+
+  it("teardown clears the bridge", () => {
+    const off = publishPluginApis([{ id: "ruler", handle: handle({}) }]);
+    off();
+    expect(window.lab).toBeUndefined();
+  });
+
+  it("a stale teardown leaves a newer bridge alone", () => {
+    // StrictMode remounts overlap: the old session's cleanup runs after the
+    // new session has already published. It must not blank the live one.
+    const off = publishPluginApis([{ id: "ruler", handle: handle({ n: 1 }) }]);
+    publishPluginApis([{ id: "ruler", handle: handle({ n: 2 }) }]);
+    off();
+    expect(window.lab?.plugin("ruler")).toEqual({ n: 2 });
   });
 });

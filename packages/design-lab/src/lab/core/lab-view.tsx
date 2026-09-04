@@ -35,7 +35,11 @@ import { applyResize, cleanupRow } from "./frame-ops";
 import { ScreenFrame, type ResizeEdge } from "./screen-frame";
 import { SCREENS, screenById, type ScreenDef } from "../screens";
 import type { Mode } from "./types";
-import { LAB_PLUGINS } from "../plugin-api";
+import {
+  LAB_PLUGINS,
+  type LabPluginHandle,
+  publishPluginApis,
+} from "../plugin-api";
 import { dispatchLabKey } from "./keyboard-dispatch";
 import {
   attachLabSpotlight,
@@ -207,6 +211,7 @@ export function InteractionLab() {
       },
     });
     const owned: HTMLElement[] = [];
+    const mounted: { id: string; handle: LabPluginHandle }[] = [];
     for (const def of LAB_PLUGINS) {
       let host: HTMLElement | null = null;
       if (def.hostSelector) {
@@ -222,8 +227,12 @@ export function InteractionLab() {
       }
       if (!host) continue;
       const handle = def.mount(ctxFor(host));
-      if (handle) session.plugins.push(handle);
+      if (handle) {
+        session.plugins.push(handle);
+        mounted.push({ id: def.id, handle });
+      }
     }
+    const unpublish = publishPluginApis(mounted);
     session.pluginsOnCameraWrite = () => {
       for (const p of session.plugins) p.onCameraWrite?.();
     };
@@ -235,6 +244,7 @@ export function InteractionLab() {
       return [];
     };
     session.disposeExtras = () => {
+      unpublish();
       for (const p of session.plugins) p.destroy();
       session.plugins.length = 0;
       for (const host of owned) host.remove();

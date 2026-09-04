@@ -174,7 +174,8 @@ export class CanvasRuler {
     this.root.remove();
   }
 
-  private toggle(): void {
+  /** Rulers on/off — the code path for Shift+R. */
+  toggle(): void {
     if (this.enabled) {
       this.enabled = false;
       this.root.style.display = "none";
@@ -188,11 +189,46 @@ export class CanvasRuler {
     for (const g of this.guides) this.positionEl(g);
   }
 
-  private setHidden(hidden: boolean): void {
+  /** Hide while staying in ruler mode — Ctrl+Shift+R. No-op when off. */
+  setHidden(hidden: boolean): void {
     if (!this.enabled) return;
     this.hidden = hidden;
     this.root.style.display = hidden ? "none" : "block";
     if (!hidden) this.refresh();
+  }
+
+  /** Turn rulers on if they are off. */
+  enable(): void {
+    if (!this.enabled) this.toggle();
+  }
+
+  /** Turn rulers off if they are on. */
+  disable(): void {
+    if (this.enabled) this.toggle();
+  }
+
+  /**
+   * Place a guide at a page coordinate — what dragging out of a ruler does,
+   * without the hand. Allowed while rulers are off (the guide is waiting when
+   * you turn them on); `getGuides` still reports only while enabled, so frame
+   * snapping behaves exactly as before.
+   */
+  addGuide(axis: GuideAxis, pos: number): Guide {
+    const g = this.insert(axis, pos);
+    this.positionEl(g);
+    this.draw();
+    this.commit();
+    return g;
+  }
+
+  /** Remove one guide by id. */
+  removeGuide(id: number): void {
+    this.remove(id);
+  }
+
+  /** Remove every guide. */
+  clearGuides(): void {
+    for (const g of [...this.guides]) this.remove(g.id);
   }
 
   private theme(): Theme {

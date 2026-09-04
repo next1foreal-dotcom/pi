@@ -34,6 +34,12 @@ export interface LabPluginHandle {
   onCameraWrite?(): void;
   /** Extra snap targets for frame drags, in page units. */
   getGuides?(): { axis: "x" | "y"; pos: number }[];
+  /**
+   * The plugin's own instance API, published to callers outside React — an
+   * agent driving the page, an e2e test, the console — as
+   * `window.lab.plugin("<id>")`. Omit it and the plugin stays keyboard-only.
+   */
+  api?: unknown;
   destroy(): void;
 }
 
@@ -91,3 +97,39 @@ const modules = import.meta.glob<PluginModule>("./plugins/*/plugin.ts", {
 export const LAB_PLUGINS: LabPlugin[] = buildRegistry(modules, (m) =>
   console.warn(m),
 );
+
+/** The lab's one global. Present only while a lab is mounted. */
+export type LabBridge = {
+  /** A mounted plugin's published API, or undefined. */
+  plugin(id: string): unknown;
+  /** Ids of the plugins that published one. */
+  plugins(): string[];
+};
+
+declare global {
+  interface Window {
+    lab?: LabBridge;
+  }
+}
+
+/**
+ * Publish the mounted plugins' APIs on `window.lab`, so a tool can be used
+ * without pressing its keys. Returns the teardown, which only clears the
+ * bridge if it is still the one it installed (StrictMode remounts overlap).
+ */
+export function publishPluginApis(
+  mounted: { id: string; handle: LabPluginHandle }[],
+): () => void {
+  const apis = new Map<string, unknown>();
+  for (const m of mounted) {
+    if (m.handle.api !== undefined) apis.set(m.id, m.handle.api);
+  }
+  const bridge: LabBridge = {
+    plugin: (id) => apis.get(id),
+    plugins: () => [...apis.keys()],
+  };
+  window.lab = bridge;
+  return () => {
+    if (window.lab === bridge) window.lab = undefined;
+  };
+}

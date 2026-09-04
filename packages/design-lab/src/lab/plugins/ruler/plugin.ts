@@ -20,6 +20,7 @@ export const plugin: LabPlugin = {
       // repaints on every camera write rather than on a React render.
       onCameraWrite: () => ruler.refresh(),
       getGuides: () => ruler.getGuides(),
+      api: ruler,
       destroy: () => ruler.destroy(),
     };
   },
