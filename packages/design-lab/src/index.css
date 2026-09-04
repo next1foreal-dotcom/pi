@@ -1,3 +1,4 @@
+@import "./tokens/product.css";
 @font-face {
   font-family: Inter;
   src: url("/fonts/inter/inter-var.woff2") format("woff2");

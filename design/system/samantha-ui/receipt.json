@@ -1,0 +1,10 @@
+{
+	"target": "samantha-ui",
+	"sourcePath": "../samantha-ui/src/app/globals.css",
+	"sourceHead": "5077b2789d0dd5c60f6d5ba9adbba994633735e0",
+	"loadedAt": "2026-09-04T16:48:44.439Z",
+	"tokenCount": {
+		"light": 128,
+		"dark": 69
+	}
+}
