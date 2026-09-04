@@ -38,6 +38,14 @@ export const SNAP_TOLERANCE_PX = 8;
 export const NUDGE_SMALL = 1;
 export const NUDGE_BIG = 10;
 export const NUDGE_COMMIT_MS = 400;
+/**
+ * How far the pointer must travel before a press becomes a drag, in client
+ * pixels. Without it every click is a one-pixel drag, and because a client
+ * pixel is `1 / zoom` page units, a hand tremor at a fit-all zoom moves the
+ * screen by tens of page units — silently, and persisted. Figma's own
+ * threshold is in this range.
+ */
+export const DRAG_THRESHOLD_PX = 4;
 export const CLEANUP_GAP = 80;
 export const IDLE_MS = 160;
 export const MIN_FRAME_W = 320;
@@ -88,6 +96,8 @@ type Drag =
       current: ScreenLayout;
       px: number;
       py: number;
+      /** False until the pointer passes DRAG_THRESHOLD_PX; a click never arms. */
+      armed: boolean;
     }
   | {
       kind: "resize";
@@ -97,6 +107,7 @@ type Drag =
       current: ScreenLayout;
       px: number;
       py: number;
+      armed: boolean;
     };
 
 export type Session = {

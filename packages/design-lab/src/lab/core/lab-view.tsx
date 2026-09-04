@@ -54,6 +54,7 @@ import {
   MIN_FRAME_W,
   NUDGE_COMMIT_MS,
   SNAP_TO_GRID,
+  DRAG_THRESHOLD_PX,
   SNAP_TOLERANCE_PX,
   applyCamera,
   applyHistory,
@@ -308,6 +309,14 @@ export function InteractionLab() {
         }
       }
       if (!session.drag) return;
+      if (!session.drag.armed) {
+        // Still a click until the pointer travels far enough. Measured in
+        // client pixels, because the threshold is about the hand, not the zoom.
+        const ax = e.clientX - session.drag.px;
+        const ay = e.clientY - session.drag.py;
+        if (Math.hypot(ax, ay) < DRAG_THRESHOLD_PX) return;
+        session.drag.armed = true;
+      }
       const cam = getCamera();
       const dx = (e.clientX - session.drag.px) / cam.z;
       const dy = (e.clientY - session.drag.py) / cam.z;
@@ -368,6 +377,11 @@ export function InteractionLab() {
       hideSnap(session);
       if (session.ghost) session.ghost.style.display = "none";
       session.drag = null;
+      if (!drag.armed) {
+        // It was a click. Nothing moved, so there is nothing to commit: no
+        // duplicate for an Alt-click, no no-op entry in the undo stack.
+        return;
+      }
       if (drag.kind === "ghost") {
         const def = screenById(drag.id);
         if (def)
@@ -705,6 +719,7 @@ export function InteractionLab() {
       current: start,
       px: e.clientX,
       py: e.clientY,
+      armed: false,
     };
   };
 
@@ -745,6 +760,7 @@ export function InteractionLab() {
                 current: start,
                 px: e.clientX,
                 py: e.clientY,
+                armed: false,
               };
             }}
           />
