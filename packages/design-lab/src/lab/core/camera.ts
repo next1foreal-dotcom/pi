@@ -35,11 +35,25 @@ export function attachCameraApplier(fn: Applier | null): void {
   applier = fn;
 }
 
+/**
+ * The z range an interactive gesture may write, given where the camera already
+ * is. A fit can legitimately park the camera below the interactive floor, and
+ * clamping straight to that floor made the first wheel notch zoom *in* when the
+ * user was asking to zoom out. Outside the band the gesture can only hold
+ * still or come back toward it, never be yanked across it.
+ */
+export function interactiveZBand(current: number): [number, number] {
+  return [
+    Math.min(INTERACTIVE_Z_MIN, current),
+    Math.max(INTERACTIVE_Z_MAX, current),
+  ];
+}
+
 export function setCameraValue(next: Camera): void {
   camera = {
     x: next.x,
     y: next.y,
-    z: clamp(next.z, INTERACTIVE_Z_MIN, INTERACTIVE_Z_MAX),
+    z: clamp(next.z, ...interactiveZBand(camera.z)),
   };
   scheduleApply("gesture");
   bumpCoarse();

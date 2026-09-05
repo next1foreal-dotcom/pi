@@ -1,11 +1,4 @@
-import {
-  INTERACTIVE_Z_MAX,
-  INTERACTIVE_Z_MIN,
-  clamp,
-  nextZoomStep,
-  panBy,
-  zoomAt,
-} from "./math";
+import { clamp, nextZoomStep, panBy, zoomAt } from "./math";
 import { getCamera, setCameraValue } from "./camera";
 import type { Point } from "./types";
 
@@ -21,6 +14,23 @@ export type CanvasInputHandlers = {
   onFillPinch: () => void;
   lastPointer: { x: number; y: number };
 };
+
+/**
+ * How much one wheel event may zoom. Every real mouse notch reports 100 or
+ * 120, so the cap is what actually decides a notch's size; a trackpad reports
+ * single digits and stays under it, which is what keeps pinch-zoom smooth.
+ */
+export const WHEEL_ZOOM_CAP = 10;
+
+/**
+ * Wheel delta -> zoom multiplier. This is `exp` and not `1 - d` because the
+ * two directions have to be exact inverses: with `z * (1 +/- 0.1)` a notch in
+ * followed by a notch out multiplied to 0.99, so scrolling in and back out
+ * shrank the canvas ~1% every time and never returned to where you started.
+ */
+export function zoomFactor(deltaY: number): number {
+  return Math.exp(-clamp(deltaY, -WHEEL_ZOOM_CAP, WHEEL_ZOOM_CAP) / 100);
+}
 
 function wheelDelta(e: WheelEvent): { dx: number; dy: number } {
   const scale = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 800 : 1;
@@ -43,9 +53,8 @@ export function bindCanvasInput(
   };
 
   const zoomBy = (p: Point, deltaY: number) => {
-    const delta = clamp(deltaY, -10, 10) / 100;
     const cam = getCamera();
-    const z2 = clamp(cam.z * (1 - delta), INTERACTIVE_Z_MIN, INTERACTIVE_Z_MAX);
+    const z2 = cam.z * zoomFactor(deltaY);
     if (z2 === cam.z) return;
     setCameraValue(zoomAt(cam, p, z2));
   };
