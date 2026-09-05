@@ -12,7 +12,7 @@ import type { LabObjects } from "../plugin-api";
 import {
 	isNoteFid,
 	newFeedId,
-	projectNoteFeed,
+	projectNoteCanvas,
 	type NoteReply,
 	type NoteThreadState,
 } from "./note-feed";
@@ -379,6 +379,8 @@ export class StickyNotes {
 	private saveTimer: ReturnType<typeof setTimeout> | undefined;
 	private pollTimer: ReturnType<typeof setInterval> | undefined;
 	private lastEmittedText = new Map<number, string>();
+	private applyingFeed = false;
+	private closed = false;
 
 	constructor(options: StickyNotesOptions) {
 		this.storageKey =
@@ -474,6 +476,7 @@ export class StickyNotes {
 		this.refs.get(id)?.el.remove();
 		this.refs.delete(id);
 		this.lastEmittedText.delete(id);
+		if (this.applyingFeed) return;
 		if (note) this.emit({ t: "note.delete", id: note.fid });
 		this.commit();
 	}
@@ -544,6 +547,7 @@ export class StickyNotes {
 
 	destroy() {
 		if (!this.supported) return;
+		this.closed = true;
 		document.removeEventListener("pointerdown", this.onDocPointerDown, true);
 		document.removeEventListener("visibilitychange", this.onVisibility);
 		clearTimeout(this.saveTimer);
@@ -744,6 +748,7 @@ export class StickyNotes {
 				note.y = rect.y;
 				note.w = rect.width;
 				note.h = note.compact ? Math.round(rect.height / NOTE_COMPACT_RATIO) : rect.height;
+				if (this.applyingFeed) return;
 				this.emit({
 					t: "note.move",
 					id: note.fid,
@@ -1173,34 +1178,37 @@ export class StickyNotes {
 
 	// -------------------------------------------------------------- persist
 
+	private persistLocal() {
+		if (this.closed || !this.storageKey) return;
+		try {
+			localStorage.setItem(
+				this.storageKey as string,
+				JSON.stringify({
+					v: 1,
+					notes: this.notes.map((n) => ({
+						x: n.x,
+						y: n.y,
+						c: n.color,
+						f: n.fontSize,
+						ff: n.font,
+						k: n.compact,
+						w: n.w,
+						hh: n.h,
+						t: n.text,
+						h: sanitizeHtml(n.html),
+						fi: n.fid,
+					})),
+				}),
+			);
+		} catch {
+			// storage unavailable — notes stay in-memory
+		}
+	}
+
 	private commit() {
 		clearTimeout(this.saveTimer);
 		this.saveTimer = setTimeout(() => {
-			if (this.storageKey) {
-				try {
-					localStorage.setItem(
-						this.storageKey as string,
-						JSON.stringify({
-							v: 1,
-							notes: this.notes.map((n) => ({
-								x: n.x,
-								y: n.y,
-								c: n.color,
-								f: n.fontSize,
-								ff: n.font,
-								k: n.compact,
-								w: n.w,
-								hh: n.h,
-								t: n.text,
-								h: sanitizeHtml(n.html),
-								fi: n.fid,
-							})),
-						}),
-					);
-				} catch {
-					// storage unavailable — notes stay in-memory
-				}
-			}
+			this.persistLocal();
 			for (const n of this.notes) {
 				if (this.lastEmittedText.get(n.id) === n.text) continue;
 				this.emit({ t: "note.edit", id: n.fid, text: n.text });
@@ -1302,6 +1310,7 @@ export class StickyNotes {
 	};
 
 	private async pullThreads() {
+		if (this.closed) return;
 		try {
 			const res = await fetch("/__lab-fs/notes/threads", {
 				method: "POST",
@@ -1311,9 +1320,9 @@ export class StickyNotes {
 				},
 				body: "{}",
 			});
-			if (!res.ok) return;
+			if (this.closed || !res.ok) return;
 			const data = (await res.json()) as { feed?: unknown };
-			if (typeof data.feed !== "string") return;
+			if (this.closed || typeof data.feed !== "string") return;
 			this.applyFeed(data.feed);
 		} catch {
 			// silent — the canvas still works without her
@@ -1321,14 +1330,107 @@ export class StickyNotes {
 	}
 
 	private applyFeed(text: string) {
-		const threads = projectNoteFeed(text);
-		for (const note of this.notes) {
-			const st = threads.get(note.fid);
-			if (st) this.paintThread(note, st);
+		if (this.closed) return;
+		const { live, deleted } = projectNoteCanvas(text);
+		this.applyingFeed = true;
+		try {
+			let dirty = false;
+			const byFid = new Map(this.notes.map((n) => [n.fid, n] as const));
+			for (const fid of deleted) {
+				const note = byFid.get(fid);
+				if (!note || this.isEditingNote(note)) continue;
+				this.removeNote(note.id);
+				byFid.delete(fid);
+				dirty = true;
+			}
+			for (const [fid, st] of live) {
+				const note = byFid.get(fid);
+				if (note) {
+					if (!this.isEditingNote(note) && this.alignExisting(note, st))
+						dirty = true;
+					this.paintThread(note, st);
+				} else if (st.hasBody) {
+					this.adoptFromFeed(fid, st);
+					dirty = true;
+				}
+			}
+			if (dirty) {
+				this.persistLocal();
+				this.onChange?.(this);
+			}
+		} finally {
+			this.applyingFeed = false;
 		}
 	}
 
-	private paintThread(note: StickyNote, st: NoteThreadState) {
+	private isEditingNote(note: StickyNote): boolean {
+		const r = this.refs.get(note.id);
+		if (!r) return false;
+		const active = document.activeElement;
+		if (!(active instanceof Node)) return false;
+		return active === r.text || r.text.contains(active);
+	}
+
+	private alignExisting(note: StickyNote, st: NoteThreadState): boolean {
+		if (!st.hasBody) return false;
+		let dirty = false;
+		if (note.x !== st.x || note.y !== st.y) {
+			note.x = st.x;
+			note.y = st.y;
+			const layout = this.objects.layout(this.noteObjectId(note.id));
+			if (layout) {
+				this.objects.setLayout(this.noteObjectId(note.id), {
+					...layout,
+					x: st.x,
+					y: st.y,
+				});
+			}
+			dirty = true;
+		}
+		if (note.text === st.text) return dirty;
+		const r = this.refs.get(note.id);
+		note.html = textToHtml(st.text);
+		if (r) {
+			r.text.innerHTML = note.html;
+			note.text = r.text.textContent ?? "";
+			const empty = note.text === "" && !r.text.querySelector("li");
+			if (r.text.hasAttribute("data-empty") !== empty)
+				r.text.toggleAttribute("data-empty", empty);
+		} else {
+			note.text = st.text;
+		}
+		this.lastEmittedText.set(note.id, note.text);
+		return true;
+	}
+
+	private adoptFromFeed(fid: string, st: NoteThreadState) {
+		const note: StickyNote = {
+			id: this.nextId++,
+			fid,
+			x: st.x,
+			y: st.y,
+			color: this.defaultColor,
+			fontSize: "medium",
+			font: "inter",
+			compact: false,
+			w: NOTE_DEFAULT,
+			h: NOTE_DEFAULT,
+			text: "",
+			html: textToHtml(st.text),
+			replies: st.replies,
+			resolved: st.resolved,
+			source: st.source,
+		};
+		this.notes.push(note);
+		this.mountNote(note);
+		this.registerNote(note);
+		this.lastEmittedText.set(note.id, note.text);
+	}
+
+	private paintThread(
+		note: StickyNote,
+		st: Pick<NoteThreadState, "replies" | "resolved">,
+	) {
 		note.replies = st.replies;
 		note.resolved = st.resolved;
 		const r = this.refs.get(note.id);

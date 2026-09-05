@@ -75,6 +75,7 @@ afterEach(() => {
 	live?.destroy();
 	live = null;
 	document.body.innerHTML = "";
+	localStorage.removeItem("interaction-lab:notes:v1");
 	vi.unstubAllGlobals();
 	vi.useRealTimers();
 });
@@ -599,6 +600,286 @@ describe("replies and resolved state on the sticky", () => {
 				true,
 			);
 		});
+	});
+});
+
+function mockThreads(feed: string) {
+	vi.mocked(fetch).mockImplementation(async (url) => {
+		if (String(url).includes("/notes/threads")) {
+			return {
+				ok: true,
+				json: async () => ({ ok: true, feed }),
+			} as unknown as Response;
+		}
+		return {
+			ok: true,
+			json: async () => ({ ok: true }),
+		} as unknown as Response;
+	});
+}
+
+function eventLine(event: Record<string, unknown>): string {
+	return `${JSON.stringify(event)}\n`;
+}
+
+async function pullNow() {
+	Object.defineProperty(document, "hidden", {
+		configurable: true,
+		get: () => false,
+	});
+	document.dispatchEvent(new Event("visibilitychange"));
+}
+
+describe("feed is the source of truth, localStorage is a cache", () => {
+	it("creates a note the feed has and localStorage does not", async () => {
+		mockThreads(
+			eventLine({
+				t: "note",
+				id: "n_aaaaaaaaaaaa",
+				at: "2026-09-05T20:00:00.000Z",
+				author: "fei",
+				screenId: "playground",
+				x: 40,
+				y: 80,
+				text: "too tight",
+			}),
+		);
+		const host = document.createElement("div");
+		document.body.appendChild(host);
+		live = new StickyNotes({
+			host,
+			objects: stubObjects(),
+			storageKey: null,
+			screenAt: () => "playground",
+		});
+		await vi.waitFor(() => {
+			expect(live?.getNotes()).toHaveLength(1);
+		});
+		expect(live?.getNotes()[0]).toMatchObject({
+			fid: "n_aaaaaaaaaaaa",
+			x: 40,
+			y: 80,
+			text: "too tight",
+		});
+		expect(host.querySelector(".sn-text")?.textContent).toBe("too tight");
+		expect(eventPosts().filter((p) => p.body.t === "note")).toHaveLength(0);
+	});
+
+	it("deletes a local note when the feed has note.delete for it", async () => {
+		const host = document.createElement("div");
+		document.body.appendChild(host);
+		live = new StickyNotes({
+			host,
+			objects: stubObjects(),
+			storageKey: null,
+			screenAt: () => "playground",
+		});
+		const n = live.spawn({ x: 0, y: 0, text: "gone" });
+		expect(host.querySelectorAll(".sn-note")).toHaveLength(1);
+		host.querySelector<HTMLElement>(".sn-text")?.blur();
+		mockThreads(
+			eventLine({
+				t: "note.delete",
+				id: n.fid,
+				at: "2026-09-05T20:00:00.000Z",
+				author: "fei",
+			}),
+		);
+		await pullNow();
+		await vi.waitFor(() => {
+			expect(live?.getNotes()).toHaveLength(0);
+		});
+		expect(host.querySelectorAll(".sn-note")).toHaveLength(0);
+		expect(eventPosts().filter((p) => p.body.t === "note.delete")).toHaveLength(
+			0,
+		);
+	});
+
+	it("keeps a local note the feed never mentioned", async () => {
+		const host = document.createElement("div");
+		document.body.appendChild(host);
+		live = new StickyNotes({
+			host,
+			objects: stubObjects(),
+			storageKey: null,
+			screenAt: () => "playground",
+		});
+		const n = live.spawn({ x: 8, y: 9, text: "only local" });
+		mockThreads(
+			eventLine({
+				t: "note",
+				id: "n_bbbbbbbbbbbb",
+				at: "2026-09-05T20:00:00.000Z",
+				author: "fei",
+				screenId: "playground",
+				x: 1,
+				y: 2,
+				text: "from feed",
+			}),
+		);
+		await pullNow();
+		await vi.waitFor(() => {
+			expect(live?.getNotes().some((note) => note.fid === "n_bbbbbbbbbbbb")).toBe(
+				true,
+			);
+		});
+		expect(live?.getNotes().some((note) => note.fid === n.fid)).toBe(true);
+		expect(live?.getNotes().find((note) => note.fid === n.fid)?.text).toBe(
+			"only local",
+		);
+	});
+
+	it("does not touch local notes when the feed cannot be fetched", async () => {
+		const key = "test:notes:feed-down";
+		localStorage.setItem(
+			key,
+			JSON.stringify({
+				v: 1,
+				notes: [
+					{
+						x: 4,
+						y: 5,
+						c: "yellow",
+						f: "medium",
+						k: false,
+						t: "kept",
+						h: "kept",
+						fi: "n_cccccccccccc",
+					},
+				],
+			}),
+		);
+		vi.mocked(fetch).mockRejectedValue(new Error("dev server down"));
+		const host = document.createElement("div");
+		document.body.appendChild(host);
+		live = new StickyNotes({
+			host,
+			objects: stubObjects(),
+			storageKey: key,
+		});
+		expect(live.getNotes()).toHaveLength(1);
+		expect(live.getNotes()[0]?.text).toBe("kept");
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(live.getNotes()).toHaveLength(1);
+		expect(live.getNotes()[0]?.fid).toBe("n_cccccccccccc");
+		expect(live.getNotes()[0]?.text).toBe("kept");
+		expect(host.querySelectorAll(".sn-note")).toHaveLength(1);
+		localStorage.removeItem(key);
+	});
+
+	it("does not touch local notes when the feed endpoint is not ok", async () => {
+		const host = document.createElement("div");
+		document.body.appendChild(host);
+		live = new StickyNotes({
+			host,
+			objects: stubObjects(),
+			storageKey: null,
+			screenAt: () => "playground",
+		});
+		const n = live.spawn({ x: 0, y: 0, text: "still here" });
+		vi.mocked(fetch).mockResolvedValue({
+			ok: false,
+			json: async () => ({ ok: false }),
+		} as unknown as Response);
+		await pullNow();
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(live.getNotes()).toHaveLength(1);
+		expect(live.getNotes()[0]?.fid).toBe(n.fid);
+		expect(live.getNotes()[0]?.text).toBe("still here");
+	});
+
+	it("aligns text and position from last note.edit / note.move", async () => {
+		const host = document.createElement("div");
+		document.body.appendChild(host);
+		live = new StickyNotes({
+			host,
+			objects: stubObjects(),
+			storageKey: null,
+			screenAt: () => "playground",
+		});
+		const n = live.spawn({ x: 0, y: 0, text: "first words" });
+		host.querySelector<HTMLElement>(".sn-text")?.blur();
+		mockThreads(
+			eventLine({
+				t: "note",
+				id: n.fid,
+				at: "2026-09-05T20:00:00.000Z",
+				author: "fei",
+				screenId: "playground",
+				x: 10,
+				y: 20,
+				text: "first words",
+			}) +
+				eventLine({
+					t: "note.edit",
+					id: n.fid,
+					at: "2026-09-05T20:01:00.000Z",
+					author: "fei",
+					text: "second words",
+				}) +
+				eventLine({
+					t: "note.move",
+					id: n.fid,
+					at: "2026-09-05T20:02:00.000Z",
+					author: "fei",
+					screenId: "mosaic",
+					x: 90,
+					y: 40,
+				}),
+		);
+		await pullNow();
+		await vi.waitFor(() => {
+			expect(live?.getNotes()[0]?.text).toBe("second words");
+		});
+		expect(live?.getNotes()[0]).toMatchObject({ x: 90, y: 40 });
+		expect(host.querySelector(".sn-text")?.textContent).toBe("second words");
+		expect(eventPosts().filter((p) => p.body.t === "note.edit")).toHaveLength(0);
+		expect(eventPosts().filter((p) => p.body.t === "note.move")).toHaveLength(0);
+	});
+
+	it("does not rebuild a note that is being edited", async () => {
+		const host = document.createElement("div");
+		document.body.appendChild(host);
+		live = new StickyNotes({
+			host,
+			objects: stubObjects(),
+			storageKey: null,
+			screenAt: () => "playground",
+		});
+		const n = live.spawn({ x: 0, y: 0, text: "draft" });
+		const text = host.querySelector(".sn-text");
+		if (!(text instanceof HTMLElement)) throw new Error("no text");
+		text.focus();
+		expect(document.activeElement).toBe(text);
+		const node = document.activeElement;
+		mockThreads(
+			eventLine({
+				t: "note",
+				id: n.fid,
+				at: "2026-09-05T20:00:00.000Z",
+				author: "fei",
+				screenId: "playground",
+				x: 10,
+				y: 20,
+				text: "draft",
+			}) +
+				eventLine({
+					t: "note.edit",
+					id: n.fid,
+					at: "2026-09-05T20:01:00.000Z",
+					author: "fei",
+					text: "from feed, would steal the caret",
+				}),
+		);
+		await pullNow();
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(document.activeElement).toBe(node);
+		expect(text.isConnected).toBe(true);
+		expect(text.textContent).toBe("draft");
+		expect(live.getNotes()[0]?.text).toBe("draft");
 	});
 });
 

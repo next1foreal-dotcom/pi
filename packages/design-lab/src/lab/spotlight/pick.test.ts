@@ -173,3 +173,123 @@ describe("pick tool", () => {
     pick.destroy();
   });
 });
+
+describe("pick chip placement", () => {
+  const spawned: {
+    x: number;
+    y: number;
+    source?: { file: string; line: number; col: number; component: string | null };
+  }[] = [];
+  let host: HTMLDivElement;
+  let tree: ReturnType<typeof screenTree>;
+  let camera: Camera;
+
+  afterEach(() => {
+    spawned.length = 0;
+    document.body.innerHTML = "";
+  });
+
+  function stubRect(
+    el: Element,
+    box: { top: number; left: number; width: number; height: number },
+  ) {
+    Object.defineProperty(el, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({
+        x: box.left,
+        y: box.top,
+        left: box.left,
+        top: box.top,
+        right: box.left + box.width,
+        bottom: box.top + box.height,
+        width: box.width,
+        height: box.height,
+        toJSON() {},
+      }),
+    });
+  }
+
+  function mount() {
+    tree = screenTree();
+    host = document.createElement("div");
+    tree.root.appendChild(host);
+    camera = { ...CAM };
+    return createPickTool({
+      host,
+      getRoot: () => tree.root,
+      getOrigin: () => ({ x: 0, y: 0 }),
+      getCamera: () => camera,
+      spawnNote: (init) => {
+        spawned.push({
+          x: init.x,
+          y: init.y,
+          source: init.source ?? undefined,
+        });
+      },
+    });
+  }
+
+  function selectTarget(pick: ReturnType<typeof createPickTool>) {
+    pick.enter();
+    tree.target.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 110,
+        clientY: 90,
+      }),
+    );
+    return host.querySelector("[data-pick-overlay]");
+  }
+
+  it("flips the chip below an element parked against the frame name", () => {
+    const pick = mount();
+    const frame = tree.root.querySelector("[data-screen-id]");
+    if (!frame) throw new Error("no frame");
+    stubRect(frame, { top: 400, left: 80, width: 800, height: 600 });
+    stubRect(tree.target, { top: 408, left: 200, width: 80, height: 40 });
+    const box = selectTarget(pick);
+    expect(box?.hasAttribute("data-flip")).toBe(true);
+    pick.destroy();
+  });
+
+  it("keeps the chip above an element with room under the frame name", () => {
+    const pick = mount();
+    const frame = tree.root.querySelector("[data-screen-id]");
+    if (!frame) throw new Error("no frame");
+    stubRect(frame, { top: 400, left: 80, width: 800, height: 600 });
+    stubRect(tree.target, { top: 700, left: 200, width: 80, height: 40 });
+    const box = selectTarget(pick);
+    expect(box?.hasAttribute("data-flip")).toBe(false);
+    pick.destroy();
+  });
+
+  it("clamps the chip to the right edge when a centred chip would run past it", () => {
+    const pick = mount();
+    const frame = tree.root.querySelector("[data-screen-id]");
+    if (!frame) throw new Error("no frame");
+    stubRect(frame, { top: 400, left: 80, width: 800, height: 600 });
+    stubRect(tree.target, {
+      top: 700,
+      left: window.innerWidth - 40,
+      width: 80,
+      height: 40,
+    });
+    const box = selectTarget(pick);
+    expect(box?.hasAttribute("data-tb-right")).toBe(true);
+    expect(box?.hasAttribute("data-tb-left")).toBe(false);
+    pick.destroy();
+  });
+
+  it("clamps the chip to the left edge when a centred chip would run off it", () => {
+    const pick = mount();
+    const frame = tree.root.querySelector("[data-screen-id]");
+    if (!frame) throw new Error("no frame");
+    stubRect(frame, { top: 400, left: 80, width: 800, height: 600 });
+    stubRect(tree.target, { top: 700, left: 0, width: 30, height: 40 });
+    const box = selectTarget(pick);
+    expect(box?.hasAttribute("data-tb-left")).toBe(true);
+    expect(box?.hasAttribute("data-tb-right")).toBe(false);
+    pick.destroy();
+  });
+});

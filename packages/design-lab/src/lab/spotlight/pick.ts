@@ -55,6 +55,25 @@ function pageBox(
   return page;
 }
 
+/**
+ * Screen-px box for toolbarPlacement. `top` is the smaller of viewport top and
+ * offset from the screen frame, so FLIP_CLEAR covers both "off the viewport"
+ * and "onto the frame name" without a second threshold.
+ */
+function pickPlacementBox(
+  el: Element,
+): { top: number; left: number; width: number } {
+  const screen = el.getBoundingClientRect();
+  const frame = el.closest("[data-screen-id]");
+  const frameTop =
+    frame instanceof Element ? frame.getBoundingClientRect().top : 0;
+  return {
+    top: Math.min(screen.top, screen.top - frameTop),
+    left: screen.left,
+    width: screen.width,
+  };
+}
+
 export function createPickTool(opts: {
   host: HTMLElement;
   getRoot: () => HTMLElement | null;
@@ -109,9 +128,8 @@ export function createPickTool(opts: {
     if (selected) {
       const source = sourceOf(selected);
       label.textContent = chipLabel(source);
-      const screen = selected.getBoundingClientRect();
       const at = toolbarPlacement(
-        { top: screen.top, left: screen.left, width: screen.width },
+        pickPlacementBox(selected),
         window.innerWidth,
       );
       box.toggleAttribute("data-flip", at.flip);

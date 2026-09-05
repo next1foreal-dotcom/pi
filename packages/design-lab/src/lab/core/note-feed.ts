@@ -12,9 +12,28 @@ export type NoteReply = {
 	text: string;
 };
 
+export type NoteSource = {
+	file: string;
+	line: number;
+	col: number;
+	component: string | null;
+};
+
 export type NoteThreadState = {
 	replies: NoteReply[];
 	resolved: boolean;
+	x: number;
+	y: number;
+	text: string;
+	screenId: string | null;
+	source?: NoteSource;
+	/** True once a `note` event has been seen — replies alone do not count. */
+	hasBody: boolean;
+};
+
+export type NoteFeedProjection = {
+	live: Map<string, NoteThreadState>;
+	deleted: Set<string>;
 };
 
 const EVENT_TYPES = new Set([
@@ -41,13 +60,42 @@ export function isNoteFid(value: unknown): value is string {
 	return typeof value === "string" && /^n_[0-9a-f]{12}$/.test(value);
 }
 
-export function projectNoteFeed(text: string): Map<string, NoteThreadState> {
-	const threads = new Map<string, NoteThreadState>();
+function isSource(value: unknown): value is NoteSource {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+	const s = value as {
+		file?: unknown;
+		line?: unknown;
+		col?: unknown;
+		component?: unknown;
+	};
+	return (
+		typeof s.file === "string" &&
+		typeof s.line === "number" &&
+		typeof s.col === "number" &&
+		(s.component === null || typeof s.component === "string")
+	);
+}
+
+function blankThread(): NoteThreadState {
+	return {
+		replies: [],
+		resolved: false,
+		x: 0,
+		y: 0,
+		text: "",
+		screenId: null,
+		hasBody: false,
+	};
+}
+
+export function projectNoteCanvas(text: string): NoteFeedProjection {
+	const live = new Map<string, NoteThreadState>();
+	const deleted = new Set<string>();
 	const ensure = (id: string): NoteThreadState => {
-		let th = threads.get(id);
+		let th = live.get(id);
 		if (!th) {
-			th = { replies: [], resolved: false };
-			threads.set(id, th);
+			th = blankThread();
+			live.set(id, th);
 		}
 		return th;
 	};
@@ -67,14 +115,49 @@ export function projectNoteFeed(text: string): Map<string, NoteThreadState> {
 			noteId?: unknown;
 			author?: unknown;
 			text?: unknown;
+			x?: unknown;
+			y?: unknown;
+			screenId?: unknown;
+			source?: unknown;
 		};
 		if (typeof e.t !== "string" || !EVENT_TYPES.has(e.t)) continue;
 		switch (e.t) {
-			case "note":
-				if (typeof e.id === "string") ensure(e.id);
+			case "note": {
+				if (typeof e.id !== "string") break;
+				deleted.delete(e.id);
+				const th = ensure(e.id);
+				th.hasBody = true;
+				th.x = typeof e.x === "number" && Number.isFinite(e.x) ? e.x : 0;
+				th.y = typeof e.y === "number" && Number.isFinite(e.y) ? e.y : 0;
+				th.text = typeof e.text === "string" ? e.text : "";
+				th.screenId = typeof e.screenId === "string" ? e.screenId : null;
+				if (isSource(e.source)) th.source = e.source;
 				break;
+			}
+			case "note.move": {
+				if (typeof e.id !== "string") break;
+				const th = live.get(e.id);
+				if (!th) break;
+				if (typeof e.x === "number" && Number.isFinite(e.x)) th.x = e.x;
+				if (typeof e.y === "number" && Number.isFinite(e.y)) th.y = e.y;
+				if (e.screenId === null || typeof e.screenId === "string") {
+					th.screenId = e.screenId;
+				}
+				if (isSource(e.source)) th.source = e.source;
+				break;
+			}
+			case "note.edit": {
+				if (typeof e.id !== "string") break;
+				const th = live.get(e.id);
+				if (!th) break;
+				if (typeof e.text === "string") th.text = e.text;
+				break;
+			}
 			case "note.delete":
-				if (typeof e.id === "string") threads.delete(e.id);
+				if (typeof e.id === "string") {
+					live.delete(e.id);
+					deleted.add(e.id);
+				}
 				break;
 			case "reply": {
 				if (typeof e.noteId !== "string" || typeof e.id !== "string") break;
@@ -95,5 +178,9 @@ export function projectNoteFeed(text: string): Map<string, NoteThreadState> {
 				break;
 		}
 	}
-	return threads;
+	return { live, deleted };
+}
+
+export function projectNoteFeed(text: string): Map<string, NoteThreadState> {
+	return projectNoteCanvas(text).live;
 }

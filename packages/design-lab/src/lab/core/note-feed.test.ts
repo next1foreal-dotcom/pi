@@ -67,6 +67,42 @@ describe("projectNoteFeed", () => {
 		expect(threads.get("n_aaaaaaaaaaaa")?.resolved).toBe(false);
 	});
 
+	it("keeps last note.edit as the live text and last note.move as the live position", () => {
+		const threads = projectNoteFeed(
+			line({
+				t: "note",
+				id: "n_aaaaaaaaaaaa",
+				at: AT,
+				author: "fei",
+				screenId: "playground",
+				x: 10,
+				y: 20,
+				text: "first words",
+			}) +
+				line({
+					t: "note.edit",
+					id: "n_aaaaaaaaaaaa",
+					at: AT,
+					author: "fei",
+					text: "second words",
+				}) +
+				line({
+					t: "note.move",
+					id: "n_aaaaaaaaaaaa",
+					at: AT,
+					author: "fei",
+					screenId: "mosaic",
+					x: 90,
+					y: 40,
+				}),
+		);
+		const note = threads.get("n_aaaaaaaaaaaa");
+		expect(note?.text).toBe("second words");
+		expect(note?.x).toBe(90);
+		expect(note?.y).toBe(40);
+		expect(note?.screenId).toBe("mosaic");
+	});
+
 	it("lets resolve and reopen set the resolved flag, last write winning", () => {
 		const base = line({
 			t: "note",
