@@ -13,6 +13,7 @@ export const plugin: LabPlugin = {
     { name: "getLabels", signature: "getLabels(): readonly LabelItem[]", summary: "Every label with its text, position, scale and arrow direction." },
     { name: "setScale", signature: "setScale(id: number, scale: number): void", summary: "Scale text and arrow together. Clamped to the drag handle's range." },
     { name: "setDirection", signature: 'setDirection(id: number, dir: "dr" | "dl" | "ur" | "ul"): void', summary: "Which quadrant the arrow points into — down-right, down-left, up-right, up-left. The label recomposes around it." },
+    { name: "isHidden", signature: "isHidden(): boolean", summary: "Are they all hidden right now? Read this to show tool state somewhere." },
     { name: "setHidden", signature: "setHidden(hidden: boolean): void", summary: "Hide or show all labels at once. Nothing is deleted." },
   ],
   mount(ctx) {

@@ -193,5 +193,3 @@ function roundRect(
   ctx.arcTo(x, y, x + w, y, r);
   ctx.closePath();
 }
-
-void origin;

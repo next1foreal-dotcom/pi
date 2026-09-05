@@ -1,4 +1,5 @@
 import {
+  Fragment,
   memo,
   useMemo,
   useRef,
@@ -96,6 +97,7 @@ export function InteractionLab() {
     persistedBoot?.savedColors ?? [],
   );
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [hexDraft, setHexDraft] = useState(canvasColor);
   const [renaming, setRenaming] = useState<string | null>(null);
 
@@ -134,6 +136,7 @@ export function InteractionLab() {
       bump: () => {},
       getGuides: () => [] as { axis: "x" | "y"; pos: number }[],
       plugins: [],
+      pluginApis: new Map(),
       pluginsOnCameraWrite: () => {},
       disposeExtras: () => {},
       getSnapshot: () => snapshotOf(s as Session),
@@ -146,6 +149,31 @@ export function InteractionLab() {
   session.savedColors = savedColors;
 
   const theme = luminance(canvasColor) < 0.5 ? "dark" : "light";
+  const helpOpenRef = useRef(false);
+  helpOpenRef.current = helpOpen;
+
+  /**
+   * A tool button IS its shortcut — it fires the same key the sheet documents,
+   * so the two can never drift apart or place a note somewhere else.
+   */
+  const pressShortcut = (
+    code: string,
+    key: string,
+    mods: KeyboardEventInit = {},
+  ) =>
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        code,
+        key,
+        bubbles: true,
+        cancelable: true,
+        ...mods,
+      }),
+    );
+  const rulerOn = (
+    session.pluginApis.get("ruler") as ToolToggle | undefined
+  )?.isEnabled();
+
   const modeBadge =
     session.mode === "explore"
       ? null
@@ -237,6 +265,10 @@ export function InteractionLab() {
         session.plugins.push(handle);
         mounted.push({ id: def.id, handle, docs: def.describe });
       }
+    }
+    session.pluginApis.clear();
+    for (const m of mounted) {
+      if (m.handle.api !== undefined) session.pluginApis.set(m.id, m.handle.api);
     }
     const unpublish = publishPluginApis(mounted);
     session.pluginsOnCameraWrite = () => {
@@ -434,7 +466,12 @@ export function InteractionLab() {
       // Plugins get first refusal, in registry order, explore mode only.
       if (session.mode === "explore") {
         for (const p of session.plugins) {
-          if (p.handleKey?.(e)) return;
+          if (p.handleKey?.(e)) {
+            // A shortcut just changed a tool. Only re-render if something is
+            // showing that tool's state, so keys stay render-free otherwise.
+            if (helpOpenRef.current) session.bump();
+            return;
+          }
         }
       }
 
@@ -895,6 +932,40 @@ export function InteractionLab() {
             aria-label="Canvas color"
             onClick={() => setPickerOpen((o) => !o)}
           />
+          <span className={styles.sep} />
+          <button
+            type="button"
+            className={styles.tool}
+            data-on={rulerOn || undefined}
+            title="Rulers and guides — Shift R"
+            aria-label="Rulers and guides"
+            aria-pressed={rulerOn ?? false}
+            onClick={() => {
+              pressShortcut("KeyR", "R", { shiftKey: true });
+              setRev((r) => r + 1);
+            }}
+          >
+            <IconRuler />
+          </button>
+          <button
+            type="button"
+            className={styles.tool}
+            title="New sticky note — Shift N"
+            aria-label="New sticky note"
+            onClick={() => pressShortcut("KeyN", "N", { shiftKey: true })}
+          >
+            <IconNote />
+          </button>
+          <button
+            type="button"
+            className={styles.tool}
+            title="New label — Shift L"
+            aria-label="New label"
+            onClick={() => pressShortcut("KeyL", "L", { shiftKey: true })}
+          >
+            <IconLabel />
+          </button>
+          <span className={styles.sep} />
           <button
             type="button"
             className={styles.zoomBtn}
@@ -906,8 +977,39 @@ export function InteractionLab() {
           <button type="button" onClick={resetLayout}>
             Reset layout
           </button>
+          <button
+            type="button"
+            className={styles.zoomBtn}
+            title="Shortcuts"
+            aria-label="Shortcuts"
+            aria-expanded={helpOpen}
+            onClick={() => setHelpOpen((o) => !o)}
+          >
+            ?
+          </button>
         </div>
       </div>
+      {helpOpen ? (
+        <div className={styles.help} data-lab-chrome>
+          {HELP.map((group) => (
+            <Fragment key={group.title}>
+              <h3 className={styles.helpTitle}>{group.title}</h3>
+              {group.rows.map(([keys, what]) => (
+                <div className={styles.helpRow} key={what}>
+                  <span className={styles.helpKeys}>
+                    {keys.map((k) => (
+                      <kbd className={styles.key} key={k}>
+                        {k}
+                      </kbd>
+                    ))}
+                  </span>
+                  <span>{what}</span>
+                </div>
+              ))}
+            </Fragment>
+          ))}
+        </div>
+      ) : null}
       <div className={styles.toasts} data-lab-chrome>
         {toasts.map((t) => (
           <div key={t.id} className={styles.toast}>
@@ -918,6 +1020,125 @@ export function InteractionLab() {
     </div>
   );
 }
+
+type ToolToggle = { toggle(): void; isEnabled(): boolean };
+
+const IconRuler = () => (
+  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+    <rect
+      x="0.85"
+      y="4.35"
+      width="12.3"
+      height="5.3"
+      rx="1"
+      stroke="currentColor"
+      strokeWidth="1.2"
+    />
+    <path
+      d="M3.6 4.35v1.8M6.2 4.35v2.6M8.8 4.35v1.8M11.4 4.35v2.6"
+      stroke="currentColor"
+      strokeWidth="1.2"
+      strokeLinecap="round"
+    />
+  </svg>
+);
+
+const IconNote = () => (
+  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+    <path
+      d="M1.9 2.1h10.2v6.6l-3.6 3.2H1.9z"
+      stroke="currentColor"
+      strokeWidth="1.2"
+      strokeLinejoin="round"
+    />
+    <path
+      d="M12.1 8.7H8.5v3.2"
+      stroke="currentColor"
+      strokeWidth="1.2"
+      strokeLinejoin="round"
+    />
+  </svg>
+);
+
+const IconLabel = () => (
+  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+    <path
+      d="M1.9 2.4c3.4 1.2 6.3 3.9 8.7 8"
+      stroke="currentColor"
+      strokeWidth="1.2"
+      strokeLinecap="round"
+    />
+    <path
+      d="M7.3 10.7l3.4-.4-1-3.2"
+      stroke="currentColor"
+      strokeWidth="1.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </svg>
+);
+
+/**
+ * Every shortcut the lab actually listens for, grouped as it is used.
+ * Exported so help-sheet.test.ts can hold it against the real dispatcher —
+ * a cheat sheet that lies is worse than none.
+ */
+export const HELP: { title: string; rows: [string[], string][] }[] = [
+  {
+    title: "Canvas",
+    rows: [
+      [["Drag"], "Pan"],
+      [["Space", "drag"], "Pan from anywhere"],
+      [["Scroll"], "Pan"],
+      [["Ctrl", "scroll"], "Zoom to the cursor"],
+      [["+"], "Zoom in"],
+      [["−"], "Zoom out"],
+      [["Shift", "1"], "Fit every screen"],
+      [["Shift", "2"], "Zoom to the selection"],
+      [["Shift", "0"], "Zoom to 100%"],
+    ],
+  },
+  {
+    title: "Screens",
+    rows: [
+      [["Click"], "Select"],
+      [["Drag"], "Move"],
+      [["Ctrl", "drag"], "Move, ignoring guides"],
+      [["Drag edge"], "Resize"],
+      [["Double-click"], "Go into the screen"],
+      [["Enter"], "Go into the selected screen"],
+      [["Esc"], "Come back out / deselect"],
+      [["Shift", "F"], "Full screen"],
+      [["Tab"], "Next screen"],
+      [["↑↓←→"], "Nudge 1px"],
+      [["Shift", "↑↓←→"], "Nudge 10px"],
+      [["Alt", "hover"], "Measure the gap"],
+    ],
+  },
+  {
+    title: "Files on disk",
+    rows: [
+      [["Ctrl", "D"], "Duplicate — copies the folder"],
+      [["Delete"], "Delete — moves it to .lab-trash"],
+      [["Ctrl", "Z"], "Undo"],
+      [["Ctrl", "Y"], "Redo"],
+      [["Double-click name"], "Rename — rewrites the manifest"],
+      [["Ctrl", "C"], "Tidy into one row, and save it"],
+      [["Ctrl", "Shift", "⌫"], "Back to the manifest layout"],
+    ],
+  },
+  {
+    title: "Tools",
+    rows: [
+      [["Shift", "R"], "Rulers and guides"],
+      [["Ctrl", "Shift", "R"], "Hide the rulers, stay in ruler mode"],
+      [["Shift", "N"], "New sticky note"],
+      [["Ctrl", "Shift", "N"], "Hide every note"],
+      [["Shift", "L"], "New label"],
+      [["Ctrl", "Shift", "L"], "Hide every label"],
+    ],
+  },
+];
 
 const ScreenBody = memo(function ScreenBody({
   component: C,

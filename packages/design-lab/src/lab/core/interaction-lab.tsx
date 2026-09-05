@@ -145,6 +145,8 @@ export type Session = {
   getGuides: () => { axis: "x" | "y"; pos: number }[];
   /** Mounted design-time plugins, in key-broker order. */
   plugins: LabPluginHandle[];
+  /** Published plugin APIs by id — how the lab's chrome drives its own tools. */
+  pluginApis: Map<string, unknown>;
   pluginsOnCameraWrite: () => void;
   disposeExtras: () => void;
   getSnapshot: () => PersistedV1;

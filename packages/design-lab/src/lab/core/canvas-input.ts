@@ -102,7 +102,7 @@ export function bindCanvasInput(
     lastX = e.clientX;
     lastY = e.clientY;
     root.setPointerCapture(e.pointerId);
-    root.style.cursor = "grabbing";
+    root.setAttribute("data-panning", "");
     h.onGestureStart();
   };
 
@@ -121,14 +121,13 @@ export function bindCanvasInput(
   const endPan = (e: PointerEvent) => {
     if (!panning || e.pointerId !== panPointer) return;
     panning = false;
-    root.style.cursor = space ? "grab" : "";
+    root.removeAttribute("data-panning");
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.code === "Space" && !e.repeat) {
       space = true;
       root.setAttribute("data-space", "");
-      if (!h.isLocked() && !panning) root.style.cursor = "grab";
     }
   };
 
@@ -136,14 +135,12 @@ export function bindCanvasInput(
     if (e.code === "Space") {
       space = false;
       root.removeAttribute("data-space");
-      if (!panning) root.style.cursor = "";
     }
   };
 
   const onBlur = () => {
     space = false;
     root.removeAttribute("data-space");
-    if (!panning) root.style.cursor = "";
   };
 
   root.addEventListener("wheel", onWheel, { passive: false });

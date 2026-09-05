@@ -313,6 +313,11 @@ export class StickyNotes {
 	}
 
 	/** Hide/show every note without deleting anything (Ctrl+Shift+N). */
+	/** Are all notes hidden? Chrome that shows tool state has to read it. */
+	isHidden(): boolean {
+		return this.hidden;
+	}
+
 	setHidden(hidden: boolean) {
 		if (!this.supported || this._hidden === hidden) return;
 		this._hidden = hidden;

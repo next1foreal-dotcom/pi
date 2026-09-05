@@ -212,6 +212,11 @@ export class Labels {
 	}
 
 	/** Hide/show every label without deleting anything (Ctrl+Shift+L). */
+	/** Are all labels hidden? Chrome that shows tool state has to read it. */
+	isHidden(): boolean {
+		return this.hidden;
+	}
+
 	setHidden(hidden: boolean) {
 		if (!this.supported || this._hidden === hidden) return;
 		this._hidden = hidden;

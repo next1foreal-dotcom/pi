@@ -174,6 +174,16 @@ export class CanvasRuler {
     this.root.remove();
   }
 
+  /** Are the rulers on? Chrome that shows tool state has to be able to read it. */
+  isEnabled(): boolean {
+    return this.enabled;
+  }
+
+  /** On, but hidden by Ctrl+Shift+R. */
+  isHidden(): boolean {
+    return this.enabled && this.hidden;
+  }
+
   /** Rulers on/off — the code path for Shift+R. */
   toggle(): void {
     if (this.enabled) {

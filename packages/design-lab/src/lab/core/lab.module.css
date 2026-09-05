@@ -131,6 +131,25 @@
   cursor: default;
 }
 
+/*
+ * A left drag on empty canvas pans, so the canvas says so. Screens keep the
+ * arrow (a press there selects, it does not pan) — .shield above wins by
+ * being deeper. Locked in, the app owns the pointer entirely.
+ */
+.root[data-mode="explore"] {
+  cursor: grab;
+}
+.root[data-mode="explore"][data-panning] {
+  cursor: grabbing;
+}
+/* Space turns the whole canvas into the hand tool, screens included. */
+.root[data-space] .shield {
+  cursor: grab;
+}
+.root[data-panning] .shield {
+  cursor: grabbing;
+}
+
 .group[data-active] .shield {
   display: none;
 }
@@ -393,6 +412,102 @@
   padding: 4px 10px;
   border-radius: 6px;
   cursor: pointer;
+}
+.pill button {
+  cursor: pointer;
+  white-space: nowrap;
+}
+.zoomBtn:hover,
+.pill button:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* ── tools live in the pill, so they can be found without reading source ── */
+.tool {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.55);
+  padding: 5px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.tool:hover {
+  color: #fff;
+}
+.tool[data-on] {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.18);
+}
+.sep {
+  width: 1px;
+  align-self: stretch;
+  margin: 3px 3px;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+/* ── the shortcut sheet ── */
+.help {
+  pointer-events: auto;
+  position: absolute;
+  bottom: 52px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--lab-pill);
+  color: #fff;
+  border-radius: 10px;
+  padding: 14px 16px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+  z-index: 21;
+  font-size: 11px;
+  line-height: 1.2;
+  max-height: min(70vh, 560px);
+  overflow-y: auto;
+  display: grid;
+  /* Columns only when they fit: this pane is often narrower than 480px, and a
+     fixed two-column sheet ran its section titles off both edges. */
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 4px 28px;
+  align-content: start;
+  max-width: min(760px, calc(100vw - 24px));
+  box-sizing: border-box;
+}
+.helpTitle {
+  grid-column: 1 / -1;
+  margin: 10px 0 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.4);
+}
+.helpTitle:first-child {
+  margin-top: 0;
+}
+.helpRow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 0;
+  color: rgba(255, 255, 255, 0.82);
+}
+.helpKeys {
+  display: flex;
+  gap: 3px;
+  flex: 0 0 auto;
+  min-width: 92px;
+  justify-content: flex-end;
+}
+.key {
+  font: inherit;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  white-space: nowrap;
 }
 
 .pill button:hover,

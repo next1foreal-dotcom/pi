@@ -15,6 +15,7 @@ export const plugin: LabPlugin = {
     { name: "setFontSize", signature: 'setFontSize(id: number, size: "small" | "medium" | "large" | "huge"): void', summary: "Resize one note's text." },
     { name: "setFont", signature: 'setFont(id: number, font: "inter" | "mynerve"): void', summary: "Typeface: inter, or mynerve for handwriting." },
     { name: "setCompact", signature: "setCompact(id: number, compact: boolean): void", summary: "Collapse a note to a single strip, or restore it." },
+    { name: "isHidden", signature: "isHidden(): boolean", summary: "Are they all hidden right now? Read this to show tool state somewhere." },
     { name: "setHidden", signature: "setHidden(hidden: boolean): void", summary: "Hide or show all notes at once. Nothing is deleted." },
   ],
   mount(ctx) {
