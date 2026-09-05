@@ -121,6 +121,7 @@ import {
 import { createReadGuard, extractPath, type ReadGuard } from "./her-core/read-before-edit.ts";
 import { type ReviewEvidenceItem, verifyEvidence } from "./her-core/review-evidence.ts";
 import { cancelWakeup, fireDueWakeups, listWakeups, scheduleWakeup } from "./her-core/self-wakeup.ts";
+import { applyHerStatus, herStatusParameters } from "./her-core/status.ts";
 import { buildWidgetMessage } from "./her-core/widget.ts";
 import { appendAuditLog } from "./lib/audit.ts";
 import { evaluate, policyEnvelope, resolveToolCallAnchor } from "./lib/cedar.ts";
@@ -1218,13 +1219,12 @@ export default function her(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "her_status",
 		label: "Her Status",
-		description: "Report Samantha's Her memory integration status.",
-		parameters: Type.Object({}),
-		async execute() {
-			return textResult("Her loaded. Phase 2 context injection, turn capture, and memory tools are active.", {
-				phase: "2",
-				memoryDir,
-			});
+		description:
+			"每一轮收尾前调用一次，卡住需要他拍板时也调用。name 是这条会话的标题（最多 24 字，中文优先）；第一轮必须给，之后可省略（省略 = 沿用之前的名字）。headline 必填（最多 60 字），一句中文说此刻在干什么或刚干完什么。waiting 只有真的需要 Fei 才给：给了面板就会亮成「等你」。本工具不发消息、不弹卡、不改文件，只把这三件事写进这一轮的记录。",
+		parameters: herStatusParameters,
+		async execute(_toolCallId, params) {
+			const result = applyHerStatus(params);
+			return textResult(result.text, result.details);
 		},
 	});
 
