@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	NOTE_DEFAULT,
 	NOTE_MIN,
@@ -9,19 +9,20 @@ import {
 	StickyNotes,
 	toolbarPlacement,
 } from "./page-notes";
-import type { LabObjects } from "../plugin-api";
-import type { Rect } from "./types";
+import type { LabObjectInit, LabObjects } from "../plugin-api";
+import type { Point, Rect } from "./types";
 
 let live: StickyNotes | null = null;
 
-function stubObjects(): LabObjects {
+function stubObjects(): LabObjects & { inits: Map<string, LabObjectInit> } {
 	const layouts = new Map<string, Rect>();
-	const inits = new Map<string, { onSelect?(selected: boolean): void; el: HTMLElement }>();
+	const inits = new Map<string, LabObjectInit>();
 	let sel: string | null = null;
 	return {
+		inits,
 		register(init) {
 			layouts.set(init.id, { ...init.rect });
-			inits.set(init.id, { onSelect: init.onSelect, el: init.el });
+			inits.set(init.id, init);
 			init.el.setAttribute("data-lab-object", init.id);
 			init.el.style.transform = `translate(${init.rect.x}px, ${init.rect.y}px)`;
 			init.el.style.width = `${init.rect.width}px`;
@@ -60,10 +61,22 @@ function mount(): HTMLElement {
 	return host;
 }
 
+beforeEach(() => {
+	vi.stubGlobal(
+		"fetch",
+		vi.fn(async () => ({
+			ok: true,
+			json: async () => ({ ok: true, feed: "" }),
+		})),
+	);
+});
+
 afterEach(() => {
 	live?.destroy();
 	live = null;
 	document.body.innerHTML = "";
+	vi.unstubAllGlobals();
+	vi.useRealTimers();
 });
 
 describe("spawn centring (page-only, no zoom)", () => {
@@ -282,3 +295,205 @@ describe("a sticky reads as something you can pick up", () => {
 		expect(css).toContain(".sn-text:focus{cursor:text}");
 	});
 });
+
+function eventPosts(): { url: string; headers: Record<string, string>; body: Record<string, unknown> }[] {
+	return vi.mocked(fetch).mock.calls
+		.filter(([url]) => String(url).includes("/notes/event"))
+		.map(([url, init]) => {
+			const request = (init ?? {}) as {
+				headers?: Record<string, string>;
+				body?: string;
+			};
+			return {
+				url: String(url),
+				headers: request.headers ?? {},
+				body: JSON.parse(request.body ?? "{}") as Record<string, unknown>,
+			};
+		});
+}
+
+describe("feed id and localStorage", () => {
+	it("gives a new note n_ + 12 hex and writes it as fi", async () => {
+		const key = "test:notes:fid";
+		localStorage.removeItem(key);
+		const host = document.createElement("div");
+		document.body.appendChild(host);
+		live = new StickyNotes({ host, objects: stubObjects(), storageKey: key });
+		const n = live.spawn({ x: 0, y: 0 });
+		expect(n.fid).toMatch(/^n_[0-9a-f]{12}$/);
+		await new Promise((r) => setTimeout(r, 220));
+		const stored = JSON.parse(localStorage.getItem(key) ?? "{}") as {
+			notes: { fi?: string }[];
+		};
+		expect(stored.notes[0]?.fi).toBe(n.fid);
+		localStorage.removeItem(key);
+	});
+
+	it("fills a fid for old payloads that have none", () => {
+		const key = "test:notes:fid-legacy";
+		localStorage.setItem(
+			key,
+			JSON.stringify({
+				v: 1,
+				notes: [
+					{
+						x: 1,
+						y: 2,
+						c: "yellow",
+						f: "medium",
+						k: false,
+						t: "old",
+						h: "old",
+					},
+				],
+			}),
+		);
+		const host = document.createElement("div");
+		document.body.appendChild(host);
+		live = new StickyNotes({ host, objects: stubObjects(), storageKey: key });
+		expect(live.getNotes()[0]?.fid).toMatch(/^n_[0-9a-f]{12}$/);
+		localStorage.removeItem(key);
+	});
+});
+
+describe("canvas events posted to the feed", () => {
+	function mountWithScreen(
+		screenAt: (point: Point) => string | null = () => "playground",
+	) {
+		const host = document.createElement("div");
+		document.body.appendChild(host);
+		const objects = stubObjects();
+		live = new StickyNotes({ host, objects, storageKey: null, screenAt });
+		return { host, objects };
+	}
+
+	it("spawn posts a note with screen, position and text, never an author", () => {
+		mountWithScreen();
+		const n = live?.spawn({ x: 40, y: 80, text: "too tight" });
+		const posts = eventPosts();
+		expect(posts).toHaveLength(1);
+		expect(posts[0]?.headers["x-lab-canvas"]).toBe("1");
+		expect(posts[0]?.body).toMatchObject({
+			t: "note",
+			id: n?.fid,
+			screenId: "playground",
+			x: 40,
+			y: 80,
+			text: "too tight",
+		});
+		expect(posts[0]?.body).not.toHaveProperty("author");
+	});
+
+	it("text changes post note.edit after the 150ms persist debounce", async () => {
+		const { host } = mountWithScreen();
+		const n = live?.spawn({ x: 0, y: 0 });
+		const text = host.querySelector(".sn-text");
+		expect(text).toBeInstanceOf(HTMLElement);
+		(text as HTMLElement).textContent = "spacing is tight";
+		text?.dispatchEvent(new Event("input", { bubbles: true }));
+		expect(eventPosts().filter((p) => p.body.t === "note.edit")).toHaveLength(0);
+		await new Promise((r) => setTimeout(r, 220));
+		const edits = eventPosts().filter((p) => p.body.t === "note.edit");
+		expect(edits).toHaveLength(1);
+		expect(edits[0]?.body).toMatchObject({
+			t: "note.edit",
+			id: n?.fid,
+			text: "spacing is tight",
+		});
+		expect(edits[0]?.body).not.toHaveProperty("author");
+	});
+
+	it("a committed move posts note.move with a fresh screenId", () => {
+		const { objects } = mountWithScreen((p) =>
+			p.x >= 1640 ? "product-list" : "playground",
+		);
+		const n = live?.spawn({ x: 10, y: 20 });
+		const init = objects.inits.get(`note:${n?.id}`);
+		init?.onLayout?.({ x: 1700, y: 40, width: 240, height: 240 });
+		const moves = eventPosts().filter((p) => p.body.t === "note.move");
+		expect(moves).toHaveLength(1);
+		expect(moves[0]?.body).toMatchObject({
+			t: "note.move",
+			id: n?.fid,
+			screenId: "product-list",
+			x: 1700,
+			y: 40,
+		});
+	});
+
+	it("removeNote posts note.delete", () => {
+		mountWithScreen();
+		const n = live?.spawn({ x: 0, y: 0 });
+		live?.removeNote(n?.id ?? 0);
+		const deletes = eventPosts().filter((p) => p.body.t === "note.delete");
+		expect(deletes).toHaveLength(1);
+		expect(deletes[0]?.body).toMatchObject({ t: "note.delete", id: n?.fid });
+	});
+});
+
+describe("replies and resolved state on the sticky", () => {
+	it("the stylesheet paints replies as canvas content and a quiet resolved mark", () => {
+		mount();
+		const css =
+			document.querySelector<HTMLStyleElement>("style[data-sticky-note]")
+				?.textContent ?? "";
+		expect(css).toContain(".sn-replies{");
+		expect(css).toContain('.sn-reply[data-author="samantha"]');
+		expect(css).toContain("[data-resolved]");
+		const repliesRule = css.match(/\.sn-replies\{[^}]*\}/)?.[0] ?? "";
+		expect(repliesRule).not.toContain("--inv-zoom");
+	});
+
+	it("pulls her reply onto the note and marks it resolved", async () => {
+		const host = document.createElement("div");
+		document.body.appendChild(host);
+		live = new StickyNotes({
+			host,
+			objects: stubObjects(),
+			storageKey: null,
+			screenAt: () => "playground",
+		});
+		const n = live.spawn({ x: 0, y: 0, text: "too tight" });
+		vi.mocked(fetch).mockImplementation(async (url) => {
+			if (String(url).includes("/notes/threads")) {
+				const feed =
+					`${JSON.stringify({
+						t: "reply",
+						id: "r_aaaaaaaaaaaa",
+						noteId: n.fid,
+						at: "2026-09-05T20:00:00.000Z",
+						author: "samantha",
+						text: "24px now",
+					})}\n` +
+					`${JSON.stringify({
+						t: "resolve",
+						noteId: n.fid,
+						at: "2026-09-05T20:01:00.000Z",
+						author: "samantha",
+					})}\n`;
+				return {
+					ok: true,
+					json: async () => ({ ok: true, feed }),
+				} as unknown as Response;
+			}
+			return {
+				ok: true,
+				json: async () => ({ ok: true }),
+			} as unknown as Response;
+		});
+		Object.defineProperty(document, "hidden", {
+			configurable: true,
+			get: () => false,
+		});
+		document.dispatchEvent(new Event("visibilitychange"));
+		await vi.waitFor(() => {
+			const reply = host.querySelector(".sn-reply");
+			expect(reply?.getAttribute("data-author")).toBe("samantha");
+			expect(reply?.textContent).toContain("24px now");
+			expect(host.querySelector(".sn-note")?.hasAttribute("data-resolved")).toBe(
+				true,
+			);
+		});
+	});
+});
+

@@ -35,7 +35,7 @@ import { labFs } from "./fs-client";
 import { applyResize, cleanupRow } from "./frame-ops";
 import { ScreenFrame, type ResizeEdge } from "./screen-frame";
 import { SCREENS, screenById, type ScreenDef } from "../screens";
-import type { Mode } from "./types";
+import type { Mode, Point } from "./types";
 import {
   LAB_PLUGINS,
   type LabObjects,
@@ -44,6 +44,7 @@ import {
   publishPluginApis,
 } from "../plugin-api";
 import { dispatchLabKey } from "./keyboard-dispatch";
+import { screenAt as screenAtPoint } from "./screen-at";
 import {
   attachLabSpotlight,
   notifySpotlightGesture,
@@ -268,6 +269,7 @@ export function InteractionLab() {
           origin,
         );
       },
+      screenAt: (point: Point) => screenAtPoint(point, SCREENS, session.layouts),
       objects: labObjects,
     });
     const owned: HTMLElement[] = [];

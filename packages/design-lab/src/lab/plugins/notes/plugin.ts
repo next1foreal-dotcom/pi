@@ -24,6 +24,7 @@ export const plugin: LabPlugin = {
     const notes = new StickyNotes({
       host: ctx.host,
       objects: ctx.objects,
+      screenAt: ctx.screenAt,
     });
     return {
       handleKey: (e) =>

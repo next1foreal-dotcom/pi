@@ -80,6 +80,8 @@ export interface LabPluginContext {
   getZoom(): number;
   /** Page-space point under the centre of the viewport. */
   viewportCenterPage(): Point;
+  /** The screen whose frame contains this page-space point, if any. */
+  screenAt(point: Point): string | null;
   objects: LabObjects;
 }
 

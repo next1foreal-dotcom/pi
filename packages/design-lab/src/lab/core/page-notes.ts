@@ -9,7 +9,14 @@
  */
 
 import type { LabObjects } from "../plugin-api";
-import type { Rect } from "./types";
+import {
+	isNoteFid,
+	newFeedId,
+	projectNoteFeed,
+	type NoteReply,
+	type NoteThreadState,
+} from "./note-feed";
+import type { Point, Rect } from "./types";
 
 const MYNERVE_WOFF2 = "/fonts/mynerve/regular.woff2";
 const MYNERVE_WOFF = "/fonts/mynerve/regular.woff";
@@ -30,6 +37,8 @@ export type NoteFont = "inter" | "mynerve";
 
 export interface StickyNote {
 	id: number;
+	/** Feed id (`n_` + 12 hex). Survives localStorage reloads. */
+	fid: string;
 	/** Page-space top-left (canvas units at zoom 1). */
 	x: number;
 	y: number;
@@ -46,6 +55,8 @@ export interface StickyNote {
 	text: string;
 	/** Formatted content (sanitized HTML: b/i/u/s, ordered lists…). */
 	html: string;
+	replies: NoteReply[];
+	resolved: boolean;
 }
 
 export interface StickyNotesOptions {
@@ -54,6 +65,7 @@ export interface StickyNotesOptions {
 	storageKey?: string | null;
 	defaultColor?: NoteColor;
 	onChange?: (notes: StickyNotes) => void;
+	screenAt?: (point: Point) => string | null;
 }
 
 /** Default note edge in page units. */
@@ -226,6 +238,13 @@ ${colorRules}
 .sn-item:hover{background:rgba(255,255,255,.08)}
 .sn-item .sn-checkmark{visibility:hidden}
 .sn-item[data-active] .sn-checkmark{visibility:visible}
+.sn-replies{flex:none;padding:4px 8px 8px;font:500 11px/1.35 Inter,system-ui,-apple-system,sans-serif;opacity:.8}
+.sn-replies:empty{display:none}
+.sn-reply{margin:0}
+.sn-reply[data-author="samantha"]{font-weight:600}
+.sn-note[data-resolved]{opacity:.55}
+.sn-note[data-resolved] .sn-bar{position:relative}
+.sn-note[data-resolved] .sn-bar::after{content:"";position:absolute;left:5px;right:5px;top:50%;border-top:1px solid currentColor;opacity:.45}
 `;
 }
 
@@ -323,6 +342,7 @@ const isFont = (f: unknown): f is NoteFont => f === "inter" || f === "mynerve";
 interface NoteRefs {
 	el: HTMLDivElement;
 	text: HTMLDivElement;
+	replies: HTMLDivElement;
 	dot: HTMLSpanElement;
 	sizeLabel: HTMLSpanElement;
 	fontLabel: HTMLSpanElement;
@@ -340,6 +360,7 @@ export class StickyNotes {
 	private defaultColor: NoteColor;
 	private onChange: StickyNotesOptions["onChange"];
 	private objects: LabObjects;
+	private screenAt: ((point: Point) => string | null) | undefined;
 
 	private root!: HTMLDivElement;
 	private refs = new Map<number, NoteRefs>();
@@ -349,6 +370,8 @@ export class StickyNotes {
 	private _hidden = false;
 	private zTop = 1;
 	private saveTimer: ReturnType<typeof setTimeout> | undefined;
+	private pollTimer: ReturnType<typeof setInterval> | undefined;
+	private lastEmittedText = new Map<number, string>();
 
 	constructor(options: StickyNotesOptions) {
 		this.storageKey =
@@ -358,6 +381,7 @@ export class StickyNotes {
 		this.defaultColor = options.defaultColor ?? "yellow";
 		this.onChange = options.onChange;
 		this.objects = options.objects;
+		this.screenAt = options.screenAt;
 		if (!this.supported) return;
 		acquireStyles(
 			buildCss({
@@ -370,6 +394,11 @@ export class StickyNotes {
 		options.host.appendChild(this.root);
 		this.loadNotes();
 		document.addEventListener("pointerdown", this.onDocPointerDown, true);
+		document.addEventListener("visibilitychange", this.onVisibility);
+		this.pollTimer = setInterval(() => {
+			if (!document.hidden) void this.pullThreads();
+		}, 4000);
+		if (!document.hidden) void this.pullThreads();
 	}
 
 	getNotes(): readonly StickyNote[] {
@@ -402,6 +431,7 @@ export class StickyNotes {
 		const step = (this.notes.length % 6) * 24;
 		const note: StickyNote = {
 			id: this.nextId++,
+			fid: newFeedId("n"),
 			x: init.x ?? step,
 			y: init.y ?? step,
 			color: init.color ?? this.defaultColor,
@@ -415,12 +445,15 @@ export class StickyNotes {
 				init.html !== undefined
 					? sanitizeHtml(init.html)
 					: textToHtml(init.text ?? ""),
+			replies: [],
+			resolved: false,
 		};
 		this.notes.push(note);
 		this.mountNote(note);
 		this.registerNote(note);
 		this.objects.select(`note:${note.id}`);
 		this.enterEdit(note.id);
+		this.emitCreated(note);
 		this.commit();
 		return { ...note };
 	}
@@ -428,18 +461,24 @@ export class StickyNotes {
 	removeNote(id: number) {
 		const i = this.notes.findIndex((n) => n.id === id);
 		if (i === -1) return;
-		this.notes.splice(i, 1);
+		const [note] = this.notes.splice(i, 1);
 		this.objects.unregister(`note:${id}`);
 		this.refs.get(id)?.el.remove();
 		this.refs.delete(id);
+		this.lastEmittedText.delete(id);
+		if (note) this.emit({ t: "note.delete", id: note.fid });
 		this.commit();
 	}
 
 	clearNotes() {
-		for (const note of this.notes) this.objects.unregister(`note:${note.id}`);
+		for (const note of this.notes) {
+			this.objects.unregister(`note:${note.id}`);
+			this.emit({ t: "note.delete", id: note.fid });
+		}
 		for (const r of this.refs.values()) r.el.remove();
 		this.refs.clear();
 		this.notes = [];
+		this.lastEmittedText.clear();
 		this.commit();
 	}
 
@@ -498,7 +537,9 @@ export class StickyNotes {
 	destroy() {
 		if (!this.supported) return;
 		document.removeEventListener("pointerdown", this.onDocPointerDown, true);
+		document.removeEventListener("visibilitychange", this.onVisibility);
 		clearTimeout(this.saveTimer);
+		clearInterval(this.pollTimer);
 		for (const note of this.notes) this.objects.unregister(`note:${note.id}`);
 		this.root.remove();
 		releaseStyles();
@@ -625,11 +666,15 @@ export class StickyNotes {
 			fontItems,
 		} = this.buildToolbar(note);
 
-		el.append(bar, text, toolbar);
+		const replies = document.createElement("div");
+		replies.className = "sn-replies";
+
+		el.append(bar, text, replies, toolbar);
 		this.root.appendChild(el);
 		this.refs.set(note.id, {
 			el,
 			text,
+			replies,
 			dot,
 			sizeLabel,
 			fontLabel,
@@ -637,6 +682,10 @@ export class StickyNotes {
 			swatches,
 			sizeItems,
 			fontItems,
+		});
+		this.paintThread(note, {
+			replies: note.replies,
+			resolved: note.resolved,
 		});
 	}
 
@@ -674,6 +723,13 @@ export class StickyNotes {
 				note.y = rect.y;
 				note.w = rect.width;
 				note.h = note.compact ? Math.round(rect.height / NOTE_COMPACT_RATIO) : rect.height;
+				this.emit({
+					t: "note.move",
+					id: note.fid,
+					screenId: this.screenAt?.({ x: note.x, y: note.y }) ?? null,
+					x: note.x,
+					y: note.y,
+				});
 				this.commit();
 			},
 			onSelect: (selected) => {
@@ -700,13 +756,17 @@ export class StickyNotes {
 		const copy: StickyNote = {
 			...source,
 			id: this.nextId++,
+			fid: newFeedId("n"),
 			x: rect.x,
 			y: rect.y,
+			replies: [],
+			resolved: false,
 		};
 		this.notes.push(copy);
 		this.mountNote(copy);
 		this.registerNote(copy);
 		this.objects.select(this.noteObjectId(copy.id));
+		this.emitCreated(copy);
 		this.commit();
 	}
 
@@ -1092,9 +1152,9 @@ export class StickyNotes {
 	// -------------------------------------------------------------- persist
 
 	private commit() {
-		if (this.storageKey) {
-			clearTimeout(this.saveTimer);
-			this.saveTimer = setTimeout(() => {
+		clearTimeout(this.saveTimer);
+		this.saveTimer = setTimeout(() => {
+			if (this.storageKey) {
 				try {
 					localStorage.setItem(
 						this.storageKey as string,
@@ -1111,14 +1171,20 @@ export class StickyNotes {
 								hh: n.h,
 								t: n.text,
 								h: sanitizeHtml(n.html),
+								fi: n.fid,
 							})),
 						}),
 					);
 				} catch {
 					// storage unavailable — notes stay in-memory
 				}
-			}, 150);
-		}
+			}
+			for (const n of this.notes) {
+				if (this.lastEmittedText.get(n.id) === n.text) continue;
+				this.emit({ t: "note.edit", id: n.fid, text: n.text });
+				this.lastEmittedText.set(n.id, n.text);
+			}
+		}, 150);
 		this.onChange?.(this);
 	}
 
@@ -1140,13 +1206,18 @@ export class StickyNotes {
 					hh?: unknown;
 					t: string;
 					h?: unknown;
+					fi?: unknown;
 				}[];
 			};
 			if (data.v !== 1 || !Array.isArray(data.notes)) return;
+			let backfilled = false;
 			for (const n of data.notes) {
 				if (typeof n.x !== "number" || typeof n.y !== "number") continue;
+				const fid = isNoteFid(n.fi) ? n.fi : newFeedId("n");
+				if (!isNoteFid(n.fi)) backfilled = true;
 				const note: StickyNote = {
 					id: this.nextId++,
+					fid,
 					x: n.x,
 					y: n.y,
 					color: n.c in COLORS ? n.c : this.defaultColor,
@@ -1160,13 +1231,99 @@ export class StickyNotes {
 						typeof n.h === "string"
 							? sanitizeHtml(n.h)
 							: textToHtml(typeof n.t === "string" ? n.t : ""),
+					replies: [],
+					resolved: false,
 				};
 				this.notes.push(note);
 				this.mountNote(note); // derives note.text from the mounted DOM
 				this.registerNote(note);
+				this.lastEmittedText.set(note.id, note.text);
 			}
+			if (backfilled) this.commit();
 		} catch {
 			// corrupt payload — start with no notes
+		}
+	}
+
+	private emitCreated(note: StickyNote) {
+		this.emit({
+			t: "note",
+			id: note.fid,
+			screenId: this.screenAt?.({ x: note.x, y: note.y }) ?? null,
+			x: note.x,
+			y: note.y,
+			text: note.text,
+		});
+		this.lastEmittedText.set(note.id, note.text);
+	}
+
+	private emit(event: Record<string, unknown>): void {
+		try {
+			void fetch("/__lab-fs/notes/event", {
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					"x-lab-canvas": "1",
+				},
+				body: JSON.stringify(event),
+			}).catch(() => {
+				// dev server down — notes stay local
+			});
+		} catch {
+			// fetch missing — notes stay local
+		}
+	}
+
+	private onVisibility = () => {
+		if (!document.hidden) void this.pullThreads();
+	};
+
+	private async pullThreads() {
+		try {
+			const res = await fetch("/__lab-fs/notes/threads", {
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					"x-lab-canvas": "1",
+				},
+				body: "{}",
+			});
+			if (!res.ok) return;
+			const data = (await res.json()) as { feed?: unknown };
+			if (typeof data.feed !== "string") return;
+			this.applyFeed(data.feed);
+		} catch {
+			// silent — the canvas still works without her
+		}
+	}
+
+	private applyFeed(text: string) {
+		const threads = projectNoteFeed(text);
+		for (const note of this.notes) {
+			const st = threads.get(note.fid);
+			if (st) this.paintThread(note, st);
+		}
+	}
+
+	private paintThread(note: StickyNote, st: NoteThreadState) {
+		note.replies = st.replies;
+		note.resolved = st.resolved;
+		const r = this.refs.get(note.id);
+		if (!r) return;
+		r.el.toggleAttribute("data-resolved", st.resolved);
+		r.replies.replaceChildren();
+		for (const reply of st.replies) {
+			const row = document.createElement("div");
+			row.className = "sn-reply";
+			row.dataset.author = reply.author;
+			const who =
+				reply.author === "samantha"
+					? "Samantha"
+					: reply.author === "fei"
+						? "Fei"
+						: reply.author;
+			row.textContent = `${who}: ${reply.text}`;
+			r.replies.appendChild(row);
 		}
 	}
 }

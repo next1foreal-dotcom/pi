@@ -43,9 +43,44 @@ function patchPosition(src: string, x: number, y: number): string {
   return `${src}\n${next};\n`;
 }
 
+/**
+ * The feedback feed: what Fei writes on the canvas, and what she writes back.
+ * Lives in her data directory, not the lab's, because the canvas is a viewer
+ * and the conversation is hers to keep. Append-only, one JSON event per line —
+ * a record's position is its sequence, so the two writers (this dev server and
+ * her runtime) never pick a number and never collide on one.
+ * Semantics and the reader live in packages/her/src/design-canvas/.
+ */
+const FEED_REL = ["design", "canvas", "feed.jsonl"];
+
+/**
+ * Writes must carry this header.
+ *
+ * A JSON body sent as text/plain is a CORS-*simple* request, so without it any
+ * page the browser visits — including a screen whose markup she generated from
+ * something she read — could POST here. Since `author` is what makes a note
+ * read as Fei, that would be a path for generated content to issue instructions
+ * to her in his name. A simple request cannot set a custom header, and the
+ * browser route cannot claim authorship anyway: the server stamps it.
+ * (The reasoning is tracepaper's; the code is ours.)
+ */
+const WRITE_GUARD = "x-lab-canvas";
+
+const EVENT_TYPES = new Set([
+  "note",
+  "note.move",
+  "note.edit",
+  "note.delete",
+  "reply",
+  "resolve",
+  "reopen",
+]);
+
 export function labFsPlugin(projectRoot: string): Plugin {
   const screensDir = path.resolve(projectRoot, "src/screens");
   const trashDir = path.resolve(projectRoot, ".lab-trash");
+  // packages/design-lab -> the samantha repo root
+  const feedFile = path.resolve(projectRoot, "..", "..", ...FEED_REL);
 
   return {
     name: "lab-fs",
@@ -157,6 +192,35 @@ export function labFsPlugin(projectRoot: string): Plugin {
                 fs.writeFileSync(manifest, text);
               }
               json(res, 200, { ok: true });
+              return;
+            }
+            if (url === "/notes/event") {
+              const guard = req.headers[WRITE_GUARD];
+              const guardValue = Array.isArray(guard) ? guard[0] : guard;
+              if (guardValue !== "1") {
+                json(res, 403, { ok: false, error: "forbidden" });
+                return;
+              }
+              const t = body.t;
+              if (typeof t !== "string" || !EVENT_TYPES.has(t)) {
+                json(res, 400, { ok: false, error: "unknown event type" });
+                return;
+              }
+              const at =
+                typeof body.at === "string" && body.at
+                  ? body.at
+                  : new Date().toISOString();
+              const event = { ...body, t, at, author: "fei" };
+              fs.mkdirSync(path.dirname(feedFile), { recursive: true });
+              fs.appendFileSync(feedFile, `${JSON.stringify(event)}\n`);
+              json(res, 200, { ok: true });
+              return;
+            }
+            if (url === "/notes/threads") {
+              const feed = fs.existsSync(feedFile)
+                ? fs.readFileSync(feedFile, "utf8")
+                : "";
+              json(res, 200, { ok: true, feed });
               return;
             }
             json(res, 404, { ok: false, error: "unknown op" });
