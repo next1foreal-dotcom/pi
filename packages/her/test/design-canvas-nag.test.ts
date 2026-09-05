@@ -1,12 +1,28 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+	appendFileSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import test from "node:test";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 
 import type { CanvasEvent } from "../src/design-canvas/feed.ts";
-import { pendingForHer, withCanvasNag } from "../src/design-canvas/nag.ts";
+import {
+	acceptProposal,
+	declineProposal,
+	pendingForHer,
+	pendingProposals,
+	withCanvasNag,
+} from "../src/design-canvas/nag.ts";
 import { appendEvent, readCanvas, readCursor } from "../src/design-canvas/store.ts";
 
 const AT = "2026-09-05T20:00:00.000Z";
@@ -316,6 +332,266 @@ test("rewording his own note counts as speaking", () => {
 			pendingForHer(root).map((t) => t.id),
 			["n1"],
 			"he rewrote it — that is him speaking",
+		);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+function plantProposal(
+	root: string,
+	partial: {
+		id: string;
+		screenId?: string | null;
+		items?: { his: string; hers: string }[];
+		at?: string;
+		from?: string[];
+		status?: string;
+	},
+): void {
+	const dir = join(root, "design", "canvas");
+	mkdirSync(dir, { recursive: true });
+	appendFileSync(
+		join(dir, "rule-proposals.jsonl"),
+		`${JSON.stringify({
+			at: AT,
+			screenId: "product-list",
+			items: SAMPLE_ITEMS,
+			from: ["d1", "d2", "d3"],
+			status: "pending",
+			...partial,
+		})}\n`,
+		"utf8",
+	);
+}
+
+function proposalFile(root: string): string {
+	return join(root, "design", "canvas", "rule-proposals.jsonl");
+}
+
+function proposalLines(root: string): string[] {
+	const file = proposalFile(root);
+	if (!existsSync(file)) return [];
+	return readFileSync(file, "utf8")
+		.split("\n")
+		.map((line) => line.trim())
+		.filter(Boolean);
+}
+
+function relativeFiles(root: string): string[] {
+	const out: string[] = [];
+	const walk = (dir: string): void => {
+		for (const name of readdirSync(dir)) {
+			const full = join(dir, name);
+			if (statSync(full).isDirectory()) walk(full);
+			else out.push(relative(root, full).split("\\").join("/"));
+		}
+	};
+	walk(root);
+	return out.sort();
+}
+
+function plantSkillFiles(root: string): { skill: string; nested: string; body: string } {
+	const body = "taste rule: never auto-write here\n";
+	const skill = join(root, "SKILL.md");
+	const nestedDir = join(root, ".claude", "skills", "taste");
+	mkdirSync(nestedDir, { recursive: true });
+	const nested = join(nestedDir, "SKILL.md");
+	writeFileSync(skill, body, "utf8");
+	writeFileSync(nested, body, "utf8");
+	return { skill, nested, body };
+}
+
+const SAMPLE_ITEMS = [
+	{ his: "too tight", hers: "24px" },
+	{ his: "wrong green", hers: "hue shifted" },
+	{ his: "fix the gap", hers: "closed it" },
+];
+
+function expectedProposalNag(items: { his: string; hers: string }[], screenId: string): string {
+	return [
+		`他在 ${screenId} 上提过 ${items.length} 次同一带的意见,你都改了:`,
+		...items.map((item) => `  他:${item.his}  →  你:${item.hers}`),
+		"看看这几条背后是不是同一条口味。是的话,下次跟他聊的时候用你自己的话说出来,让他确认。",
+		"别自己当规矩用,也别写进任何 skill 文件——没经他点头的口味不算数。",
+	].join("\n");
+}
+
+test("a pending proposal hitchhikes as its own text part, next to the todo nag", async () => {
+	const root = tempRoot();
+	try {
+		appendEvent(fromFei("n1", "too tight"), root);
+		plantProposal(root, { id: "p_old", items: SAMPLE_ITEMS, from: ["d1", "d2", "d3"] });
+
+		const result = await runDummy(root, () => originalResult());
+		assert.equal(result.content.length, 3, "original + todo nag + proposal nag, not mashed together");
+		assert.equal(result.content[0].text, "photo ok");
+		assert.match(result.content[1].text, /没处理的意见/);
+		assert.match(result.content[1].text, /n1 on product-list: too tight/);
+		assert.equal(result.content[2].text, expectedProposalNag(SAMPLE_ITEMS, "product-list"));
+		assert.equal(pendingProposals(root).length, 1, "showing it must not mark it handled");
+		assert.equal(proposalLines(root).length, 1);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("zero proposals add nothing — even when a todo nag is present", async () => {
+	const root = tempRoot();
+	try {
+		const quiet = await runDummy(root, () => originalResult());
+		assert.deepEqual(quiet, originalResult());
+		assert.equal(pendingProposals(root).length, 0);
+
+		appendEvent(fromFei("n1", "too tight"), root);
+		const withTodo = await runDummy(root, () => originalResult());
+		assert.equal(withTodo.content.length, 2);
+		assert.equal(withTodo.content[0].text, "photo ok");
+		assert.match(withTodo.content[1].text, /没处理的意见/);
+		assert.doesNotMatch(withTodo.content[1].text, /同一带的意见/);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("three pending proposals: only the oldest one is raised", async () => {
+	const root = tempRoot();
+	try {
+		plantProposal(root, {
+			id: "p_a",
+			at: "2026-09-01T00:00:00.000Z",
+			screenId: "mosaic",
+			items: [{ his: "first gripe", hers: "first fix" }],
+			from: ["a1", "a2", "a3"],
+		});
+		plantProposal(root, {
+			id: "p_b",
+			at: "2026-09-02T00:00:00.000Z",
+			screenId: "mosaic",
+			items: [{ his: "second gripe", hers: "second fix" }],
+			from: ["b1", "b2", "b3"],
+		});
+		plantProposal(root, {
+			id: "p_c",
+			at: "2026-09-03T00:00:00.000Z",
+			screenId: "mosaic",
+			items: [{ his: "third gripe", hers: "third fix" }],
+			from: ["c1", "c2", "c3"],
+		});
+
+		assert.deepEqual(
+			pendingProposals(root).map((p) => p.id),
+			["p_a", "p_b", "p_c"],
+			"oldest first",
+		);
+
+		const result = await runDummy(root, () => originalResult());
+		assert.equal(result.content.length, 2, "one extra text, not three");
+		assert.equal(result.content[1].text, expectedProposalNag([{ his: "first gripe", hers: "first fix" }], "mosaic"));
+		assert.doesNotMatch(result.content[1].text, /second gripe/);
+		assert.doesNotMatch(result.content[1].text, /third gripe/);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("acceptProposal appends a new line; the original pending row is still there", () => {
+	const root = tempRoot();
+	try {
+		plantProposal(root, { id: "p_old", items: SAMPLE_ITEMS });
+		const before = proposalLines(root);
+		assert.equal(before.length, 1);
+		assert.equal(pendingProposals(root).length, 1);
+
+		acceptProposal("p_old", root);
+
+		const after = proposalLines(root);
+		assert.equal(after.length, 2, "status change is a new record, not a rewrite");
+		assert.equal(after[0], before[0]);
+		const added = JSON.parse(after[1] as string) as { id: string; status: string };
+		assert.equal(added.id, "p_old");
+		assert.equal(added.status, "accepted");
+		assert.equal(pendingProposals(root).length, 0);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("declineProposal appends declined and drops it from pendingProposals", () => {
+	const root = tempRoot();
+	try {
+		plantProposal(root, { id: "p_no", items: SAMPLE_ITEMS });
+		declineProposal("p_no", root);
+		assert.equal(proposalLines(root).length, 2);
+		assert.equal(pendingProposals(root).length, 0);
+		const added = JSON.parse(proposalLines(root)[1] as string) as { status: string };
+		assert.equal(added.status, "declined");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("a missing or torn proposals file does not break the wrapped tool", async () => {
+	const root = tempRoot();
+	try {
+		const missing = await runDummy(root, () => originalResult());
+		assert.deepEqual(missing, originalResult());
+		assert.deepEqual(pendingProposals(root), []);
+
+		const dir = join(root, "design", "canvas");
+		mkdirSync(dir, { recursive: true });
+		writeFileSync(
+			proposalFile(root),
+			`{"not":"valid"\n${JSON.stringify({
+				id: "p_kept",
+				at: AT,
+				items: SAMPLE_ITEMS,
+				from: ["d1", "d2", "d3"],
+				status: "pending",
+			})}\n`,
+			"utf8",
+		);
+		assert.deepEqual(
+			pendingProposals(root).map((p) => p.id),
+			["p_kept"],
+		);
+		const torn = await runDummy(root, () => originalResult());
+		assert.equal(torn.content.length, 2);
+		assert.equal(torn.content[0].text, "photo ok");
+		assert.match(torn.content[1].text, /同一带的意见/);
+
+		rmSync(proposalFile(root), { force: true });
+		mkdirSync(proposalFile(root), { recursive: true });
+		const unreadable = await runDummy(root, () => originalResult());
+		assert.deepEqual(unreadable, originalResult());
+		assert.deepEqual(pendingProposals(root), []);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("raising or deciding a proposal never writes a skill file", async () => {
+	const root = tempRoot();
+	try {
+		const planted = plantSkillFiles(root);
+		plantProposal(root, { id: "p_old", items: SAMPLE_ITEMS });
+		const before = relativeFiles(root).filter((p) => /skill/i.test(p));
+
+		await runDummy(root, () => originalResult());
+		acceptProposal("p_old", root);
+		plantProposal(root, { id: "p_next", screenId: "mosaic", items: [{ his: "too loud", hers: "quieted it" }] });
+		declineProposal("p_next", root);
+
+		assert.equal(readFileSync(planted.skill, "utf8"), planted.body);
+		assert.equal(readFileSync(planted.nested, "utf8"), planted.body);
+		assert.deepEqual(
+			relativeFiles(root).filter((p) => /skill/i.test(p)),
+			before,
+		);
+		assert.equal(existsSync(join(root, "Agents.md")), false);
+		assert.ok(
+			relativeFiles(root).every((p) => !p.split("/").includes("skills") || p.startsWith(".claude/skills/")),
+			"no new skills path appeared",
 		);
 	} finally {
 		rmSync(root, { recursive: true, force: true });

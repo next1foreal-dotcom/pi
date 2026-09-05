@@ -128,9 +128,11 @@ test("three related opinions collapse into one pending proposal", async () => {
 	]);
 	assert.ok(proposed);
 	assert.deepEqual(proposed.from, ["d1", "d2", "d3"]);
-	assert.match(proposed.rule, /too tight/);
-	assert.match(proposed.rule, /wrong green/);
-	assert.match(proposed.rule, /fix the gap/);
+	// The proposal carries what was said, not a machine's paraphrase of it.
+	assert.deepEqual(
+		proposed.items.map((i) => i.his),
+		["too tight", "wrong green", "fix the gap"],
+	);
 
 	const root = tempRoot();
 	try {
@@ -146,10 +148,10 @@ test("three related opinions collapse into one pending proposal", async () => {
 
 		const rows = readJsonl(join(root, "design", "canvas", "rule-proposals.jsonl"));
 		assert.equal(rows.length, 1);
-		const row = rows[0] as { rule: string; from: string[]; status: string };
+		const row = rows[0] as { items: { his: string }[]; from: string[]; status: string };
 		assert.equal(row.status, "pending");
 		assert.equal(row.from.length, 3);
-		assert.match(row.rule, /too tight/);
+		assert.ok(row.items.some((i) => i.his === "too tight"));
 
 		assert.equal(readFileSync(planted.skill, "utf8"), planted.body);
 		assert.equal(readFileSync(planted.nested, "utf8"), planted.body);
@@ -179,8 +181,12 @@ test("identical notes still count; the rule text names each unique ask once", ()
 	const same = [decision("d1", "too tight"), decision("d2", "too tight"), decision("d3", "too tight")];
 	const proposed = proposeRule(same);
 	assert.ok(proposed);
-	assert.deepEqual(proposed.from, ["d1", "d2", "d3"]);
-	assert.equal((proposed.rule.match(/too tight/g) ?? []).length, 1);
+	assert.deepEqual(proposed.from, ["d1", "d2", "d3"], "all three still count as evidence");
+	assert.deepEqual(
+		proposed.items.map((i) => i.his),
+		["too tight"],
+		"but it is named once",
+	);
 });
 
 test("pendingDecisions drops entries already named by a proposal", () => {
@@ -194,4 +200,35 @@ test("pendingDecisions drops entries already named by a proposal", () => {
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}
+});
+
+test("a proposal hands over the raw material, it does not pretend to be a rule", () => {
+	// What this produced before was his three complaints joined with " | " and
+	// called a rule. That is a transcript, not a taste — and it looked finished:
+	// tests green, ledger written, the nag firing, nothing of value produced.
+	//
+	// A pure function cannot generalise taste out of natural language, and the
+	// fix is not to call a model: SHE is the model, and she is already reading
+	// this text. So the proposal carries what was actually said and done, and
+	// naming the pattern is her job when she raises it with him.
+	const decisions: CanvasDecision[] = [
+		{ id: "d1", at: AT, noteId: "n1", screenId: "product-list", his: "这个间距太挤了", hers: "加大到 24px" },
+		{ id: "d2", at: AT, noteId: "n2", screenId: "product-list", his: "标题和正文离太近", hers: "改成 16px" },
+		{ id: "d3", at: AT, noteId: "n3", screenId: "product-list", his: "卡片之间挤在一起", hers: "gap 24px" },
+	];
+	const p = proposeRule(decisions);
+	assert.ok(p, "three on one screen is enough to be worth raising");
+	assert.equal(p.screenId, "product-list");
+	assert.deepEqual(
+		p.items.map((i) => [i.his, i.hers]),
+		[
+			["这个间距太挤了", "加大到 24px"],
+			["标题和正文离太近", "改成 16px"],
+			["卡片之间挤在一起", "gap 24px"],
+		],
+		"both halves survive: what he objected to AND what she did about it",
+	);
+	assert.deepEqual(p.from, ["d1", "d2", "d3"]);
+	// and nothing anywhere claims to be a finished rule
+	assert.equal("rule" in p, false);
 });

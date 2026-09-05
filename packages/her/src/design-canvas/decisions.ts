@@ -13,12 +13,32 @@ export interface CanvasDecision {
 	hers: string;
 }
 
+export type ProposalStatus = "pending" | "accepted" | "declined";
+
+/** One pair from the record: what he objected to, and what she did about it. */
+export interface DecisionPair {
+	his: string;
+	hers: string;
+}
+
 export interface RuleProposal {
 	id: string;
 	at: string;
-	rule: string;
+	screenId: string | null;
+	/**
+	 * The raw material, not a rule.
+	 *
+	 * An earlier version joined his complaints with " | " and called the result
+	 * a taste rule. It was a transcript wearing a rule's name, and it looked
+	 * finished — tests green, ledger written, the reminder firing — while
+	 * producing nothing anyone could act on. A pure function cannot generalise
+	 * taste out of natural language, and the answer is not to call a model:
+	 * she is the model, and she is the one reading this. Naming the pattern is
+	 * her job, in front of him, where he can say yes or no to it.
+	 */
+	items: DecisionPair[];
 	from: string[];
-	status: "pending";
+	status: ProposalStatus;
 }
 
 export interface RecordDecisionOpts {
@@ -84,6 +104,74 @@ function isProposal(value: unknown): value is Pick<RuleProposal, "from"> {
 	return Array.isArray(row.from) && row.from.every((id) => typeof id === "string");
 }
 
+function isRuleProposal(value: unknown): value is RuleProposal {
+	if (!isProposal(value)) return false;
+	const row = value as Record<string, unknown>;
+	// `items` is what makes a proposal readable. A row without it is either
+	// corrupt or written by the version that put a joined string in `rule`, and
+	// either way there is nothing to show her — skip it here, explicitly,
+	// rather than letting it throw its way into the caller's catch and take a
+	// whole reminder down silently.
+	const items = row.items;
+	return (
+		typeof row.id === "string" &&
+		typeof row.at === "string" &&
+		Array.isArray(items) &&
+		items.length > 0 &&
+		items.every(
+			(item) =>
+				!!item &&
+				typeof item === "object" &&
+				typeof (item as { his?: unknown }).his === "string" &&
+				typeof (item as { hers?: unknown }).hers === "string",
+		) &&
+		(row.status === "pending" || row.status === "accepted" || row.status === "declined")
+	);
+}
+
+/**
+ * Latest state of each proposal, oldest-first by first appearance.
+ * A later line with the same id is a status change, not a rewrite.
+ */
+export function proposalStates(repoRoot?: string): RuleProposal[] {
+	const root = rootOf(repoRoot);
+	try {
+		const latest = new Map<string, RuleProposal>();
+		const order: string[] = [];
+		for (const row of readJsonl(proposalsPath(root), isRuleProposal)) {
+			if (!latest.has(row.id)) order.push(row.id);
+			latest.set(row.id, row);
+		}
+		return order.flatMap((id) => {
+			const row = latest.get(id);
+			return row ? [row] : [];
+		});
+	} catch {
+		return [];
+	}
+}
+
+function appendProposalStatus(id: string, status: "accepted" | "declined", repoRoot?: string): void {
+	const root = rootOf(repoRoot);
+	const current = proposalStates(root).find((row) => row.id === id);
+	if (!current) return;
+	appendJsonl(proposalsPath(root), {
+		...current,
+		status,
+		at: new Date().toISOString(),
+	});
+}
+
+/** Append a status-change line. Does not rewrite the original pending row. */
+export function acceptProposal(id: string, repoRoot?: string): void {
+	appendProposalStatus(id, "accepted", repoRoot);
+}
+
+/** Append a status-change line. Does not rewrite the original pending row. */
+export function declineProposal(id: string, repoRoot?: string): void {
+	appendProposalStatus(id, "declined", repoRoot);
+}
+
 function lastSamanthaReply(thread: Thread): string {
 	for (let i = thread.replies.length - 1; i >= 0; i--) {
 		const reply = thread.replies[i];
@@ -121,7 +209,9 @@ export function pendingDecisions(repoRoot?: string): CanvasDecision[] {
  *
  * Pure: no I/O, no model.
  */
-export function proposeRule(decisions: CanvasDecision[]): { rule: string; from: string[] } | null {
+export function proposeRule(
+	decisions: CanvasDecision[],
+): { screenId: string | null; items: DecisionPair[]; from: string[] } | null {
 	const groups = new Map<string, CanvasDecision[]>();
 	const order: string[] = [];
 	for (const row of decisions) {
@@ -139,16 +229,16 @@ export function proposeRule(decisions: CanvasDecision[]): { rule: string; from: 
 		const group = groups.get(key);
 		if (!group || group.length < 3) continue;
 		const seen = new Set<string>();
-		const unique: string[] = [];
+		const items: DecisionPair[] = [];
 		for (const row of group) {
 			const norm = row.his.trim().toLowerCase();
 			if (seen.has(norm)) continue;
 			seen.add(norm);
-			unique.push(row.his.trim());
+			items.push({ his: row.his.trim(), hers: row.hers.trim() });
 		}
-		const where = key || "the canvas";
 		return {
-			rule: `On ${where}: ${unique.join(" | ")}`,
+			screenId: key || null,
+			items,
 			from: group.map((row) => row.id),
 		};
 	}
@@ -161,7 +251,8 @@ function maybePropose(repoRoot: string, now: () => string): void {
 	const record: RuleProposal = {
 		id: newRecordId("p"),
 		at: now(),
-		rule: proposed.rule,
+		screenId: proposed.screenId,
+		items: proposed.items,
 		from: proposed.from,
 		status: "pending",
 	};
