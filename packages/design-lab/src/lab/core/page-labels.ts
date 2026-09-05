@@ -43,7 +43,10 @@ export interface LabelsOptions {
 
 export const DEFAULT_LABELS_KEY = "interaction-lab:labels:v1";
 
-const BASE_FONT = 28; // px at scale 1
+// px at scale 1. Labels are viewport-constant too, and 28 read as a headline
+// rather than an annotation; the arrow follows in em, so the drawn proportion
+// is unchanged. Users can still scale a callout up to 4x by its handle.
+const BASE_FONT = 20;
 const MIN_SCALE = 0.4;
 const MAX_SCALE = 4;
 export const AIM_DEAD_ZONE = 14;

@@ -49,9 +49,39 @@ export interface StickyNotesOptions {
 	onChange?: (notes: StickyNotes) => void;
 }
 
-export const NOTE_W = 260;
-export const NOTE_H = 260;
-const NOTE_H_COMPACT = 112;
+/**
+ * Sticky geometry. Notes are viewport-constant chrome (see the counter-scale
+ * in `place`), so a flat 260px square ate half the width of a narrow pane.
+ * The cap only bites below ~800px; on a monitor the note stays 240, which is
+ * FigJam's own sticky edge.
+ */
+const NOTE_MAX = 240;
+const NOTE_VW = 0.3;
+const NOTE_COMPACT_RATIO = 0.43;
+
+/**
+ * The rendered sticky edge in *screen* px. Mirrors the CSS `min()` below --
+ * both derive from NOTE_MAX/NOTE_VW so they cannot drift apart, and
+ * `page-notes.test.ts` pins that agreement.
+ */
+export function noteSize(viewportWidth: number = window.innerWidth): number {
+	return Math.min(NOTE_MAX, viewportWidth * NOTE_VW);
+}
+
+/**
+ * Top-left, in PAGE units, that puts a fresh note's middle on a page point.
+ * Half a note is half a *screen* note, so it has to be divided back out of
+ * the zoom -- without that the note only lands centred at 100% zoom and hangs
+ * off the edge everywhere else.
+ */
+export function noteSpawnTopLeft(
+	centre: { x: number; y: number },
+	zoom: number,
+	viewportWidth?: number,
+): { x: number; y: number } {
+	const half = noteSize(viewportWidth) / 2 / zoom;
+	return { x: centre.x - half, y: centre.y - half };
+}
 const BAR_H = 18;
 /**
  * Headroom (toolbar + tallest popover) needed above a note for the toolbar
@@ -59,6 +89,27 @@ const BAR_H = 18;
  * trays never render off-screen.
  */
 const FLIP_CLEAR = 190;
+/**
+ * Widest the dark toolbar gets (color + size + font + height). On a narrow
+ * pane it is wider than the sticky itself, so anchoring it to the note's left
+ * edge pushes its trays off-screen near the right edge.
+ */
+const TOOLBAR_CLEAR = 240;
+
+/**
+ * Where the toolbar can sit, given the note's rect **in screen px**. Both
+ * axes flip the anchor rather than nudging by a measured overhang, so the
+ * toolbar and its trays travel together and never need a second layout read.
+ */
+export function toolbarPlacement(
+	box: { top: number; left: number },
+	viewportWidth: number,
+): { flip: boolean; anchorRight: boolean } {
+	return {
+		flip: box.top < FLIP_CLEAR,
+		anchorRight: box.left + TOOLBAR_CLEAR > viewportWidth,
+	};
+}
 
 /** paper color, text color — Mac-Stickies flat pastels */
 const COLORS: Record<NoteColor, [string, string]> = {
@@ -113,8 +164,8 @@ function buildCss(fonts: { woff2: string; woff: string }): string {
 	return `
 @font-face{font-family:"Mynerve";src:url("${fonts.woff2}") format("woff2"),url("${fonts.woff}") format("woff");font-display:swap}
 .sn-root{position:absolute;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;font-family:Inter,system-ui,-apple-system,sans-serif}
-.sn-note{position:absolute;top:0;left:0;transform-origin:0 0;width:${NOTE_W}px;height:${NOTE_H}px;pointer-events:auto;display:flex;flex-direction:column;box-shadow:0 10px 30px rgba(0,0,0,.28),0 2px 6px rgba(0,0,0,.16);border-radius:2px}
-.sn-note[data-compact]{height:${NOTE_H_COMPACT}px}
+.sn-note{position:absolute;top:0;left:0;transform-origin:0 0;--sn-size:min(${NOTE_MAX}px,${NOTE_VW * 100}vw);width:var(--sn-size);height:var(--sn-size);pointer-events:auto;display:flex;flex-direction:column;box-shadow:0 10px 30px rgba(0,0,0,.28),0 2px 6px rgba(0,0,0,.16);border-radius:2px}
+.sn-note[data-compact]{height:calc(var(--sn-size) * ${NOTE_COMPACT_RATIO})}
 .sn-note[data-selected]{outline:2px solid #7b61ff;outline-offset:0}
 .sn-bar{height:${BAR_H}px;flex:none;cursor:grab;background:rgba(0,0,0,.09);display:flex;align-items:center;padding:0 5px;touch-action:none;border-radius:2px 2px 0 0}
 .sn-bar:active{cursor:grabbing}
@@ -138,6 +189,8 @@ ${colorRules}
 .sn-toolbar{position:absolute;left:0;top:-44px;height:36px;display:none;align-items:center;gap:2px;background:#1f1f1f;border-radius:8px;padding:0 4px;box-shadow:0 6px 20px rgba(0,0,0,.4);color:#e6e6e6;cursor:default;white-space:nowrap}
 .sn-note[data-selected] .sn-toolbar{display:flex}
 .sn-note[data-flip] .sn-toolbar{top:auto;bottom:-44px}
+.sn-note[data-tb-right] .sn-toolbar{left:auto;right:0}
+.sn-note[data-tb-right] .sn-pop{left:auto;right:0}
 .sn-group{position:relative;display:flex}
 .sn-tool{display:flex;align-items:center;gap:6px;height:28px;padding:0 8px;border:none;background:transparent;border-radius:6px;color:inherit;font:500 12px/1 Inter,system-ui,-apple-system,sans-serif;cursor:pointer}
 .sn-tool:hover{background:rgba(255,255,255,.08)}
@@ -673,11 +726,25 @@ export class StickyNotes {
 		if (!r) return;
 		// Page-unit position, screen-size drawing — see the note in styles().
 		r.el.style.transform = `translate3d(${note.x}px,${note.y}px,0) scale(var(--inv-zoom,1))`;
-		// flip the toolbar below the note when there is no room above it —
-		// only touch the attribute on actual change (this runs per drag frame)
-		const flip = note.y < FLIP_CLEAR;
-		if (r.el.hasAttribute("data-flip") !== flip)
-			r.el.toggleAttribute("data-flip", flip);
+		if (this.selectedId === note.id) this.placeToolbar(note.id);
+	}
+
+	/**
+	 * Park the toolbar somewhere it fits. `note.y` is a PAGE coordinate, so it
+	 * cannot be compared to a screen-px clearance — the rect is the only
+	 * honest source. Only the selected note has a visible toolbar, so this
+	 * costs at most one layout read per frame.
+	 */
+	private placeToolbar(id: number) {
+		const r = this.refs.get(id);
+		if (!r) return;
+		const box = r.el.getBoundingClientRect();
+		const at = toolbarPlacement(box, window.innerWidth);
+		// Only touch attributes on actual change — this runs per drag frame.
+		if (r.el.hasAttribute("data-flip") !== at.flip)
+			r.el.toggleAttribute("data-flip", at.flip);
+		if (r.el.hasAttribute("data-tb-right") !== at.anchorRight)
+			r.el.toggleAttribute("data-tb-right", at.anchorRight);
 	}
 
 	private enterEdit(id: number) {
@@ -906,6 +973,7 @@ export class StickyNotes {
 		this.selectedId = id;
 		for (const [nid, r] of this.refs)
 			r.el.toggleAttribute("data-selected", nid === id);
+		if (id !== null) this.placeToolbar(id);
 	}
 
 	private togglePop(pop: HTMLElement) {
