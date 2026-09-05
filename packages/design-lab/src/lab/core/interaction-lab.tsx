@@ -175,12 +175,48 @@ function liveLayout(s: Session, id: string): ScreenLayout {
   return l;
 }
 
+/**
+ * One tick per screen, so a frame that is being resized can re-render on its
+ * own while the rest of the lab stays still.
+ *
+ * A drag writes the frame imperatively and never renders, which is what keeps
+ * pan and zoom render-free — but it also meant a screen learned its new size
+ * only on pointerup, so the content inside it snapped into place after the
+ * gesture instead of reflowing during it. Ticking only on a SIZE change keeps
+ * moves free; `liveLayout` is still the source of truth once a render happens,
+ * so this carries no size of its own to fall out of date.
+ */
+const frameTicks = new Map<string, number>();
+const frameListeners = new Map<string, Set<() => void>>();
+const lastWritten = new Map<string, string>();
+
+export function subscribeFrame(id: string, fn: () => void): () => void {
+  let set = frameListeners.get(id);
+  if (!set) {
+    set = new Set();
+    frameListeners.set(id, set);
+  }
+  set.add(fn);
+  return () => {
+    set?.delete(fn);
+  };
+}
+
+export function frameTick(id: string): number {
+  return frameTicks.get(id) ?? 0;
+}
+
 function writeFrame(s: Session, id: string, layout: ScreenLayout): void {
   const el = s.layer?.querySelector(`[data-screen-id="${id}"]`);
   if (!(el instanceof HTMLElement)) return;
   el.style.transform = `translate(${layout.x}px, ${layout.y}px)`;
   el.style.width = `${layout.width}px`;
   el.style.height = `${layout.height}px`;
+  const size = `${layout.width}x${layout.height}`;
+  if (lastWritten.get(id) === size) return;
+  lastWritten.set(id, size);
+  frameTicks.set(id, frameTick(id) + 1);
+  for (const fn of frameListeners.get(id) ?? []) fn();
 }
 
 function placeChrome(s: Session): void {

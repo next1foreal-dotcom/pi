@@ -69,7 +69,7 @@ if (!HTMLElement.prototype.setPointerCapture) {
 }
 
 import { getCamera } from "./camera";
-import { DRAG_THRESHOLD_PX } from "./interaction-lab";
+import { DRAG_THRESHOLD_PX, frameTick } from "./interaction-lab";
 import { InteractionLab } from "./lab-view";
 
 function pointer(type: string, x: number, y: number, init: PointerEventInit = {}) {
@@ -227,5 +227,75 @@ describe("only the background pans the canvas", () => {
 		});
 		expect(Math.abs(moved.dx)).toBeGreaterThan(1);
 		expect(group.style.transform).toBe(before);
+	});
+});
+
+describe("a resize ticks its own screen, a move does not", () => {
+	// The tick is what lets the app inside a frame reflow DURING the drag
+	// instead of after it. It has to be size-only: a move calls writeFrame on
+	// every pointermove too, and ticking there would re-render the screen
+	// subtree for a gesture that changed nothing about its size.
+	let container: HTMLDivElement;
+	let root: Root;
+	let group: HTMLElement;
+	let shield: HTMLElement;
+	let id: string;
+
+	beforeAll(async () => {
+		container = document.createElement("div");
+		document.body.appendChild(container);
+		root = createRoot(container);
+		await act(() => {
+			root.render(
+				createElement(StrictMode, null, createElement(InteractionLab)),
+			);
+		});
+		const g = [...container.querySelectorAll("[data-screen-id]")].find(
+			(el) => el instanceof HTMLElement && el.querySelector("[data-screen-scroll]"),
+		);
+		if (!(g instanceof HTMLElement)) throw new Error("no screen frame rendered");
+		group = g;
+		id = g.dataset.screenId ?? "";
+		const s = g.querySelector('[class*="shield"]');
+		if (!(s instanceof HTMLElement)) throw new Error("no shield rendered");
+		shield = s;
+	});
+
+	afterAll(() => {
+		act(() => root.unmount());
+		container.remove();
+	});
+
+	async function drag(el: HTMLElement, dx: number, dy: number) {
+		await act(() => {
+			el.dispatchEvent(pointer("pointerdown", 400, 300));
+		});
+		await act(() => {
+			window.dispatchEvent(pointer("pointermove", 400 + dx, 300 + dy));
+		});
+		await act(() => {
+			window.dispatchEvent(pointer("pointerup", 400 + dx, 300 + dy));
+		});
+	}
+
+	it("moving a screen leaves its tick alone", async () => {
+		const before = frameTick(id);
+		await drag(shield, 60, 40);
+		expect(frameTick(id)).toBe(before);
+	});
+
+	it("resizing a screen ticks it", async () => {
+		// select it so the handles render
+		await act(() => {
+			shield.dispatchEvent(pointer("pointerdown", 400, 300));
+		});
+		await act(() => {
+			window.dispatchEvent(pointer("pointerup", 400, 300));
+		});
+		const handle = group.querySelector('[data-edge="e"]');
+		if (!(handle instanceof HTMLElement)) throw new Error("no resize handle");
+		const before = frameTick(id);
+		await drag(handle, 80, 0);
+		expect(frameTick(id)).toBeGreaterThan(before);
 	});
 });

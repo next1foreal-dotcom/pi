@@ -76,6 +76,8 @@ import {
   paintMeasure,
   showSnap,
   snapshotOf,
+  frameTick,
+  subscribeFrame,
   writeFrame,
   type Session,
 } from "./interaction-lab";
@@ -1167,6 +1169,13 @@ function ScreenSlot({
     edge: ResizeEdge,
   ) => void;
 }) {
+  // Re-render this one screen while its frame is being resized, so the app
+  // inside it reflows during the drag instead of after it. Only this slot
+  // subscribes, so a resize never renders the rest of the lab.
+  useSyncExternalStore(
+    useMemo(() => (fn: () => void) => subscribeFrame(def.id, fn), [def.id]),
+    () => frameTick(def.id),
+  );
   const layout = liveLayout(session, def.id);
   const active = session.focusedId === def.id && session.mode !== "explore";
   const selected = session.selectedId === def.id;
