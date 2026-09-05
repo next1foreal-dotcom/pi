@@ -75,6 +75,26 @@ export function dispatchLabKey(
     return { action: "exit-one" };
   }
 
+  // ── Browser page-zoom keys: always the canvas, typing target or not ──
+  // Ctrl/Cmd + = / - / 0 are the browser's own zoom shortcuts. Left to fall
+  // through the typing gate, selecting a note (which focuses its text) and
+  // pressing Ctrl+- zoomed the whole browser page, HUD and all, instead of
+  // the canvas. Stealing them from a contenteditable costs nothing: none of
+  // them is a text-editing command.
+  if (meta && !altKey) {
+    const plus =
+      key === "+" || key === "=" || code === "Equal" || code === "NumpadAdd";
+    const minus = key === "-" || code === "Minus" || code === "NumpadSubtract";
+    const zero = code === "Digit0" || code === "Numpad0";
+    if (plus || minus || zero) {
+      // In fill the screen owns the viewport; a zoom key backs out of it,
+      // the same way a ctrl+wheel pinch does.
+      if (ctx.mode === "fill") return { action: "exit-one" };
+      if (zero) return explore ? { action: "zoom-100" } : { action: "exit-one" };
+      return { action: "zoom-step", direction: plus ? 1 : -1 };
+    }
+  }
+
   // ── Typing target gates everything else ─────────────────────────
   if (ctx.isTypingTarget) return null;
 
