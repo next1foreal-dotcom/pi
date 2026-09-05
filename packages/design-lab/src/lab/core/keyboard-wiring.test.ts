@@ -67,6 +67,7 @@ vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
 import { InteractionLab, __keyboardListenerActive } from "./lab-view";
 import { SCREENS } from "../screens";
 import * as kd from "./keyboard-dispatch";
+import { getCamera } from "./camera";
 
 // ────────────────────────── Helpers ─────────────────────────────────────
 
@@ -260,5 +261,38 @@ describe("keyboard wiring (full chain, jsdom + StrictMode)", () => {
         r.type === "return" && r.value?.action === "delete-screen",
     );
     expect(reachedLab).toBe(true);
+  });
+
+  it("P then Escape leaves explore selection and camera as they were", async () => {
+    await backToExplore();
+    await act(() => {
+      dispatchKey("Tab");
+    });
+    const rootEl = container.querySelector("[data-mode]");
+    expect(rootEl?.getAttribute("data-mode")).toBe("explore");
+    const camBefore = { ...getCamera() };
+    dispatchSpy.mockClear();
+
+    await act(() => {
+      dispatchKey("i", "KeyI");
+    });
+    expect(rootEl?.hasAttribute("data-pick")).toBe(true);
+    expect(rootEl?.getAttribute("data-mode")).toBe("explore");
+    expect(getCamera()).toEqual(camBefore);
+
+    await act(() => {
+      dispatchKey("Escape");
+    });
+    expect(rootEl?.hasAttribute("data-pick")).toBe(false);
+    expect(rootEl?.getAttribute("data-mode")).toBe("explore");
+    expect(getCamera()).toEqual(camBefore);
+
+    // Selection survived: Enter still locks into the screen Tab picked.
+    await act(() => {
+      dispatchKey("Enter");
+    });
+    expect(rootEl?.getAttribute("data-mode")).toBe("focus");
+
+    await backToExplore();
   });
 });

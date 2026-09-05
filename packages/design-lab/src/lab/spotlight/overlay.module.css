@@ -19,3 +19,89 @@
 .box[data-fast] {
   transition-duration: 80ms;
 }
+
+.pickBox {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  pointer-events: none;
+  box-sizing: border-box;
+  border: calc(1px * var(--inv-zoom, 1)) dashed #4c9ffe;
+  z-index: 6;
+  display: none;
+}
+
+.pickBox[data-show] {
+  display: block;
+}
+
+.pickBox[data-selected] {
+  border-style: solid;
+}
+
+.pickChip {
+  position: absolute;
+  left: 50%;
+  bottom: 100%;
+  --tb-x: -50%;
+  --tb-ox: 50%;
+  --tb-oy: 100%;
+  transform: translateX(var(--tb-x)) scale(var(--inv-zoom, 1));
+  transform-origin: var(--tb-ox) var(--tb-oy);
+  margin-bottom: calc(8px * var(--inv-zoom, 1));
+  height: 28px;
+  display: none;
+  align-items: center;
+  gap: 8px;
+  background: #1f1f1f;
+  color: #e6e6e6;
+  border-radius: 8px;
+  padding: 0 4px 0 10px;
+  font: 500 12px/1 Inter, system-ui, -apple-system, sans-serif;
+  white-space: nowrap;
+  pointer-events: auto;
+  cursor: default;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+
+.pickBox[data-selected] .pickChip {
+  display: flex;
+}
+
+.pickBox[data-flip] .pickChip {
+  bottom: auto;
+  top: 100%;
+  --tb-oy: 0%;
+  margin-bottom: 0;
+  margin-top: calc(8px * var(--inv-zoom, 1));
+}
+
+.pickBox[data-tb-left] .pickChip {
+  left: 0;
+  --tb-x: 0px;
+  --tb-ox: 0%;
+}
+
+.pickBox[data-tb-right] .pickChip {
+  left: auto;
+  right: 0;
+  --tb-x: 0px;
+  --tb-ox: 100%;
+}
+
+.pickSpeak {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.pickSpeak:hover {
+  background: rgba(255, 255, 255, 0.08);
+}

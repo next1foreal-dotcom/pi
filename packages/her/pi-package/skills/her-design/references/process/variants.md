@@ -17,6 +17,26 @@ At least one of these must change between directions:
 
 A shared skeleton with a new palette, typeface, radius, or shadow is not a variant. Name it as a skin pass instead and do not count it toward the two-or-three requirement.
 
+## Which question the variants are answering
+
+Before generating anything, decide which of two questions is open. Answering the wrong one wastes the round and, worse, reopens a decision that was already made.
+
+**Direction shopping — the aesthetic is not committed yet.** The project has no direction sentence on record, or the Owner asked for a fresh start. Each candidate commits to its *own* ground, mood and color stance. This is the expensive question and it should be asked once per project.
+
+**Execution shopping — the aesthetic is already committed.** A direction sentence exists and has been accepted. Every candidate now obeys it exactly and differs only in information architecture, composition skeleton or motif. Producing three new aesthetics here is not thoroughness; it is discarding a decision the Owner already made, and it forces him to re-litigate taste when he asked about layout.
+
+Say which mode you are in, in one line, before the candidates. If the two are mixed in one batch the comparison is unreadable — the eye picks the prettiest aesthetic, not the best structure, so a direction wins on a coat of paint.
+
+The default is execution shopping whenever a direction sentence exists. Go back to direction shopping only when the Owner asks for it, or when every candidate fails the rubric for the same reason and the failure traces to the direction itself rather than to the layouts.
+
+## The gate before the work
+
+Present the candidate list — one line each, naming the structural difference — and **stop**. Do not build them until the Owner has answered.
+
+This gate is not politeness. Candidates generated in parallel from the same brief converge: without a committed, differentiated seed for each one, three "different" directions come back as three arrangements of the same instinct, and the round produces one design and two shadows of it. The list is where that is caught, and it is cheap to fix there and expensive to fix afterwards.
+
+While waiting, say you are waiting. A silent pause reads as work in progress.
+
 ## Comparison loop
 
 1. Write a direction sentence for each candidate using `process/direction-first`.

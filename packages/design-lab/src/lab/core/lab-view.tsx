@@ -50,6 +50,7 @@ import {
   notifySpotlightGesture,
 } from "../spotlight/attach";
 import { SpotlightOverlay } from "../spotlight/overlay";
+import { createPickTool } from "../spotlight/pick";
 import styles from "./lab.module.css";
 import {
   CLEANUP_GAP,
@@ -185,6 +186,7 @@ export function InteractionLab() {
   const rulerOn = (
     session.pluginApis.get("ruler") as ToolToggle | undefined
   )?.isEnabled();
+  const pickOn = session.root?.hasAttribute("data-pick") ?? false;
 
   // The locked-screen hint. It names both ways out, because there are two and
   // Tab is the one nobody guesses (keyboard-dispatch handles Tab before the
@@ -303,8 +305,29 @@ export function InteractionLab() {
       if (m.handle.api !== undefined) session.pluginApis.set(m.id, m.handle.api);
     }
     const unpublish = publishPluginApis(mounted);
+    const layerEl = el.querySelector("[data-lab-layer]");
+    const pickHost = document.createElement("div");
+    if (layerEl instanceof HTMLElement) layerEl.appendChild(pickHost);
+    const pick = createPickTool({
+      host: pickHost,
+      getRoot: () => session.root,
+      getOrigin: () => session.origin,
+      getCamera,
+      spawnNote: (init) => {
+        const notes = session.pluginApis.get("notes") as
+          | { spawn: (arg: { x: number; y: number; source?: typeof init.source }) => void }
+          | undefined;
+        notes?.spawn({
+          x: init.x,
+          y: init.y,
+          ...(init.source ? { source: init.source } : {}),
+        });
+      },
+    });
+
     session.pluginsOnCameraWrite = () => {
       for (const p of session.plugins) p.onCameraWrite?.();
+      pick.onCameraWrite();
     };
     session.getGuides = () => {
       for (const p of session.plugins) {
@@ -508,6 +531,10 @@ export function InteractionLab() {
 
     // ── Keyboard: all lab shortcuts (capture phase, keydown only) ──────
     const onKeyDown = (e: KeyboardEvent) => {
+      if (pick.handleKey(e)) {
+        session.bump();
+        return;
+      }
       // Plugins get first refusal, in registry order, explore mode only.
       if (session.mode === "explore") {
         for (const p of session.plugins) {
@@ -749,6 +776,8 @@ export function InteractionLab() {
     });
 
     return () => {
+      pick.destroy();
+      pickHost.remove();
       stopSpotlight();
       unbind();
       ro.disconnect();
@@ -837,7 +866,7 @@ export function InteractionLab() {
       style={{ "--color-canvas": canvasColor } as CSSProperties}
     >
       <canvas className={styles.pixelGrid} ref={stableAttach.grid} />
-      <div className={styles.layer} ref={stableAttach.layer}>
+      <div className={styles.layer} ref={stableAttach.layer} data-lab-layer>
         {SCREENS.map((def) => (
           <ScreenSlot
             key={def.id}
@@ -1026,6 +1055,20 @@ export function InteractionLab() {
           >
             <IconLabel />
           </button>
+          <button
+            type="button"
+            className={styles.tool}
+            data-on={pickOn || undefined}
+            title="Point — I"
+            aria-label="Point"
+            aria-pressed={pickOn}
+            onClick={() => {
+              pressShortcut("KeyI", "i");
+              setRev((r) => r + 1);
+            }}
+          >
+            <IconPoint />
+          </button>
           <span className={styles.sep} />
           <button
             type="button"
@@ -1141,6 +1184,18 @@ const IconLabel = () => (
   </svg>
 );
 
+const IconPoint = () => (
+  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+    <path
+      d="M7 1.5v2.5M7 10v2.5M1.5 7h2.5M10 7h2.5"
+      stroke="currentColor"
+      strokeWidth="1.2"
+      strokeLinecap="round"
+    />
+    <circle cx="7" cy="7" r="2.2" stroke="currentColor" strokeWidth="1.2" />
+  </svg>
+);
+
 /**
  * Every shortcut the lab actually listens for, grouped as it is used.
  * Exported so help-sheet.test.ts can hold it against the real dispatcher —
@@ -1199,6 +1254,7 @@ export const HELP: { title: string; rows: [string[], string][] }[] = [
       [["Ctrl", "Shift", "N"], "Hide every note"],
       [["Shift", "L"], "New label"],
       [["Ctrl", "Shift", "L"], "Hide every label"],
+      [["I"], "Point"],
     ],
   },
 ];

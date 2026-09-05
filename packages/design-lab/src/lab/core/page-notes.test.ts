@@ -429,6 +429,39 @@ describe("canvas events posted to the feed", () => {
 		expect(deletes).toHaveLength(1);
 		expect(deletes[0]?.body).toMatchObject({ t: "note.delete", id: n?.fid });
 	});
+
+	it("spawn with source posts it as a repo-relative path and paints the caption", () => {
+		const { host } = mountWithScreen();
+		const source = {
+			file: "src/screens/playground/screen.tsx",
+			line: 19,
+			col: 25,
+			component: "PlaygroundScreen",
+		};
+		const n = live?.spawn({ x: 40, y: 80, source });
+		const posts = eventPosts().filter((p) => p.body.t === "note");
+		expect(posts[0]?.body.source).toEqual(source);
+		expect(JSON.stringify(posts[0]?.body.source)).not.toContain(
+			"http://localhost:5180",
+		);
+		expect(host.querySelector(".sn-source")?.textContent).toBe("screen.tsx:19");
+		expect(n?.source).toEqual(source);
+	});
+
+	it("a move of a sourced note keeps source on note.move", () => {
+		const { objects } = mountWithScreen();
+		const source = {
+			file: "src/screens/playground/screen.tsx",
+			line: 19,
+			col: 25,
+			component: "PlaygroundScreen",
+		};
+		const n = live?.spawn({ x: 10, y: 20, source });
+		const init = objects.inits.get(`note:${n?.id}`);
+		init?.onLayout?.({ x: 50, y: 60, width: 240, height: 240 });
+		const moves = eventPosts().filter((p) => p.body.t === "note.move");
+		expect(moves[0]?.body.source).toEqual(source);
+	});
 });
 
 describe("replies and resolved state on the sticky", () => {
@@ -442,6 +475,78 @@ describe("replies and resolved state on the sticky", () => {
 		expect(css).toContain("[data-resolved]");
 		const repliesRule = css.match(/\.sn-replies\{[^}]*\}/)?.[0] ?? "";
 		expect(repliesRule).not.toContain("--inv-zoom");
+	});
+
+	it("keeps .sn-text{flex:1} so blank space is still the editor", () => {
+		mount();
+		const css =
+			document.querySelector<HTMLStyleElement>("style[data-sticky-note]")
+				?.textContent ?? "";
+		const text = css.match(/\.sn-text\{[^}]*\}/)?.[0] ?? "";
+		expect(text).toContain("flex:1");
+		expect(css).toContain(".sn-body{");
+		expect(css).toContain(".sn-blank{");
+		const repliesRule = css.match(/\.sn-replies\{[^}]*\}/)?.[0] ?? "";
+		expect(repliesRule).not.toContain("margin-top:auto");
+		expect(repliesRule).toContain("flex:none");
+	});
+
+	it("clicking the leftover blank still starts typing when a reply is present", async () => {
+		const host = document.createElement("div");
+		document.body.appendChild(host);
+		const objects = stubObjects();
+		objects.beginMove = (_e, _id, opts) => {
+			opts?.onClick?.();
+		};
+		live = new StickyNotes({
+			host,
+			objects,
+			storageKey: null,
+			screenAt: () => "playground",
+		});
+		const n = live.spawn({ x: 0, y: 0, text: "too tight" });
+		const text = host.querySelector(".sn-text");
+		if (!(text instanceof HTMLElement)) throw new Error("no text");
+		text.blur();
+		vi.mocked(fetch).mockImplementation(async (url) => {
+			if (String(url).includes("/notes/threads")) {
+				const feed = `${JSON.stringify({
+					t: "reply",
+					id: "r_aaaaaaaaaaaa",
+					noteId: n.fid,
+					at: "2026-09-05T20:00:00.000Z",
+					author: "samantha",
+					text: "24px now",
+				})}\n`;
+				return {
+					ok: true,
+					json: async () => ({ ok: true, feed }),
+				} as unknown as Response;
+			}
+			return {
+				ok: true,
+				json: async () => ({ ok: true }),
+			} as unknown as Response;
+		});
+		Object.defineProperty(document, "hidden", {
+			configurable: true,
+			get: () => false,
+		});
+		document.dispatchEvent(new Event("visibilitychange"));
+		await vi.waitFor(() => {
+			expect(host.querySelector(".sn-reply")?.textContent).toContain("24px now");
+		});
+		expect(document.activeElement).not.toBe(text);
+		const blank = host.querySelector(".sn-blank");
+		expect(blank).toBeInstanceOf(HTMLElement);
+		blank?.dispatchEvent(
+			new PointerEvent("pointerdown", {
+				bubbles: true,
+				cancelable: true,
+				button: 0,
+			}),
+		);
+		expect(document.activeElement).toBe(text);
 	});
 
 	it("pulls her reply onto the note and marks it resolved", async () => {

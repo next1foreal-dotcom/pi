@@ -139,6 +139,15 @@
 .root[data-mode="explore"] {
   cursor: grab;
 }
+.root[data-pick] {
+  cursor: default;
+}
+.root[data-pick] .shield {
+  pointer-events: none;
+}
+.root[data-pick] .content {
+  pointer-events: auto;
+}
 .root[data-mode="explore"][data-panning] {
   cursor: grabbing;
 }

@@ -57,6 +57,7 @@ export interface StickyNote {
 	html: string;
 	replies: NoteReply[];
 	resolved: boolean;
+	source?: { file: string; line: number; col: number; component: string | null };
 }
 
 export interface StickyNotesOptions {
@@ -197,12 +198,18 @@ function buildCss(fonts: { woff2: string; woff: string }): string {
 .sn-bar{height:${BAR_H}px;flex:none;cursor:grab;background:rgba(0,0,0,.09);display:flex;align-items:center;padding:0 5px;touch-action:none;border-radius:2px 2px 0 0}
 .sn-note:active{cursor:grabbing}
 .sn-text:focus{cursor:text}
+.sn-source{flex:none;padding:2px 8px 0;font:500 9px/1.2 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;opacity:.55}
+.sn-source:empty{display:none}
 .sn-note[data-color="black"] .sn-bar{background:rgba(255,255,255,.08)}
 .sn-close{width:8px;height:8px;flex:none;border:none;padding:0;background:rgba(0,0,0,.22);cursor:pointer}
 .sn-close:hover{background:rgba(0,0,0,.45)}
 .sn-note[data-color="black"] .sn-close{background:rgba(255,255,255,.28)}
 .sn-note[data-color="black"] .sn-close:hover{background:rgba(255,255,255,.5)}
-.sn-text{flex:1;cursor:inherit;overflow-y:auto;scrollbar-width:thin;scrollbar-color:gray transparent;background:transparent;border:none;outline:none;padding:6px 4px;margin:2px 8px 10px;color:inherit;font-family:inherit;font-size:var(--sn-fs,14px);line-height:1.4;white-space:pre-wrap;word-break:break-word}
+.sn-body{flex:1;min-height:0;overflow-y:auto;scrollbar-width:thin;scrollbar-color:gray transparent;display:flex;flex-direction:column}
+.sn-text{flex:1;min-height:0;cursor:inherit;overflow-y:auto;scrollbar-width:thin;scrollbar-color:gray transparent;background:transparent;border:none;outline:none;padding:6px 4px;margin:2px 8px 10px;color:inherit;font-family:inherit;font-size:var(--sn-fs,14px);line-height:1.4;white-space:pre-wrap;word-break:break-word}
+.sn-blank{display:none;flex:1;min-height:0;cursor:inherit}
+.sn-body:has(.sn-replies:not(:empty)) .sn-text{flex:none;overflow:visible}
+.sn-body:has(.sn-replies:not(:empty)) .sn-blank{display:block}
 .sn-text[data-empty]::before{content:"Write note ...";opacity:.35;pointer-events:none}
 .sn-text ol,.sn-text ul{margin:.15em 0;padding-left:1.5em}
 .sn-text ol{list-style:decimal}
@@ -447,6 +454,7 @@ export class StickyNotes {
 					: textToHtml(init.text ?? ""),
 			replies: [],
 			resolved: false,
+			source: init.source,
 		};
 		this.notes.push(note);
 		this.mountNote(note);
@@ -565,6 +573,7 @@ export class StickyNotes {
 			// the note itself: its bar, its text, its padding.
 			if (e.target === close) return;
 			const onText = e.target instanceof Node && text.contains(e.target);
+			const onBlank = e.target instanceof Node && blank.contains(e.target);
 			// Already writing in this note — leave the caret and selection to the
 			// browser, or you could not put the cursor between two words.
 			if (onText && document.activeElement === text) return;
@@ -578,7 +587,7 @@ export class StickyNotes {
 			e.preventDefault();
 			this.objects.beginMove(e, `note:${note.id}`, {
 				onClick: () => {
-					if (onText) this.enterEdit(note.id);
+					if (onText || onBlank) this.enterEdit(note.id);
 				},
 			});
 		});
@@ -668,8 +677,20 @@ export class StickyNotes {
 
 		const replies = document.createElement("div");
 		replies.className = "sn-replies";
+		const blank = document.createElement("div");
+		blank.className = "sn-blank";
+		const body = document.createElement("div");
+		body.className = "sn-body";
+		body.append(text, replies, blank);
 
-		el.append(bar, text, replies, toolbar);
+		const sourceEl = document.createElement("div");
+		sourceEl.className = "sn-source";
+		if (note.source) {
+			const base = note.source.file.split("/").pop() ?? note.source.file;
+			sourceEl.textContent = `${base}:${note.source.line}`;
+		}
+
+		el.append(bar, sourceEl, body, toolbar);
 		this.root.appendChild(el);
 		this.refs.set(note.id, {
 			el,
@@ -729,6 +750,7 @@ export class StickyNotes {
 					screenId: this.screenAt?.({ x: note.x, y: note.y }) ?? null,
 					x: note.x,
 					y: note.y,
+					...(note.source ? { source: note.source } : {}),
 				});
 				this.commit();
 			},
@@ -1253,6 +1275,7 @@ export class StickyNotes {
 			x: note.x,
 			y: note.y,
 			text: note.text,
+			...(note.source ? { source: note.source } : {}),
 		});
 		this.lastEmittedText.set(note.id, note.text);
 	}

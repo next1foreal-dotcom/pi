@@ -299,3 +299,25 @@ test("but dragging the note is not speaking — a move does not wake it up", () 
 		rmSync(root, { recursive: true, force: true });
 	}
 });
+
+test("rewording his own note counts as speaking", () => {
+	// The doc comment on Thread.lastSpoke has always said editing the words
+	// counts. The code did not, and no test asked — so he could rewrite an
+	// objection she had already answered and she would never hear the new
+	// wording.
+	const root = tempRoot();
+	try {
+		appendEvent({ t: "note", id: "n1", at: AT, author: "fei", screenId: "s", x: 0, y: 0, text: "too tight" }, root);
+		appendEvent({ t: "reply", id: "r1", noteId: "n1", at: AT, author: "samantha", text: "24px now" }, root);
+		assert.deepEqual(pendingForHer(root), [], "answered: quiet");
+
+		appendEvent({ t: "note.edit", id: "n1", at: AT, author: "fei", text: "still too tight, try 32" }, root);
+		assert.deepEqual(
+			pendingForHer(root).map((t) => t.id),
+			["n1"],
+			"he rewrote it — that is him speaking",
+		);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});

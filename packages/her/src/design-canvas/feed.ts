@@ -40,6 +40,7 @@ export type CanvasEvent =
 			x: number;
 			y: number;
 			text: string;
+			source?: { file: string; line: number; col: number; component: string | null };
 	  }
 	| {
 			t: "note.move";
@@ -49,6 +50,7 @@ export type CanvasEvent =
 			screenId: string | null;
 			x: number;
 			y: number;
+			source?: { file: string; line: number; col: number; component: string | null };
 	  }
 	| { t: "note.edit"; id: string; at: string; author: Author; text: string }
 	| { t: "note.delete"; id: string; at: string; author: Author }
@@ -187,7 +189,10 @@ export function projectThreads(events: CanvasEvent[]): Thread[] {
 			}
 			case "note.edit": {
 				const th = threads.get(e.id);
-				if (th) th.text = e.text;
+				if (th) {
+					th.text = e.text;
+					th.lastSpoke = e.author;
+				}
 				break;
 			}
 			case "note.delete":
