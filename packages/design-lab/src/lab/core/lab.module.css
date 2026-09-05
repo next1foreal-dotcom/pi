@@ -502,30 +502,18 @@
   align-content: start;
   max-width: min(760px, calc(100vw - 24px));
   box-sizing: border-box;
-  /* The sheet is one column on a narrow pane and taller than its cap, so it
-     scrolls — and the platform scrollbar is a wide grey trough with arrow
-     buttons sitting on a dark sheet. Same treatment a note's text already
-     gets: a thin bar in the sheet's own palette. */
-  scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.26) transparent;
+  /* No scrollbar. The sheet is one column on a narrow pane and taller than its
+     cap, and the platform's answer is a grey trough with arrow buttons parked
+     on a dark panel — the only piece of chrome in this lab drawn by the OS.
+     A thin one is still one. The wheel scrolls it (canvas-input leaves chrome
+     alone), and the fade below says there is more without drawing a control. */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
   overscroll-behavior: contain;
 }
 
 .help::-webkit-scrollbar {
-  width: 8px;
-}
-
-.help::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.help::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.22);
-  border-radius: 4px;
-}
-
-.help::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.34);
+  display: none;
 }
 .helpTitle {
   grid-column: 1 / -1;

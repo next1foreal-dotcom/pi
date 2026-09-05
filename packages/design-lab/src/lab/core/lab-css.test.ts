@@ -147,26 +147,29 @@ describe("the locked-mode hint is its own corner, not a HUD button", () => {
 	});
 });
 
-describe("the help sheet does not hand you a platform scrollbar", () => {
+describe("the help sheet has no scrollbar at all", () => {
 	// The sheet is one column on a narrow pane and taller than its own cap, so
 	// it scrolls. Left alone that is a wide grey trough with arrow buttons on
 	// a dark panel — the one piece of chrome in this lab drawn by Windows
 	// rather than by us.
-	it("asks for a thin bar in its own palette", () => {
+	it("asks for none — a thin one is still one", () => {
 		const help = rules(css).find((r) => r.selectors.includes(".help"));
-		expect(help?.body).toMatch(/scrollbar-width:\s*thin/);
-		expect(help?.body).toMatch(/scrollbar-color:/);
+		expect(help?.body).toMatch(/scrollbar-width:\s*none/);
+		expect(help?.body).not.toMatch(/scrollbar-width:\s*thin/);
 	});
 
-	it("styles the WebKit scrollbar too, since that is the engine we run on", () => {
+	it("hides the WebKit scrollbar too, since that is the engine we run on", () => {
 		const bar = rules(css).find((r) =>
 			r.selectors.some((s) => s === ".help::-webkit-scrollbar"),
 		);
-		const thumb = rules(css).find((r) =>
-			r.selectors.some((s) => s === ".help::-webkit-scrollbar-thumb"),
-		);
-		expect(bar?.body).toMatch(/width:\s*\d/);
-		expect(thumb?.body).toMatch(/background:/);
-		expect(thumb?.body).toMatch(/border-radius:/);
+		expect(bar?.body).toMatch(/display:\s*none/);
+	});
+
+	it("but it can still be scrolled — the wheel does it", () => {
+		const help = rules(css).find((r) => r.selectors.includes(".help"));
+		expect(help?.body).toMatch(/overflow-y:\s*auto/);
+		// No mask, no fade, no gradient. A softened edge over a reference sheet
+		// just makes the row you were reading unreadable.
+		expect(help?.body).not.toMatch(/mask-image/);
 	});
 });
