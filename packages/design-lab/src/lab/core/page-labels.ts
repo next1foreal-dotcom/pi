@@ -548,7 +548,28 @@ export class Labels {
 				const active = document.activeElement;
 				if (active instanceof HTMLElement && r.text === active) active.blur();
 			},
+			duplicate: (rect) => this.duplicateLabel(label, rect),
 		});
+	}
+
+	/**
+	 * Alt-drag drop: one copy of `label` at `rect`, keeping its words, scale
+	 * and arrow direction. Nothing is taken from `rect` but the position -- a
+	 * label is content-sized, so its box is whatever the copy's own text
+	 * measures once it is mounted.
+	 */
+	private duplicateLabel(source: LabelItem, rect: Rect): void {
+		const copy: LabelItem = {
+			...source,
+			id: this.nextId++,
+			x: rect.x,
+			y: rect.y,
+		};
+		this.items.push(copy);
+		this.mountLabel(copy);
+		this.registerLabel(copy);
+		this.objects.select(this.objectId(copy.id));
+		this.commit();
 	}
 
 	/** Push the re-measured box back after anything that changes its shape. */

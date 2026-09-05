@@ -220,6 +220,70 @@ describe("a sticky is an ordinary canvas object", () => {
 		await dragFrom(text, [120, 120], [200, 180]);
 		expect(el.style.transform).toBe(before);
 	});
+
+	// Alt-drag copies, the way it already did for a screen. The three cases
+	// below are the whole contract: it copies when it should, it does NOT copy
+	// when the press never travelled, and a drag without Alt is still a move.
+	// Only asserting the first would pass just as well on an implementation
+	// that copied on every click.
+	describe("Alt-drag makes a copy", () => {
+		/** Alt is read at pointerdown, which is when the lab picks ghost vs move. */
+		async function altDrag(
+			target: HTMLElement,
+			from: [number, number],
+			to: [number, number],
+		) {
+			await act(() => {
+				target.dispatchEvent(
+					pointer("pointerdown", from[0], from[1], { altKey: true }),
+				);
+			});
+			await act(() => {
+				window.dispatchEvent(pointer("pointermove", to[0], to[1], { altKey: true }));
+			});
+			await act(() => {
+				window.dispatchEvent(pointer("pointerup", to[0], to[1], { altKey: true }));
+			});
+		}
+
+		it("leaves the original where it was and drops the copy where you let go", async () => {
+			const { note, el } = await freshNote();
+			// Change it away from the default, so "the copy looks like the
+			// original" cannot pass by both of them merely being default.
+			await act(() => {
+				notes.setColor(note.id, "green");
+			});
+			const text = await stopTyping(el);
+			await altDrag(text, [120, 120], [320, 240]);
+
+			const all = notes.getNotes();
+			expect(all).toHaveLength(2);
+			const [original, copy] = all;
+			// the original has not moved
+			expect({ x: original.x, y: original.y }).toEqual({ x: 0, y: 0 });
+			// and the copy landed at the drop point, carrying the note's look
+			expect({ x: copy.x, y: copy.y }).toEqual({ x: 200, y: 120 });
+			expect(copy.color).toBe("green");
+			expect(copy.w).toBe(original.w);
+			expect(copy.h).toBe(original.h);
+			expect(copy.id).not.toBe(original.id);
+		});
+
+		it("copies nothing when the press never travelled", async () => {
+			const { el } = await freshNote();
+			const text = await stopTyping(el);
+			await altDrag(text, [120, 120], [120 + DRAG_THRESHOLD_PX - 1, 120]);
+			expect(notes.getNotes()).toHaveLength(1);
+		});
+
+		it("and a drag without Alt still moves the one note, rather than copying it", async () => {
+			const { el } = await freshNote();
+			const text = await stopTyping(el);
+			await dragFrom(text, [120, 120], [320, 240]);
+			expect(notes.getNotes()).toHaveLength(1);
+			expect(el.style.transform).toBe("translate(200px, 120px)");
+		});
+	});
 });
 
 /**

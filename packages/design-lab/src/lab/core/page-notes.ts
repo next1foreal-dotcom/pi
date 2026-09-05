@@ -9,6 +9,7 @@
  */
 
 import type { LabObjects } from "../plugin-api";
+import type { Rect } from "./types";
 
 const MYNERVE_WOFF2 = "/fonts/mynerve/regular.woff2";
 const MYNERVE_WOFF = "/fonts/mynerve/regular.woff";
@@ -679,7 +680,34 @@ export class StickyNotes {
 				if (selected) this.placeToolbar(note.id);
 				else this.closePop();
 			},
+			duplicate: (rect) => this.duplicateNote(note, rect),
 		});
+	}
+
+	/**
+	 * Alt-drag drop: one copy of `note` at `rect`, carrying its colour, font,
+	 * size, shape and content across -- a duplicate of the sticky, not a blank
+	 * one in its shape.
+	 *
+	 * Size comes from the source rather than from `rect`: a compact note's
+	 * drawn height is a ratio of its stored height, and reading it back off the
+	 * ghost would fold that ratio in a second time and squash the copy.
+	 * Unlike `spawn` this does not open the editor -- the copy already has its
+	 * words, and a caret dropped into them is a keystroke away from wrecking
+	 * the thing you just copied.
+	 */
+	private duplicateNote(source: StickyNote, rect: Rect): void {
+		const copy: StickyNote = {
+			...source,
+			id: this.nextId++,
+			x: rect.x,
+			y: rect.y,
+		};
+		this.notes.push(copy);
+		this.mountNote(copy);
+		this.registerNote(copy);
+		this.objects.select(this.noteObjectId(copy.id));
+		this.commit();
 	}
 
 	/** Figma-plugin-style dark toolbar: color, text size, font, height. */

@@ -263,8 +263,12 @@ function beginObjectMove(
   e.stopPropagation();
   selectObject(s, id);
   const start = { ...s.layouts[id] };
+  // Alt-drag copies, exactly as it does for a screen: drag a ghost, and on
+  // drop ask the plugin for one new object there. Alt+hover measures, but
+  // that path requires no button held, so the two do not collide.
+  const ghost = e.altKey && typeof s.objects.get(id)?.duplicate === "function";
   s.drag = {
-    kind: "move",
+    kind: ghost ? "ghost" : "move",
     id,
     start,
     current: start,

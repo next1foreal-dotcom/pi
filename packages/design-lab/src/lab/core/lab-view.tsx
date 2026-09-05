@@ -462,11 +462,17 @@ export function InteractionLab() {
       }
       if (drag.kind === "ghost") {
         const def = screenById(drag.id);
-        if (def)
+        if (def) {
           void duplicateScreen(session, def.dir, {
             x: drag.current.x,
             y: drag.current.y,
           });
+          return;
+        }
+        // Not a screen: a plugin object that opted into Alt-drag copying.
+        // The plugin builds the copy, because only it knows what a copy of a
+        // sticky or a label is; the lab only says where it landed.
+        session.objects.get(drag.id)?.duplicate?.({ ...drag.current });
         return;
       }
       commitNudge(session);

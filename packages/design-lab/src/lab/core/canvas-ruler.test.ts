@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { CanvasRuler } from "./canvas-ruler";
 
 const STORAGE_KEY = "interaction-lab:guides:v1";
@@ -23,7 +23,31 @@ function stored(): { a: string; p: number }[] {
 	return raw ? JSON.parse(raw).guides : [];
 }
 
+/**
+ * Build one ruler and throw it away, so the first real test is not billed for
+ * the environment warming up.
+ *
+ * Measured: the first test in this file took 2127-3971ms while every later
+ * one took 5-10ms, including tests that do strictly more work -- so the cost
+ * is jsdom's one-time DOM/CSS first touch, not anything the test does. Under
+ * a loaded full-suite run it crossed the 5s budget and the file went red,
+ * which reads as "the ruler broke" and is not what happened. Paying it in a
+ * hook attributes it honestly instead of raising the timeout to hide it.
+ */
+function warmUpJsdom(): void {
+	const { host, ruler } = makeRuler();
+	ruler.enable();
+	ruler.destroy();
+	host.remove();
+	localStorage.clear();
+}
+
 describe("CanvasRuler programmatic API", () => {
+	beforeAll(warmUpJsdom);
+	afterAll(() => {
+		document.body.innerHTML = "";
+	});
+
 	beforeEach(() => {
 		localStorage.clear();
 		vi.useFakeTimers();

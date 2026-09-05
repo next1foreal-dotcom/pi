@@ -43,6 +43,18 @@ export interface LabObjectInit {
   /** Fired after a COMMITTED geometry change (pointerup of a move/resize, nudge commit, undo/redo, setLayout). Persist here. */
   onLayout?(rect: Rect): void;
   onSelect?(selected: boolean): void;
+  /**
+   * Alt-drag makes a copy, the way it does for a screen: the lab drags a ghost
+   * outline and, on drop, asks the plugin to create one new object at `rect`
+   * (page units). Leave it off and Alt-drag is an ordinary move.
+   *
+   * Creating the copy is the plugin's job because only it knows what a copy of
+   * its own object means -- a sticky carries its colour and text across, a
+   * label its scale and arrow direction. Like every other way one of these is
+   * born (and like a duplicated screen), the creation is not on the undo
+   * stack; moving it afterwards is.
+   */
+  duplicate?(rect: Rect): void;
 }
 
 export interface LabObjects {
