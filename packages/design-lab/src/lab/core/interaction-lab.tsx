@@ -219,6 +219,21 @@ function writeFrame(s: Session, id: string, layout: ScreenLayout): void {
   for (const fn of frameListeners.get(id) ?? []) fn();
 }
 
+/**
+ * Below this on-screen frame width the chrome stops helping. Frame names are
+ * drawn at constant screen size, so once a 1440-wide frame is ~96px across
+ * its neighbours are ~13px away and three names smear into one another; the
+ * size badge and the play button are already wider than the frame they
+ * belong to. A constant, not a measurement: reading a label's width here
+ * would force a layout on every camera write and cost the 60fps.
+ */
+export const CHROME_MIN_PX = 96;
+
+/** Whether a frame is too small on screen to carry its own chrome. */
+export function chromeIsTiny(frameWidth: number, zoom: number): boolean {
+  return frameWidth * zoom < CHROME_MIN_PX;
+}
+
 function placeChrome(s: Session): void {
   const cam = getCamera();
   for (const [id, el] of s.chrome) {
@@ -227,6 +242,9 @@ function placeChrome(s: Session): void {
     const y = (l.y + cam.y) * cam.z;
     el.style.transform = `translate(${x}px, ${y}px)`;
     el.style.width = `${l.width * cam.z}px`;
+    const tiny = chromeIsTiny(l.width, cam.z);
+    // only when it flips: this runs on every camera write
+    if (el.hasAttribute("data-tiny") !== tiny) el.toggleAttribute("data-tiny", tiny);
   }
   s.pluginsOnCameraWrite();
 }

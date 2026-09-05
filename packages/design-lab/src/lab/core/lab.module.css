@@ -259,6 +259,21 @@
   transform-origin: 0 100%;
 }
 
+/*
+ * Zoomed far enough out, a frame is narrower than its own name: three names
+ * overlap into a smear and the size badge is wider than the frame. Fade the
+ * chrome out instead of popping — the flip happens mid-zoom-gesture, and a
+ * hard cut there reads as a glitch. The transition runs on the flip only,
+ * not on the per-frame transform write.
+ */
+.chromeItem > * {
+  transition: opacity 120ms ease-out;
+}
+.chromeItem[data-tiny] > * {
+  opacity: 0;
+  pointer-events: none;
+}
+
 .label {
   display: flex;
   align-items: center;
