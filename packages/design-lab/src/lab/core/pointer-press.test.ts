@@ -299,3 +299,57 @@ describe("a resize ticks its own screen, a move does not", () => {
 		expect(frameTick(id)).toBeGreaterThan(before);
 	});
 });
+
+/**
+ * The lab's chrome lives inside the canvas root, so every wheel over it
+ * bubbled into the canvas handler, which preventDefault'd and paned. Opening
+ * the shortcut sheet and scrolling it moved the canvas instead — the sheet is
+ * taller than its cap on a narrow pane, so there was something to scroll and
+ * no way to scroll it.
+ */
+describe("a wheel over the lab's own chrome belongs to the chrome", () => {
+	function wheelOn(el: Element) {
+		const e = new WheelEvent("wheel", {
+			bubbles: true,
+			cancelable: true,
+			deltaY: 120,
+		});
+		el.dispatchEvent(e);
+		return e.defaultPrevented;
+	}
+
+	let container: HTMLDivElement;
+	let root: Root;
+
+	beforeAll(async () => {
+		container = document.createElement("div");
+		document.body.appendChild(container);
+		root = createRoot(container);
+		await act(() => {
+			root.render(createElement(StrictMode, null, createElement(InteractionLab)));
+		});
+	});
+	afterAll(() => {
+		act(() => root.unmount());
+		container.remove();
+	});
+
+	it("does not eat a wheel aimed at a chrome panel", async () => {
+		// open the sheet the way its button does
+		const help = [...container.querySelectorAll("button")].find(
+			(b) => b.textContent?.trim() === "?",
+		);
+		if (!help) throw new Error("no help button");
+		await act(() => help.click());
+		const sheet = container.querySelector("[data-lab-chrome][class*=help]");
+		if (!sheet) throw new Error("sheet did not open");
+		expect(wheelOn(sheet)).toBe(false);
+		await act(() => help.click());
+	});
+
+	it("still takes a wheel on the canvas itself", () => {
+		const shield = container.querySelector('[class*="shield"]');
+		if (!shield) throw new Error("no shield");
+		expect(wheelOn(shield)).toBe(true);
+	});
+});

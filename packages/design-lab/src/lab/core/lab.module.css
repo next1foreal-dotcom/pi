@@ -502,6 +502,30 @@
   align-content: start;
   max-width: min(760px, calc(100vw - 24px));
   box-sizing: border-box;
+  /* The sheet is one column on a narrow pane and taller than its cap, so it
+     scrolls — and the platform scrollbar is a wide grey trough with arrow
+     buttons sitting on a dark sheet. Same treatment a note's text already
+     gets: a thin bar in the sheet's own palette. */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.26) transparent;
+  overscroll-behavior: contain;
+}
+
+.help::-webkit-scrollbar {
+  width: 8px;
+}
+
+.help::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.help::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.22);
+  border-radius: 4px;
+}
+
+.help::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.34);
 }
 .helpTitle {
   grid-column: 1 / -1;
@@ -554,12 +578,47 @@
   background: var(--color-canvas);
 }
 
-.badge {
-  padding: 4px 10px;
-  color: #fff;
-  background: var(--lab-accent);
-  border-radius: 6px;
+/*
+ * The locked-screen hint: which screen you are inside, and both ways back out.
+ *
+ * It used to be a badge crammed into the middle of the HUD pill, between the
+ * zoom button and "Reset layout" — which put a message about the screen inside
+ * a control strip about the canvas, and shoved the buttons sideways every time
+ * you locked in. It gets its own corner instead: bottom left, under the locked
+ * frame, clear of the HUD.
+ *
+ * No new visual language — same `--lab-pill` surface, same 8px radius, same
+ * 12px type as `.pill` above. It is a caption, not a control, so it takes no
+ * pointer events (`.chrome` is `pointer-events: none` and its items opt back
+ * in individually; this one does not).
+ */
+.lockHint {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  z-index: 20;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  background: var(--lab-pill);
+  color: rgba(255, 255, 255, 0.62);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  font-size: 12px;
+  font-weight: 500;
   white-space: nowrap;
+}
+
+.lockHint b {
+  color: #fff;
+  font-weight: 500;
+}
+
+/* Explore mode has no locked screen, so it has nothing to say. */
+.root[data-mode="explore"] .lockHint {
+  display: none;
 }
 
 .popover {

@@ -32,36 +32,6 @@ export function zoomFactor(deltaY: number): number {
   return Math.exp(-clamp(deltaY, -WHEEL_ZOOM_CAP, WHEEL_ZOOM_CAP) / 100);
 }
 
-/**
- * How long a zoom anchor outlives the notch that set it. Matches IDLE_MS in
- * interaction-lab (pinned by zoom-anchor.test.ts): once a gesture is marked
- * the layer stops taking pointer events, so every notch after the first
- * resolves to the root and would lose the anchor without this hold.
- */
-export const ZOOM_ANCHOR_HOLD_MS = 160;
-
-export type ZoomAnchor = { el: Element; at: number };
-
-/**
- * A screen-sized annotation (sticky, label) under the cursor becomes the zoom
- * anchor instead of the cursor. It is drawn at constant size, so zooming at
- * the cursor slides it out from under the pointer while the frames stay put;
- * zooming at its own corner keeps it exactly still and scales the canvas
- * around it, which is what "zoom in on this note" means.
- */
-export function resolveZoomAnchor(
-  target: EventTarget | null,
-  prev: ZoomAnchor | null,
-  now: number,
-): ZoomAnchor | null {
-  const hit =
-    target instanceof Element ? target.closest("[data-zoom-anchor]") : null;
-  if (hit) return { el: hit, at: now };
-  if (prev && now - prev.at < ZOOM_ANCHOR_HOLD_MS)
-    return { el: prev.el, at: now };
-  return null;
-}
-
 function wheelDelta(e: WheelEvent): { dx: number; dy: number } {
   const scale = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 800 : 1;
   return { dx: e.deltaX * scale, dy: e.deltaY * scale };
@@ -76,7 +46,6 @@ export function bindCanvasInput(
   let lastX = 0;
   let lastY = 0;
   let space = false;
-  let anchor: ZoomAnchor | null = null;
 
   const localPoint = (e: { clientX: number; clientY: number }): Point => {
     const o = h.getOrigin();
@@ -91,6 +60,12 @@ export function bindCanvasInput(
   };
 
   const onWheel = (e: WheelEvent) => {
+    // The lab's own chrome sits inside the canvas root, so a wheel over the
+    // shortcut sheet bubbled here and got preventDefault'd — the sheet stayed
+    // put and the canvas paned underneath it. Chrome owns its own scrolling;
+    // this handler is for the canvas.
+    if (e.target instanceof Element && e.target.closest("[data-lab-chrome]"))
+      return;
     const locked = h.isLocked();
     const fill = h.isFill();
     const pinch = e.ctrlKey || e.metaKey;
@@ -104,13 +79,12 @@ export function bindCanvasInput(
     h.onGestureStart();
     const { dx, dy } = wheelDelta(e);
     if (pinch) {
-      anchor = resolveZoomAnchor(e.target, anchor, performance.now());
-      if (anchor) {
-        const r = anchor.el.getBoundingClientRect();
-        zoomBy(localPoint({ clientX: r.left, clientY: r.top }), dy);
-      } else {
-        zoomBy(localPoint(e), dy);
-      }
+      // Everything on the canvas is canvas content now — frames, stickies,
+      // labels all scale together — so a pinch pivots on the cursor, the way
+      // every canvas does. The anchor machinery that used to pin a
+      // screen-sized annotation under the pointer has no annotation left to
+      // compensate for.
+      zoomBy(localPoint(e), dy);
     } else if (e.shiftKey) {
       setCameraValue(panBy(getCamera(), dy, 0));
     } else {

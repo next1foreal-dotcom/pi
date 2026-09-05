@@ -264,3 +264,21 @@ describe("injected CSS migration checks", () => {
 		expect(css).not.toContain("30vw");
 	});
 });
+
+describe("a sticky reads as something you can pick up", () => {
+	it("the note carries the grab cursor and the text does not fight it", () => {
+		mount();
+		const css =
+			document.querySelector<HTMLStyleElement>("style[data-sticky-note]")
+				?.textContent ?? "";
+		const note = css.match(/\.sn-note\{[^}]*\}/)?.[0] ?? "";
+		const text = css.match(/\.sn-text\{[^}]*\}/)?.[0] ?? "";
+		expect(note).toContain("cursor:grab");
+		// The text used to end its own rule with `cursor:text`, which won on
+		// specificity order and put a caret over the whole note.
+		expect(text).toContain("cursor:inherit");
+		expect(text).not.toContain("cursor:text");
+		// …and the caret comes back the moment you are actually in it.
+		expect(css).toContain(".sn-text:focus{cursor:text}");
+	});
+});

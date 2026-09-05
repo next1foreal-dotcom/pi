@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 
 /**
- * Notes are now ordinary canvas content (page-sized, no counter-scale).
- * Labels still counter-scale with --inv-zoom until P2.
+ * Nothing pinned to the screen is left on the canvas. Notes and labels are both
+ * ordinary canvas content now: they go through the core's writeFrame (tested in
+ * canvas-objects.test.ts) and carry no counter-scale of their own.
  *
- * This test verifies the two models coexist: notes go through the core's
- * writeFrame (tested in canvas-objects.test.ts), while labels still apply
- * transform-origin 0 0 and scale(var(--inv-zoom,1)).
+ * What DOES stay screen-sized is the chrome drawn on top of them — a note's
+ * toolbar, a label's two handles and its selection outline — because a control
+ * you cannot grab is not a control. Both sides are asserted here: the content
+ * must not counter-scale, the controls must.
  */
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -43,7 +45,7 @@ afterEach(() => {
 	document.body.innerHTML = "";
 });
 
-describe("notes are canvas content, labels still counter-scale", () => {
+describe("notes and labels are both canvas content", () => {
 	it("a note does NOT carry scale(var(--inv-zoom)) any more", () => {
 		const notes = new StickyNotes({ host: host(), objects: stubObjects() });
 		notes.spawn({ x: 1200, y: -340 });
@@ -63,25 +65,54 @@ describe("notes are canvas content, labels still counter-scale", () => {
 		notes.destroy();
 	});
 
-	it("a label still carries its page point and the counter scale", () => {
-		const labels = new Labels({ host: host(), getZoom: () => 1 });
+	it("a label does NOT carry scale(var(--inv-zoom)) any more either", () => {
+		const objects = stubObjects();
+		const labels = new Labels({ host: host(), getZoom: () => 1, objects });
 		labels.spawn({ x: -80, y: 512 });
-		const el = document.querySelector(".lb-label");
+		const el = document.querySelector<HTMLElement>(".lb-label");
 		expect(el).toBeTruthy();
-		const t = (el as HTMLElement).style.transform;
-		expect(t).toContain("translate3d(-80px,512px,0)");
-		expect(t).toContain("scale(var(--inv-zoom,1))");
+		// It registered, so the core owns its position now …
+		expect(el?.hasAttribute("data-lab-object")).toBe(true);
+		expect(objects.layout("label:1")).toMatchObject({ x: -80, y: 512 });
+		// … and it writes none of its own. A returning positionEl would put the
+		// counter-scale back here and the label would stop growing with the canvas.
+		expect(el?.style.transform ?? "").toBe("");
+		const rule =
+			document
+				.querySelector<HTMLStyleElement>("style[data-label-overlay]")
+				?.textContent?.match(/\.lb-label\{[^}]*\}/)?.[0] ?? "";
+		expect(rule).toBeTruthy();
+		expect(rule).not.toContain("inv-zoom");
 		labels.destroy();
 	});
 
-	it("labels still scale about the stored point (transform-origin 0 0)", () => {
-		const labels = new Labels({ host: host(), getZoom: () => 1 });
+	it("but the label's own controls still counter-scale, or they get ungrabbable", () => {
+		const labels = new Labels({
+			host: host(),
+			getZoom: () => 1,
+			objects: stubObjects(),
+		});
 		labels.spawn({ x: 0, y: 0 });
-		const sheet = [...document.querySelectorAll("style")]
-			.map((s) => s.textContent ?? "")
-			.join("\n");
-		expect(sheet).toMatch(/\.lb-label\{[^}]*transform-origin:0 0/);
+		const css =
+			document.querySelector<HTMLStyleElement>("style[data-label-overlay]")
+				?.textContent ?? "";
+		expect(css.match(/\.lb-handle\{[^}]*\}/)?.[0]).toContain("var(--inv-zoom,1)");
+		expect(css.match(/\.lb-aim\{[^}]*\}/)?.[0]).toContain("var(--inv-zoom,1)");
+		expect(css.match(/\.lb-label\[data-selected\]\{[^}]*\}/)?.[0]).toContain(
+			"var(--inv-zoom,1)",
+		);
 		labels.destroy();
+	});
+
+	it("the note's toolbar still counter-scales for the same reason", () => {
+		const notes = new StickyNotes({ host: host(), objects: stubObjects() });
+		const css =
+			document.querySelector<HTMLStyleElement>("style[data-sticky-note]")
+				?.textContent ?? "";
+		expect(css.match(/\.sn-toolbar\{[^}]*\}/)?.[0]).toContain(
+			"scale(var(--inv-zoom,1))",
+		);
+		notes.destroy();
 	});
 
 	it("the .sn-note rule has no scale(var(--inv-zoom (toolbar may counter-scale)", () => {

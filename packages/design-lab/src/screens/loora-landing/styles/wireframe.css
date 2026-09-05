@@ -64,6 +64,14 @@
   --ll-font: "Merrion Sans", system-ui, sans-serif;
   --ll-mono: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, monospace;
 
+  /* The ruler for the queries at the bottom of this file: this element's own
+     inline size, which is the FRAME's width. `@media (max-width: …)` reads the
+     browser window instead, which is the lab, not the screen. `.is-narrow`
+     above is the same measurement taken in JS (`frameSize.width < 720`); these
+     queries add the step between it and full width, in CSS. */
+  container-type: inline-size;
+  container-name: loora-screen;
+
   position: relative;
   width: 100%;
   min-height: 100%;
@@ -353,5 +361,85 @@
   .wf-cmd,
   .wf-cmd span {
     transition-duration: 0.01ms;
+  }
+}
+
+/* ── frame-width steps ────────────────────────────────────────────────────
+ *
+ * The four-corner HUD is the whole layout, so "reflow" here means the corners
+ * stop pretending they have 1440px between them. Nothing fires above 900px,
+ * so the 1440 frame is untouched.
+ *
+ * These deliberately avoid the properties `.is-narrow` sets (left / top /
+ * right / bottom / width on the same elements). `.wf-page.is-narrow .wf-fact`
+ * out-specifies a bare `.wf-fact`, so a query that tried to move the same
+ * corner would lose below 720 and only half-apply — a rule that works at one
+ * width and silently does nothing at another is worse than no rule.
+ */
+
+@container loora-screen (max-width: 900px) {
+  .wf-fact,
+  .wf-fact span,
+  .wf-hint,
+  .wf-link,
+  .wf-cmd code,
+  .wf-cmd span {
+    font-size: 13px;
+  }
+
+  .wf-fact {
+    /* 360px of copy against a 900px frame crowds the link in the far corner. */
+    width: 300px;
+  }
+
+  .wf-cmd {
+    height: 36px;
+    gap: 12px;
+    padding: 4px 4px 4px 12px;
+  }
+
+  .wf-cmd span {
+    height: 28px;
+    padding: 0 10px;
+  }
+}
+
+@container loora-screen (max-width: 560px) {
+  .wf-mark {
+    font-size: 15px;
+  }
+
+  .wf-fact,
+  .wf-fact span,
+  .wf-hint,
+  .wf-link,
+  .wf-cmd code,
+  .wf-cmd span {
+    font-size: 12px;
+  }
+
+  .wf-fact span {
+    margin-top: 6px;
+  }
+
+  .wf-cmd {
+    /* Full width at this size (`.is-narrow` pins left AND right), so the code
+       and the button share the row instead of the button hugging the edge. */
+    height: 34px;
+    gap: 8px;
+    padding: 3px 3px 3px 10px;
+  }
+
+  .wf-cmd span {
+    height: 28px;
+    padding: 0 8px;
+  }
+
+  .wf-node-text .wf-caption {
+    font-size: 14px;
+  }
+
+  .wf-caption {
+    font-size: 10px;
   }
 }

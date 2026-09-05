@@ -1,0 +1,460 @@
+/*
+ * Mosaic pane host — ported from
+ * `samantha-ui/src/components/mosaic-pane-host.module.css` (216 lines).
+ *
+ * Two things changed on the way in.
+ *
+ * 1. Tokens. The Studio's stylesheet leans on six variables that live in its
+ *    `globals.css`. They are defined on `.mos-screen` below, with the values
+ *    measured out of that file (light theme) so nothing is invented:
+ *      --accent        #587A4F        globals.css:115
+ *      --border        #E5E5E5        globals.css:118
+ *      --ease          cubic-bezier(0.16, 1, 0.3, 1)      globals.css:150
+ *      --cds-radius    6px            globals.css:3156
+ *      --cds-ease-out  cubic-bezier(.165, .84, .44, 1)    globals.css:3174
+ *      --cds-dur-snap  .12s           globals.css:3178
+ *    Scoped to the screen root, so they inherit down into the mosaic and
+ *    nowhere else.
+ *
+ * 2. Breakpoints. The original narrows on `@media (max-width: 767px)`, which
+ *    reads the BROWSER WINDOW. In a lab that is the wrong ruler: a 420-wide
+ *    frame on a 1440 monitor would keep the wide layout, and a 1440-wide frame
+ *    on a laptop would get the narrow one. Every query here is a
+ *    `@container mosaic-screen` query against the frame instead.
+ *
+ * The Studio's class names were CSS-module-scoped; here they are prefixed
+ * `mos-` and global, matching how the lab's other screens are written.
+ */
+
+.mos-screen {
+  --accent: #587a4f;
+  --border: #e5e5e5;
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --cds-radius: 6px;
+  --cds-ease-out: cubic-bezier(0.165, 0.84, 0.44, 1);
+  --cds-dur-snap: 0.12s;
+
+  --mos-bg: #ffffff;
+  --mos-surface: #f7f7f7;
+  --mos-surface-hi: #efefef;
+  --mos-ink: #2a2a2a;
+  --mos-ink-soft: #5c5c5c;
+  --mos-ink-faint: #7a7a7a;
+  --mos-bar-h: 32px;
+  --mos-pad: 14px;
+  --mos-title: 12px;
+  --mos-body: 12px;
+
+  /* The ruler for every query below: this element's own inline size, which is
+     the frame's width. The camera is a transform, and transforms do not change
+     layout size, so this stays true at any zoom. */
+  container-type: inline-size;
+  container-name: mosaic-screen;
+
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  overflow: hidden;
+  background: var(--mos-bg);
+  color: var(--mos-ink);
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.mos-screen * {
+  box-sizing: border-box;
+}
+
+.mos-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 0 0 auto;
+  height: 36px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--mos-ink-faint);
+  font-size: 12px;
+}
+
+.mos-head b {
+  color: var(--mos-ink);
+  font-weight: 500;
+}
+
+.mos-head-keys {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mos-head-reset {
+  margin-left: auto;
+  flex: 0 0 auto;
+  appearance: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--mos-ink-faint);
+  font: inherit;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.mos-head-reset:hover {
+  background: var(--mos-surface-hi);
+  color: var(--mos-ink);
+}
+
+.mos-host {
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--mosaic-cols, minmax(0, 1fr));
+  grid-template-rows: minmax(0, 1fr);
+  gap: 0;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  isolation: isolate;
+  transition: grid-template-columns 240ms var(--ease);
+}
+
+/* Live drag: the track var is being written every frame, easing would fight it. */
+.mos-host[data-resizing] {
+  transition: none;
+}
+
+.mos-col {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.mos-pane {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex-basis: 0;
+  flex-shrink: 1;
+  min-width: 0;
+  min-height: 0;
+  outline: none;
+  transition: filter var(--cds-dur-snap) var(--cds-ease-out);
+}
+
+/* Only dim when there is actually something to disambiguate. */
+.mos-host[data-split] .mos-pane:not([data-focused]) {
+  filter: opacity(0.75) saturate(0.85);
+}
+
+/*
+ * Quiet the chrome you are not using. Ported from Claude Desktop, which runs
+ * `.dframe-pane-actions { opacity: 0 }` on any pane that is not focused and
+ * brings it back on hover: with four panes open, four sets of buttons all at
+ * full strength is most of the visual noise on the screen, and every one of
+ * them belongs to a pane you are not currently in.
+ *
+ * `:focus-within` is ours, not Claude's — without it the buttons would be
+ * reachable by Tab while invisible, which is worse than noisy.
+ */
+.mos-host[data-split] .mos-pane:not([data-focused]) [data-pane-actions] {
+  opacity: 0;
+  transition: opacity var(--cds-dur-snap) var(--cds-ease-out);
+}
+
+.mos-host[data-split] .mos-pane:not([data-focused]):hover [data-pane-actions],
+.mos-host[data-split]
+  .mos-pane:not([data-focused]):focus-within
+  [data-pane-actions] {
+  opacity: 1;
+}
+
+/*
+ * Resize grips: a 12px pointer target that shows nothing until you approach it.
+ * The column line itself is drawn by the pane box's right border, so the column
+ * grip only paints on hover; rows have no separator otherwise, so the row grip
+ * carries the hairline.
+ */
+.mos-col-grip {
+  position: absolute;
+  top: 0;
+  right: -6px;
+  bottom: 0;
+  width: 12px;
+  z-index: 20;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.mos-col-grip::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  background: transparent;
+  transition: background-color var(--cds-dur-snap) var(--cds-ease-out);
+}
+
+.mos-col-grip:hover::before,
+.mos-col-grip[data-active]::before {
+  background: var(--accent);
+}
+
+.mos-row-grip-slot {
+  position: relative;
+  flex: 0 0 0px;
+  min-height: 0;
+}
+
+.mos-row-grip {
+  position: absolute;
+  top: -6px;
+  right: 0;
+  left: 0;
+  height: 12px;
+  z-index: 20;
+  cursor: row-resize;
+  touch-action: none;
+}
+
+.mos-row-grip::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 0;
+  left: 0;
+  height: 1px;
+  background: var(--border);
+  transition: background-color var(--cds-dur-snap) var(--cds-ease-out);
+}
+
+.mos-row-grip:hover::before,
+.mos-row-grip[data-active]::before {
+  background: var(--accent);
+}
+
+/*
+ * Hold ctrl/⌘ and the whole pane becomes a handle. The ring waits 600ms so
+ * simply holding a modifier while moving the mouse across the mosaic does not
+ * light everything up.
+ */
+.mos-host[data-cmd-held][data-split] .mos-pane:hover {
+  cursor: grab;
+}
+
+.mos-host[data-split] .mos-pane::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  border-radius: var(--cds-radius);
+  box-shadow: inset 0 0 0 2px var(--accent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--cds-dur-snap) var(--cds-ease-out);
+}
+
+.mos-host[data-cmd-held][data-split] .mos-pane:hover::before {
+  opacity: 1;
+  transition-delay: 0.6s;
+}
+
+/* ── the pane box (stands in for the Studio's PaneShell) ───────────────── */
+
+.mos-box {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  border-right: 1px solid var(--border);
+  background: var(--mos-bg);
+}
+
+.mos-col:last-child .mos-box {
+  border-right: none;
+}
+
+.mos-box-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  height: var(--mos-bar-h);
+  padding: 0 6px 0 var(--mos-pad);
+  border-bottom: 1px solid var(--border);
+  background: var(--mos-surface);
+}
+
+.mos-box-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--mos-title);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--mos-ink);
+}
+
+.mos-box-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+}
+
+.mos-box-btn {
+  appearance: none;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--mos-ink-faint);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+}
+
+.mos-box-btn:hover {
+  background: var(--mos-surface-hi);
+  color: var(--mos-ink);
+}
+
+.mos-box-body {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--mos-pad);
+  font-size: var(--mos-body);
+  line-height: 1.55;
+  color: var(--mos-ink-soft);
+}
+
+.mos-box-body p {
+  margin: 0 0 6px;
+}
+
+.mos-box-body p:last-child {
+  margin-bottom: 0;
+}
+
+.mos-box-body strong {
+  color: var(--mos-ink);
+  font-weight: 500;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mos-host,
+  .mos-pane,
+  .mos-col-grip::before,
+  .mos-row-grip::before {
+    transition: none;
+  }
+}
+
+/* ── frame-width steps ─────────────────────────────────────────────────────
+ *
+ * 1080px is 3 × the 360px column floor: below it the JS rescue rule gives up
+ * (`COL_MIN_PX * cols.length > width` bails out) and three tracks would be
+ * slivers. So the grid stops being a grid and the columns stack — one column,
+ * top to bottom, which is what "collapse toward one column" means here.
+ * The column grips go with it: there is no column edge left to drag.
+ */
+@container mosaic-screen (max-width: 1080px) {
+  .mos-host {
+    display: flex;
+    flex-direction: column;
+    transition: none;
+  }
+
+  .mos-col {
+    flex: 1 1 0;
+    min-height: 140px;
+  }
+
+  .mos-col-grip {
+    display: none;
+  }
+
+  .mos-box {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .mos-col:last-child .mos-box {
+    border-bottom: none;
+  }
+}
+
+/*
+ * Narrower than a usable pair of panes: carry one pane, not a stack. Claude
+ * Desktop clears the extra panes outright at 700px; we only stop rendering
+ * them, so the arrangement comes back untouched when the frame widens.
+ */
+@container mosaic-screen (max-width: 767px) {
+  .mos-host {
+    display: block;
+  }
+
+  .mos-col {
+    display: none;
+    height: 100%;
+  }
+
+  .mos-col:has(> .mos-pane[data-focused]) {
+    display: flex;
+  }
+
+  .mos-pane:not([data-focused]) {
+    display: none;
+  }
+
+  .mos-host[data-split] .mos-pane[data-focused] {
+    filter: none;
+  }
+
+  .mos-col-grip,
+  .mos-row-grip-slot {
+    display: none;
+  }
+
+  .mos-box,
+  .mos-col:last-child .mos-box {
+    border-right: none;
+    border-bottom: none;
+  }
+
+  /* One pane on screen and no hover to speak of — never hide its controls. */
+  .mos-host[data-split] .mos-pane [data-pane-actions] {
+    opacity: 1;
+  }
+}
+
+/* Phone-width frame: the type and the gutters step down, and the header drops
+   the shortcut list it has no room to print. */
+@container mosaic-screen (max-width: 520px) {
+  /* On `.mos-host`, not on `.mos-screen`: a container query styles the
+     container's DESCENDANTS, never the container element itself. */
+  .mos-host {
+    --mos-bar-h: 28px;
+    --mos-pad: 10px;
+    --mos-title: 11px;
+    --mos-body: 11px;
+  }
+
+  .mos-head {
+    height: 32px;
+    padding: 0 8px;
+    font-size: 11px;
+  }
+
+  .mos-head-keys {
+    display: none;
+  }
+}

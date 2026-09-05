@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 // Read the stylesheet as text: importing it would hand back the CSS-modules
 // class-name map, and `?raw` / `?inline` lose to that transform.
 const css = readFileSync(new URL("./lab.module.css", import.meta.url), "utf8");
+const view = readFileSync(new URL("./lab-view.tsx", import.meta.url), "utf8");
 
 /** Crude but sufficient: `selectors { declarations }` pairs, comments stripped. */
 function rules(source: string): { selectors: string[]; body: string }[] {
@@ -76,5 +77,96 @@ describe("canvas-object decor and dragging cursor", () => {
 		);
 		expect(drag.length).toBeGreaterThan(0);
 		expect(drag.some((r) => r.body.includes("grabbing"))).toBe(true);
+	});
+});
+
+describe("the locked-mode hint is its own corner, not a HUD button", () => {
+	// It used to be a badge wedged into the middle of the bottom-centre pill,
+	// between the zoom readout and "Reset layout": a message about the screen
+	// living inside a control strip about the canvas, widening the strip and
+	// pushing its buttons sideways every time you locked in. Now it is a pill
+	// of its own in the bottom-left corner, under the locked frame, naming the
+	// screen and BOTH ways out — esc, and the tab nobody guesses.
+
+	const hint = rules(css).find(
+		(r) => r.selectors.length === 1 && r.selectors[0] === ".lockHint",
+	);
+	const pill = rules(css).find(
+		(r) => r.selectors.length === 1 && r.selectors[0] === ".pill",
+	);
+
+	it("has a rule of its own", () => {
+		expect(hint).toBeDefined();
+	});
+
+	it("sits in the bottom-left corner", () => {
+		expect(hint?.body).toMatch(/position:\s*absolute/);
+		expect(hint?.body).toMatch(/left:\s*\d/);
+		expect(hint?.body).toMatch(/bottom:\s*\d/);
+		// Bottom-CENTRE is what the HUD does: `left: 50%` plus a translate. If
+		// either of those shows up here the hint has drifted back under the HUD.
+		expect(hint?.body).not.toMatch(/left:\s*50%/);
+		expect(hint?.body).not.toMatch(/translateX/);
+		expect(hint?.body).not.toMatch(/right:\s*\d/);
+	});
+
+	it("is hidden in explore mode", () => {
+		// There is no locked screen in explore, so there is nothing to say. The
+		// stylesheet owns this, the same way it owns the pixel grid's and the
+		// rulers' visibility per mode.
+		const hidden = rules(css).filter(
+			(r) =>
+				r.selectors.some((s) => /\[data-mode="explore"\]/.test(s)) &&
+				r.selectors.some((s) => s.includes(".lockHint")),
+		);
+		expect(hidden.length).toBeGreaterThan(0);
+		expect(hidden[0].body).toMatch(/display:\s*none/);
+	});
+
+	it("borrows the HUD pill's surface, radius and type scale", () => {
+		// Chrome that belongs to this lab, not a second visual language.
+		expect(hint?.body).toMatch(/background:\s*var\(--lab-pill\)/);
+		expect(pill?.body).toMatch(/background:\s*var\(--lab-pill\)/);
+		for (const prop of ["border-radius", "font-size"] as const) {
+			const of = (body: string | undefined) =>
+				new RegExp(`${prop}:\\s*([^;]+)`).exec(body ?? "")?.[1].trim();
+			expect(of(hint?.body)).toBe(of(pill?.body));
+		}
+	});
+
+	it("no longer rides inside the HUD pill", () => {
+		// The pill is back to zoom %, the tools, reset and `?`. The badge class
+		// it used to wear is gone from both files, so it cannot quietly return.
+		expect(view).not.toContain("styles.badge");
+		expect(view).toContain("styles.lockHint");
+		expect(rules(css).some((r) => r.selectors.includes(".badge"))).toBe(false);
+	});
+
+	it("names both ways out", () => {
+		expect(view).toMatch(/esc exits · tab cycles/);
+	});
+});
+
+describe("the help sheet does not hand you a platform scrollbar", () => {
+	// The sheet is one column on a narrow pane and taller than its own cap, so
+	// it scrolls. Left alone that is a wide grey trough with arrow buttons on
+	// a dark panel — the one piece of chrome in this lab drawn by Windows
+	// rather than by us.
+	it("asks for a thin bar in its own palette", () => {
+		const help = rules(css).find((r) => r.selectors.includes(".help"));
+		expect(help?.body).toMatch(/scrollbar-width:\s*thin/);
+		expect(help?.body).toMatch(/scrollbar-color:/);
+	});
+
+	it("styles the WebKit scrollbar too, since that is the engine we run on", () => {
+		const bar = rules(css).find((r) =>
+			r.selectors.some((s) => s === ".help::-webkit-scrollbar"),
+		);
+		const thumb = rules(css).find((r) =>
+			r.selectors.some((s) => s === ".help::-webkit-scrollbar-thumb"),
+		);
+		expect(bar?.body).toMatch(/width:\s*\d/);
+		expect(thumb?.body).toMatch(/background:/);
+		expect(thumb?.body).toMatch(/border-radius:/);
 	});
 });

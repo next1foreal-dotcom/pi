@@ -357,9 +357,14 @@ export function frameTick(id: string): number {
 }
 
 function writeFrame(s: Session, id: string, layout: ScreenLayout): void {
-  const el = s.objects.get(id)?.el ?? s.layer?.querySelector(`[data-screen-id="${id}"]`);
+  const obj = s.objects.get(id);
+  const el = obj?.el ?? s.layer?.querySelector(`[data-screen-id="${id}"]`);
   if (!(el instanceof HTMLElement)) return;
   el.style.transform = `translate(${layout.x}px, ${layout.y}px)`;
+  // A content-sized object draws its own box — text, an arrow, whatever it is.
+  // The lab owns where it sits and nothing else, so there is no size to write
+  // and no lab-owned size to tick on.
+  if (obj?.sizing === "content") return;
   el.style.width = `${layout.width}px`;
   el.style.height = `${layout.height}px`;
   const size = `${layout.width}x${layout.height}`;

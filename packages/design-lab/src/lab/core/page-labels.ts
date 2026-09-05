@@ -10,6 +10,9 @@
  * Mynerve: Google Fonts, SIL Open Font License 1.1.
  */
 
+import type { LabObjects } from "../plugin-api";
+import type { Rect } from "./types";
+
 const MYNERVE_WOFF2 = "/fonts/mynerve/regular.woff2";
 const MYNERVE_WOFF = "/fonts/mynerve/regular.woff";
 
@@ -29,7 +32,14 @@ export interface LabelItem {
 
 export interface LabelsOptions {
 	host: HTMLElement;
+	/**
+	 * Still needed after the drag loop moved into the lab: a label's box is
+	 * measured with `getBoundingClientRect()`, which is screen px, and the
+	 * registered rect is page units.
+	 */
 	getZoom: () => number;
+	/** The lab owns a label's position, selection, nudge and undo. */
+	objects: LabObjects;
 	/**
 	 * localStorage key used to persist labels across reloads.
 	 * Pass `null` to disable persistence. Defaults to DEFAULT_LABELS_KEY.
@@ -43,13 +53,29 @@ export interface LabelsOptions {
 
 export const DEFAULT_LABELS_KEY = "interaction-lab:labels:v1";
 
-// px at scale 1. Labels are viewport-constant too, and 28 read as a headline
-// rather than an annotation; the arrow follows in em, so the drawn proportion
-// is unchanged. Users can still scale a callout up to 4x by its handle.
+// Page units at scale 1 — a label is canvas content, so this is the size it
+// keeps relative to the frames it annotates, not relative to the screen. 28
+// read as a headline rather than an annotation; the arrow follows in em, so the
+// drawn proportion is unchanged. Users can still scale a callout up to 4x by
+// its handle.
 const BASE_FONT = 20;
 const MIN_SCALE = 0.4;
 const MAX_SCALE = 4;
 export const AIM_DEAD_ZONE = 14;
+
+/**
+ * The drawn proportions of a label, in em, used only when the element has not
+ * been laid out yet (a fresh mount, or jsdom, where every box is 0×0). The
+ * registered rect is what snapping and Shift+2 read, so a 0×0 one would make a
+ * label unsnappable and unzoomable-to; these numbers come from the CSS below —
+ * the arrow is 3.6em wide and 2.16em tall, above or below one text line, plus
+ * the .2em/.35em padding.
+ */
+const FALLBACK_EM_W = 4.6;
+const FALLBACK_EM_H = 3.5;
+
+/** Same pause as the save debounce: a re-measure costs a forced layout. */
+const RECT_REFRESH_MS = 150;
 
 /**
  * One hand-drawn S-curve swoosh per direction, mirrored in place inside the
@@ -90,15 +116,6 @@ export function directionFromAim(
 	return dy >= 0 ? (dx >= 0 ? "dr" : "dl") : dx >= 0 ? "ur" : "ul";
 }
 
-export function viewportDeltaToPage(
-	dx: number,
-	dy: number,
-	zoom: number,
-): { x: number; y: number } {
-	const z = zoom || 1;
-	return { x: dx / z, y: dy / z };
-}
-
 const ARROW = `<svg class="lb-arrow" viewBox="0 0 100 60" fill="none" aria-hidden="true"><path d="${ARROWS.dr}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
 function buildCss(fonts: { woff2: string; woff: string }) {
@@ -107,7 +124,7 @@ function buildCss(fonts: { woff2: string; woff: string }) {
 .lb-root{position:absolute;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;font-family:"Mynerve","Comic Sans MS",cursive}
 .lb-label{position:absolute;top:0;left:0;transform-origin:0 0;pointer-events:auto;display:flex;flex-direction:column;align-items:flex-start;padding:.2em .35em;font-family:"Mynerve","Comic Sans MS",cursive;line-height:1.15;cursor:grab;touch-action:none;user-select:none;color:var(--lb-ink)}
 .lb-label:active{cursor:grabbing}
-.lb-label[data-selected]{outline:1px solid #4c9ffe}
+.lb-label[data-selected]{outline:calc(1px * var(--inv-zoom,1)) solid #4c9ffe}
 .lb-label[data-editing]{cursor:auto}
 .lb-text{outline:none;white-space:pre-wrap;min-width:1.4em;min-height:1.15em}
 .lb-label[data-editing] .lb-text{user-select:text;cursor:text}
@@ -117,9 +134,9 @@ function buildCss(fonts: { woff2: string; woff: string }) {
 .lb-label[data-dir="ur"] .lb-arrowwrap{order:-1;margin:0 0 .05em 1em}
 .lb-label[data-dir="ul"] .lb-arrowwrap{order:-1;align-self:flex-start;margin:0 1em .05em 0}
 .lb-arrow{display:block;width:3.6em;height:2.16em}
-.lb-handle{position:absolute;right:-6px;bottom:-6px;width:10px;height:10px;background:#fff;border:1px solid #4c9ffe;border-radius:2px;display:none;cursor:nwse-resize;touch-action:none}
-.lb-aim{position:absolute;right:-16px;top:50%;margin-top:-5px;width:10px;height:10px;background:#fff;border:1px solid #4c9ffe;border-radius:50%;display:none;cursor:crosshair;touch-action:none}
-.lb-label[data-dir="dl"] .lb-aim,.lb-label[data-dir="ul"] .lb-aim{right:auto;left:-16px}
+.lb-handle{position:absolute;right:calc(-6px * var(--inv-zoom,1));bottom:calc(-6px * var(--inv-zoom,1));width:calc(10px * var(--inv-zoom,1));height:calc(10px * var(--inv-zoom,1));background:#fff;border:calc(1px * var(--inv-zoom,1)) solid #4c9ffe;border-radius:2px;display:none;cursor:nwse-resize;touch-action:none}
+.lb-aim{position:absolute;right:calc(-16px * var(--inv-zoom,1));top:50%;margin-top:calc(-5px * var(--inv-zoom,1));width:calc(10px * var(--inv-zoom,1));height:calc(10px * var(--inv-zoom,1));background:#fff;border:calc(1px * var(--inv-zoom,1)) solid #4c9ffe;border-radius:50%;display:none;cursor:crosshair;touch-action:none}
+.lb-label[data-dir="dl"] .lb-aim,.lb-label[data-dir="ul"] .lb-aim{right:auto;left:calc(-16px * var(--inv-zoom,1))}
 .lb-label[data-selected] .lb-handle,.lb-label[data-selected] .lb-aim{display:block}
 `;
 }
@@ -173,15 +190,16 @@ export class Labels {
 	private storageKey: string | null;
 	private onChange: LabelsOptions["onChange"];
 	private getZoom: () => number;
+	private objects: LabObjects;
 
 	private root!: HTMLDivElement;
 	private refs = new Map<number, LabelRefs>();
 	private items: LabelItem[] = [];
 	private nextId = 1;
-	private selectedId: number | null = null;
 	private _hidden = false;
 	private zTop = 1;
 	private saveTimer: ReturnType<typeof setTimeout> | undefined;
+	private rectTimer: ReturnType<typeof setTimeout> | undefined;
 	private prevCursor = "";
 
 	constructor(options: LabelsOptions) {
@@ -191,6 +209,7 @@ export class Labels {
 				: options.storageKey;
 		this.onChange = options.onChange;
 		this.getZoom = options.getZoom;
+		this.objects = options.objects;
 		if (!this.supported) return;
 		acquireStyles(
 			buildCss({
@@ -203,7 +222,11 @@ export class Labels {
 		this.root.style.setProperty("--lb-ink", options.ink ?? "#1c1c1c");
 		options.host.appendChild(this.root);
 		this.loadItems();
-		document.addEventListener("pointerdown", this.onDocPointerDown, true);
+	}
+
+	/** The lab's id for one label. */
+	private objectId(id: number): string {
+		return `label:${id}`;
 	}
 
 	getLabels(): readonly LabelItem[] {
@@ -224,7 +247,7 @@ export class Labels {
 		if (!this.supported || this._hidden === hidden) return;
 		this._hidden = hidden;
 		this.root.style.display = hidden ? "none" : "block";
-		if (hidden) this.select(null);
+		if (hidden) this.objects.select(null);
 		this.onChange?.(this);
 	}
 
@@ -241,7 +264,8 @@ export class Labels {
 		};
 		this.items.push(label);
 		this.mountLabel(label);
-		this.select(label.id);
+		this.registerLabel(label);
+		this.objects.select(this.objectId(label.id));
 		this.enterEdit(label.id);
 		this.commit();
 		return { ...label };
@@ -251,17 +275,17 @@ export class Labels {
 		const i = this.items.findIndex((l) => l.id === id);
 		if (i === -1) return;
 		this.items.splice(i, 1);
+		this.objects.unregister(this.objectId(id));
 		this.refs.get(id)?.el.remove();
 		this.refs.delete(id);
-		if (this.selectedId === id) this.selectedId = null;
 		this.commit();
 	}
 
 	clearLabels() {
+		for (const l of this.items) this.objects.unregister(this.objectId(l.id));
 		for (const r of this.refs.values()) r.el.remove();
 		this.refs.clear();
 		this.items = [];
-		this.selectedId = null;
 		this.commit();
 	}
 
@@ -273,6 +297,7 @@ export class Labels {
 		if (next === label.scale) return;
 		label.scale = next;
 		r.el.style.fontSize = `${BASE_FONT * next}px`;
+		this.refreshRect(label);
 		this.commit();
 	}
 
@@ -284,13 +309,16 @@ export class Labels {
 		label.dir = dir;
 		r.el.dataset.dir = dir;
 		r.path.setAttribute("d", ARROWS[dir]);
+		// recomposing puts the arrow on the other side: the box changes shape
+		this.refreshRect(label);
 		this.commit();
 	}
 
 	destroy() {
 		if (!this.supported) return;
-		document.removeEventListener("pointerdown", this.onDocPointerDown, true);
 		clearTimeout(this.saveTimer);
+		clearTimeout(this.rectTimer);
+		for (const l of this.items) this.objects.unregister(this.objectId(l.id));
 		this.root.remove();
 		releaseStyles();
 	}
@@ -316,10 +344,7 @@ export class Labels {
 				active.blur();
 				return true;
 			}
-			if (this.selectedId != null) {
-				this.select(null);
-				return true;
-			}
+			// Let the core's deselect handle Esc
 			return false;
 		}
 		if (isTypingTarget(e.target)) return false;
@@ -330,8 +355,13 @@ export class Labels {
 			this.spawn({ x: at.x, y: at.y });
 			return true;
 		}
-		if (this._hidden || this.selectedId == null) return false;
-		const label = this.items.find((l) => l.id === this.selectedId);
+		if (this._hidden) return false;
+		// Act only when the thing the lab has selected is one of ours.
+		const sel = this.objects.selectedId();
+		const label =
+			sel == null
+				? undefined
+				: this.items.find((l) => this.objectId(l.id) === sel);
 		if (!label) return false;
 		if (e.key === "Delete" || e.key === "Backspace") {
 			e.preventDefault();
@@ -357,21 +387,9 @@ export class Labels {
 			this.setDirection(label.id, cycleDirection(label.dir, e.altKey));
 			return true;
 		}
-		const step = e.shiftKey ? 10 : 1;
-		let dx = 0;
-		let dy = 0;
-		if (e.key === "ArrowLeft") dx = -step;
-		else if (e.key === "ArrowRight") dx = step;
-		else if (e.key === "ArrowUp") dy = -step;
-		else if (e.key === "ArrowDown") dy = step;
-		if (dx !== 0 || dy !== 0) {
-			e.preventDefault();
-			label.x += dx;
-			label.y += dy;
-			this.positionEl(label);
-			this.commit();
-			return true;
-		}
+		// Arrow keys are NOT ours: the lab nudges whatever it has selected, in
+		// page units, with the same 1/10 step and the same 400ms undo
+		// coalescing a frame gets. One behaviour, one implementation.
 		return false;
 	}
 
@@ -380,8 +398,6 @@ export class Labels {
 	private mountLabel(label: LabelItem) {
 		const el = document.createElement("div");
 		el.className = "lb-label";
-		// zoom with the cursor over a label pivots on the label, not the cursor
-		el.setAttribute("data-zoom-anchor", "");
 		el.style.fontSize = `${BASE_FONT * label.scale}px`;
 		el.style.zIndex = String(++this.zTop);
 		el.dataset.dir = label.dir;
@@ -397,6 +413,9 @@ export class Labels {
 			const empty = label.text.trim() === "";
 			if (text.hasAttribute("data-empty") !== empty)
 				text.toggleAttribute("data-empty", empty);
+			// Typing changes the box. Debounced like the save: one layout read
+			// per pause instead of one per keystroke.
+			this.scheduleRectRefresh(label);
 			this.commit();
 		});
 		text.addEventListener("focus", () =>
@@ -426,7 +445,7 @@ export class Labels {
 
 		el.addEventListener("pointerdown", (e) => {
 			e.stopPropagation();
-			this.select(label.id);
+			this.objects.select(this.objectId(label.id));
 			el.style.zIndex = String(++this.zTop);
 			if (e.button !== 0) return;
 			if (e.target === handle) {
@@ -444,7 +463,17 @@ export class Labels {
 				document.activeElement === text
 			)
 				return;
-			this.beginDrag(e, label, text);
+			const tappedText = e.target instanceof Node && text.contains(e.target);
+			// Suppress native focus: a press on the text is a drag until the lab
+			// says otherwise, and only a clean tap below the threshold becomes
+			// "start editing". Without this the caret lands on pointerdown and
+			// dragging by the text selects letters instead of moving the label.
+			e.preventDefault();
+			this.objects.beginMove(e, this.objectId(label.id), {
+				onClick: () => {
+					if (tappedText) this.enterEdit(label.id);
+				},
+			});
 		});
 		arrowWrap
 			.querySelector(".lb-arrow")
@@ -458,14 +487,67 @@ export class Labels {
 		// textContent, so pasted markup can't leak through)
 		if (!text.isContentEditable) text.setAttribute("contenteditable", "true");
 		this.refs.set(label.id, { el, text, path });
-		this.positionEl(label);
 	}
 
-	private positionEl(label: LabelItem) {
+	/**
+	 * A label's box is content-driven — text plus a drawn arrow, sized by
+	 * `font-size`. `getBoundingClientRect()` is screen px; the lab wants page
+	 * units. Before layout (and in jsdom) the box reads 0×0, which would make
+	 * the label unsnappable and unreachable by Shift+2, so fall back to the
+	 * drawn proportions.
+	 */
+	private measureRect(label: LabelItem): Rect {
+		const box = this.refs.get(label.id)?.el.getBoundingClientRect();
+		const z = this.getZoom() || 1;
+		const font = BASE_FONT * label.scale;
+		return {
+			x: label.x,
+			y: label.y,
+			width: box && box.width > 0 ? box.width / z : font * FALLBACK_EM_W,
+			height: box && box.height > 0 ? box.height / z : font * FALLBACK_EM_H,
+		};
+	}
+
+	/**
+	 * Hand the label to the lab. `sizing: "content"` because the element sizes
+	 * itself; `resizable: false` because an 8-way box resize means nothing for
+	 * a line of text — the scale handle and the aim handle are its real size
+	 * and direction controls.
+	 */
+	private registerLabel(label: LabelItem) {
 		const r = this.refs.get(label.id);
 		if (!r) return;
-		// Page-unit position, screen-size drawing — same as .sn-note.
-		r.el.style.transform = `translate3d(${label.x}px,${label.y}px,0) scale(var(--inv-zoom,1))`;
+		this.objects.register({
+			id: this.objectId(label.id),
+			el: r.el,
+			rect: this.measureRect(label),
+			sizing: "content",
+			resizable: false,
+			onLayout: (rect) => {
+				// Position only — the box is the element's own business.
+				label.x = rect.x;
+				label.y = rect.y;
+				this.commit();
+			},
+			onSelect: (selected) => {
+				// Leaving a label stops editing it, so no orphaned caret is left
+				// blinking in something that is no longer selected.
+				if (selected) return;
+				const active = document.activeElement;
+				if (active instanceof HTMLElement && r.text === active) active.blur();
+			},
+		});
+	}
+
+	/** Push the re-measured box back after anything that changes its shape. */
+	private refreshRect(label: LabelItem) {
+		if (!this.objects.layout(this.objectId(label.id))) return;
+		this.objects.setLayout(this.objectId(label.id), this.measureRect(label));
+	}
+
+	private scheduleRectRefresh(label: LabelItem) {
+		clearTimeout(this.rectTimer);
+		this.rectTimer = setTimeout(() => this.refreshRect(label), RECT_REFRESH_MS);
 	}
 
 	private enterEdit(id: number) {
@@ -481,59 +563,6 @@ export class Labels {
 	}
 
 	// ----------------------------------------------------------- interaction
-
-	private beginDrag(e: PointerEvent, label: LabelItem, text: HTMLElement) {
-		e.preventDefault(); // also suppresses native focus — tap-to-edit below
-		e.stopPropagation();
-		const target = e.currentTarget as HTMLElement;
-		target.setPointerCapture(e.pointerId);
-		const originX = e.clientX;
-		const originY = e.clientY;
-		const startPageX = label.x;
-		const startPageY = label.y;
-		const downX = e.clientX;
-		const downY = e.clientY;
-		const tappedText = e.target instanceof Node && text.contains(e.target);
-		let moved = false;
-		this.prevCursor = document.documentElement.style.cursor;
-		document.documentElement.style.cursor = "grabbing";
-		const z0 = this.getZoom();
-
-		const onMove = (ev: PointerEvent) => {
-			if (
-				!moved &&
-				Math.abs(ev.clientX - downX) < 3 &&
-				Math.abs(ev.clientY - downY) < 3
-			)
-				return;
-			moved = true;
-			const z = this.getZoom() || z0;
-			const delta = viewportDeltaToPage(
-				ev.clientX - originX,
-				ev.clientY - originY,
-				z,
-			);
-			const x = startPageX + delta.x;
-			const y = startPageY + delta.y;
-			if (x !== label.x || y !== label.y) {
-				label.x = x;
-				label.y = y;
-				this.positionEl(label);
-			}
-		};
-		const onEnd = () => {
-			target.removeEventListener("pointermove", onMove);
-			target.removeEventListener("pointerup", onEnd);
-			target.removeEventListener("pointercancel", onEnd);
-			document.documentElement.style.cursor = this.prevCursor;
-			if (moved) this.commit();
-			// a clean tap on the text of a selected label enters editing
-			else if (tappedText) this.enterEdit(label.id);
-		};
-		target.addEventListener("pointermove", onMove);
-		target.addEventListener("pointerup", onEnd);
-		target.addEventListener("pointercancel", onEnd);
-	}
 
 	private beginScale(e: PointerEvent, label: LabelItem) {
 		e.preventDefault();
@@ -603,18 +632,6 @@ export class Labels {
 		target.addEventListener("pointercancel", onEnd);
 	}
 
-	private onDocPointerDown = (e: PointerEvent) => {
-		if (e.target instanceof Node && this.root.contains(e.target)) return;
-		this.select(null);
-	};
-
-	private select(id: number | null) {
-		if (this.selectedId === id) return;
-		this.selectedId = id;
-		for (const [lid, r] of this.refs)
-			r.el.toggleAttribute("data-selected", lid === id);
-	}
-
 	// -------------------------------------------------------------- persist
 
 	private commit() {
@@ -673,6 +690,7 @@ export class Labels {
 				};
 				this.items.push(label);
 				this.mountLabel(label);
+				this.registerLabel(label);
 			}
 		} catch {
 			// corrupt payload — start with no labels

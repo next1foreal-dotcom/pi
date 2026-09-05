@@ -185,10 +185,18 @@ export function InteractionLab() {
     session.pluginApis.get("ruler") as ToolToggle | undefined
   )?.isEnabled();
 
-  const modeBadge =
-    session.mode === "explore"
-      ? null
-      : `${session.names[session.focusedId ?? ""] ?? ""} · Esc to exit`;
+  // The locked-screen hint. It names both ways out, because there are two and
+  // Tab is the one nobody guesses (keyboard-dispatch handles Tab before the
+  // `!explore` gate, and `cycle()` moves the lock in focus and fill alike).
+  //
+  // Which MODES it shows in is the stylesheet's business, not this line's:
+  // `.root[data-mode=…]` already decides that for the pixel grid, the rulers
+  // and the notes layer, and one owner for "when is this visible" beats two.
+  // All this decides is whether there is a screen to name at all.
+  const lockedId = session.focusedId;
+  const lockedName = lockedId
+    ? (session.names[lockedId] ?? screenById(lockedId)?.name ?? "")
+    : null;
 
   const attachLayer = (el: HTMLDivElement | null) => {
     if (!el) return;
@@ -964,6 +972,11 @@ export function InteractionLab() {
           </div>
         </div>
       ) : null}
+      {lockedName !== null ? (
+        <div className={styles.lockHint} data-lab-chrome>
+          <b>{lockedName}</b> — esc exits · tab cycles
+        </div>
+      ) : null}
       <div className={styles.hud} data-lab-chrome>
         <div className={styles.pill}>
           <button
@@ -1013,7 +1026,6 @@ export function InteractionLab() {
           >
             {Math.round(zoom * 100)}%
           </button>
-          {modeBadge ? <span className={styles.badge}>{modeBadge}</span> : null}
           <button type="button" onClick={resetLayout}>
             Reset layout
           </button>
@@ -1035,10 +1047,13 @@ export function InteractionLab() {
             <Fragment key={group.title}>
               <h3 className={styles.helpTitle}>{group.title}</h3>
               {group.rows.map(([keys, what]) => (
-                <div className={styles.helpRow} key={what}>
+                // Keyed on both halves: two rows in one group can share a
+                // description (Drag and Scroll both pan) and React logs a
+                // duplicate-key error for the pair.
+                <div className={styles.helpRow} key={`${keys.join("+")} ${what}`}>
                   <span className={styles.helpKeys}>
-                    {keys.map((k) => (
-                      <kbd className={styles.key} key={k}>
+                    {keys.map((k, i) => (
+                      <kbd className={styles.key} key={`${i}-${k}`}>
                         {k}
                       </kbd>
                     ))}

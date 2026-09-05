@@ -31,6 +31,15 @@ export interface LabObjectInit {
   minHeight?: number;
   /** true -> the lab appends its own selection ring + 8 resize handles into `el`; they show while the object is selected. */
   resizable?: boolean;
+  /**
+   * "lab" (default) — the lab writes width and height onto the element, as it
+   * does for a frame or a sticky.
+   * "content" — the element sizes itself (text, intrinsic content) and the lab
+   * writes only the position. The registered rect's width/height are still the
+   * numbers snapping and zoom-to-selection use, so a content-sized object must
+   * push its measured box back with `setLayout` whenever it changes shape.
+   */
+  sizing?: "lab" | "content";
   /** Fired after a COMMITTED geometry change (pointerup of a move/resize, nudge commit, undo/redo, setLayout). Persist here. */
   onLayout?(rect: Rect): void;
   onSelect?(selected: boolean): void;

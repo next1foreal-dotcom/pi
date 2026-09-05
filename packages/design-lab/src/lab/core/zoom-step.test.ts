@@ -1,9 +1,14 @@
 // @vitest-environment jsdom
 
-import { describe, expect, it } from "vitest";
-import { interactiveZBand } from "./camera";
-import { WHEEL_ZOOM_CAP, zoomFactor } from "./canvas-input";
-import { INTERACTIVE_Z_MAX, INTERACTIVE_Z_MIN, clamp } from "./math";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { getCamera, interactiveZBand, setCameraExact } from "./camera";
+import { WHEEL_ZOOM_CAP, bindCanvasInput, zoomFactor } from "./canvas-input";
+import {
+	INTERACTIVE_Z_MAX,
+	INTERACTIVE_Z_MIN,
+	clamp,
+	screenToPage,
+} from "./math";
 
 /** A real mouse notch on this platform. */
 const NOTCH = 100;
@@ -83,5 +88,83 @@ describe("interactive zoom band", () => {
 		);
 		const past = 8;
 		expect(interactiveZBand(past)[1]).toBe(past);
+	});
+});
+
+/**
+ * Where a pinch pivots. This used to be split: the cursor over bare canvas,
+ * but a screen-sized annotation's own corner whenever one was under the
+ * pointer. That anchor machinery is gone — nothing on the canvas is
+ * screen-sized any more — and the cursor case moved here from the deleted
+ * zoom-anchor.test.ts, where it is now the whole behaviour.
+ */
+describe("wheel zoom pivot", () => {
+	const ORIGIN = { x: 0, y: 0 };
+	let root: HTMLElement;
+	let child: HTMLElement;
+	let unbind: () => void;
+
+	function ctrlWheel(target: Element, clientX: number, clientY: number) {
+		target.dispatchEvent(
+			new WheelEvent("wheel", {
+				bubbles: true,
+				cancelable: true,
+				ctrlKey: true,
+				deltaY: -NOTCH,
+				deltaMode: 0,
+				clientX,
+				clientY,
+			}),
+		);
+	}
+
+	beforeEach(() => {
+		root = document.createElement("div");
+		child = document.createElement("div");
+		root.appendChild(child);
+		document.body.appendChild(root);
+		setCameraExact({ x: 0, y: 0, z: 1 });
+		unbind = bindCanvasInput(root, {
+			getOrigin: () => ORIGIN,
+			getViewport: () => ({ width: 800, height: 600 }),
+			isLocked: () => false,
+			isFill: () => false,
+			onGestureStart: () => {},
+			onGestureMove: () => {},
+			onPointerDown: () => false,
+			onBackgroundClick: () => {},
+			onFillPinch: () => {},
+			lastPointer: { x: 0, y: 0 },
+		});
+	});
+
+	afterEach(() => {
+		unbind();
+		document.body.innerHTML = "";
+	});
+
+	it("still pivots on the cursor over bare canvas", () => {
+		const before = getCamera();
+		const under = screenToPage({ x: 400, y: 300 }, before, ORIGIN);
+		ctrlWheel(root, 400, 300);
+		const after = getCamera();
+		expect(after.z).toBeGreaterThan(before.z);
+		const underAfter = screenToPage({ x: 400, y: 300 }, after, ORIGIN);
+		expect(underAfter.x).toBeCloseTo(under.x, 6);
+		expect(underAfter.y).toBeCloseTo(under.y, 6);
+	});
+
+	it("pivots on the cursor over canvas content too", () => {
+		// The other half of the deleted split: content under the pointer no
+		// longer claims the pivot, so a label reached this way behaves exactly
+		// like the frame beside it.
+		const before = getCamera();
+		const under = screenToPage({ x: 150, y: 130 }, before, ORIGIN);
+		ctrlWheel(child, 150, 130);
+		const after = getCamera();
+		expect(after.z).toBeGreaterThan(before.z);
+		const underAfter = screenToPage({ x: 150, y: 130 }, after, ORIGIN);
+		expect(underAfter.x).toBeCloseTo(under.x, 6);
+		expect(underAfter.y).toBeCloseTo(under.y, 6);
 	});
 });

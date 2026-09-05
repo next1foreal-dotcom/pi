@@ -180,15 +180,16 @@ function buildCss(fonts: { woff2: string; woff: string }): string {
 	return `
 @font-face{font-family:"Mynerve";src:url("${fonts.woff2}") format("woff2"),url("${fonts.woff}") format("woff");font-display:swap}
 .sn-root{position:absolute;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;font-family:Inter,system-ui,-apple-system,sans-serif}
-.sn-note{position:absolute;top:0;left:0;transform-origin:0 0;pointer-events:auto;display:flex;flex-direction:column;box-shadow:0 10px 30px rgba(0,0,0,.28),0 2px 6px rgba(0,0,0,.16);border-radius:2px;width:100%;height:100%}
+.sn-note{position:absolute;top:0;left:0;transform-origin:0 0;pointer-events:auto;cursor:grab;display:flex;flex-direction:column;box-shadow:0 10px 30px rgba(0,0,0,.28),0 2px 6px rgba(0,0,0,.16);border-radius:2px;width:100%;height:100%}
 .sn-bar{height:${BAR_H}px;flex:none;cursor:grab;background:rgba(0,0,0,.09);display:flex;align-items:center;padding:0 5px;touch-action:none;border-radius:2px 2px 0 0}
-.sn-bar:active{cursor:grabbing}
+.sn-note:active{cursor:grabbing}
+.sn-text:focus{cursor:text}
 .sn-note[data-color="black"] .sn-bar{background:rgba(255,255,255,.08)}
 .sn-close{width:8px;height:8px;flex:none;border:none;padding:0;background:rgba(0,0,0,.22);cursor:pointer}
 .sn-close:hover{background:rgba(0,0,0,.45)}
 .sn-note[data-color="black"] .sn-close{background:rgba(255,255,255,.28)}
 .sn-note[data-color="black"] .sn-close:hover{background:rgba(255,255,255,.5)}
-.sn-text{flex:1;overflow-y:auto;scrollbar-width:thin;scrollbar-color:gray transparent;background:transparent;border:none;outline:none;padding:6px 4px;margin:2px 8px 10px;color:inherit;font-family:inherit;font-size:var(--sn-fs,14px);line-height:1.4;white-space:pre-wrap;word-break:break-word;cursor:text}
+.sn-text{flex:1;cursor:inherit;overflow-y:auto;scrollbar-width:thin;scrollbar-color:gray transparent;background:transparent;border:none;outline:none;padding:6px 4px;margin:2px 8px 10px;color:inherit;font-family:inherit;font-size:var(--sn-fs,14px);line-height:1.4;white-space:pre-wrap;word-break:break-word}
 .sn-text[data-empty]::before{content:"Write note ...";opacity:.35;pointer-events:none}
 .sn-text ol,.sn-text ul{margin:.15em 0;padding-left:1.5em}
 .sn-text ol{list-style:decimal}
@@ -516,6 +517,28 @@ export class StickyNotes {
 			e.stopPropagation();
 			this.objects.select(`note:${note.id}`);
 			el.style.zIndex = String(++this.zTop);
+			if (e.button !== 0) return;
+			// The toolbar, the close box and the lab's own resize handles all
+			// stop the event before it gets here, so anything still arriving is
+			// the note itself: its bar, its text, its padding.
+			if (e.target === close) return;
+			const onText = e.target instanceof Node && text.contains(e.target);
+			// Already writing in this note — leave the caret and selection to the
+			// browser, or you could not put the cursor between two words.
+			if (onText && document.activeElement === text) return;
+			const active = document.activeElement;
+			if (active instanceof HTMLElement && active.classList.contains("sn-text"))
+				active.blur();
+			this.closePop();
+			// Suppress the native focus a contenteditable takes on pointerdown: a
+			// press anywhere on a sticky is a drag until the lab says it was a
+			// click. Without this, dragging by the body selects letters instead.
+			e.preventDefault();
+			this.objects.beginMove(e, `note:${note.id}`, {
+				onClick: () => {
+					if (onText) this.enterEdit(note.id);
+				},
+			});
 		});
 
 		// header strip: drag handle + close box (Mac Stickies)
@@ -528,16 +551,9 @@ export class StickyNotes {
 		close.addEventListener("pointerdown", (e) => e.stopPropagation());
 		close.addEventListener("click", () => this.removeNote(note.id));
 		bar.appendChild(close);
-		bar.addEventListener("pointerdown", (e) => {
-			if (e.button === 0 && e.target !== close) {
-				// grabbing the bar leaves writing mode
-				const active = document.activeElement;
-				if (active instanceof HTMLElement && active.classList.contains("sn-text"))
-					active.blur();
-				this.closePop();
-				this.objects.beginMove(e, `note:${note.id}`);
-			}
-		});
+		// The bar is no longer the only way to move a note — the whole sticky is
+		// the drag surface (see the element's own pointerdown). It stays as the
+		// place the close box lives and as a visible seam between grab and type.
 
 		// rich text editor: a contenteditable div (a textarea can't hold
 		// bold/italic runs or lists)

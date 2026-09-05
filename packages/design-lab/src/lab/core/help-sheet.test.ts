@@ -2,6 +2,9 @@
 // (lab-view reaches window at module scope; this suite is pure data vs a
 // pure function, jsdom is only here so the import resolves.)
 
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { HELP } from "./lab-view";
 import {
@@ -106,5 +109,34 @@ describe("the shortcut sheet does not lie", () => {
 		const combos = tools?.rows.map(([k]) => k.join("+")) ?? [];
 		expect(new Set(combos).size).toBe(combos.length);
 		expect(combos).toContain("Shift+R");
+	});
+});
+
+describe("every row in the sheet is distinguishable from its neighbours", () => {
+	// A duplicate React key is a console error in production, and the sheet had
+	// one: inside "Canvas", Drag and Scroll both read "Pan". Keying on the
+	// description alone collided. The invariant the render depends on is that
+	// keys+description is unique within a group — assert that, not the string
+	// the component happens to build.
+	it("no two rows in one group share both their keys and their description", () => {
+		for (const group of HELP) {
+			const seen = new Set<string>();
+			for (const [keys, what] of group.rows) {
+				const id = `${keys.join("+")} ${what}`;
+				expect(seen.has(id), `${group.title}: duplicate row "${id}"`).toBe(false);
+				seen.add(id);
+			}
+		}
+	});
+
+	it("and the renderer keys on both halves, not the description alone", () => {
+		const view = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "lab-view.tsx"), "utf8");
+		const row =
+			view.split(/\r?\n/).find((l) => l.includes("styles.helpRow")) ?? "";
+		expect(row, "no helpRow line in lab-view").toContain("key=");
+		// Both halves. Keyed on the description alone, two rows that read the
+		// same collide even when their keys differ.
+		expect(row).toContain("keys.join");
+		expect(row).toContain("what");
 	});
 });

@@ -1,0 +1,102 @@
+/*
+ * Playground — the same page it has always been, with the properties that have
+ * to move on a narrow frame lifted out of the inline styles so a query can
+ * reach them. Every base value below is exactly what the JSX used to hardcode,
+ * so at 1440 nothing changed.
+ *
+ * The ruler is `.pg-root`'s own inline size, i.e. the FRAME. `@media
+ * (max-width: …)` would read the browser window, which is the lab — a 420-wide
+ * frame on this monitor would keep the wide layout, and locking a 1440-wide
+ * screen into fill mode on a laptop would get the narrow one.
+ *
+ * `.pg-page` exists only because a container query styles its container's
+ * DESCENDANTS and never the container element itself: the padding has to sit
+ * one level in from `container-type` for a query to be able to change it.
+ */
+
+.pg-root {
+  container-type: inline-size;
+  container-name: playground-screen;
+
+  box-sizing: border-box;
+  min-height: 100%;
+  font-family: Inter, system-ui, sans-serif;
+  color: #1c1c1c;
+  background: #fff;
+}
+
+.pg-root * {
+  box-sizing: border-box;
+}
+
+.pg-page {
+  --pg-pad: 64px;
+  --pg-title: 40px;
+  --pg-text: 16px;
+
+  padding: var(--pg-pad);
+  font-size: var(--pg-text);
+}
+
+.pg-title {
+  margin: 0;
+  font-size: var(--pg-title);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.pg-note {
+  margin-top: 12px;
+  color: #6b6b6b;
+}
+
+.pg-note + .pg-note {
+  margin-top: 0;
+}
+
+.pg-btn {
+  margin-top: 24px;
+  padding: 10px 16px;
+  border-radius: 8px;
+  border: 1px solid #d9d9d9;
+  background: #f5f5f5;
+  font: inherit;
+  cursor: pointer;
+}
+
+.pg-field {
+  margin-top: 16px;
+}
+
+.pg-input {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid #d9d9d9;
+  font: inherit;
+  /* 320px was hardcoded. It is still 320 wherever there is room for it, and
+     the frame's width below that — a fixed 320 overflows a 420-wide frame the
+     moment the gutters are counted. */
+  width: min(320px, 100%);
+}
+
+@container playground-screen (max-width: 900px) {
+  .pg-page {
+    --pg-pad: 40px;
+    --pg-title: 32px;
+  }
+}
+
+@container playground-screen (max-width: 560px) {
+  .pg-page {
+    --pg-pad: 24px;
+    --pg-title: 26px;
+    --pg-text: 15px;
+  }
+
+  /* Nothing sits beside anything on this page, so the narrow step is type,
+     gutters, and controls that stop being fixed-width. */
+  .pg-btn {
+    width: 100%;
+    margin-top: 20px;
+  }
+}

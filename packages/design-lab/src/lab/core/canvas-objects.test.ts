@@ -53,6 +53,7 @@ import {
 	setObjectLayout,
 	snapshotOf,
 	commitLayout,
+	frameTick,
 } from "./interaction-lab";
 import { pushHistory, popUndo, type LayoutMap } from "./history";
 import type { LabObjectInit } from "../plugin-api";
@@ -147,6 +148,65 @@ describe("canvas-object registry", () => {
 		expect(s.selectedId).toBeNull();
 		// decor removed
 		expect(init.el.querySelectorAll("[data-edge]").length).toBe(0);
+	});
+});
+
+/**
+ * A label's box is content-driven: text plus a drawn arrow, sized by its own
+ * font-size. The lab owns where it sits and nothing else. Both sides are here
+ * on purpose — "the lab stopped writing sizes" would pass just as well if it
+ * had stopped writing them for frames and stickies too.
+ */
+describe("sizing: content vs lab", () => {
+	it("a content-sized object gets the transform and keeps its own box", () => {
+		const s = stubSession();
+		const init = makeInit(
+			"label:content",
+			{ x: 30, y: 40, width: 92, height: 70 },
+			{ sizing: "content" },
+		);
+		s.layer?.appendChild(init.el);
+		registerObject(s, init);
+		expect(init.el.style.transform).toContain("translate(30px, 40px)");
+		expect(init.el.style.width).toBe("");
+		expect(init.el.style.height).toBe("");
+		// The registered rect is still what snapping and Shift+2 read.
+		expect(s.layouts["label:content"]).toEqual({
+			x: 30,
+			y: 40,
+			width: 92,
+			height: 70,
+		});
+		// It moves like anything else, and still writes no size.
+		setObjectLayout(s, "label:content", { x: 1, y: 2, width: 120, height: 80 });
+		expect(init.el.style.transform).toContain("translate(1px, 2px)");
+		expect(init.el.style.width).toBe("");
+		// No lab-owned size means no size tick to fire.
+		expect(frameTick("label:content")).toBe(0);
+	});
+
+	it("a lab-sized object still gets width and height written", () => {
+		const s = stubSession();
+		const init = makeInit("note:sized", { x: 30, y: 40, width: 92, height: 70 });
+		s.layer?.appendChild(init.el);
+		registerObject(s, init);
+		expect(init.el.style.transform).toContain("translate(30px, 40px)");
+		expect(init.el.style.width).toBe("92px");
+		expect(init.el.style.height).toBe("70px");
+		setObjectLayout(s, "note:sized", { x: 1, y: 2, width: 120, height: 80 });
+		expect(init.el.style.width).toBe("120px");
+		expect(init.el.style.height).toBe("80px");
+		expect(frameTick("note:sized")).toBeGreaterThan(0);
+	});
+
+	it('"lab" is the default, so an object that says nothing is sized', () => {
+		const s = stubSession();
+		const init = makeInit("note:default", { x: 0, y: 0, width: 50, height: 60 }, {
+			sizing: "lab",
+		});
+		s.layer?.appendChild(init.el);
+		registerObject(s, init);
+		expect(init.el.style.width).toBe("50px");
 	});
 });
 

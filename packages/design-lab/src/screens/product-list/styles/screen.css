@@ -5,6 +5,13 @@
   --color-text-tertiary: 116, 116, 116;
   --color-card-background: 246, 251, 251;
   --color-green: 66, 176, 167;
+
+  /* The ruler for the queries at the bottom of this file: this element's own
+     inline size, which is the FRAME's width. `@media (max-width: …)` reads the
+     browser window instead, which is the lab, not the screen. */
+  container-type: inline-size;
+  container-name: product-screen;
+
   box-sizing: border-box;
   width: 100%;
   min-height: 100%;
@@ -145,3 +152,61 @@
   color: rgb(var(--color-text-tertiary));
   margin: 0;
 }
+
+/* ── frame-width steps ────────────────────────────────────────────────────
+ *
+ * Every rule below targets a DESCENDANT of `.product-list-root`; a container
+ * query cannot style the element that declares the container.
+ * Nothing here fires above 900px, so the 1440 frame is untouched.
+ */
+
+@container product-screen (max-width: 900px) {
+  /* The card stops floating in a field of white and takes the frame's gutters
+     instead — 60px of dead space above a 450px card reads as a mistake once
+     the frame is only half again as wide as the card. */
+  .feature_card {
+    padding: 0 20px;
+    padding-top: 36px;
+  }
+
+  .row-container {
+    padding: 14px;
+  }
+}
+
+@container product-screen (max-width: 560px) {
+  .feature_card {
+    padding: 0 12px;
+    padding-top: 20px;
+    border-radius: 8px;
+  }
+
+  /* The row was title-block beside price. At this width the price has nowhere
+     to be, so the row becomes two stacked lines. */
+  .content-wrapper {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+  }
+
+  .product-title {
+    /* 180px of ellipsis inside a 300px row is a truncation nobody asked for. */
+    max-width: 100%;
+    font-size: 13px;
+  }
+
+  .row-container {
+    padding: 12px;
+    gap: 10px;
+  }
+
+  .image-container {
+    height: 40px;
+    width: 40px;
+  }
+
+  .price {
+    line-height: 12px;
+  }
+}
+
