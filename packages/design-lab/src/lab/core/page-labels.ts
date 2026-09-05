@@ -102,7 +102,7 @@ function buildCss(fonts: { woff2: string; woff: string }) {
 	return `
 @font-face{font-family:"Mynerve";src:url("${fonts.woff2}") format("woff2"),url("${fonts.woff}") format("woff");font-display:swap}
 .lb-root{position:absolute;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;font-family:"Mynerve","Comic Sans MS",cursive}
-.lb-label{position:absolute;top:0;left:0;pointer-events:auto;display:flex;flex-direction:column;align-items:flex-start;padding:.2em .35em;font-family:"Mynerve","Comic Sans MS",cursive;line-height:1.15;cursor:grab;touch-action:none;user-select:none;color:var(--lb-ink)}
+.lb-label{position:absolute;top:0;left:0;transform-origin:0 0;pointer-events:auto;display:flex;flex-direction:column;align-items:flex-start;padding:.2em .35em;font-family:"Mynerve","Comic Sans MS",cursive;line-height:1.15;cursor:grab;touch-action:none;user-select:none;color:var(--lb-ink)}
 .lb-label:active{cursor:grabbing}
 .lb-label[data-selected]{outline:1px solid #4c9ffe}
 .lb-label[data-editing]{cursor:auto}
@@ -459,7 +459,8 @@ export class Labels {
 	private positionEl(label: LabelItem) {
 		const r = this.refs.get(label.id);
 		if (!r) return;
-		r.el.style.transform = `translate3d(${label.x}px,${label.y}px,0)`;
+		// Page-unit position, screen-size drawing — same as .sn-note.
+		r.el.style.transform = `translate3d(${label.x}px,${label.y}px,0) scale(var(--inv-zoom,1))`;
 	}
 
 	private enterEdit(id: number) {

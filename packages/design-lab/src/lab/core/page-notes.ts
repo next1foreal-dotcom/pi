@@ -113,7 +113,7 @@ function buildCss(fonts: { woff2: string; woff: string }): string {
 	return `
 @font-face{font-family:"Mynerve";src:url("${fonts.woff2}") format("woff2"),url("${fonts.woff}") format("woff");font-display:swap}
 .sn-root{position:absolute;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;font-family:Inter,system-ui,-apple-system,sans-serif}
-.sn-note{position:absolute;top:0;left:0;width:${NOTE_W}px;height:${NOTE_H}px;pointer-events:auto;display:flex;flex-direction:column;box-shadow:0 10px 30px rgba(0,0,0,.28),0 2px 6px rgba(0,0,0,.16);border-radius:2px}
+.sn-note{position:absolute;top:0;left:0;transform-origin:0 0;width:${NOTE_W}px;height:${NOTE_H}px;pointer-events:auto;display:flex;flex-direction:column;box-shadow:0 10px 30px rgba(0,0,0,.28),0 2px 6px rgba(0,0,0,.16);border-radius:2px}
 .sn-note[data-compact]{height:${NOTE_H_COMPACT}px}
 .sn-note[data-selected]{outline:2px solid #7b61ff;outline-offset:0}
 .sn-bar{height:${BAR_H}px;flex:none;cursor:grab;background:rgba(0,0,0,.09);display:flex;align-items:center;padding:0 5px;touch-action:none;border-radius:2px 2px 0 0}
@@ -671,7 +671,8 @@ export class StickyNotes {
 	private positionEl(note: StickyNote) {
 		const r = this.refs.get(note.id);
 		if (!r) return;
-		r.el.style.transform = `translate3d(${note.x}px,${note.y}px,0)`;
+		// Page-unit position, screen-size drawing — see the note in styles().
+		r.el.style.transform = `translate3d(${note.x}px,${note.y}px,0) scale(var(--inv-zoom,1))`;
 		// flip the toolbar below the note when there is no room above it —
 		// only touch the attribute on actual change (this runs per drag frame)
 		const flip = note.y < FLIP_CLEAR;

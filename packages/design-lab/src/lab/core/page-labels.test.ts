@@ -102,7 +102,10 @@ describe("page ↔ viewport conversion", () => {
 		expect(item?.x).toBe(190);
 		expect(item?.y).toBe(130);
 		const el = host.querySelector(".lb-label") as HTMLElement;
-		expect(el.style.transform).toBe("translate3d(190px,130px,0)");
+		// The transform also carries the counter scale that keeps a label at
+		// screen size (pinned-tools.test.ts owns that half); this one is only
+		// about the coordinates being page units.
+		expect(el.style.transform).toContain("translate3d(190px,130px,0)");
 		labels.destroy();
 		host.remove();
 	});
