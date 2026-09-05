@@ -1,4 +1,4 @@
-import type { Camera, Point } from "./core/types";
+import type { Camera, Point, Rect, ResizeEdge } from "./core/types";
 
 /**
  * The lab is a host; design-time tools are plugins.
@@ -19,6 +19,34 @@ export interface PluginApiDoc {
   summary: string;
 }
 
+export interface LabObjectInit {
+  /** Globally unique across screens and plugins. Plugins prefix: "note:3". */
+  id: string;
+  /** The plugin's element. It must live inside the plugin host, which is inside the lab layer, so the camera transform applies to it. */
+  el: HTMLElement;
+  /** Page units. */
+  rect: Rect;
+  /** Resize floor in page units. Defaults to MIN_FRAME_W / MIN_FRAME_H. */
+  minWidth?: number;
+  minHeight?: number;
+  /** true -> the lab appends its own selection ring + 8 resize handles into `el`; they show while the object is selected. */
+  resizable?: boolean;
+  /** Fired after a COMMITTED geometry change (pointerup of a move/resize, nudge commit, undo/redo, setLayout). Persist here. */
+  onLayout?(rect: Rect): void;
+  onSelect?(selected: boolean): void;
+}
+
+export interface LabObjects {
+  register(init: LabObjectInit): void;
+  unregister(id: string): void;
+  layout(id: string): Rect | undefined;
+  setLayout(id: string, rect: Rect): void;
+  beginMove(e: PointerEvent, id: string, opts?: { onClick?(): void }): void;
+  beginResize(e: PointerEvent, id: string, edge: ResizeEdge): void;
+  select(id: string | null): void;
+  selectedId(): string | null;
+}
+
 /** What the lab hands a plugin at mount time. */
 export interface LabPluginContext {
   /** The element this plugin owns and mounts into. */
@@ -31,6 +59,7 @@ export interface LabPluginContext {
   getZoom(): number;
   /** Page-space point under the centre of the viewport. */
   viewportCenterPage(): Point;
+  objects: LabObjects;
 }
 
 /** What a mounted plugin gives back. Only `destroy` is required. */

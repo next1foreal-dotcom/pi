@@ -346,6 +346,20 @@
   pointer-events: none;
 }
 
+/* ── Canvas-object decor: hidden unless the object is selected ───────── */
+.objectDecor {
+  display: none;
+}
+[data-selected] > .objectDecor {
+  display: block;
+}
+
+/* ── Cursor while dragging ──────────────────────────────────────────── */
+.root[data-dragging="move"],
+.root[data-dragging="move"] * {
+  cursor: grabbing !important;
+}
+
 .ghost {
   position: absolute;
   border-radius: 8px;

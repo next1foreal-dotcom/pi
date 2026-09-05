@@ -27,8 +27,9 @@ import { pushHistory, setNotice, type HistoryCommand } from "./history";
 import { labFs } from "./fs-client";
 import type { ResizeEdge } from "./screen-frame";
 import { SCREENS, screenById } from "../screens";
-import type { LabPluginHandle } from "../plugin-api";
-import type { Camera, Mode, PersistedV1, Point, ScreenLayout } from "./types";
+import type { LabPluginHandle, LabObjectInit } from "../plugin-api";
+import type { Camera, Mode, PersistedV1, Point, Rect, ScreenLayout } from "./types";
+import labStyles from "./lab.module.css";
 
 export const SHOW_PIXEL_GRID = true;
 export const SNAP_TO_GRID = true;
@@ -98,6 +99,8 @@ type Drag =
       py: number;
       /** False until the pointer passes DRAG_THRESHOLD_PX; a click never arms. */
       armed: boolean;
+      /** For object moves: called on pointerup if the press never armed (it was a click). */
+      onClick?: () => void;
     }
   | {
       kind: "resize";
@@ -140,6 +143,7 @@ export type Session = {
   alt: boolean;
   measureHover: string | null;
   nudge: { id: string; from: { x: number; y: number }; timer: number } | null;
+  objects: Map<string, LabObject>;
   escapers: Map<string, () => boolean>;
   bump: () => void;
   getGuides: () => { axis: "x" | "y"; pos: number }[];
@@ -152,9 +156,155 @@ export type Session = {
   getSnapshot: () => PersistedV1;
 };
 
+export type LabObject = LabObjectInit & { decor?: HTMLElement[] };
+
+const DECOR_EDGES: ResizeEdge[] = ["n", "s", "e", "w", "nw", "ne", "sw", "se"];
+
+function appendDecor(s: Session, obj: LabObject): void {
+  const els: HTMLElement[] = [];
+  const ring = document.createElement("div");
+  ring.className = `${labStyles.ring} ${labStyles.objectDecor}`;
+  obj.el.appendChild(ring);
+  els.push(ring);
+  for (const edge of DECOR_EDGES) {
+    const h = document.createElement("div");
+    h.className = `${labStyles.handle} ${labStyles.objectDecor}`;
+    h.dataset.edge = edge;
+    // Without this the handles are decoration: they draw, they take the
+    // resize cursor, and dragging one does nothing.
+    h.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      e.stopPropagation();
+      beginObjectResize(s, e, obj.id, edge);
+    });
+    obj.el.appendChild(h);
+    els.push(h);
+  }
+  obj.decor = els;
+}
+
+function removeDecor(obj: LabObject): void {
+  if (obj.decor) {
+    for (const el of obj.decor) el.remove();
+    obj.decor = undefined;
+  }
+}
+
+function selectObject(s: Session, id: string | null): void {
+  const prev = s.selectedId;
+  if (prev === id) return;
+  // clear previous object attribute
+  if (prev != null) {
+    const prevObj = s.objects.get(prev);
+    if (prevObj) {
+      prevObj.el.removeAttribute("data-selected");
+      prevObj.onSelect?.(false);
+    }
+  }
+  s.selectedId = id;
+  // set new object attribute
+  if (id != null) {
+    const nextObj = s.objects.get(id);
+    if (nextObj) {
+      nextObj.el.setAttribute("data-selected", "");
+      nextObj.onSelect?.(true);
+    }
+  }
+  s.bump();
+}
+
+function registerObject(s: Session, init: LabObjectInit): void {
+  if (s.objects.has(init.id)) {
+    throw new Error(`[lab] duplicate object id "${init.id}"`);
+  }
+  const obj: LabObject = { ...init };
+  s.objects.set(init.id, obj);
+  s.layouts[init.id] = { ...init.rect };
+  init.el.setAttribute("data-lab-object", init.id);
+  writeFrame(s, init.id, init.rect);
+  if (init.resizable) appendDecor(s, obj);
+}
+
+function unregisterObject(s: Session, id: string): void {
+  const obj = s.objects.get(id);
+  if (!obj) return;
+  removeDecor(obj);
+  obj.el.removeAttribute("data-lab-object");
+  delete s.layouts[id];
+  if (s.selectedId === id) selectObject(s, null);
+  s.objects.delete(id);
+}
+
+function setObjectLayout(s: Session, id: string, rect: Rect): void {
+  const obj = s.objects.get(id);
+  if (!obj) return;
+  s.layouts[id] = { ...rect };
+  writeFrame(s, id, rect);
+  obj.onLayout?.(rect);
+}
+
+function commitLayout(s: Session, id: string): void {
+  const obj = s.objects.get(id);
+  if (obj) {
+    obj.onLayout?.(s.layouts[id]);
+  } else {
+    persist(s);
+  }
+}
+
+function beginObjectMove(
+  s: Session,
+  e: PointerEvent,
+  id: string,
+  opts?: { onClick?(): void },
+): void {
+  if (s.mode !== "explore") return;
+  if (s.root?.hasAttribute("data-space")) return;
+  e.stopPropagation();
+  selectObject(s, id);
+  const start = { ...s.layouts[id] };
+  s.drag = {
+    kind: "move",
+    id,
+    start,
+    current: start,
+    px: e.clientX,
+    py: e.clientY,
+    armed: false,
+    onClick: opts?.onClick,
+  };
+  if (s.root) s.root.dataset.dragging = "move";
+}
+
+function beginObjectResize(
+  s: Session,
+  e: PointerEvent,
+  id: string,
+  edge: ResizeEdge,
+): void {
+  if (s.mode !== "explore") return;
+  if (s.root?.hasAttribute("data-space")) return;
+  e.stopPropagation();
+  selectObject(s, id);
+  const start = { ...s.layouts[id] };
+  s.drag = {
+    kind: "resize",
+    id,
+    edge,
+    start,
+    current: start,
+    px: e.clientX,
+    py: e.clientY,
+    armed: false,
+  };
+  if (s.root) s.root.dataset.dragging = "resize";
+}
+
 export function snapshotOf(s: Session): PersistedV1 {
   const screens: PersistedV1["screens"] = {};
   for (const id of Object.keys(s.layouts)) {
+    // Snapshot excludes objects — only screens get persisted
+    if (s.objects.has(id)) continue;
     const l = s.layouts[id];
     screens[id] = { x: l.x, y: l.y, width: l.width, height: l.height };
   }
@@ -207,7 +357,7 @@ export function frameTick(id: string): number {
 }
 
 function writeFrame(s: Session, id: string, layout: ScreenLayout): void {
-  const el = s.layer?.querySelector(`[data-screen-id="${id}"]`);
+  const el = s.objects.get(id)?.el ?? s.layer?.querySelector(`[data-screen-id="${id}"]`);
   if (!(el instanceof HTMLElement)) return;
   el.style.transform = `translate(${layout.x}px, ${layout.y}px)`;
   el.style.width = `${layout.width}px`;
@@ -371,7 +521,7 @@ function commitNudge(s: Session): void {
   if (to && (to.x !== from.x || to.y !== from.y)) {
     pushHistory({ type: "move", id, from, to: { x: to.x, y: to.y } });
   }
-  persist(s);
+  commitLayout(s, id);
 }
 
 function fitAll(s: Session): void {
@@ -383,7 +533,7 @@ function fitAll(s: Session): void {
 function lockInto(s: Session, id: string, fill = false): void {
   if (s.mode === "explore") s.exploreCamera = { ...getCamera() };
   s.focusedId = id;
-  s.selectedId = id;
+  selectObject(s, id);
   s.mode = fill ? "fill" : "focus";
   s.root?.setAttribute("data-mode", s.mode);
   s.bump();
@@ -434,8 +584,7 @@ function cycle(s: Session, dir: 1 | -1): void {
   const next = ids[(i + dir + ids.length) % ids.length];
   if (s.mode === "fill") {
     s.focusedId = next;
-    s.selectedId = next;
-    s.bump();
+    selectObject(s, next);
     const l = s.layouts[next];
     setCameraExact({ x: -l.x, y: -l.y, z: 1 });
     return;
@@ -444,8 +593,7 @@ function cycle(s: Session, dir: 1 | -1): void {
     lockInto(s, next, false);
     return;
   }
-  s.selectedId = next;
-  s.bump();
+  selectObject(s, next);
 }
 
 async function duplicateScreen(
@@ -499,24 +647,42 @@ async function applyHistory(
 ): Promise<void> {
   if (!cmd) return;
   if (cmd.type === "move") {
+    if (!s.layouts[cmd.id]) {
+      pushToast("skipped — gone");
+      return;
+    }
     const pos = invert ? cmd.from : cmd.to;
     s.layouts[cmd.id] = { ...s.layouts[cmd.id], ...pos };
-    s.selectedId = cmd.id;
+    selectObject(s, cmd.id);
     writeFrame(s, cmd.id, s.layouts[cmd.id]);
+    // selectObject only bumps when the selection CHANGES, and undoing a drag
+    // you just made leaves it unchanged — so the frame moved and its name
+    // label stayed behind. placeChrome moves the chrome, bump re-renders.
+    placeChrome(s);
     s.bump();
-    persist(s);
+    commitLayout(s, cmd.id);
     return;
   }
   if (cmd.type === "resize") {
+    if (!s.layouts[cmd.id]) {
+      pushToast("skipped — gone");
+      return;
+    }
     s.layouts[cmd.id] = invert ? cmd.from : cmd.to;
-    s.selectedId = cmd.id;
+    selectObject(s, cmd.id);
     writeFrame(s, cmd.id, s.layouts[cmd.id]);
+    placeChrome(s);
     s.bump();
-    persist(s);
+    commitLayout(s, cmd.id);
     return;
   }
   if (cmd.type === "reset") {
-    s.layouts = invert ? cmd.before : cmd.after;
+    // Merge: keep registered objects' layouts
+    const objectLayouts: Record<string, ScreenLayout> = {};
+    for (const [id] of s.objects) {
+      if (s.layouts[id]) objectLayouts[id] = s.layouts[id];
+    }
+    s.layouts = { ...(invert ? cmd.before : cmd.after), ...objectLayouts };
     s.bump();
     persist(s);
     fitAll(s);
@@ -566,6 +732,9 @@ async function applyHistory(
 export {
   applyCamera,
   applyHistory,
+  beginObjectMove,
+  beginObjectResize,
+  commitLayout,
   commitNudge,
   cycle,
   deleteScreen,
@@ -578,7 +747,11 @@ export {
   markGesture,
   persist,
   placeChrome,
+  registerObject,
+  selectObject,
+  setObjectLayout,
   showSnap,
+  unregisterObject,
   writeFrame,
 };
 

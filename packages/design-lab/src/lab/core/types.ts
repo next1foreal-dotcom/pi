@@ -21,6 +21,8 @@ export type Rect = {
   height: number;
 };
 
+export type ResizeEdge = "n" | "s" | "e" | "w" | "nw" | "ne" | "sw" | "se";
+
 export type Mode = "explore" | "focus" | "fill";
 
 export type ScreenLayout = {

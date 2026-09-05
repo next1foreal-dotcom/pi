@@ -54,3 +54,27 @@ describe("locked modes leave the live screen clickable", () => {
 		expect(chrome?.body).toMatch(/pointer-events:\s*none/);
 	});
 });
+
+describe("canvas-object decor and dragging cursor", () => {
+	it("objectDecor hidden by default", () => {
+		const decor = rules(css).find(
+			(r) => r.selectors.some((s) => s === ".objectDecor"),
+		);
+		expect(decor?.body).toMatch(/display:\s*none/);
+	});
+
+	it("objectDecor shown when data-selected", () => {
+		const shown = rules(css).find(
+			(r) => r.selectors.some((s) => s.includes("[data-selected]") && s.includes(".objectDecor")),
+		);
+		expect(shown?.body).toMatch(/display:\s*block/);
+	});
+
+	it("data-dragging=move sets grabbing cursor on root and descendants", () => {
+		const drag = rules(css).filter(
+			(r) => r.selectors.some((s) => s.includes('[data-dragging="move"]')),
+		);
+		expect(drag.length).toBeGreaterThan(0);
+		expect(drag.some((r) => r.body.includes("grabbing"))).toBe(true);
+	});
+});

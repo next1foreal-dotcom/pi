@@ -38,6 +38,7 @@ import { SCREENS, screenById, type ScreenDef } from "../screens";
 import type { Mode } from "./types";
 import {
   LAB_PLUGINS,
+  type LabObjects,
   type LabPluginHandle,
   type PluginApiDoc,
   publishPluginApis,
@@ -59,6 +60,9 @@ import {
   SNAP_TOLERANCE_PX,
   applyCamera,
   applyHistory,
+  beginObjectMove,
+  beginObjectResize,
+  commitLayout,
   bootLayouts,
   commitNudge,
   cycle,
@@ -74,10 +78,14 @@ import {
   persistedBoot,
   placeChrome,
   paintMeasure,
+  registerObject,
+  selectObject,
+  setObjectLayout,
   showSnap,
   snapshotOf,
   frameTick,
   subscribeFrame,
+  unregisterObject,
   writeFrame,
   type Session,
 } from "./interaction-lab";
@@ -134,6 +142,7 @@ export function InteractionLab() {
       alt: false,
       measureHover: null,
       nudge: null,
+      objects: new Map(),
       escapers: new Map(),
       bump: () => {},
       getGuides: () => [] as { axis: "x" | "y"; pos: number }[],
@@ -224,6 +233,16 @@ export function InteractionLab() {
 
     // ── Plugins: the lab is a host, design-time tools are plugins ──────
     const pluginLayer = el.querySelector("[data-plugin-layer]");
+    const labObjects: LabObjects = {
+      register: (init) => registerObject(session, init),
+      unregister: (id) => unregisterObject(session, id),
+      layout: (id) => session.layouts[id] ? { ...session.layouts[id] } : undefined,
+      setLayout: (id, rect) => setObjectLayout(session, id, rect),
+      beginMove: (e, id, opts) => beginObjectMove(session, e, id, opts),
+      beginResize: (e, id, edge) => beginObjectResize(session, e, id, edge),
+      select: (id) => selectObject(session, id),
+      selectedId: () => session.selectedId,
+    };
     const ctxFor = (host: HTMLElement) => ({
       host,
       getCamera,
@@ -241,6 +260,7 @@ export function InteractionLab() {
           origin,
         );
       },
+      objects: labObjects,
     });
     const owned: HTMLElement[] = [];
     const mounted: {
@@ -365,14 +385,17 @@ export function InteractionLab() {
       const dy = (e.clientY - session.drag.py) / cam.z;
       const bypass = e.metaKey || e.ctrlKey;
       if (session.drag.kind === "resize") {
+        const obj = session.objects.get(session.drag.id);
+        const minW = obj?.minWidth ?? MIN_FRAME_W;
+        const minH = obj?.minHeight ?? MIN_FRAME_H;
         const next = snapResize(
           applyResize(
             session.drag.start,
             session.drag.edge,
             dx,
             dy,
-            MIN_FRAME_W,
-            MIN_FRAME_H,
+            minW,
+            minH,
           ),
           SNAP_TO_GRID,
           bypass,
@@ -385,9 +408,10 @@ export function InteractionLab() {
       const start = session.drag.start;
       const moving = { ...start, x: start.x + dx, y: start.y + dy };
       const dragId = session.drag.id;
-      const others = SCREENS.filter((x) => x.id !== dragId).map((x) =>
-        liveLayout(session, x.id),
-      );
+      // Snap against all other items in layouts (screens + objects)
+      const others = Object.keys(session.layouts)
+        .filter((id) => id !== dragId)
+        .map((id) => liveLayout(session, id));
       const snapped = SNAP_TO_GRID
         ? snapMovingBox(
             moving,
@@ -420,9 +444,12 @@ export function InteractionLab() {
       hideSnap(session);
       if (session.ghost) session.ghost.style.display = "none";
       session.drag = null;
+      // Clear data-dragging
+      if (session.root) delete session.root.dataset.dragging;
       if (!drag.armed) {
         // It was a click. Nothing moved, so there is nothing to commit: no
         // duplicate for an Alt-click, no no-op entry in the undo stack.
+        if (drag.kind === "move" && "onClick" in drag) drag.onClick?.();
         return;
       }
       if (drag.kind === "ghost") {
@@ -448,7 +475,7 @@ export function InteractionLab() {
           to: { x: to.x, y: to.y },
         });
       }
-      persist(session);
+      commitLayout(session, drag.id);
       session.bump();
     };
 
@@ -504,8 +531,7 @@ export function InteractionLab() {
       // ── Execute action ──────────────────────────────────────────────
       switch (act.action) {
         case "deselect":
-          session.selectedId = null;
-          session.bump();
+          selectObject(session, null);
           break;
         case "exit-one":
           if (session.mode !== "explore" && session.focusedId) {
@@ -529,7 +555,7 @@ export function InteractionLab() {
         case "fill-toggle": {
           const id =
             session.focusedId ?? session.selectedId ?? SCREENS[0]?.id;
-          if (!id) break;
+          if (!id || !screenById(id)) break;
           if (session.mode === "fill") exitOne(session);
           else lockInto(session, id, true);
           break;
@@ -570,7 +596,8 @@ export function InteractionLab() {
           }
           break;
         case "lock-into":
-          if (session.selectedId) lockInto(session, session.selectedId);
+          if (session.selectedId && screenById(session.selectedId))
+            lockInto(session, session.selectedId);
           break;
         case "duplicate":
           if (session.selectedId) {
@@ -579,7 +606,7 @@ export function InteractionLab() {
           }
           break;
         case "delete-screen":
-          if (session.selectedId) {
+          if (session.selectedId && screenById(session.selectedId)) {
             void deleteScreen(session, session.selectedId);
           }
           break;
@@ -593,21 +620,27 @@ export function InteractionLab() {
           break;
         case "cleanup": {
           commitNudge(session);
-          const before = { ...session.layouts };
+          // Capture only screen entries for history
+          const beforeScreens: LayoutMap = {};
+          for (const scr of SCREENS) beforeScreens[scr.id] = { ...session.layouts[scr.id] };
           const order = [...SCREENS]
             .sort(
               (a, b) => session.layouts[a.id].x - session.layouts[b.id].x,
             )
             .map((x) => x.id);
-          session.layouts = cleanupRow(
+          const cleaned = cleanupRow(
             session.layouts,
             order,
             CLEANUP_GAP,
           );
+          // Merge: keep registered objects
+          session.layouts = { ...session.layouts, ...cleaned };
+          const afterScreens: LayoutMap = {};
+          for (const scr of SCREENS) afterScreens[scr.id] = { ...session.layouts[scr.id] };
           pushHistory({
             type: "reset",
-            before,
-            after: { ...session.layouts },
+            before: beforeScreens,
+            after: afterScreens,
           });
           saveNow(session.getSnapshot());
           const positions: Record<string, { x: number; y: number }> = {};
@@ -622,18 +655,21 @@ export function InteractionLab() {
         }
         case "reset-layout": {
           commitNudge(session);
-          const before = { ...session.layouts };
-          const after: LayoutMap = {};
+          // Capture only screen entries for history
+          const beforeReset: LayoutMap = {};
+          for (const scr of SCREENS) beforeReset[scr.id] = { ...session.layouts[scr.id] };
+          const afterReset: LayoutMap = {};
           for (const scr of SCREENS) {
-            after[scr.id] = {
+            afterReset[scr.id] = {
               x: scr.defaultPosition.x,
               y: scr.defaultPosition.y,
               width: scr.width,
               height: scr.height,
             };
           }
-          session.layouts = after;
-          pushHistory({ type: "reset", before, after });
+          // Merge: keep registered objects
+          session.layouts = { ...session.layouts, ...afterReset };
+          pushHistory({ type: "reset", before: beforeReset, after: afterReset });
           persist(session);
           session.bump();
           fitAll(session);
@@ -736,7 +772,9 @@ export function InteractionLab() {
 
   const resetLayout = () => {
     commitNudge(session);
-    const before = { ...session.layouts };
+    // Only capture screen entries for history
+    const before: LayoutMap = {};
+    for (const scr of SCREENS) before[scr.id] = { ...session.layouts[scr.id] };
     const after: LayoutMap = {};
     for (const scr of SCREENS) {
       after[scr.id] = {
@@ -746,7 +784,8 @@ export function InteractionLab() {
         height: scr.height,
       };
     }
-    session.layouts = after;
+    // Merge: keep registered objects
+    session.layouts = { ...session.layouts, ...after };
     pushHistory({ type: "reset", before, after });
     persist(session);
     bump();
@@ -759,8 +798,7 @@ export function InteractionLab() {
     // Space is held: the canvas is panning from wherever the press landed.
     if (session.root?.hasAttribute("data-space")) return;
     e.stopPropagation();
-    session.selectedId = id;
-    bump();
+    selectObject(session, id);
     const start = { ...session.layouts[id] };
     session.drag = {
       kind: ghost ? "ghost" : "move",
@@ -771,6 +809,7 @@ export function InteractionLab() {
       py: e.clientY,
       armed: false,
     };
+    if (session.root) session.root.dataset.dragging = "move";
   };
 
   return (
@@ -799,8 +838,7 @@ export function InteractionLab() {
             onShieldDoubleClick={(id) => lockInto(session, id)}
             onResizePointerDown={(e, id, edge) => {
               e.stopPropagation();
-              session.selectedId = id;
-              bump();
+              selectObject(session, id);
               const start = { ...session.layouts[id] };
               session.drag = {
                 kind: "resize",
@@ -812,6 +850,7 @@ export function InteractionLab() {
                 py: e.clientY,
                 armed: false,
               };
+              if (session.root) session.root.dataset.dragging = "resize";
             }}
           />
         ))}
@@ -842,8 +881,7 @@ export function InteractionLab() {
             }
             onSelect={() => {
               if (session.mode !== "explore") return;
-              session.selectedId = def.id;
-              bump();
+              selectObject(session, def.id);
             }}
             onDrag={(e) => startMove(e, def.id, e.altKey)}
             onFill={() => lockInto(session, def.id, true)}

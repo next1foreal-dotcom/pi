@@ -2,24 +2,61 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 import {
-	noteSize,
+	NOTE_DEFAULT,
+	NOTE_MIN,
 	noteSpawnTopLeft,
-	sizeOrNull,
+	sizeOrDefault,
 	StickyNotes,
 	toolbarPlacement,
 } from "./page-notes";
-
-/**
- * The sticky is drawn at screen size, so two things can quietly drift apart:
- * the CSS that sizes it and the maths that centres it. Both are pinned here.
- */
+import type { LabObjects } from "../plugin-api";
+import type { Rect } from "./types";
 
 let live: StickyNotes | null = null;
+
+function stubObjects(): LabObjects {
+	const layouts = new Map<string, Rect>();
+	const inits = new Map<string, { onSelect?(selected: boolean): void; el: HTMLElement }>();
+	let sel: string | null = null;
+	return {
+		register(init) {
+			layouts.set(init.id, { ...init.rect });
+			inits.set(init.id, { onSelect: init.onSelect, el: init.el });
+			init.el.setAttribute("data-lab-object", init.id);
+			init.el.style.transform = `translate(${init.rect.x}px, ${init.rect.y}px)`;
+			init.el.style.width = `${init.rect.width}px`;
+			init.el.style.height = `${init.rect.height}px`;
+		},
+		unregister(id) { layouts.delete(id); inits.delete(id); },
+		layout: (id) => layouts.get(id) ? { ...layouts.get(id)! } : undefined,
+		setLayout(id, rect) {
+			layouts.set(id, rect);
+			const entry = inits.get(id);
+			if (entry) entry.onSelect?.(false); // onLayout would be here too
+		},
+		beginMove() {},
+		beginResize() {},
+		select(id) {
+			const prev = sel;
+			if (prev === id) return;
+			if (prev != null) {
+				const p = inits.get(prev);
+				if (p) { p.el.removeAttribute("data-selected"); p.onSelect?.(false); }
+			}
+			sel = id;
+			if (id != null) {
+				const n = inits.get(id);
+				if (n) { n.el.setAttribute("data-selected", ""); n.onSelect?.(true); }
+			}
+		},
+		selectedId: () => sel,
+	};
+}
 
 function mount(): HTMLElement {
 	const host = document.createElement("div");
 	document.body.appendChild(host);
-	live = new StickyNotes({ host, getZoom: () => 1 });
+	live = new StickyNotes({ host, objects: stubObjects() });
 	return host;
 }
 
@@ -29,144 +66,82 @@ afterEach(() => {
 	document.body.innerHTML = "";
 });
 
-describe("sticky size", () => {
-	it("caps against a narrow pane but not a monitor", () => {
-		expect(noteSize(2560)).toBe(240);
-		expect(noteSize(1280)).toBe(240);
-		// 800 is where the cap starts to bite.
-		expect(noteSize(800)).toBe(240);
-		expect(noteSize(519)).toBeCloseTo(155.7, 1);
-		expect(noteSize(377)).toBeCloseTo(113.1, 1);
-	});
-
-	it("never lets the note take more than a third of the viewport", () => {
-		for (const w of [320, 375, 519, 640, 800, 1024, 1440, 2560]) {
-			expect(noteSize(w) / w).toBeLessThanOrEqual(0.3 + 1e-9);
-		}
-	});
-
-	it("the injected CSS uses the same min() the maths does", () => {
-		mount();
-		const css =
-			document.querySelector<HTMLStyleElement>("style[data-sticky-note]")
-				?.textContent ?? "";
-		const m = css.match(/--sn-size:min\((\d+(?:\.\d+)?)px,(\d+(?:\.\d+)?)vw\)/);
-		expect(m, "--sn-size declaration missing from the injected CSS").toBeTruthy();
-		const maxPx = Number(m?.[1]);
-		const vw = Number(m?.[2]) / 100;
-		for (const w of [320, 519, 800, 1440, 2560]) {
-			expect(Math.min(maxPx, w * vw)).toBeCloseTo(noteSize(w), 6);
-		}
-	});
-
-	it("collapses to a strip that stays proportional to the note", () => {
-		mount();
-		const css =
-			document.querySelector<HTMLStyleElement>("style[data-sticky-note]")
-				?.textContent ?? "";
-		// A resized note keeps its own strip height; an untouched one falls
-		// back through --sn-h to the responsive default.
-		expect(css).toContain(
-			"[data-compact]{height:calc(var(--sn-h,var(--sn-size)) *",
-		);
-	});
-});
-
-describe("spawn centring", () => {
+describe("spawn centring (page-only, no zoom)", () => {
 	it("puts the note's middle on the point, not its corner", () => {
-		const at = noteSpawnTopLeft({ x: 1000, y: 2000 }, 1, 1440);
+		const at = noteSpawnTopLeft({ x: 1000, y: 2000 });
 		expect(at).toEqual({ x: 1000 - 120, y: 2000 - 120 });
 	});
 
-	it("offsets in page units, so it stays centred when zoomed out", () => {
-		// This is the regression: half a note is half a *screen* note, so the
-		// page-unit offset has to grow as the zoom shrinks. Drop the `/ zoom`
-		// and this note lands with its corner on the point instead.
-		const centre = { x: 1000, y: 2000 };
-		const at = noteSpawnTopLeft(centre, 0.07, 1440);
-		const halfPage = 120 / 0.07;
-		expect(at.x).toBeCloseTo(1000 - halfPage, 6);
-		expect(at.y).toBeCloseTo(2000 - halfPage, 6);
-		// …and the offset really is ~14x the 100% one, not equal to it.
-		expect(centre.x - at.x).toBeGreaterThan(14 * 120 * 0.99);
-	});
-
-	it("stays centred at every zoom the camera can reach", () => {
-		for (const zoom of [0.02, 0.07, 0.5, 1, 2, 8]) {
-			const at = noteSpawnTopLeft({ x: 0, y: 0 }, zoom, 1440);
-			// Re-project the note's middle back to screen px: it must land on
-			// the point regardless of zoom.
-			const middleScreen = (at.x + 120 / zoom) * zoom;
-			expect(middleScreen).toBeCloseTo(0, 6);
-		}
+	it("does not need zoom — the same offset at any zoom", () => {
+		// With page-sized notes, the offset is always half of NOTE_DEFAULT
+		const a = noteSpawnTopLeft({ x: 500, y: 600 });
+		expect(a.x).toBe(500 - NOTE_DEFAULT / 2);
+		expect(a.y).toBe(600 - NOTE_DEFAULT / 2);
 	});
 });
 
 describe("toolbar placement", () => {
 	it("sits above a note with headroom, below one without", () => {
-		expect(toolbarPlacement({ top: 400, left: 100 }, 1440).flip).toBe(false);
-		expect(toolbarPlacement({ top: 12, left: 100 }, 1440).flip).toBe(true);
+		expect(toolbarPlacement({ top: 400, left: 100, width: 240 }, 1440).flip).toBe(false);
+		expect(toolbarPlacement({ top: 12, left: 100, width: 240 }, 1440).flip).toBe(true);
 	});
 
 	it("reads the note's SCREEN top, not its page y", () => {
-		// The regression: `note.y < FLIP_CLEAR` compared a page coordinate to a
-		// screen-px clearance. A note parked far down the page can still be at
-		// the top of the viewport once you scroll to it — it needs the flip.
-		expect(toolbarPlacement({ top: 8, left: 100 }, 1440).flip).toBe(true);
-		// …and one near the page origin that is scrolled into the middle of the
-		// viewport must NOT flip.
-		expect(toolbarPlacement({ top: 700, left: 100 }, 1440).flip).toBe(false);
+		expect(toolbarPlacement({ top: 8, left: 100, width: 240 }, 1440).flip).toBe(true);
+		expect(toolbarPlacement({ top: 700, left: 100, width: 240 }, 1440).flip).toBe(false);
 	});
 
-	it("anchors right when the toolbar would run past the edge", () => {
-		// 519px pane, note at the right edge: 300 + 240 > 519.
-		expect(toolbarPlacement({ top: 400, left: 300 }, 519).anchorRight).toBe(true);
-		expect(toolbarPlacement({ top: 400, left: 40 }, 519).anchorRight).toBe(false);
+	it("centres the toolbar on the note when there is room on both sides", () => {
+		expect(toolbarPlacement({ top: 400, left: 300, width: 240 }, 1440).anchor).toBe(
+			"centre",
+		);
+		// A note far smaller than the toolbar is the case centring exists for.
+		expect(toolbarPlacement({ top: 400, left: 700, width: 30 }, 1440).anchor).toBe(
+			"centre",
+		);
 	});
 
-	it("leaves the toolbar left-anchored when there is room", () => {
-		// Same note position on a wide monitor needs no flip at all.
-		expect(toolbarPlacement({ top: 400, left: 300 }, 1440).anchorRight).toBe(false);
+	it("takes the right edge when a centred toolbar would run past it", () => {
+		// centre 420 + half a toolbar (120) is past 519
+		expect(toolbarPlacement({ top: 400, left: 300, width: 240 }, 519).anchor).toBe(
+			"right",
+		);
+		expect(toolbarPlacement({ top: 400, left: 160, width: 240 }, 519).anchor).toBe(
+			"centre",
+		);
 	});
 
-	it("keeps the toolbar on-screen for every note position on a narrow pane", () => {
-		const TOOLBAR = 240;
-		const pane = 519;
-		const note = noteSize(pane);
-		for (let left = 0; left <= pane - note; left += 8) {
-			const { anchorRight } = toolbarPlacement({ top: 400, left }, pane);
-			// Right-anchored: the toolbar hangs left off the note's right edge.
-			const l = anchorRight ? left + note - TOOLBAR : left;
-			const r = l + TOOLBAR;
-			expect(r, `right edge at left=${left}`).toBeLessThanOrEqual(pane);
-		}
+	it("takes the left edge when a centred toolbar would run off it", () => {
+		// A small note hugging the left edge: centred, the bar would start at -105
+		expect(toolbarPlacement({ top: 400, left: 0, width: 30 }, 1440).anchor).toBe(
+			"left",
+		);
 	});
 
-	it("the CSS actually re-anchors the toolbar and its trays", () => {
+	it("the CSS carries all three anchors and moves the trays with them", () => {
 		mount();
 		const css =
 			document.querySelector<HTMLStyleElement>("style[data-sticky-note]")
 				?.textContent ?? "";
-		expect(css).toContain("[data-tb-right] .sn-toolbar{left:auto;right:0}");
+		// centred is the default state, on .sn-toolbar itself
+		expect(css).toContain("left:50%");
+		expect(css).toContain("--tb-x:-50%");
+		expect(css).toContain("[data-tb-left] .sn-toolbar{left:0;--tb-x:0px;--tb-ox:0%}");
+		expect(css).toContain(
+			"[data-tb-right] .sn-toolbar{left:auto;right:0;--tb-x:0px;--tb-ox:100%}",
+		);
 		expect(css).toContain("[data-tb-right] .sn-pop{left:auto;right:0}");
 	});
 });
 
-/**
- * The pure function above can only ever be handed a rect, so it cannot catch
- * the caller reverting to `note.y < FLIP_CLEAR`. These drive the real class
- * with a stubbed rect: page y and screen top are deliberately opposite, so a
- * caller reading the wrong one flips the wrong way.
- */
 describe("toolbar placement reads the screen rect, not the page position", () => {
 	function stubRect(el: Element, top: number, left: number) {
 		Object.defineProperty(el, "getBoundingClientRect", {
 			configurable: true,
-			value: () => ({ top, left, right: left, bottom: top, width: 0, height: 0 }),
+			value: () => ({ top, left, right: left + 240, bottom: top, width: 240, height: 240 }),
 		});
 	}
 
-	/** Select `a` by clicking it while `b` holds the selection. */
 	function reselect(host: HTMLElement, index: number) {
 		const el = host.querySelectorAll<HTMLElement>(".sn-note")[index];
 		el.dispatchEvent(new Event("pointerdown", { bubbles: true }));
@@ -201,49 +176,50 @@ describe("toolbar placement reads the screen rect, not the page position", () =>
 		stubRect(a, 400, window.innerWidth - 120);
 		reselect(host, 0);
 		expect(a.hasAttribute("data-tb-right")).toBe(true);
+		expect(a.hasAttribute("data-tb-left")).toBe(false);
 	});
 });
 
-describe("note resizing", () => {
-	it("clamps a stored dimension and rejects anything that is not one", () => {
-		expect(sizeOrNull(300)).toBe(300);
-		expect(sizeOrNull(10)).toBe(96); // floor: a bar plus one word
-		expect(sizeOrNull(99999)).toBe(1200);
-		expect(sizeOrNull(240.6)).toBe(241);
+describe("note resizing (page units)", () => {
+	it("sizeOrDefault clamps to floor and defaults non-numbers to 240", () => {
+		expect(sizeOrDefault(300)).toBe(300);
+		expect(sizeOrDefault(10)).toBe(NOTE_MIN); // floor
+		expect(sizeOrDefault(240.6)).toBe(241);
+		// non-number / null / undefined all default to 240
 		for (const junk of [undefined, null, "240", NaN, Infinity, {}])
-			expect(sizeOrNull(junk), String(junk)).toBeNull();
+			expect(sizeOrDefault(junk), String(junk)).toBe(NOTE_DEFAULT);
 	});
 
-	it("a fresh note has no explicit size, so it follows the default", () => {
+	it("a fresh note has explicit default size (240x240)", () => {
 		mount();
 		const n = live?.spawn({ x: 0, y: 0 });
-		expect(n?.w).toBeNull();
-		expect(n?.h).toBeNull();
-		const el = document.querySelector<HTMLElement>(".sn-note");
-		expect(el?.style.getPropertyValue("--sn-w")).toBe("");
-		expect(el?.style.getPropertyValue("--sn-h")).toBe("");
+		expect(n?.w).toBe(NOTE_DEFAULT);
+		expect(n?.h).toBe(NOTE_DEFAULT);
 	});
 
-	it("setSize writes screen px onto the element and survives a reset", () => {
+	it("setSize goes through the LabObjects stub and clamps the floor", () => {
 		mount();
-		const n = live?.spawn({ x: 0, y: 0});
-		const el = document.querySelector<HTMLElement>(".sn-note");
+		const n = live?.spawn({ x: 0, y: 0 });
 		live?.setSize(n?.id ?? 0, 420, 300);
-		expect(el?.style.getPropertyValue("--sn-w")).toBe("420px");
-		expect(el?.style.getPropertyValue("--sn-h")).toBe("300px");
 		expect(live?.getNotes()[0].w).toBe(420);
-		live?.resetSize(n?.id ?? 0);
-		// Removed, not zeroed -- the CSS fallback is what restores the default.
-		expect(el?.style.getPropertyValue("--sn-w")).toBe("");
-		expect(live?.getNotes()[0].w).toBeNull();
+		expect(live?.getNotes()[0].h).toBe(300);
+		// no ceiling
+		live?.setSize(n?.id ?? 0, 5000, 3000);
+		expect(live?.getNotes()[0].w).toBe(5000);
+		expect(live?.getNotes()[0].h).toBe(3000);
+		// floor
+		live?.setSize(n?.id ?? 0, -50, 10);
+		expect(live?.getNotes()[0].w).toBe(NOTE_MIN);
+		expect(live?.getNotes()[0].h).toBe(NOTE_MIN);
 	});
 
-	it("setSize clamps rather than letting a note collapse or run away", () => {
+	it("resetSize returns to 240x240", () => {
 		mount();
 		const n = live?.spawn({ x: 0, y: 0 });
-		live?.setSize(n?.id ?? 0, -50, 4000);
-		expect(live?.getNotes()[0].w).toBe(96);
-		expect(live?.getNotes()[0].h).toBe(1200);
+		live?.setSize(n?.id ?? 0, 420, 300);
+		live?.resetSize(n?.id ?? 0);
+		expect(live?.getNotes()[0].w).toBe(NOTE_DEFAULT);
+		expect(live?.getNotes()[0].h).toBe(NOTE_DEFAULT);
 	});
 
 	it("a resized note comes back the same size after a reload", async () => {
@@ -251,7 +227,7 @@ describe("note resizing", () => {
 		localStorage.removeItem(key);
 		const h1 = document.createElement("div");
 		document.body.appendChild(h1);
-		const a = new StickyNotes({ host: h1, getZoom: () => 1, storageKey: key });
+		const a = new StickyNotes({ host: h1, objects: stubObjects(), storageKey: key });
 		const n = a.spawn({ x: 5, y: 6 });
 		a.setSize(n.id, 333, 222);
 		// the write is debounced 150ms; let it actually land
@@ -260,20 +236,31 @@ describe("note resizing", () => {
 
 		const h2 = document.createElement("div");
 		document.body.appendChild(h2);
-		live = new StickyNotes({ host: h2, getZoom: () => 1, storageKey: key });
+		live = new StickyNotes({ host: h2, objects: stubObjects(), storageKey: key });
 		expect(live.getNotes()[0].w).toBe(333);
 		expect(live.getNotes()[0].h).toBe(222);
 		localStorage.removeItem(key);
 	});
+});
 
-	it("the grip only shows on a selected note that is not collapsed", () => {
+describe("injected CSS migration checks", () => {
+	it("the .sn-note rule has no scale(var(--inv-zoom (toolbar is allowed to)", () => {
 		mount();
 		const css =
 			document.querySelector<HTMLStyleElement>("style[data-sticky-note]")
 				?.textContent ?? "";
-		expect(css).toContain(".sn-handle{");
-		expect(css).toContain(
-			'.sn-note[data-selected]:not([data-compact]) .sn-handle{display:block}',
-		);
+		// Extract just the .sn-note{...} rule
+		const noteRule = css.match(/\.sn-note\{[^}]*\}/)?.[0] ?? "";
+		expect(noteRule).not.toContain("scale(var(--inv-zoom");
+		// The toolbar IS allowed to counter-scale
+		expect(css).toContain(".sn-toolbar{");
+	});
+
+	it("the injected CSS has no 30vw", () => {
+		mount();
+		const css =
+			document.querySelector<HTMLStyleElement>("style[data-sticky-note]")
+				?.textContent ?? "";
+		expect(css).not.toContain("30vw");
 	});
 });

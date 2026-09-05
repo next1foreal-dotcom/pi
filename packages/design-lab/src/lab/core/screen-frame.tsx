@@ -1,10 +1,11 @@
 import { memo, type ReactNode } from "react";
 import { ScreenProvider, type ScreenState } from "../screen-context";
-import type { ScreenLayout } from "./types";
+import type { ResizeEdge, ScreenLayout } from "./types";
 import styles from "./lab.module.css";
 
-const EDGES = ["n", "s", "e", "w", "nw", "ne", "sw", "se"] as const;
-export type ResizeEdge = (typeof EDGES)[number];
+export type { ResizeEdge };
+
+const EDGES: readonly ResizeEdge[] = ["n", "s", "e", "w", "nw", "ne", "sw", "se"];
 
 type Props = {
   id: string;

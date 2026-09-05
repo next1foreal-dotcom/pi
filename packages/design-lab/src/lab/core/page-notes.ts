@@ -3,10 +3,12 @@
  *
  * Reference UX (viewport notes): github.com/timothymaarv/sticky-notes @ 7db1bbb —
  * no LICENSE file; read for mechanism, do not vendor.
- * Positions are page units and live inside the camera-transformed layer, so
- * notes pan/zoom with canvas content (Shift+N spawns at the viewport-center
- * page point).
+ * Notes are ordinary canvas content: page-sized (default 240x240 page units),
+ * they grow and shrink with zoom like frames. Move/resize/select/undo/nudge
+ * go through the core's canvas-object machinery.
  */
+
+import type { LabObjects } from "../plugin-api";
 
 const MYNERVE_WOFF2 = "/fonts/mynerve/regular.woff2";
 const MYNERVE_WOFF = "/fonts/mynerve/regular.woff";
@@ -35,12 +37,10 @@ export interface StickyNote {
 	font: NoteFont;
 	/** true = short strip, false = tall square note. */
 	compact: boolean;
-	/**
-	 * Explicit size in SCREEN px, or null to follow the responsive default.
-	 * The note draws at screen size, so a resize drag maps 1:1 to these.
-	 */
-	w: number | null;
-	h: number | null;
+	/** Width in page units. Always explicit; default 240. */
+	w: number;
+	/** Height in page units. Always explicit; default 240. */
+	h: number;
 	/** Plain text of the note (derived from the DOM). */
 	text: string;
 	/** Formatted content (sanitized HTML: b/i/u/s, ordered lists…). */
@@ -49,69 +49,34 @@ export interface StickyNote {
 
 export interface StickyNotesOptions {
 	host: HTMLElement;
-	getZoom: () => number;
+	objects: LabObjects;
 	storageKey?: string | null;
 	defaultColor?: NoteColor;
 	onChange?: (notes: StickyNotes) => void;
 }
 
-/**
- * Sticky geometry. Notes are viewport-constant chrome (see the counter-scale
- * in `place`), so a flat 260px square ate half the width of a narrow pane.
- * The cap only bites below ~800px; on a monitor the note stays 240, which is
- * FigJam's own sticky edge.
- */
-const NOTE_MAX = 240;
-const NOTE_VW = 0.3;
+/** Default note edge in page units. */
+export const NOTE_DEFAULT = 240;
 const NOTE_COMPACT_RATIO = 0.43;
-/** Resize clamps. The floor is a bar plus one readable word. */
-const NOTE_MIN = 96;
-const NOTE_LIMIT = 1200;
-
-/**
- * The rendered sticky edge in *screen* px. Mirrors the CSS `min()` below --
- * both derive from NOTE_MAX/NOTE_VW so they cannot drift apart, and
- * `page-notes.test.ts` pins that agreement.
- */
-export function noteSize(viewportWidth: number = window.innerWidth): number {
-	return Math.min(NOTE_MAX, viewportWidth * NOTE_VW);
-}
+/** Resize floor in page units. */
+export const NOTE_MIN = 96;
 
 const clampSize = (n: number) =>
-	Math.max(NOTE_MIN, Math.min(NOTE_LIMIT, Math.round(n)));
+	Math.max(NOTE_MIN, Math.round(n));
 
-/** A stored dimension, clamped, or null for "follow the responsive default". */
-export function sizeOrNull(v: unknown): number | null {
-	return typeof v === "number" && Number.isFinite(v) ? clampSize(v) : null;
-}
-
-/**
- * Push a note's size onto its element. Removing the custom property lets the
- * CSS `var(--sn-w, var(--sn-size))` fall back to the responsive default, so
- * "reset to default" needs no second code path.
- */
-function applyNoteSize(el: HTMLElement, note: StickyNote): void {
-	for (const [prop, v] of [
-		["--sn-w", note.w],
-		["--sn-h", note.h],
-	] as const) {
-		if (v === null) el.style.removeProperty(prop);
-		else el.style.setProperty(prop, `${v}px`);
-	}
+/** A stored dimension, clamped to the floor; null/non-number -> NOTE_DEFAULT. */
+export function sizeOrDefault(v: unknown): number {
+	return typeof v === "number" && Number.isFinite(v) ? clampSize(v) : NOTE_DEFAULT;
 }
 
 /**
  * Top-left, in PAGE units, that puts a fresh note's middle on a page point.
- * Half a note is half a *screen* note, so it has to be divided back out of
- * the zoom -- without that the note only lands centred at 100% zoom and hangs
- * off the edge everywhere else.
+ * Pure page arithmetic -- no zoom involved (notes are page-sized now).
  */
 export function noteSpawnTopLeft(
 	centre: { x: number; y: number },
-	zoom: number,
-	viewportWidth?: number,
 ): { x: number; y: number } {
-	const half = noteSize(viewportWidth) / 2 / zoom;
+	const half = NOTE_DEFAULT / 2;
 	return { x: centre.x - half, y: centre.y - half };
 }
 const BAR_H = 18;
@@ -128,19 +93,38 @@ const FLIP_CLEAR = 190;
  */
 const TOOLBAR_CLEAR = 240;
 
+/** Centred on the note, or clamped to one of its edges near a viewport edge. */
+export type ToolbarAnchor = "centre" | "left" | "right";
+
 /**
- * Where the toolbar can sit, given the note's rect **in screen px**. Both
- * axes flip the anchor rather than nudging by a measured overhang, so the
- * toolbar and its trays travel together and never need a second layout read.
+ * Where the toolbar can sit, given the note's rect **in screen px**.
+ *
+ * Centred by default. A note is page-sized now, so at overview zoom it can be
+ * a fraction of the toolbar's width, and left-anchoring hung the whole bar out
+ * to one side, over whatever happened to be there — a 222px bar on a 62px
+ * note. Centring degrades gracefully: at 100 % a 240 note and a ~222 toolbar
+ * are near enough the same width that nothing appears to have moved.
+ *
+ * The two anchored states are the clamps. A centred toolbar sticks out half
+ * its width on each side, which is a way to run off a viewport edge that a
+ * left-anchored one never had, so near an edge it takes that edge instead.
+ * Both axes flip the anchor rather than nudging by a measured overhang, so
+ * the toolbar and its trays travel together and never need a second layout
+ * read.
  */
 export function toolbarPlacement(
-	box: { top: number; left: number },
+	box: { top: number; left: number; width: number },
 	viewportWidth: number,
-): { flip: boolean; anchorRight: boolean } {
-	return {
-		flip: box.top < FLIP_CLEAR,
-		anchorRight: box.left + TOOLBAR_CLEAR > viewportWidth,
-	};
+): { flip: boolean; anchor: ToolbarAnchor } {
+	const centre = box.left + box.width / 2;
+	const half = TOOLBAR_CLEAR / 2;
+	const anchor: ToolbarAnchor =
+		centre + half > viewportWidth
+			? "right"
+			: centre - half < 0
+				? "left"
+				: "centre";
+	return { flip: box.top < FLIP_CLEAR, anchor };
 }
 
 /** paper color, text color — Mac-Stickies flat pastels */
@@ -196,11 +180,7 @@ function buildCss(fonts: { woff2: string; woff: string }): string {
 	return `
 @font-face{font-family:"Mynerve";src:url("${fonts.woff2}") format("woff2"),url("${fonts.woff}") format("woff");font-display:swap}
 .sn-root{position:absolute;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;font-family:Inter,system-ui,-apple-system,sans-serif}
-.sn-note{position:absolute;top:0;left:0;transform-origin:0 0;--sn-size:min(${NOTE_MAX}px,${NOTE_VW * 100}vw);width:var(--sn-w,var(--sn-size));height:var(--sn-h,var(--sn-size));pointer-events:auto;display:flex;flex-direction:column;box-shadow:0 10px 30px rgba(0,0,0,.28),0 2px 6px rgba(0,0,0,.16);border-radius:2px}
-.sn-note[data-compact]{height:calc(var(--sn-h,var(--sn-size)) * ${NOTE_COMPACT_RATIO})}
-.sn-note[data-selected]{outline:2px solid #7b61ff;outline-offset:0}
-.sn-handle{position:absolute;right:-5px;bottom:-5px;width:10px;height:10px;background:#fff;border:1px solid #7b61ff;border-radius:2px;display:none;cursor:nwse-resize;touch-action:none;z-index:2}
-.sn-note[data-selected]:not([data-compact]) .sn-handle{display:block}
+.sn-note{position:absolute;top:0;left:0;transform-origin:0 0;pointer-events:auto;display:flex;flex-direction:column;box-shadow:0 10px 30px rgba(0,0,0,.28),0 2px 6px rgba(0,0,0,.16);border-radius:2px;width:100%;height:100%}
 .sn-bar{height:${BAR_H}px;flex:none;cursor:grab;background:rgba(0,0,0,.09);display:flex;align-items:center;padding:0 5px;touch-action:none;border-radius:2px 2px 0 0}
 .sn-bar:active{cursor:grabbing}
 .sn-note[data-color="black"] .sn-bar{background:rgba(255,255,255,.08)}
@@ -220,10 +200,11 @@ function buildCss(fonts: { woff2: string; woff: string }): string {
 .sn-text s,.sn-text strike,.sn-text del{text-decoration:line-through}
 .sn-note[data-font="mynerve"] .sn-text{font-family:"Mynerve","Comic Sans MS",cursive}
 ${colorRules}
-.sn-toolbar{position:absolute;left:0;top:-44px;height:36px;display:none;align-items:center;gap:2px;background:#1f1f1f;border-radius:8px;padding:0 4px;box-shadow:0 6px 20px rgba(0,0,0,.4);color:#e6e6e6;cursor:default;white-space:nowrap}
+.sn-toolbar{position:absolute;left:50%;bottom:100%;--tb-x:-50%;--tb-ox:50%;--tb-oy:100%;transform:translateX(var(--tb-x)) scale(var(--inv-zoom,1));transform-origin:var(--tb-ox) var(--tb-oy);height:36px;display:none;align-items:center;gap:2px;background:#1f1f1f;border-radius:8px;padding:0 4px;box-shadow:0 6px 20px rgba(0,0,0,.4);color:#e6e6e6;cursor:default;white-space:nowrap;margin-bottom:calc(8px * var(--inv-zoom,1))}
 .sn-note[data-selected] .sn-toolbar{display:flex}
-.sn-note[data-flip] .sn-toolbar{top:auto;bottom:-44px}
-.sn-note[data-tb-right] .sn-toolbar{left:auto;right:0}
+.sn-note[data-flip] .sn-toolbar{bottom:auto;top:100%;--tb-oy:0%;margin-bottom:0;margin-top:calc(8px * var(--inv-zoom,1))}
+.sn-note[data-tb-left] .sn-toolbar{left:0;--tb-x:0px;--tb-ox:0%}
+.sn-note[data-tb-right] .sn-toolbar{left:auto;right:0;--tb-x:0px;--tb-ox:100%}
 .sn-note[data-tb-right] .sn-pop{left:auto;right:0}
 .sn-group{position:relative;display:flex}
 .sn-tool{display:flex;align-items:center;gap:6px;height:28px;padding:0 8px;border:none;background:transparent;border-radius:6px;color:inherit;font:500 12px/1 Inter,system-ui,-apple-system,sans-serif;cursor:pointer}
@@ -356,18 +337,16 @@ export class StickyNotes {
 	private storageKey: string | null;
 	private defaultColor: NoteColor;
 	private onChange: StickyNotesOptions["onChange"];
-	private getZoom: () => number;
+	private objects: LabObjects;
 
 	private root!: HTMLDivElement;
 	private refs = new Map<number, NoteRefs>();
 	private notes: StickyNote[] = [];
 	private nextId = 1;
-	private selectedId: number | null = null;
 	private openPop: HTMLElement | null = null;
 	private _hidden = false;
 	private zTop = 1;
 	private saveTimer: ReturnType<typeof setTimeout> | undefined;
-	private prevCursor = "";
 
 	constructor(options: StickyNotesOptions) {
 		this.storageKey =
@@ -376,7 +355,7 @@ export class StickyNotes {
 				: options.storageKey;
 		this.defaultColor = options.defaultColor ?? "yellow";
 		this.onChange = options.onChange;
-		this.getZoom = options.getZoom;
+		this.objects = options.objects;
 		if (!this.supported) return;
 		acquireStyles(
 			buildCss({
@@ -411,7 +390,7 @@ export class StickyNotes {
 		this.root.style.display = hidden ? "none" : "block";
 		if (hidden) {
 			this.closePop();
-			this.select(null);
+			this.objects.select(null);
 		}
 		this.onChange?.(this);
 	}
@@ -427,8 +406,8 @@ export class StickyNotes {
 			fontSize: init.fontSize ?? "medium",
 			font: init.font ?? "inter",
 			compact: init.compact ?? false,
-			w: sizeOrNull(init.w),
-			h: sizeOrNull(init.h),
+			w: sizeOrDefault(init.w),
+			h: sizeOrDefault(init.h),
 			text: "",
 			html:
 				init.html !== undefined
@@ -437,7 +416,8 @@ export class StickyNotes {
 		};
 		this.notes.push(note);
 		this.mountNote(note);
-		this.select(note.id);
+		this.registerNote(note);
+		this.objects.select(`note:${note.id}`);
 		this.enterEdit(note.id);
 		this.commit();
 		return { ...note };
@@ -447,17 +427,17 @@ export class StickyNotes {
 		const i = this.notes.findIndex((n) => n.id === id);
 		if (i === -1) return;
 		this.notes.splice(i, 1);
+		this.objects.unregister(`note:${id}`);
 		this.refs.get(id)?.el.remove();
 		this.refs.delete(id);
-		if (this.selectedId === id) this.selectedId = null;
 		this.commit();
 	}
 
 	clearNotes() {
+		for (const note of this.notes) this.objects.unregister(`note:${note.id}`);
 		for (const r of this.refs.values()) r.el.remove();
 		this.refs.clear();
 		this.notes = [];
-		this.selectedId = null;
 		this.commit();
 	}
 
@@ -504,6 +484,12 @@ export class StickyNotes {
 		note.compact = compact;
 		r.el.toggleAttribute("data-compact", compact);
 		r.heightBtn.toggleAttribute("data-active", compact);
+		// Update the registered rect: compact shows a shorter strip
+		const layout = this.objects.layout(`note:${id}`);
+		if (layout) {
+			const h = compact ? Math.round(note.h * NOTE_COMPACT_RATIO) : note.h;
+			this.objects.setLayout(`note:${id}`, { ...layout, height: h });
+		}
 		this.commit();
 	}
 
@@ -511,6 +497,7 @@ export class StickyNotes {
 		if (!this.supported) return;
 		document.removeEventListener("pointerdown", this.onDocPointerDown, true);
 		clearTimeout(this.saveTimer);
+		for (const note of this.notes) this.objects.unregister(`note:${note.id}`);
 		this.root.remove();
 		releaseStyles();
 	}
@@ -520,8 +507,6 @@ export class StickyNotes {
 	private mountNote(note: StickyNote) {
 		const el = document.createElement("div");
 		el.className = "sn-note";
-		// zoom with the cursor over a sticky pivots on the sticky, not the cursor
-		el.setAttribute("data-zoom-anchor", "");
 		el.dataset.color = note.color;
 		el.dataset.font = note.font;
 		el.toggleAttribute("data-compact", note.compact);
@@ -529,7 +514,7 @@ export class StickyNotes {
 		el.style.zIndex = String(++this.zTop);
 		el.addEventListener("pointerdown", (e) => {
 			e.stopPropagation();
-			this.select(note.id);
+			this.objects.select(`note:${note.id}`);
 			el.style.zIndex = String(++this.zTop);
 		});
 
@@ -544,7 +529,14 @@ export class StickyNotes {
 		close.addEventListener("click", () => this.removeNote(note.id));
 		bar.appendChild(close);
 		bar.addEventListener("pointerdown", (e) => {
-			if (e.button === 0 && e.target !== close) this.beginDrag(e, note);
+			if (e.button === 0 && e.target !== close) {
+				// grabbing the bar leaves writing mode
+				const active = document.activeElement;
+				if (active instanceof HTMLElement && active.classList.contains("sn-text"))
+					active.blur();
+				this.closePop();
+				this.objects.beginMove(e, `note:${note.id}`);
+			}
 		});
 
 		// rich text editor: a contenteditable div (a textarea can't hold
@@ -616,20 +608,7 @@ export class StickyNotes {
 			fontItems,
 		} = this.buildToolbar(note);
 
-		applyNoteSize(el, note);
-
-		// bottom-right resize grip, same idiom as a label's scale handle
-		const handle = document.createElement("div");
-		handle.className = "sn-handle";
-		handle.setAttribute("aria-label", "Resize note");
-		handle.addEventListener("pointerdown", (e) => this.beginResize(e, note));
-		// a double-tap on the grip hands the note back to the default size
-		handle.addEventListener("dblclick", (e) => {
-			e.stopPropagation();
-			this.resetSize(note.id);
-		});
-
-		el.append(bar, text, toolbar, handle);
+		el.append(bar, text, toolbar);
 		this.root.appendChild(el);
 		this.refs.set(note.id, {
 			el,
@@ -642,7 +621,49 @@ export class StickyNotes {
 			sizeItems,
 			fontItems,
 		});
-		this.positionEl(note);
+	}
+
+	private noteObjectId(id: number): string {
+		return `note:${id}`;
+	}
+
+	/**
+	 * Re-park the selected note's toolbar. The lab calls this after every
+	 * camera write and on every drag frame, so a note dragged up to the top of
+	 * the viewport still flips its toolbar below itself instead of pushing it
+	 * off-screen. Costs one layout read per frame, and only while a note is
+	 * selected — placeToolbar is the only reader.
+	 */
+	onCameraWrite() {
+		const sel = this.objects.selectedId();
+		if (sel == null) return;
+		const ours = this.notes.find((n) => this.noteObjectId(n.id) === sel);
+		if (ours) this.placeToolbar(ours.id);
+	}
+
+	private registerNote(note: StickyNote) {
+		const r = this.refs.get(note.id);
+		if (!r) return;
+		const h = note.compact ? Math.round(note.h * NOTE_COMPACT_RATIO) : note.h;
+		this.objects.register({
+			id: this.noteObjectId(note.id),
+			el: r.el,
+			rect: { x: note.x, y: note.y, width: note.w, height: h },
+			minWidth: NOTE_MIN,
+			minHeight: NOTE_MIN,
+			resizable: true,
+			onLayout: (rect) => {
+				note.x = rect.x;
+				note.y = rect.y;
+				note.w = rect.width;
+				note.h = note.compact ? Math.round(rect.height / NOTE_COMPACT_RATIO) : rect.height;
+				this.commit();
+			},
+			onSelect: (selected) => {
+				if (selected) this.placeToolbar(note.id);
+				else this.closePop();
+			},
+		});
 	}
 
 	/** Figma-plugin-style dark toolbar: color, text size, font, height. */
@@ -772,14 +793,6 @@ export class StickyNotes {
 		};
 	}
 
-	private positionEl(note: StickyNote) {
-		const r = this.refs.get(note.id);
-		if (!r) return;
-		// Page-unit position, screen-size drawing — see the note in styles().
-		r.el.style.transform = `translate3d(${note.x}px,${note.y}px,0) scale(var(--inv-zoom,1))`;
-		if (this.selectedId === note.id) this.placeToolbar(note.id);
-	}
-
 	/**
 	 * Park the toolbar somewhere it fits. `note.y` is a PAGE coordinate, so it
 	 * cannot be compared to a screen-px clearance — the rect is the only
@@ -794,8 +807,12 @@ export class StickyNotes {
 		// Only touch attributes on actual change — this runs per drag frame.
 		if (r.el.hasAttribute("data-flip") !== at.flip)
 			r.el.toggleAttribute("data-flip", at.flip);
-		if (r.el.hasAttribute("data-tb-right") !== at.anchorRight)
-			r.el.toggleAttribute("data-tb-right", at.anchorRight);
+		const right = at.anchor === "right";
+		const left = at.anchor === "left";
+		if (r.el.hasAttribute("data-tb-right") !== right)
+			r.el.toggleAttribute("data-tb-right", right);
+		if (r.el.hasAttribute("data-tb-left") !== left)
+			r.el.toggleAttribute("data-tb-left", left);
 	}
 
 	private enterEdit(id: number) {
@@ -907,42 +924,6 @@ export class StickyNotes {
 
 	// ----------------------------------------------------------- interaction
 
-	private beginDrag(e: PointerEvent, note: StickyNote) {
-		e.preventDefault();
-		e.stopPropagation();
-		// grabbing the bar leaves writing mode, so Delete acts on the note
-		const active = document.activeElement;
-		if (active instanceof HTMLElement && active.classList.contains("sn-text"))
-			active.blur();
-		const target = e.currentTarget as HTMLElement;
-		target.setPointerCapture(e.pointerId);
-		this.closePop();
-		const z0 = this.getZoom();
-		const originX = e.clientX;
-		const originY = e.clientY;
-		const startPageX = note.x;
-		const startPageY = note.y;
-		this.prevCursor = document.documentElement.style.cursor;
-		document.documentElement.style.cursor = "grabbing";
-
-		const onMove = (ev: PointerEvent) => {
-			const z = this.getZoom() || z0;
-			note.x = startPageX + (ev.clientX - originX) / z;
-			note.y = startPageY + (ev.clientY - originY) / z;
-			this.positionEl(note);
-		};
-		const onEnd = () => {
-			target.removeEventListener("pointermove", onMove);
-			target.removeEventListener("pointerup", onEnd);
-			target.removeEventListener("pointercancel", onEnd);
-			document.documentElement.style.cursor = this.prevCursor;
-			this.commit();
-		};
-		target.addEventListener("pointermove", onMove);
-		target.addEventListener("pointerup", onEnd);
-		target.addEventListener("pointercancel", onEnd);
-	}
-
 	handleKey(e: KeyboardEvent, spawnAt: () => { x: number; y: number }): boolean {
 		if (e.key === "Escape") {
 			this.closePop();
@@ -955,10 +936,7 @@ export class StickyNotes {
 				active.blur();
 				return true;
 			}
-			if (this.selectedId != null) {
-				this.select(null);
-				return true;
-			}
+			// Let the core's deselect handle Esc
 			return false;
 		}
 		if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
@@ -995,13 +973,18 @@ export class StickyNotes {
 			return true;
 		}
 		if (this._hidden) return false;
+		// Delete/Backspace: act when the selected object is one of ours
+		const sel = this.objects.selectedId();
 		if (
 			(e.key === "Delete" || e.key === "Backspace") &&
-			this.selectedId != null
+			sel != null
 		) {
-			e.preventDefault();
-			this.removeNote(this.selectedId);
-			return true;
+			const ours = this.notes.find((n) => `note:${n.id}` === sel);
+			if (ours) {
+				e.preventDefault();
+				this.removeNote(ours.id);
+				return true;
+			}
 		}
 		return false;
 	}
@@ -1014,12 +997,11 @@ export class StickyNotes {
 				this.closePop();
 			return;
 		}
+		// Only close trays; the core handles deselection
 		this.closePop();
-		this.select(null);
 	};
 
-	/** Explicit size in SCREEN px. The note draws at screen size, so a resize
-	 * drag maps 1:1 to these; both axes are free, like Mac Stickies. */
+	/** Explicit size in PAGE units, clamped to floor (no ceiling). */
 	setSize(id: number, w: number, h: number) {
 		const note = this.notes.find((n) => n.id === id);
 		if (!note) return;
@@ -1028,61 +1010,24 @@ export class StickyNotes {
 		if (note.w === nw && note.h === nh) return;
 		note.w = nw;
 		note.h = nh;
-		const r = this.refs.get(id);
-		if (r) applyNoteSize(r.el, note);
+		const layout = this.objects.layout(this.noteObjectId(id));
+		if (layout) {
+			this.objects.setLayout(this.noteObjectId(id), { ...layout, width: nw, height: nh });
+		}
 		this.commit();
 	}
 
-	/** Hand the note back to the responsive default size. */
+	/** Hand the note back to the default size (240x240 page units). */
 	resetSize(id: number) {
 		const note = this.notes.find((n) => n.id === id);
-		if (!note || (note.w === null && note.h === null)) return;
-		note.w = null;
-		note.h = null;
-		const r = this.refs.get(id);
-		if (r) applyNoteSize(r.el, note);
+		if (!note || (note.w === NOTE_DEFAULT && note.h === NOTE_DEFAULT)) return;
+		note.w = NOTE_DEFAULT;
+		note.h = NOTE_DEFAULT;
+		const layout = this.objects.layout(this.noteObjectId(id));
+		if (layout) {
+			this.objects.setLayout(this.noteObjectId(id), { ...layout, width: NOTE_DEFAULT, height: NOTE_DEFAULT });
+		}
 		this.commit();
-	}
-
-	private beginResize(e: PointerEvent, note: StickyNote) {
-		e.preventDefault();
-		e.stopPropagation();
-		this.select(note.id);
-		const target = e.currentTarget as HTMLElement;
-		target.setPointerCapture(e.pointerId);
-		const r = this.refs.get(note.id);
-		if (!r) return;
-		// Net scale through the counter-scaled layer is 1, so the element's own
-		// box is already in screen px and the pointer delta needs no conversion.
-		const box = r.el.getBoundingClientRect();
-		const startW = box.width;
-		const startH = box.height;
-		const sx = e.clientX;
-		const sy = e.clientY;
-		this.prevCursor = document.documentElement.style.cursor;
-		document.documentElement.style.cursor = "nwse-resize";
-
-		const onMove = (ev: PointerEvent) => {
-			this.setSize(note.id, startW + (ev.clientX - sx), startH + (ev.clientY - sy));
-		};
-		const onEnd = () => {
-			target.removeEventListener("pointermove", onMove);
-			target.removeEventListener("pointerup", onEnd);
-			target.removeEventListener("pointercancel", onEnd);
-			document.documentElement.style.cursor = this.prevCursor;
-		};
-		target.addEventListener("pointermove", onMove);
-		target.addEventListener("pointerup", onEnd);
-		target.addEventListener("pointercancel", onEnd);
-	}
-
-	private select(id: number | null) {
-		if (this.selectedId === id) return;
-		if (this.selectedId !== null) this.closePop();
-		this.selectedId = id;
-		for (const [nid, r] of this.refs)
-			r.el.toggleAttribute("data-selected", nid === id);
-		if (id !== null) this.placeToolbar(id);
 	}
 
 	private togglePop(pop: HTMLElement) {
@@ -1164,8 +1109,8 @@ export class StickyNotes {
 					fontSize: n.f in FONT_SIZES ? n.f : "medium",
 					font: isFont(n.ff) ? n.ff : "inter",
 					compact: Boolean(n.k),
-					w: sizeOrNull(n.w),
-					h: sizeOrNull(n.hh),
+					w: sizeOrDefault(n.w),
+					h: sizeOrDefault(n.hh),
 					text: "",
 					html:
 						typeof n.h === "string"
@@ -1174,6 +1119,7 @@ export class StickyNotes {
 				};
 				this.notes.push(note);
 				this.mountNote(note); // derives note.text from the mounted DOM
+				this.registerNote(note);
 			}
 		} catch {
 			// corrupt payload — start with no notes
