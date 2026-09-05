@@ -15,6 +15,8 @@ export const plugin: LabPlugin = {
     { name: "setFontSize", signature: 'setFontSize(id: number, size: "small" | "medium" | "large" | "huge"): void', summary: "Resize one note's text." },
     { name: "setFont", signature: 'setFont(id: number, font: "inter" | "mynerve"): void', summary: "Typeface: inter, or mynerve for handwriting." },
     { name: "setCompact", signature: "setCompact(id: number, compact: boolean): void", summary: "Collapse a note to a single strip, or restore it." },
+    { name: "setSize", signature: "setSize(id: number, w: number, h: number): void", summary: "Resize one note. Both are SCREEN px (the note draws at screen size, so this is what the reader sees at any zoom), clamped to 96-1200. Free aspect, like Mac Stickies." },
+    { name: "resetSize", signature: "resetSize(id: number): void", summary: "Hand a note back to the responsive default size — min(240px, 30vw). Same as double-clicking its resize grip." },
     { name: "isHidden", signature: "isHidden(): boolean", summary: "Are they all hidden right now? Read this to show tool state somewhere." },
     { name: "setHidden", signature: "setHidden(hidden: boolean): void", summary: "Hide or show all notes at once. Nothing is deleted." },
   ],

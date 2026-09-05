@@ -35,6 +35,12 @@ export interface StickyNote {
 	font: NoteFont;
 	/** true = short strip, false = tall square note. */
 	compact: boolean;
+	/**
+	 * Explicit size in SCREEN px, or null to follow the responsive default.
+	 * The note draws at screen size, so a resize drag maps 1:1 to these.
+	 */
+	w: number | null;
+	h: number | null;
 	/** Plain text of the note (derived from the DOM). */
 	text: string;
 	/** Formatted content (sanitized HTML: b/i/u/s, ordered lists…). */
@@ -58,6 +64,9 @@ export interface StickyNotesOptions {
 const NOTE_MAX = 240;
 const NOTE_VW = 0.3;
 const NOTE_COMPACT_RATIO = 0.43;
+/** Resize clamps. The floor is a bar plus one readable word. */
+const NOTE_MIN = 96;
+const NOTE_LIMIT = 1200;
 
 /**
  * The rendered sticky edge in *screen* px. Mirrors the CSS `min()` below --
@@ -66,6 +75,29 @@ const NOTE_COMPACT_RATIO = 0.43;
  */
 export function noteSize(viewportWidth: number = window.innerWidth): number {
 	return Math.min(NOTE_MAX, viewportWidth * NOTE_VW);
+}
+
+const clampSize = (n: number) =>
+	Math.max(NOTE_MIN, Math.min(NOTE_LIMIT, Math.round(n)));
+
+/** A stored dimension, clamped, or null for "follow the responsive default". */
+export function sizeOrNull(v: unknown): number | null {
+	return typeof v === "number" && Number.isFinite(v) ? clampSize(v) : null;
+}
+
+/**
+ * Push a note's size onto its element. Removing the custom property lets the
+ * CSS `var(--sn-w, var(--sn-size))` fall back to the responsive default, so
+ * "reset to default" needs no second code path.
+ */
+function applyNoteSize(el: HTMLElement, note: StickyNote): void {
+	for (const [prop, v] of [
+		["--sn-w", note.w],
+		["--sn-h", note.h],
+	] as const) {
+		if (v === null) el.style.removeProperty(prop);
+		else el.style.setProperty(prop, `${v}px`);
+	}
 }
 
 /**
@@ -164,9 +196,11 @@ function buildCss(fonts: { woff2: string; woff: string }): string {
 	return `
 @font-face{font-family:"Mynerve";src:url("${fonts.woff2}") format("woff2"),url("${fonts.woff}") format("woff");font-display:swap}
 .sn-root{position:absolute;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;font-family:Inter,system-ui,-apple-system,sans-serif}
-.sn-note{position:absolute;top:0;left:0;transform-origin:0 0;--sn-size:min(${NOTE_MAX}px,${NOTE_VW * 100}vw);width:var(--sn-size);height:var(--sn-size);pointer-events:auto;display:flex;flex-direction:column;box-shadow:0 10px 30px rgba(0,0,0,.28),0 2px 6px rgba(0,0,0,.16);border-radius:2px}
-.sn-note[data-compact]{height:calc(var(--sn-size) * ${NOTE_COMPACT_RATIO})}
+.sn-note{position:absolute;top:0;left:0;transform-origin:0 0;--sn-size:min(${NOTE_MAX}px,${NOTE_VW * 100}vw);width:var(--sn-w,var(--sn-size));height:var(--sn-h,var(--sn-size));pointer-events:auto;display:flex;flex-direction:column;box-shadow:0 10px 30px rgba(0,0,0,.28),0 2px 6px rgba(0,0,0,.16);border-radius:2px}
+.sn-note[data-compact]{height:calc(var(--sn-h,var(--sn-size)) * ${NOTE_COMPACT_RATIO})}
 .sn-note[data-selected]{outline:2px solid #7b61ff;outline-offset:0}
+.sn-handle{position:absolute;right:-5px;bottom:-5px;width:10px;height:10px;background:#fff;border:1px solid #7b61ff;border-radius:2px;display:none;cursor:nwse-resize;touch-action:none;z-index:2}
+.sn-note[data-selected]:not([data-compact]) .sn-handle{display:block}
 .sn-bar{height:${BAR_H}px;flex:none;cursor:grab;background:rgba(0,0,0,.09);display:flex;align-items:center;padding:0 5px;touch-action:none;border-radius:2px 2px 0 0}
 .sn-bar:active{cursor:grabbing}
 .sn-note[data-color="black"] .sn-bar{background:rgba(255,255,255,.08)}
@@ -393,6 +427,8 @@ export class StickyNotes {
 			fontSize: init.fontSize ?? "medium",
 			font: init.font ?? "inter",
 			compact: init.compact ?? false,
+			w: sizeOrNull(init.w),
+			h: sizeOrNull(init.h),
 			text: "",
 			html:
 				init.html !== undefined
@@ -578,7 +614,20 @@ export class StickyNotes {
 			fontItems,
 		} = this.buildToolbar(note);
 
-		el.append(bar, text, toolbar);
+		applyNoteSize(el, note);
+
+		// bottom-right resize grip, same idiom as a label's scale handle
+		const handle = document.createElement("div");
+		handle.className = "sn-handle";
+		handle.setAttribute("aria-label", "Resize note");
+		handle.addEventListener("pointerdown", (e) => this.beginResize(e, note));
+		// a double-tap on the grip hands the note back to the default size
+		handle.addEventListener("dblclick", (e) => {
+			e.stopPropagation();
+			this.resetSize(note.id);
+		});
+
+		el.append(bar, text, toolbar, handle);
 		this.root.appendChild(el);
 		this.refs.set(note.id, {
 			el,
@@ -967,6 +1016,64 @@ export class StickyNotes {
 		this.select(null);
 	};
 
+	/** Explicit size in SCREEN px. The note draws at screen size, so a resize
+	 * drag maps 1:1 to these; both axes are free, like Mac Stickies. */
+	setSize(id: number, w: number, h: number) {
+		const note = this.notes.find((n) => n.id === id);
+		if (!note) return;
+		const nw = clampSize(w);
+		const nh = clampSize(h);
+		if (note.w === nw && note.h === nh) return;
+		note.w = nw;
+		note.h = nh;
+		const r = this.refs.get(id);
+		if (r) applyNoteSize(r.el, note);
+		this.commit();
+	}
+
+	/** Hand the note back to the responsive default size. */
+	resetSize(id: number) {
+		const note = this.notes.find((n) => n.id === id);
+		if (!note || (note.w === null && note.h === null)) return;
+		note.w = null;
+		note.h = null;
+		const r = this.refs.get(id);
+		if (r) applyNoteSize(r.el, note);
+		this.commit();
+	}
+
+	private beginResize(e: PointerEvent, note: StickyNote) {
+		e.preventDefault();
+		e.stopPropagation();
+		this.select(note.id);
+		const target = e.currentTarget as HTMLElement;
+		target.setPointerCapture(e.pointerId);
+		const r = this.refs.get(note.id);
+		if (!r) return;
+		// Net scale through the counter-scaled layer is 1, so the element's own
+		// box is already in screen px and the pointer delta needs no conversion.
+		const box = r.el.getBoundingClientRect();
+		const startW = box.width;
+		const startH = box.height;
+		const sx = e.clientX;
+		const sy = e.clientY;
+		this.prevCursor = document.documentElement.style.cursor;
+		document.documentElement.style.cursor = "nwse-resize";
+
+		const onMove = (ev: PointerEvent) => {
+			this.setSize(note.id, startW + (ev.clientX - sx), startH + (ev.clientY - sy));
+		};
+		const onEnd = () => {
+			target.removeEventListener("pointermove", onMove);
+			target.removeEventListener("pointerup", onEnd);
+			target.removeEventListener("pointercancel", onEnd);
+			document.documentElement.style.cursor = this.prevCursor;
+		};
+		target.addEventListener("pointermove", onMove);
+		target.addEventListener("pointerup", onEnd);
+		target.addEventListener("pointercancel", onEnd);
+	}
+
 	private select(id: number | null) {
 		if (this.selectedId === id) return;
 		if (this.selectedId !== null) this.closePop();
@@ -1009,6 +1116,8 @@ export class StickyNotes {
 								f: n.fontSize,
 								ff: n.font,
 								k: n.compact,
+								w: n.w,
+								hh: n.h,
 								t: n.text,
 								h: sanitizeHtml(n.html),
 							})),
@@ -1036,6 +1145,8 @@ export class StickyNotes {
 					f: NoteFontSize;
 					ff?: unknown;
 					k: boolean;
+					w?: unknown;
+					hh?: unknown;
 					t: string;
 					h?: unknown;
 				}[];
@@ -1051,6 +1162,8 @@ export class StickyNotes {
 					fontSize: n.f in FONT_SIZES ? n.f : "medium",
 					font: isFont(n.ff) ? n.ff : "inter",
 					compact: Boolean(n.k),
+					w: sizeOrNull(n.w),
+					h: sizeOrNull(n.hh),
 					text: "",
 					html:
 						typeof n.h === "string"

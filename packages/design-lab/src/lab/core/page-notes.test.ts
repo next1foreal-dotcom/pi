@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
 	noteSize,
 	noteSpawnTopLeft,
+	sizeOrNull,
 	StickyNotes,
 	toolbarPlacement,
 } from "./page-notes";
@@ -63,7 +64,11 @@ describe("sticky size", () => {
 		const css =
 			document.querySelector<HTMLStyleElement>("style[data-sticky-note]")
 				?.textContent ?? "";
-		expect(css).toContain("[data-compact]{height:calc(var(--sn-size) *");
+		// A resized note keeps its own strip height; an untouched one falls
+		// back through --sn-h to the responsive default.
+		expect(css).toContain(
+			"[data-compact]{height:calc(var(--sn-h,var(--sn-size)) *",
+		);
 	});
 });
 
@@ -196,5 +201,79 @@ describe("toolbar placement reads the screen rect, not the page position", () =>
 		stubRect(a, 400, window.innerWidth - 120);
 		reselect(host, 0);
 		expect(a.hasAttribute("data-tb-right")).toBe(true);
+	});
+});
+
+describe("note resizing", () => {
+	it("clamps a stored dimension and rejects anything that is not one", () => {
+		expect(sizeOrNull(300)).toBe(300);
+		expect(sizeOrNull(10)).toBe(96); // floor: a bar plus one word
+		expect(sizeOrNull(99999)).toBe(1200);
+		expect(sizeOrNull(240.6)).toBe(241);
+		for (const junk of [undefined, null, "240", NaN, Infinity, {}])
+			expect(sizeOrNull(junk), String(junk)).toBeNull();
+	});
+
+	it("a fresh note has no explicit size, so it follows the default", () => {
+		mount();
+		const n = live?.spawn({ x: 0, y: 0 });
+		expect(n?.w).toBeNull();
+		expect(n?.h).toBeNull();
+		const el = document.querySelector<HTMLElement>(".sn-note");
+		expect(el?.style.getPropertyValue("--sn-w")).toBe("");
+		expect(el?.style.getPropertyValue("--sn-h")).toBe("");
+	});
+
+	it("setSize writes screen px onto the element and survives a reset", () => {
+		mount();
+		const n = live?.spawn({ x: 0, y: 0});
+		const el = document.querySelector<HTMLElement>(".sn-note");
+		live?.setSize(n?.id ?? 0, 420, 300);
+		expect(el?.style.getPropertyValue("--sn-w")).toBe("420px");
+		expect(el?.style.getPropertyValue("--sn-h")).toBe("300px");
+		expect(live?.getNotes()[0].w).toBe(420);
+		live?.resetSize(n?.id ?? 0);
+		// Removed, not zeroed -- the CSS fallback is what restores the default.
+		expect(el?.style.getPropertyValue("--sn-w")).toBe("");
+		expect(live?.getNotes()[0].w).toBeNull();
+	});
+
+	it("setSize clamps rather than letting a note collapse or run away", () => {
+		mount();
+		const n = live?.spawn({ x: 0, y: 0 });
+		live?.setSize(n?.id ?? 0, -50, 4000);
+		expect(live?.getNotes()[0].w).toBe(96);
+		expect(live?.getNotes()[0].h).toBe(1200);
+	});
+
+	it("a resized note comes back the same size after a reload", async () => {
+		const key = "test:notes:resize";
+		localStorage.removeItem(key);
+		const h1 = document.createElement("div");
+		document.body.appendChild(h1);
+		const a = new StickyNotes({ host: h1, getZoom: () => 1, storageKey: key });
+		const n = a.spawn({ x: 5, y: 6 });
+		a.setSize(n.id, 333, 222);
+		// the write is debounced 150ms; let it actually land
+		await new Promise((r) => setTimeout(r, 220));
+		a.destroy();
+
+		const h2 = document.createElement("div");
+		document.body.appendChild(h2);
+		live = new StickyNotes({ host: h2, getZoom: () => 1, storageKey: key });
+		expect(live.getNotes()[0].w).toBe(333);
+		expect(live.getNotes()[0].h).toBe(222);
+		localStorage.removeItem(key);
+	});
+
+	it("the grip only shows on a selected note that is not collapsed", () => {
+		mount();
+		const css =
+			document.querySelector<HTMLStyleElement>("style[data-sticky-note]")
+				?.textContent ?? "";
+		expect(css).toContain(".sn-handle{");
+		expect(css).toContain(
+			'.sn-note[data-selected]:not([data-compact]) .sn-handle{display:block}',
+		);
 	});
 });
