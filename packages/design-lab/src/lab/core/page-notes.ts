@@ -520,6 +520,8 @@ export class StickyNotes {
 	private mountNote(note: StickyNote) {
 		const el = document.createElement("div");
 		el.className = "sn-note";
+		// zoom with the cursor over a sticky pivots on the sticky, not the cursor
+		el.setAttribute("data-zoom-anchor", "");
 		el.dataset.color = note.color;
 		el.dataset.font = note.font;
 		el.toggleAttribute("data-compact", note.compact);

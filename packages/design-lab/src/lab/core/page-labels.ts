@@ -380,6 +380,8 @@ export class Labels {
 	private mountLabel(label: LabelItem) {
 		const el = document.createElement("div");
 		el.className = "lb-label";
+		// zoom with the cursor over a label pivots on the label, not the cursor
+		el.setAttribute("data-zoom-anchor", "");
 		el.style.fontSize = `${BASE_FONT * label.scale}px`;
 		el.style.zIndex = String(++this.zTop);
 		el.dataset.dir = label.dir;
