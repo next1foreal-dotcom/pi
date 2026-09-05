@@ -646,3 +646,48 @@ describe("handleKey intercept vs passthrough", () => {
 		expect(labels.handleKey(e, spawnAt)).toBe(true);
 	});
 });
+
+describe("a label is as wide as its handwriting", () => {
+	// `.lb-label` is absolutely positioned, and its containing block is
+	// `.lb-root` — which is 0×0 on purpose, being an anchor rather than a box.
+	// An abspos element with `width: auto` shrinks to fit the AVAILABLE width,
+	// and here that is zero, so it collapses to min-content and stays there
+	// however much canvas is free. Measured in Chromium at 1:1: a
+	// thirty-character label came out 106×121, its text wrapped into three
+	// lines inside 92px, the width of the drawn arrow.
+	//
+	// The width therefore cannot be left to `auto`. The label has to state it.
+	let labels: Labels;
+
+	beforeEach(() => {
+		labels = new Labels({
+			host: host(),
+			getZoom: () => 1,
+			objects: stubObjects(),
+			storageKey: null,
+		});
+	});
+
+	afterEach(() => {
+		labels.destroy();
+	});
+
+	it("sits in a zero-sized anchor — the reason the width has to be stated", () => {
+		const rule = cssRule(/\.lb-root\{[^}]*\}/);
+		expect(rule).toContain("width:0");
+		expect(rule).toContain("height:0");
+	});
+
+	it("states its own width instead of shrinking to fit nothing", () => {
+		const rule = cssRule(/\.lb-label\{[^}]*\}/);
+		expect(rule).toContain("position:absolute");
+		expect(rule).toContain("width:max-content");
+	});
+
+	it("caps that width in em, so it scales with the label's own hand", () => {
+		// A cap in px would mean a 4x label wraps four times sooner than a 1x
+		// one. The label's size lives in `font-size`; the cap follows it.
+		const rule = cssRule(/\.lb-label\{[^}]*\}/);
+		expect(rule).toMatch(/max-width:\d+(?:\.\d+)?em/);
+	});
+});

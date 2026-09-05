@@ -118,11 +118,23 @@ export function directionFromAim(
 
 const ARROW = `<svg class="lb-arrow" viewBox="0 0 100 60" fill="none" aria-hidden="true"><path d="${ARROWS.dr}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
+/**
+ * The stylesheet, as one template literal. No backticks and no ${} inside
+ * it -- both end the string, and a stray backtick turns the next
+ * identifier into a template tag ("root is not a function").
+ *
+ * On .lb-label's width: .lb-root is a 0x0 anchor, so an auto width would
+ * shrink to fit an available width of zero -- that is, collapse to
+ * min-content and stay there however much canvas is free. Measured in
+ * Chromium at 1:1, a thirty-character label came out 106x121 with its text
+ * wrapped into three lines inside 92px, the width of the drawn arrow. So
+ * the width is stated, and capped in em so the cap scales with the label.
+ */
 function buildCss(fonts: { woff2: string; woff: string }) {
 	return `
 @font-face{font-family:"Mynerve";src:url("${fonts.woff2}") format("woff2"),url("${fonts.woff}") format("woff");font-display:swap}
 .lb-root{position:absolute;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;font-family:"Mynerve","Comic Sans MS",cursive}
-.lb-label{position:absolute;top:0;left:0;transform-origin:0 0;pointer-events:auto;display:flex;flex-direction:column;align-items:flex-start;padding:.2em .35em;font-family:"Mynerve","Comic Sans MS",cursive;line-height:1.15;cursor:grab;touch-action:none;user-select:none;color:var(--lb-ink)}
+.lb-label{position:absolute;top:0;left:0;transform-origin:0 0;width:max-content;max-width:18em;pointer-events:auto;display:flex;flex-direction:column;align-items:flex-start;padding:.2em .35em;font-family:"Mynerve","Comic Sans MS",cursive;line-height:1.15;cursor:grab;touch-action:none;user-select:none;color:var(--lb-ink)}
 .lb-label:active{cursor:grabbing}
 .lb-label[data-selected]{outline:calc(1px * var(--inv-zoom,1)) solid #4c9ffe}
 .lb-label[data-editing]{cursor:auto}
