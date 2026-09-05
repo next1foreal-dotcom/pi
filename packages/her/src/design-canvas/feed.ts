@@ -72,6 +72,15 @@ export interface Thread {
 	y: number;
 	text: string;
 	replies: Reply[];
+	/**
+	 * Who spoke last on this thread — the test for "is this waiting on her".
+	 *
+	 * Only speech counts: opening the note, editing its words, replying, or
+	 * reopening it. Dragging a note across the canvas is not saying anything,
+	 * so a move must not make a thread she has already answered start asking
+	 * for her attention again.
+	 */
+	lastSpoke: Author;
 	resolved: boolean;
 	resolvedBy?: Author;
 	resolvedNote?: string;
@@ -163,6 +172,7 @@ export function projectThreads(events: CanvasEvent[]): Thread[] {
 					y: e.y,
 					text: e.text,
 					replies: [],
+					lastSpoke: e.author,
 					resolved: false,
 				});
 				break;
@@ -186,7 +196,10 @@ export function projectThreads(events: CanvasEvent[]): Thread[] {
 				break;
 			case "reply": {
 				const th = threads.get(e.noteId);
-				if (th) th.replies.push({ id: e.id, at: e.at, author: e.author, text: e.text });
+				if (th) {
+					th.replies.push({ id: e.id, at: e.at, author: e.author, text: e.text });
+					th.lastSpoke = e.author;
+				}
 				break;
 			}
 			case "resolve": {
@@ -204,6 +217,7 @@ export function projectThreads(events: CanvasEvent[]): Thread[] {
 					th.resolved = false;
 					th.resolvedBy = undefined;
 					th.resolvedNote = undefined;
+					th.lastSpoke = e.author;
 				}
 				break;
 			}

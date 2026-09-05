@@ -2,8 +2,11 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 import { textResult } from "../tools/shared.ts";
+import { recordResolvedDecision } from "./decisions.ts";
 import { type CanvasEvent, newId, type Thread } from "./feed.ts";
 import { allThreads, appendEvent, readCanvas } from "./store.ts";
+
+export { withCanvasNag } from "./nag.ts";
 
 /** Anything she writes is stamped as hers. She cannot post as Fei. */
 const HER = "samantha" as const;
@@ -158,6 +161,11 @@ export function registerDesignCanvasTools(pi: ExtensionAPI, deps: DesignCanvasDe
 				author: HER,
 				...(params.note ? { note: params.note } : {}),
 			});
+			try {
+				recordResolvedDecision(thread, params.note, { repoRoot, now });
+			} catch {
+				// a memory miss must not fail the resolve the canvas already recorded
+			}
 			return textResult(`Resolved ${params.noteId}.`, { noteId: params.noteId });
 		},
 	});
