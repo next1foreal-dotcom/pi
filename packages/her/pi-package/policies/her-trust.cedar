@@ -164,3 +164,25 @@ permit(
   action == Action::"CallTool",
   resource == Tool::"her_tool_call"
 );
+
+// G-435 弧 — Fei 拍板放行(2026-09-06,活体走查照出它被拒之后)。design_system_apply
+// 把她试出来的 token 值写回产品自己的 globals.css。注册为 destructive:true,上面三条
+// permit 都不覆盖它,所以活体扫描撞到 `cedar: deny (no permit matched)`。
+//
+// 这张证不给她新能力:permit_coding_destructive_tools 早已允许 edit/write 在**所有非锚
+// 路径**上写,globals.css 正是非锚路径 —— 她本来就能用 write 整份覆写它。这条只是把那次
+// 覆写换成一次具名、有作用域、账本读得懂的调用:整组落地或一个字节不动、light/dark 各自
+// 归位、只替换读得出来的声明、其余字节逐字保留。**是收窄,不是扩权。**
+//
+// 发证后仍然不可能的事:
+//   · 锚层:forbid_anchor_write 照旧压过它 —— 目标解析成锚路径(SOUL/FACTS/CONTEXT/
+//     evals/policies/.githooks/.env)时,这张证不生效。
+//   · 无人值守轮:her-trust-heartbeat.cedar 是独立策略集,只放行 destructive == false,
+//     该工具注册为 true ⇒ 这张证漏不进心跳轮。
+//   · 新增 token:工具自己拒绝写不存在的 token 名,加 token 仍是人的决定。
+@id("permit_design_system_apply")
+permit(
+  principal == Agent::"samantha",
+  action == Action::"CallTool",
+  resource == Tool::"design_system_apply"
+);

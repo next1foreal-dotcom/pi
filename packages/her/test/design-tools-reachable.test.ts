@@ -17,10 +17,9 @@ import { governedTools } from "../src/lib/governed-tools.ts";
  * half: that a wired tool is also permitted to run.
  */
 
-const SRC = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
-
-/** Deliberately denied: allowing it means editing a policy file, which is an anchor. */
-const KNOWN_DENIED = new Set(["design_system_apply"]);
+const HERE = dirname(fileURLToPath(import.meta.url));
+const SRC = join(HERE, "..", "src");
+const POLICY = join(HERE, "..", "pi-package", "policies", "her-trust.cedar");
 
 function tsFilesUnder(dir: string): string[] {
 	const out: string[] = [];
@@ -42,6 +41,15 @@ function registeredDesignToolNames(): string[] {
 	return [...names].sort();
 }
 
+/** Tools the default policy names in a permit of their own. */
+function toolsWithOwnPermit(): Set<string> {
+	const out = new Set<string>();
+	for (const m of readFileSync(POLICY, "utf8").matchAll(/resource\s*==\s*Tool::"(\w+)"/g)) {
+		out.add(m[1]);
+	}
+	return out;
+}
+
 test("every design_* tool is listed in governedTools, so the Cedar gate can permit it", () => {
 	const names = registeredDesignToolNames();
 	assert.ok(names.length >= 15, `expected the design tools to be found, got ${names.length}`);
@@ -50,13 +58,14 @@ test("every design_* tool is listed in governedTools, so the Cedar gate can perm
 	assert.deepEqual(unlisted, [], "unlisted means destructive means denied at call time");
 });
 
-test("no design_* tool is destructive without a deliberate decision behind it", () => {
-	const surprises = registeredDesignToolNames().filter(
-		(name) => governedTools[name]?.destructive === true && !KNOWN_DENIED.has(name),
+test("a destructive design tool is named in a permit, or it is dead on arrival", () => {
+	const permitted = toolsWithOwnPermit();
+	const stranded = registeredDesignToolNames().filter(
+		(name) => governedTools[name]?.destructive === true && !permitted.has(name),
 	);
 	assert.deepEqual(
-		surprises,
+		stranded,
 		[],
-		"a destructive design tool is denied unless a policy permit names it; add it to KNOWN_DENIED only with that decision made",
+		"no permit covers a destructive tool, so one without its own permit is denied at every call",
 	);
 });
