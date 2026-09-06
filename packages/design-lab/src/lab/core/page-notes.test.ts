@@ -455,6 +455,198 @@ describe("a note about an area", () => {
 	});
 });
 
+/**
+ * A box you cannot adjust is a box you have to delete and redraw, and redrawing
+ * it means finding the same edges by eye a second time.
+ *
+ * It goes through the canvas-object machinery rather than growing its own drag,
+ * so it inherits move, resize handles, snapping, nudge and undo -- and so there
+ * is one answer in this lab to "what does dragging a thing do".
+ */
+describe("adjusting a region after it is drawn", () => {
+	const SCREEN = { x: 1000, y: 2000, width: 1440, height: 900 };
+
+	/**
+	 * The shared stub does not call `onLayout` from `setLayout`, and the real one
+	 * does. That difference is the whole point of the guard below, so this stub
+	 * behaves like the real thing.
+	 */
+	function objectsThatEcho() {
+		const base = stubObjects();
+		const setLayout = base.setLayout.bind(base);
+		base.setLayout = (id: string, rect: Rect) => {
+			setLayout(id, rect);
+			base.inits.get(id)?.onLayout?.({ ...rect });
+		};
+		return base;
+	}
+
+	function lab(objects: ReturnType<typeof objectsThatEcho>) {
+		const host = document.createElement("div");
+		document.body.appendChild(host);
+		return new StickyNotes({
+			host,
+			objects,
+			storageKey: null,
+			screenAt: () => "main-landing",
+			screenLayout: () => ({ ...SCREEN }),
+		});
+	}
+
+	const drawn = (l: StickyNotes) =>
+		l.spawn({
+			x: 2000,
+			y: 2100,
+			regionPage: { x: 1360, y: 2090, width: 720, height: 450 },
+		});
+
+	/**
+	 * `spawn` hands back a COPY, so anything held from it is a snapshot taken
+	 * before the drag. Read the live note, or a test that asserts "this did not
+	 * change" cannot fail: it is comparing the snapshot with itself.
+	 */
+	const regionNow = (l: StickyNotes) => l.getNotes()[0]?.region;
+
+	it("is a canvas object with handles, like everything else you can drag", () => {
+		const objects = objectsThatEcho();
+		live = lab(objects);
+		const note = drawn(live);
+		const init = objects.inits.get(`region:${note.id}`);
+		expect(init).toBeDefined();
+		expect(init?.resizable).toBe(true);
+	});
+
+	it("takes the pointer only while you are looking at its note", () => {
+		// A region is as big as the area it is about, and locked in, the screen
+		// under it is a live app. One that always ate clicks would make the thing
+		// it is a remark about unusable.
+		const objects = objectsThatEcho();
+		live = lab(objects);
+		const note = drawn(live);
+		const el = () => document.querySelector(".sn-region") as HTMLElement;
+		objects.select(null);
+		expect(el().hasAttribute("data-live")).toBe(false);
+		objects.select(`note:${note.id}`);
+		expect(el().hasAttribute("data-live")).toBe(true);
+		objects.select(`region:${note.id}`);
+		expect(el().hasAttribute("data-live")).toBe(true);
+		objects.select("note:999");
+		expect(el().hasAttribute("data-live")).toBe(false);
+	});
+
+	it("comes to the front when it wakes, so its corners stay reachable", () => {
+		// The handles straddle the corners and the sticky is pinned just off one
+		// of them: under the notes, that corner handle is under the note.
+		const objects = objectsThatEcho();
+		live = lab(objects);
+		const note = drawn(live);
+		const region = document.querySelector(".sn-region") as HTMLElement;
+		const sticky = document.querySelector(".sn-note") as HTMLElement;
+		objects.select(null);
+		objects.select(`note:${note.id}`);
+		expect(Number(region.style.zIndex)).toBeGreaterThan(Number(sticky.style.zIndex));
+	});
+
+	it("but does not climb a step on every frame", () => {
+		// markRegionLive runs on every camera write; bumping unconditionally would
+		// run the counter away and hand every later note a lower z than the boxes.
+		const objects = objectsThatEcho();
+		live = lab(objects);
+		const note = drawn(live);
+		const region = document.querySelector(".sn-region") as HTMLElement;
+		objects.select(`note:${note.id}`);
+		const settled = region.style.zIndex;
+		for (let i = 0; i < 5; i++) window.dispatchEvent(new Event("scroll"));
+		expect(region.style.zIndex).toBe(settled);
+	});
+
+	it("a drag is written back in the screen's own pixels", () => {
+		const objects = objectsThatEcho();
+		live = lab(objects);
+		const note = drawn(live);
+		objects.inits
+			.get(`region:${note.id}`)
+			?.onLayout?.({ x: 1500, y: 2200, width: 300, height: 200 });
+		expect(regionNow(live)).toEqual({
+			screenId: "main-landing",
+			x: 500,
+			y: 200,
+			w: 300,
+			h: 200,
+		});
+	});
+
+	it("dragging it does not hand it to a different screen", () => {
+		// screenAt would happily answer for wherever it landed. Re-resolving would
+		// leave a remark pointing at coordinates in a page it was never about.
+		const objects = objectsThatEcho();
+		const host = document.createElement("div");
+		document.body.appendChild(host);
+		live = new StickyNotes({
+			host,
+			objects,
+			storageKey: null,
+			screenAt: () => "main-landing",
+			screenLayout: () => ({ ...SCREEN }),
+		});
+		const note = drawn(live);
+		// Any later hit-test says "mosaic"; the region must not care.
+		(live as unknown as { screenAt: () => string }).screenAt = () => "mosaic";
+		objects.inits
+			.get(`region:${note.id}`)
+			?.onLayout?.({ x: 1500, y: 2200, width: 300, height: 200 });
+		expect(regionNow(live)?.screenId).toBe("main-landing");
+	});
+
+	it("scrolling past a region is not editing it", () => {
+		// After a scroll the canvas and the page disagree about where the box is,
+		// so the canvas has to be told. Without the guard that write comes back as
+		// a move: the rect lands on the same numbers either way -- the conversion
+		// is its own inverse -- but every frame of every scroll would count as an
+		// edit, and every edit schedules a write and tells the world the notes
+		// changed. The stored value is not what this protects; the noise is.
+		const objects = objectsThatEcho();
+		const screen = document.createElement("div");
+		screen.setAttribute("data-screen-id", "main-landing");
+		const inner = document.createElement("div");
+		inner.setAttribute("data-screen-scroll", "main-landing");
+		screen.appendChild(inner);
+		document.body.appendChild(screen);
+
+		const host = document.createElement("div");
+		document.body.appendChild(host);
+		let changes = 0;
+		live = new StickyNotes({
+			host,
+			objects,
+			storageKey: null,
+			screenAt: () => "main-landing",
+			screenLayout: () => ({ ...SCREEN }),
+			onChange: () => {
+				changes += 1;
+			},
+		});
+		drawn(live);
+		const before = { ...regionNow(live)! };
+		const quiet = changes;
+
+		inner.scrollTop = 300;
+		for (let i = 0; i < 5; i++) window.dispatchEvent(new Event("scroll"));
+
+		expect(regionNow(live)).toEqual(before);
+		expect(changes).toBe(quiet);
+	});
+
+	it("deleting the note takes its object with it", () => {
+		const objects = objectsThatEcho();
+		live = lab(objects);
+		const note = drawn(live);
+		expect(objects.inits.has(`region:${note.id}`)).toBe(true);
+		live.removeNote(note.id);
+		expect(objects.inits.has(`region:${note.id}`)).toBe(false);
+	});
+});
+
 describe("injected CSS migration checks", () => {
 	it("the .sn-note rule has no scale(var(--inv-zoom (toolbar is allowed to)", () => {
 		mount();

@@ -111,6 +111,8 @@ export const NOTE_DEFAULT = 240;
 const NOTE_COMPACT_RATIO = 0.43;
 /** Resize floor in page units. */
 export const NOTE_MIN = 96;
+/** A region smaller than this is not a remark about an area, it is a slip. */
+const REGION_MIN = 16;
 
 const clampSize = (n: number) =>
 	Math.max(NOTE_MIN, Math.round(n));
@@ -232,6 +234,8 @@ function buildCss(fonts: { woff2: string; woff: string }): string {
 @font-face{font-family:"Mynerve";src:url("${fonts.woff2}") format("woff2"),url("${fonts.woff}") format("woff");font-display:swap}
 .sn-root{position:absolute;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;font-family:Inter,system-ui,-apple-system,sans-serif}
 .sn-region{position:absolute;top:0;left:0;transform-origin:0 0;pointer-events:none;box-sizing:border-box;border:calc(1px * var(--inv-zoom, 1)) solid var(--sn-region-ink,#f2c94c);border-radius:2px;background:color-mix(in srgb, var(--sn-region-ink,#f2c94c) 14%, transparent);z-index:3}
+.sn-region[data-live]{pointer-events:auto;cursor:grab}
+.sn-region[data-live]{background:color-mix(in srgb, var(--sn-region-ink,#f2c94c) 22%, transparent)}
 .sn-note{position:absolute;top:0;left:0;transform-origin:0 0;pointer-events:auto;cursor:grab;display:flex;flex-direction:column;box-shadow:0 10px 30px rgba(0,0,0,.28),0 2px 6px rgba(0,0,0,.16);border-radius:2px;width:100%;height:100%}
 .sn-bar{height:${BAR_H}px;flex:none;cursor:grab;background:rgba(0,0,0,.09);display:flex;align-items:center;padding:0 5px;touch-action:none;border-radius:2px 2px 0 0}
 .sn-note:active{cursor:grabbing}
@@ -421,6 +425,7 @@ export class StickyNotes {
 	private lastEmittedText = new Map<number, string>();
 	private applyingFeed = false;
 	private applyingAnchor = false;
+	private applyingRegion = false;
 	private closed = false;
 	private feedLive = new Map<string, NoteThreadState>();
 	private threadListeners = new Set<() => void>();
@@ -648,6 +653,7 @@ export class StickyNotes {
 		this.objects.unregister(`note:${id}`);
 		this.refs.get(id)?.el.remove();
 		this.refs.delete(id);
+		this.objects.unregister(this.regionObjectId(id));
 		this.regions.get(id)?.remove();
 		this.regions.delete(id);
 		this.lastEmittedText.delete(id);
@@ -662,6 +668,8 @@ export class StickyNotes {
 			this.emit({ t: "note.delete", id: note.fid });
 		}
 		for (const r of this.refs.values()) r.el.remove();
+		for (const id of this.regions.keys())
+			this.objects.unregister(this.regionObjectId(id));
 		for (const el of this.regions.values()) el.remove();
 		this.regions.clear();
 		this.refs.clear();
@@ -892,6 +900,47 @@ export class StickyNotes {
 		});
 	}
 
+	private regionObjectId(id: number): string {
+		return `region:${id}`;
+	}
+
+	/**
+	 * A region takes the pointer only while its own note is what you are looking
+	 * at -- or while you are already dragging the region itself.
+	 *
+	 * It cannot simply be grabbable all the time: a region is as big as the area
+	 * it is about, and locked in, the screen underneath is a live app. A box the
+	 * size of a hero section that always ate clicks would make the thing it is a
+	 * remark about unusable, which is a worse bargain than not being able to
+	 * nudge the box.
+	 */
+	private regionLive(id: number): boolean {
+		// Read the attribute the canvas writes, not selectedId(): the deselect
+		// callback runs BEFORE the id is cleared, so asking the session inside it
+		// answers about the selection that is on its way out.
+		const note = this.refs.get(id)?.el;
+		const region = this.regions.get(id);
+		return Boolean(
+			note?.hasAttribute("data-selected") || region?.hasAttribute("data-selected"),
+		);
+	}
+
+	private markRegionLive(id: number) {
+		const el = this.regions.get(id);
+		if (!el) return;
+		const live = this.regionLive(id);
+		const was = el.hasAttribute("data-live");
+		el.toggleAttribute("data-live", live);
+		// Coming forward, come all the way forward. A region sits under the notes
+		// by default, which is right for a passive box -- but its resize handles
+		// straddle its corners, and the sticky is pinned just off one of them, so
+		// the corner handle is under the note and dragging it grabs the note
+		// instead. Measured: the bottom-right handle answered nothing while the
+		// bottom-left one resized fine. Only on the transition; this runs on every
+		// camera write and bumping every frame would run the counter away.
+		if (live && !was) el.style.zIndex = String(++this.zTop);
+	}
+
 	private noteObjectId(id: number): string {
 		return `note:${id}`;
 	}
@@ -1019,9 +1068,51 @@ export class StickyNotes {
 		const el = document.createElement("div");
 		el.className = "sn-region";
 		el.dataset.noteRegion = String(note.id);
+		el.addEventListener("pointerdown", (e) => {
+			if (!this.regionLive(note.id)) return;
+			if (e.button !== 0) return;
+			e.stopPropagation();
+			e.preventDefault();
+			this.objects.beginMove(e, this.regionObjectId(note.id));
+		});
 		this.root.appendChild(el);
 		this.regions.set(note.id, el);
+		const rect = this.regionPageRect(note);
+		this.objects.register({
+			id: this.regionObjectId(note.id),
+			el,
+			rect: rect ?? { x: 0, y: 0, width: 1, height: 1 },
+			minWidth: REGION_MIN,
+			minHeight: REGION_MIN,
+			resizable: true,
+			onLayout: (moved) => this.regionMoved(note, moved),
+			onSelect: () => this.markRegionLive(note.id),
+		});
 		this.writeRegionPos(note);
+	}
+
+	/**
+	 * A dragged or resized region, written back where it is kept: the screen's
+	 * own pixels, from the top of its scrolled content.
+	 *
+	 * The screen is NOT re-resolved from where the box landed. Dragging a remark
+	 * a little to the left must not silently hand it to the neighbouring screen
+	 * and leave it pointing at coordinates in a page it was never about.
+	 */
+	private regionMoved(note: StickyNote, moved: Rect) {
+		if (this.applyingRegion || !note.region) return;
+		const layout = this.screenLayout?.(note.region.screenId);
+		if (!layout) return;
+		const scroll = this.scrollOf(note.region.screenId);
+		note.region = {
+			screenId: note.region.screenId,
+			x: moved.x - layout.x + scroll.x,
+			y: moved.y - layout.y + scroll.y,
+			w: moved.width,
+			h: moved.height,
+		};
+		this.markRegionLive(note.id);
+		this.commit();
 	}
 
 	private writeRegionPos(note: StickyNote) {
@@ -1049,17 +1140,57 @@ export class StickyNotes {
 			}
 			// Partly out: clip rather than clamp, so the part still showing stays
 			// where it really is instead of being squashed to fit.
-			el.style.clipPath = `inset(${top - rect.y}px ${rect.x + rect.width - right}px ${rect.y + rect.height - bottom}px ${left - rect.x}px)`;
+			//
+			// Only when it really is partly out. The resize handles sit a few px
+			// OUTSIDE the box, and clip-path clips hit-testing as well as paint, so
+			// an always-on `inset(0 0 0 0)` quietly cuts the corner off every handle
+			// and dragging one does nothing -- which is exactly what it did.
+			const inset = [
+				top - rect.y,
+				rect.x + rect.width - right,
+				rect.y + rect.height - bottom,
+				left - rect.x,
+			];
+			el.style.clipPath = inset.every((v) => v < 0.5)
+				? ""
+				: `inset(${inset[0]}px ${inset[1]}px ${inset[2]}px ${inset[3]}px)`;
 		}
 		el.style.display = "";
 		el.style.setProperty("--sn-region-ink", COLORS[note.color][0]);
 		el.style.transform = `translate(${rect.x}px, ${rect.y}px)`;
 		el.style.width = `${rect.width}px`;
 		el.style.height = `${rect.height}px`;
+		this.markRegionLive(note.id);
+		// The canvas thinks in page coordinates and this box thinks in the page's
+		// own scrolled ones, so after a scroll the two disagree about where it is.
+		// Hand the canvas the answer rather than letting a drag start from a stale
+		// one; the guard is what stops that write from being read back as a move.
+		const known = this.objects.layout(this.regionObjectId(note.id));
+		if (
+			known &&
+			(known.x !== rect.x ||
+				known.y !== rect.y ||
+				known.width !== rect.width ||
+				known.height !== rect.height)
+		) {
+			this.applyingRegion = true;
+			try {
+				this.objects.setLayout(this.regionObjectId(note.id), { ...rect });
+			} finally {
+				this.applyingRegion = false;
+			}
+		}
 	}
 
 	private syncRegions = () => {
-		for (const note of this.notes) if (note.region) this.writeRegionPos(note);
+		const selected = this.objects.selectedId();
+		for (const note of this.notes) {
+			if (!note.region) continue;
+			// The one being dragged is the one whose position the canvas owns right
+			// now; rewriting it from the stored rect would pin it under the cursor.
+			if (selected === this.regionObjectId(note.id)) continue;
+			this.writeRegionPos(note);
+		}
 	};
 
 	private syncAnchoredNotes() {
@@ -1117,6 +1248,8 @@ export class StickyNotes {
 			onSelect: (selected) => {
 				if (selected) this.placeToolbar(note.id);
 				else this.closePop();
+				// Looking at the note is what makes its box grabbable.
+				this.markRegionLive(note.id);
 			},
 			duplicate: (rect) => this.duplicateNote(note, rect),
 		});
