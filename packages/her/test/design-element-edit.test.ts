@@ -76,12 +76,12 @@ async function run(tool: ToolDefinition | undefined, params: Record<string, unkn
 }
 
 /** A repo root holding just the fixture screen. */
-async function repoWithFixture(t: test.TestContext): Promise<{ root: string; path: string }> {
+async function repoWithFixture(t: test.TestContext, source: string = FIXTURE): Promise<{ root: string; path: string }> {
 	const root = await mkdtemp(join(tmpdir(), "her-element-edit-"));
 	t.after(() => rm(root, { recursive: true, force: true }));
 	const path = join(root, SCREEN);
 	await mkdir(dirname(path), { recursive: true });
-	await writeFile(path, FIXTURE);
+	await writeFile(path, source);
 	return { root, path };
 }
 
@@ -162,6 +162,76 @@ test("removing the first class keeps the survivors' spacing, and a class that is
 	assert.equal(details.after, "primary rounded");
 	assert.match(text, /Not on the tag, so not removed: nonexistent/);
 	assert.equal(await readFile(path, "utf8"), FIXTURE.replace(`"btn primary rounded"`, `"primary rounded"`));
+});
+
+/**
+ * Taking the last class off left `className=""` behind. It renders the same, so
+ * nothing caught it -- but it means undoing what you just did does not give you
+ * back the tag you started with, and this tool's whole claim is that it changes
+ * the one element you pointed at and leaves the file otherwise as it was.
+ *
+ * All three directions matter. "Always drop it" would pass the first alone and
+ * quietly tidy files nobody asked it to touch; "never drop it" is the bug.
+ */
+test("taking the last class off takes className with it", async (t) => {
+	const { root, path } = await repoWithFixture(t);
+	const tools = harness(noBrowser(root));
+	const at = locate(FIXTURE, SECOND_BUTTON);
+
+	const { text, details } = await run(tools.get("design_element_classes"), {
+		file: SCREEN,
+		line: at.line,
+		column: at.column,
+		tag: "button",
+		remove: "btn ghost",
+	});
+
+	assert.equal(details.ok, true);
+	assert.equal(details.dropped, true);
+	assert.equal(details.after, "");
+	assert.match(text, /has no className at all now/);
+	// The space in front of it goes too: `<button type="button" >` is not
+	// something anyone would have written.
+	assert.equal(await readFile(path, "utf8"), FIXTURE.replace(SECOND_BUTTON, `<button type="button">`));
+});
+
+test("a list with a name left in it keeps its attribute", async (t) => {
+	const { root, path } = await repoWithFixture(t);
+	const tools = harness(noBrowser(root));
+	const at = locate(FIXTURE, SECOND_BUTTON);
+
+	const { details } = await run(tools.get("design_element_classes"), {
+		file: SCREEN,
+		line: at.line,
+		column: at.column,
+		tag: "button",
+		remove: "ghost",
+	});
+
+	assert.equal(details.dropped, false);
+	assert.equal(details.after, "btn");
+	assert.equal(await readFile(path, "utf8"), FIXTURE.replace(`"btn ghost"`, `"btn"`));
+});
+
+test("an empty className that was already there is left alone", async (t) => {
+	// Tidying it would be an edit nobody asked for, in a file someone else may
+	// have open. Only the edit that empties a list gets to remove it.
+	const EMPTY_BUTTON = `<button type="button" className="">`;
+	const source = FIXTURE.replace(SECOND_BUTTON, EMPTY_BUTTON);
+	const { root, path } = await repoWithFixture(t, source);
+	const tools = harness(noBrowser(root));
+	const at = locate(source, EMPTY_BUTTON);
+
+	const { details } = await run(tools.get("design_element_classes"), {
+		file: SCREEN,
+		line: at.line,
+		column: at.column,
+		tag: "button",
+		remove: "ghost",
+	});
+
+	assert.equal(details.changed, false);
+	assert.equal(await readFile(path, "utf8"), source);
 });
 
 test("a location whose tag no longer matches is refused, and the file is untouched", async (t) => {

@@ -76,6 +76,8 @@ export type ClassEditResult =
 			before: string;
 			after: string;
 			changed: boolean;
+			/** The edit emptied the class list, so `className` came off the tag entirely. */
+			dropped: boolean;
 			/** Names asked to be removed that were not on the tag. */
 			missing: string[];
 			/** Names asked to be added that were already on the tag. */
@@ -93,6 +95,10 @@ interface OpenTag {
 
 interface JsxAttribute {
 	name: string;
+	/** Offset of the first character of the attribute's name. */
+	start: number;
+	/** Offset just past the whole attribute, closing quote or brace included. */
+	end: number;
 	/** Offset of the first character of the value, inside the quotes or braces. */
 	valueStart: number;
 	/** Offset just past the last character of the value. */
@@ -283,7 +289,7 @@ export function scanAttributes(source: string, nameEnd: number): JsxAttribute[] 
 		let after = i;
 		while (after < source.length && /\s/.test(source[after])) after += 1;
 		if (source[after] !== "=") {
-			out.push({ name, valueStart: i, valueEnd: i, kind: "boolean", quote: "" });
+			out.push({ name, start: nameStart, end: i, valueStart: i, valueEnd: i, kind: "boolean", quote: "" });
 			continue;
 		}
 		let value = after + 1;
@@ -292,14 +298,30 @@ export function scanAttributes(source: string, nameEnd: number): JsxAttribute[] 
 		if (opener === '"' || opener === "'") {
 			const next = skipQuoted(source, value, false);
 			if (next === -1) return null;
-			out.push({ name, valueStart: value + 1, valueEnd: next - 1, kind: "string", quote: opener });
+			out.push({
+				name,
+				start: nameStart,
+				end: next,
+				valueStart: value + 1,
+				valueEnd: next - 1,
+				kind: "string",
+				quote: opener,
+			});
 			i = next;
 			continue;
 		}
 		if (opener === "{") {
 			const next = skipBraces(source, value);
 			if (next === -1) return null;
-			out.push({ name, valueStart: value + 1, valueEnd: next - 1, kind: "expression", quote: "" });
+			out.push({
+				name,
+				start: nameStart,
+				end: next,
+				valueStart: value + 1,
+				valueEnd: next - 1,
+				kind: "expression",
+				quote: "",
+			});
 			i = next;
 			continue;
 		}
@@ -455,6 +477,7 @@ export function editClassList(source: string, request: ClassEditRequest): ClassE
 			before: "",
 			after: value,
 			changed: true,
+			dropped: false,
 			missing: [...remove],
 			present: [],
 		};
@@ -477,12 +500,40 @@ export function editClassList(source: string, request: ClassEditRequest): ClassE
 	}
 
 	const changed = value !== before;
+	// Taking the last class off used to leave `className=""` standing. It renders
+	// the same, so nothing caught it, but it means undoing what you just did does
+	// not give you back the tag you started with -- and the whole claim of this
+	// tool is that it changes the one element you pointed at and leaves the file
+	// otherwise as it was. An empty class list is not a class list.
+	//
+	// Only when this edit is what emptied it. A `className=""` that was already
+	// there and is not being changed stays: tidying it would be an edit nobody
+	// asked for, in a file someone else is holding open.
+	const dropped = changed && value === "";
+	if (dropped) {
+		// The whitespace in front of it goes too, or `<h1 className="">` becomes
+		// `<h1 >`. Walking back to the previous non-space also does the right thing
+		// when the attribute sits on a line of its own.
+		let cut = className.start;
+		while (cut > 0 && /\s/.test(source[cut - 1])) cut -= 1;
+		return {
+			ok: true,
+			source: source.slice(0, cut) + source.slice(className.end),
+			before,
+			after: value,
+			changed,
+			dropped,
+			missing,
+			present,
+		};
+	}
 	return {
 		ok: true,
 		source: changed ? source.slice(0, className.valueStart) + value + source.slice(className.valueEnd) : source,
 		before,
 		after: value,
 		changed,
+		dropped,
 		missing,
 		present,
 	};
@@ -836,10 +887,20 @@ export function registerElementEditTools(pi: ExtensionAPI, deps: ElementEditDeps
 			const notes =
 				(edit.present.length ? ` Already there: ${edit.present.join(", ")}.` : "") +
 				(edit.missing.length ? ` Not on the tag, so not removed: ${edit.missing.join(", ")}.` : "");
+			const became = edit.dropped
+				? `has no className at all now (it was "${edit.before}") — an empty class list is not a class list, so the attribute came off with the last name in it`
+				: `now reads class "${edit.after}" (was "${edit.before}")`;
 			return textResult(
-				`<${tag}> at ${path.relative}:${line}:${column} now reads class "${edit.after}" (was "${edit.before}").${notes} ` +
+				`<${tag}> at ${path.relative}:${line}:${column} ${became}.${notes} ` +
 					"The lab hot-reloads on this write — take a design_lab_still and look at it.",
-				{ ok: true, changed: true, file: path.relative, before: edit.before, after: edit.after },
+				{
+					ok: true,
+					changed: true,
+					file: path.relative,
+					before: edit.before,
+					after: edit.after,
+					dropped: edit.dropped,
+				},
 			);
 		},
 	});
