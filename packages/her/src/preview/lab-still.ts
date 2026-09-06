@@ -256,23 +256,58 @@ export async function labScreenIds(page: PageLike): Promise<string[]> {
 	return ((await page.evaluate(COLLECT_SCREEN_IDS)) as string[]).filter(Boolean);
 }
 
+/** Ask the lab to fly in. Undefined when this lab is too old to have been asked. */
+const lockScript = (screenId: string) => `(() => {
+  const canvas = window.lab && window.lab.canvas;
+  if (!canvas || typeof canvas.lockInto !== "function") return undefined;
+  return canvas.lockInto(${JSON.stringify(screenId)});
+})()`;
+
+/** Whether that screen's content is live now, read off the DOM rather than believed. */
+const lockedInto = (screenId: string) => `(() => {
+  const root = document.querySelector("[data-mode]");
+  const mode = root ? root.getAttribute("data-mode") : null;
+  const group = [...document.querySelectorAll('[data-screen-id="${screenId}"]')]
+    .find((el) => el.hasAttribute("data-active"));
+  return { mode, active: Boolean(group) };
+})()`;
+
 /**
  * The lab's own lock-into-screen camera move. The canvas opens fitted to
- * everything (~24%), where a shot is too small to judge and a point is too
- * coarse to aim; clicking the screen and pressing Enter is how the lab itself
- * flies the camera in. False means the screen is not on the canvas at all.
+ * everything (~20%), where a shot is too small to judge and a point is too
+ * coarse to aim. False means the screen did not become live -- either it is not
+ * on the canvas, or the lab would not go there.
+ *
+ * This used to mime the gesture: click the middle of the screen, press Enter.
+ * It worked until a sticky note sat in the middle of a screen, and then the
+ * click selected the note, Enter did nothing, and this returned true anyway --
+ * because it only ever checked that the screen had a box, never that the lab
+ * had moved. Everything downstream then hit-tested a canvas at 20% zoom behind
+ * an explore-mode shield and truthfully reported that there was nothing there.
+ * A canvas is a person's workspace; their notes will be wherever they put them,
+ * so a tool cannot aim at pixels and hope.
+ *
+ * So ask, then look. The gesture stays as the fallback for a lab that predates
+ * `window.lab.canvas`, but either way the answer comes from `data-active`.
  */
 export async function lockIntoScreen(page: PageLike, screenId: string): Promise<boolean> {
 	const target = page.locator(`[data-screen-id="${screenId}"]`).first();
 	if ((await target.count()) === 0) return false;
-	const box = await target.boundingBox();
-	if (box) {
+
+	const asked = (await page.evaluate(lockScript(screenId))) as boolean | undefined;
+	if (asked === false) return false;
+	if (asked === undefined) {
+		const box = await target.boundingBox();
+		if (!box) return false;
 		await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
 		await page.waitForTimeout(300);
 		await page.keyboard.press("Enter");
-		await page.waitForTimeout(2500);
 	}
-	return true;
+	// The fly-in is animated either way, and the content is not hit-testable
+	// until it lands.
+	await page.waitForTimeout(2500);
+	const state = (await page.evaluate(lockedInto(screenId))) as { mode: string | null; active: boolean };
+	return state.active && state.mode !== "explore";
 }
 
 const scrollToTail = (screenId: string) =>

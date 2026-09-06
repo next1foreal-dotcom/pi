@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { governedTools } from "../src/lib/governed-tools.ts";
-import { type LabStillDeps, registerLabStillTools } from "../src/preview/lab-still.ts";
+import { type LabStillDeps, lockIntoScreen, type PageLike, registerLabStillTools } from "../src/preview/lab-still.ts";
 
 function harness(deps: LabStillDeps): Map<string, ToolDefinition> {
 	const tools = new Map<string, ToolDefinition>();
@@ -48,6 +48,103 @@ async function tempRoot(t: test.TestContext): Promise<string> {
 	t.after(() => rm(dir, { recursive: true, force: true }));
 	return dir;
 }
+
+/**
+ * lockIntoScreen used to answer "did the screen have a box?" while claiming to
+ * answer "is the screen live?". It mimed the human gesture -- click the middle,
+ * press Enter -- and a sticky note sitting in the middle of a screen was enough
+ * to eat the click. Enter then did nothing, this returned true, and everything
+ * downstream hit-tested a canvas still at 20% behind an explore-mode shield and
+ * truthfully reported that there was nothing there.
+ *
+ * A canvas is someone's workspace and their notes are wherever they put them,
+ * so aiming at pixels cannot be the mechanism. Ask the lab, then read the DOM
+ * back. Both directions are here: a lab that went is a true, a lab that did not
+ * is a false, and the false is the one that used to be a lie.
+ */
+function fakePage(options: {
+	count?: number;
+	box?: { x: number; y: number; width: number; height: number } | null;
+	lockInto?: boolean | undefined;
+	landed: { mode: string | null; active: boolean };
+}): { page: PageLike; log: string[] } {
+	const log: string[] = [];
+	const page: PageLike = {
+		async goto() {
+			return null;
+		},
+		async waitForTimeout() {},
+		async evaluate(script: string) {
+			if (script.includes("canvas.lockInto")) {
+				log.push("asked");
+				return options.lockInto;
+			}
+			if (script.includes("data-active")) {
+				log.push("looked");
+				return options.landed;
+			}
+			return null;
+		},
+		locator() {
+			return {
+				first: () => ({
+					async count() {
+						return options.count ?? 1;
+					},
+					async boundingBox() {
+						return options.box === undefined ? { x: 0, y: 0, width: 100, height: 80 } : options.box;
+					},
+				}),
+			};
+		},
+		mouse: {
+			async click() {
+				log.push("clicked");
+			},
+		},
+		keyboard: {
+			async press() {
+				log.push("pressed");
+			},
+		},
+		async screenshot() {
+			return Buffer.from("x");
+		},
+	};
+	return { page, log };
+}
+
+test("locking in asks the lab, and does not mime a click at all", async () => {
+	const { page, log } = fakePage({ lockInto: true, landed: { mode: "focus", active: true } });
+	assert.equal(await lockIntoScreen(page, "main-landing"), true);
+	assert.deepEqual(log, ["asked", "looked"]);
+});
+
+test("a lab that says the screen did not become live is a false, not a true", async () => {
+	// This is the shape of the bug: the gesture ran, nothing happened, and the
+	// old code returned true because the screen had a bounding box.
+	const { page, log } = fakePage({ lockInto: undefined, landed: { mode: "explore", active: false } });
+	assert.equal(await lockIntoScreen(page, "main-landing"), false);
+	assert.deepEqual(log, ["asked", "clicked", "pressed", "looked"]);
+});
+
+test("an id the lab refuses never reaches the mouse", async () => {
+	const { page, log } = fakePage({ lockInto: false, landed: { mode: "focus", active: true } });
+	assert.equal(await lockIntoScreen(page, "not-a-screen"), false);
+	assert.deepEqual(log, ["asked"]);
+});
+
+test("an older lab still gets the gesture, and is still checked afterwards", async () => {
+	const { page, log } = fakePage({ lockInto: undefined, landed: { mode: "focus", active: true } });
+	assert.equal(await lockIntoScreen(page, "main-landing"), true);
+	assert.deepEqual(log, ["asked", "clicked", "pressed", "looked"]);
+});
+
+test("a screen that is not on the canvas answers false before anything else", async () => {
+	const { page, log } = fakePage({ count: 0, landed: { mode: "explore", active: false } });
+	assert.equal(await lockIntoScreen(page, "ghost"), false);
+	assert.deepEqual(log, []);
+});
 
 test("lab down is a skip with the way back, not a failure", async (t) => {
 	const tools = harness({

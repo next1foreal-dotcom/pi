@@ -105,6 +105,39 @@ describe("publishPluginApis", () => {
     expect(window.lab).toBeUndefined();
   });
 
+  it("publishes a camera a caller with no hands can drive", () => {
+    // Without this a tool has to mime the human gesture -- click the middle of
+    // the screen, press Enter -- and the middle of a screen is exactly where
+    // someone leaves a sticky note. The note eats the click, Enter does
+    // nothing, and the tool goes on to hit-test a canvas that never moved.
+    const flown: string[] = [];
+    publishPluginApis([], quiet, {
+      screens: () => ["main-landing", "playground"],
+      lockInto: (id) => {
+        if (id !== "main-landing") return false;
+        flown.push(id);
+        return true;
+      },
+      exit: () => flown.push("exit"),
+      state: () => ({ mode: flown.length ? "focus" : "explore", focusedId: null }),
+    });
+    expect(window.lab?.canvas.screens()).toEqual(["main-landing", "playground"]);
+    expect(window.lab?.canvas.lockInto("main-landing")).toBe(true);
+    // An id that is not a screen says so rather than flying somewhere.
+    expect(window.lab?.canvas.lockInto("note:1")).toBe(false);
+    expect(flown).toEqual(["main-landing"]);
+    expect(window.lab?.canvas.state().mode).toBe("focus");
+  });
+
+  it("a bridge published without one is inert, never absent", () => {
+    // The tools feature-detect it. Undefined would read as "old lab, mime the
+    // gesture"; a camera that lies about having flown would be worse.
+    publishPluginApis([{ id: "ruler", handle: handle({}) }], quiet);
+    expect(typeof window.lab?.canvas.lockInto).toBe("function");
+    expect(window.lab?.canvas.lockInto("main-landing")).toBe(false);
+    expect(window.lab?.canvas.screens()).toEqual([]);
+  });
+
   it("a stale teardown leaves a newer bridge alone", () => {
     // StrictMode remounts overlap: the old session's cleanup runs after the
     // new session has already published. It must not blank the live one.

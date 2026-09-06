@@ -326,7 +326,20 @@ export function InteractionLab() {
         ? notesApi.subscribeThreads(() => session.bump())
         : () => {};
     if (notesApi instanceof StickyNotes) session.bump();
-    const unpublish = publishPluginApis(mounted);
+    const isScreen = (id: string) =>
+      Object.hasOwn(session.layouts, id) && !session.objects.has(id);
+    const unpublish = publishPluginApis(mounted, undefined, {
+      screens: () => Object.keys(session.layouts).filter(isScreen),
+      lockInto: (id, fill = false) => {
+        if (!isScreen(id)) return false;
+        lockInto(session, id, fill);
+        return true;
+      },
+      exit: () => {
+        while (session.mode !== "explore") exitOne(session);
+      },
+      state: () => ({ mode: session.mode, focusedId: session.focusedId }),
+    });
     const layerEl = el.querySelector("[data-lab-layer]");
     const pickHost = document.createElement("div");
     if (layerEl instanceof HTMLElement) layerEl.appendChild(pickHost);

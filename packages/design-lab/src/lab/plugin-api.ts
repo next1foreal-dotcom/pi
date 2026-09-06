@@ -184,6 +184,29 @@ export type LabBridge = {
    * Preview only — does not write files.
    */
   tokens: { preview(css: string | null): void };
+  /**
+   * The camera, for a caller with no hands.
+   *
+   * A tool used to lock into a screen the way a person does: click the middle
+   * of it, then press Enter. That works right up until someone leaves a sticky
+   * note in the middle of a screen — then the click selects the note, Enter
+   * does nothing, and the tool goes on to hit-test a canvas that never locked
+   * in and reports there is nothing there. Which is true, and useless.
+   *
+   * So: say what you want instead of miming it. `lockInto` returns false for
+   * an id that is not a screen rather than flying somewhere and claiming it
+   * worked.
+   */
+  canvas: {
+    /** Screen ids on the canvas. Objects (notes, labels) are not screens. */
+    screens(): string[];
+    /** Fly in and make the screen's content live. False if `id` is not a screen. */
+    lockInto(id: string, fill?: boolean): boolean;
+    /** Back out to the whole canvas. */
+    exit(): void;
+    /** Where the camera is now. */
+    state(): { mode: string; focusedId: string | null };
+  };
 };
 
 declare global {
@@ -233,6 +256,12 @@ export function checkApiDocs(
 export function publishPluginApis(
   mounted: { id: string; handle: LabPluginHandle; docs?: PluginApiDoc[] }[],
   warn: (message: string) => void = (m) => console.warn(m),
+  canvas: LabBridge["canvas"] = {
+    screens: () => [],
+    lockInto: () => false,
+    exit: () => {},
+    state: () => ({ mode: "explore", focusedId: null }),
+  },
 ): () => void {
   const apis = new Map<string, unknown>();
   const docs = new Map<string, PluginApiDoc[]>();
@@ -252,6 +281,7 @@ export function publishPluginApis(
     describe: (id) => docs.get(id) ?? [],
     help: () => Object.fromEntries(docs),
     tokens: { preview: tokens.preview },
+    canvas,
   };
   window.lab = bridge;
   return () => {
