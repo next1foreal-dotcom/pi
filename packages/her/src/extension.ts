@@ -133,6 +133,7 @@ import { CONTEXT_INJECTION_SOURCES, injectLoggedContent } from "./lib/injection-
 import { registerMcpTools } from "./mcp/tools.ts";
 import { registerAssetShotTools } from "./preview/asset-shot.ts";
 import { registerDesignSystemTools } from "./preview/design-system.ts";
+import { registerElementEditTools } from "./preview/element-edit.ts";
 import { registerExtractDesignTools } from "./preview/extract-design.ts";
 import { registerLabStillTools } from "./preview/lab-still.ts";
 import { registerPreviewStillTools } from "./preview/still-tools.ts";
@@ -2703,6 +2704,7 @@ export default function her(pi: ExtensionAPI): void {
 	registerPreviewStillTools(pi);
 	registerExtractDesignTools(pi);
 	registerLabStillTools(withCanvasNag(pi));
+	registerElementEditTools(pi);
 	registerAssetShotTools(pi);
 	registerDesignSystemTools(pi);
 	registerTokenScratchTools(pi);

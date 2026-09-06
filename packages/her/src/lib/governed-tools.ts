@@ -87,6 +87,13 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	browser_navigate: { destructive: false },
 	design_lab_open: { destructive: false },
 	design_lab_still: { destructive: false },
+	// Hit-tests a point on a lab screen and reads back the source location. Drives
+	// the inspect plugin's published api through Playwright; writes nothing.
+	design_element_at: { destructive: false },
+	// Writes the product's own .tsx/.jsx source: it rewrites one JSX tag's class
+	// list. Registered destructive, so it needs a named permit below, and it can
+	// never leak into an unattended heartbeat round.
+	design_element_classes: { destructive: true },
 	design_asset_shot: { destructive: false },
 	design_system_load: { destructive: false },
 	// Rewrites the product's own globals.css, unlike every other design_* tool.

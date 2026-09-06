@@ -6,7 +6,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { SAMANTHA_REPO_ROOT } from "../her-core/channel-probe-gate.ts";
 
-const DEFAULT_LAB_PORT = 5180;
+export const DEFAULT_LAB_PORT = 5180;
 /** Chromium cold start, canvas mount, and the lock-in camera flight. */
 const CAPTURE_TIMEOUT_MS = 90_000;
 /** Playwright lives in samantha-ui, not in this package's node_modules. */
@@ -212,7 +212,7 @@ export function probeListeningPort(port: number, hosts: readonly string[] = ["12
  * package's type world, so the driver is typed structurally and every in-page
  * script is passed as source text.
  */
-interface PageLike {
+export interface PageLike {
 	goto(url: string, options: Record<string, unknown>): Promise<unknown>;
 	waitForTimeout(ms: number): Promise<void>;
 	evaluate(script: string): Promise<unknown>;
@@ -221,18 +221,21 @@ interface PageLike {
 	keyboard: { press(key: string): Promise<void> };
 	screenshot(): Promise<Buffer>;
 }
-type Box = { x: number; y: number; width: number; height: number };
-interface BrowserLike {
+export type Box = { x: number; y: number; width: number; height: number };
+export interface BrowserLike {
 	newPage(options: Record<string, unknown>): Promise<PageLike>;
 	close(): Promise<void>;
 }
 
 const COLLECT_SCREEN_IDS = `[...new Set([...document.querySelectorAll("[data-screen-id]")].map((el) => el.getAttribute("data-screen-id") || ""))]`;
 
-const scrollToTail = (screenId: string) =>
-	`(() => { const host = document.querySelector('[data-screen-id="${screenId}"] [data-screen-scroll]') || document.querySelector('[data-screen-id="${screenId}"]'); if (!host) return null; const before = host.scrollTop; host.scrollTop = host.scrollHeight; return { before, after: host.scrollTop, scrollHeight: host.scrollHeight, clientHeight: host.clientHeight }; })()`;
-
-async function captureWithPlaywright(request: CaptureRequest): Promise<CaptureResult> {
+/**
+ * Open the lab in a fresh chromium page, hand it to `use`, and always close the
+ * browser. Every tool that drives the lab goes through here: a second launcher
+ * would be a second set of timeouts, a second viewport, and a second thing to
+ * remember to close.
+ */
+export async function withLabPage<T>(port: number, use: (page: PageLike) => Promise<T>): Promise<T> {
 	const requireFrom = createRequire(PLAYWRIGHT_HOST);
 	const { chromium } = requireFrom("playwright") as {
 		chromium: { launch(options: Record<string, unknown>): Promise<BrowserLike> };
@@ -240,22 +243,45 @@ async function captureWithPlaywright(request: CaptureRequest): Promise<CaptureRe
 	const browser = await chromium.launch({ timeout: CAPTURE_TIMEOUT_MS });
 	try {
 		const page = await browser.newPage({ viewport: { width: 1500, height: 1000 }, deviceScaleFactor: 2 });
-		await page.goto(`http://localhost:${request.port}`, { waitUntil: "networkidle", timeout: CAPTURE_TIMEOUT_MS });
+		await page.goto(`http://localhost:${port}`, { waitUntil: "networkidle", timeout: CAPTURE_TIMEOUT_MS });
 		await page.waitForTimeout(2000);
+		return await use(page);
+	} finally {
+		await browser.close();
+	}
+}
 
-		const screenIds = ((await page.evaluate(COLLECT_SCREEN_IDS)) as string[]).filter(Boolean);
-		const target = page.locator(`[data-screen-id="${request.screenId}"]`).first();
-		if ((await target.count()) === 0) return { screenIds, shots: [] };
+/** Every screen id on the canvas. */
+export async function labScreenIds(page: PageLike): Promise<string[]> {
+	return ((await page.evaluate(COLLECT_SCREEN_IDS)) as string[]).filter(Boolean);
+}
 
-		// The canvas opens fitted to everything (~24%), where a shot is too small to judge.
-		// Clicking the screen and pressing Enter is the lab's own lock-into-screen camera move.
-		const box = await target.boundingBox();
-		if (box) {
-			await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-			await page.waitForTimeout(300);
-			await page.keyboard.press("Enter");
-			await page.waitForTimeout(2500);
-		}
+/**
+ * The lab's own lock-into-screen camera move. The canvas opens fitted to
+ * everything (~24%), where a shot is too small to judge and a point is too
+ * coarse to aim; clicking the screen and pressing Enter is how the lab itself
+ * flies the camera in. False means the screen is not on the canvas at all.
+ */
+export async function lockIntoScreen(page: PageLike, screenId: string): Promise<boolean> {
+	const target = page.locator(`[data-screen-id="${screenId}"]`).first();
+	if ((await target.count()) === 0) return false;
+	const box = await target.boundingBox();
+	if (box) {
+		await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+		await page.waitForTimeout(300);
+		await page.keyboard.press("Enter");
+		await page.waitForTimeout(2500);
+	}
+	return true;
+}
+
+const scrollToTail = (screenId: string) =>
+	`(() => { const host = document.querySelector('[data-screen-id="${screenId}"] [data-screen-scroll]') || document.querySelector('[data-screen-id="${screenId}"]'); if (!host) return null; const before = host.scrollTop; host.scrollTop = host.scrollHeight; return { before, after: host.scrollTop, scrollHeight: host.scrollHeight, clientHeight: host.clientHeight }; })()`;
+
+async function captureWithPlaywright(request: CaptureRequest): Promise<CaptureResult> {
+	return withLabPage(request.port, async (page) => {
+		const screenIds = await labScreenIds(page);
+		if (!(await lockIntoScreen(page, request.screenId))) return { screenIds, shots: [] };
 
 		const shots: CaptureResult["shots"] = [];
 		// Every screen on the canvas fits the 900px host, so none of them scroll. Verify
@@ -277,12 +303,10 @@ async function captureWithPlaywright(request: CaptureRequest): Promise<CaptureRe
 			shots.push({ part, bytes: await page.screenshot() });
 		}
 		return { screenIds, shots, scroll };
-	} finally {
-		await browser.close();
-	}
+	});
 }
 
-function errorText(error: unknown): string {
+export function errorText(error: unknown): string {
 	const detail = error instanceof Error ? error.message : String(error);
 	if (/Cannot find module 'playwright'/.test(detail)) {
 		return "Playwright is not installed where this tool looks for it (samantha-ui). Report this rather than guessing at the picture.";

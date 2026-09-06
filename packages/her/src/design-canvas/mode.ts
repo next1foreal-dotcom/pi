@@ -48,6 +48,7 @@ export const PRODUCT_MUTATING_TOOLS: ReadonlySet<string> = new Set([
 	"design_system_apply",
 	"design_asset_shot",
 	"design_tokens_commit",
+	"design_element_classes",
 ]);
 
 /**
@@ -59,6 +60,7 @@ export const READONLY_DESIGN_TOOLS: ReadonlySet<string> = new Set([
 	"design_lab_notes",
 	"design_lab_open",
 	"design_lab_still",
+	"design_element_at",
 	"design_project_get",
 	"design_project_list",
 	"design_project_audit",
