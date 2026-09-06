@@ -59,11 +59,15 @@ function originalResult(overrides: Partial<ToolResult> = {}): ToolResult {
 	};
 }
 
-async function runDummy(root: string, execute: () => Promise<ToolResult> | ToolResult): Promise<ToolResult> {
+async function runDummy(
+	root: string,
+	execute: () => Promise<ToolResult> | ToolResult,
+	name = "dummy",
+): Promise<ToolResult> {
 	const { pi, tools } = fakePi();
 	const wrapped = withCanvasNag(pi, root);
 	wrapped.registerTool({
-		name: "dummy",
+		name,
 		label: "Dummy",
 		description: "test",
 		parameters: {},
@@ -71,7 +75,7 @@ async function runDummy(root: string, execute: () => Promise<ToolResult> | ToolR
 			return await execute();
 		},
 	} as unknown as ToolDefinition);
-	const tool = tools.get("dummy");
+	const tool = tools.get(name);
 	assert.ok(tool);
 	return (await tool.execute("call-1", {}, undefined, undefined, undefined as never)) as ToolResult;
 }
@@ -593,6 +597,197 @@ test("raising or deciding a proposal never writes a skill file", async () => {
 			relativeFiles(root).every((p) => !p.split("/").includes("skills") || p.startsWith(".claude/skills/")),
 			"no new skills path appeared",
 		);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+const STYLE_GUIDE_FOOTER = "这些是产品真正 ship 的值。要完整的调 design_system_load;不许自己发明数值。";
+
+const SAMPLE_STYLE_CSS = `:root {
+	--background: #FFFFFF;
+	--accent: #2F6F4E;
+	--radius: 4px;
+	--ease: cubic-bezier(0.16, 1, 0.3, 1);
+}
+.dark {
+	--background: #0B0B0B;
+	--glow: #C2A878;
+	--muted: #111111;
+	--extra: #222222;
+}
+`;
+
+function plantStyleGuide(
+	root: string,
+	opts: { target?: string; receipt?: string | "directory"; css?: string | "directory" | "missing" } = {},
+): void {
+	const target = opts.target ?? "samantha-ui";
+	const dir = join(root, "design", "system", target);
+	mkdirSync(dir, { recursive: true });
+	if (opts.receipt === "directory") {
+		mkdirSync(join(dir, "receipt.json"), { recursive: true });
+	} else {
+		writeFileSync(
+			join(dir, "receipt.json"),
+			opts.receipt ??
+				`${JSON.stringify(
+					{
+						target,
+						sourcePath: "../samantha-ui/src/app/globals.css",
+						sourceHead: "abc",
+						loadedAt: "2000-01-01T00:00:00.000Z",
+						tokenCount: { light: 4, dark: 4 },
+					},
+					null,
+					"\t",
+				)}\n`,
+			"utf8",
+		);
+	}
+	if (opts.css === "directory") {
+		mkdirSync(join(dir, "tokens.css"), { recursive: true });
+	} else if (opts.css !== "missing") {
+		writeFileSync(join(dir, "tokens.css"), opts.css ?? SAMPLE_STYLE_CSS, "utf8");
+	}
+}
+
+function expectedStyleGuideNag(): string {
+	return [
+		"samantha-ui · 2 组",
+		"light: --background: #FFFFFF; --accent: #2F6F4E; --radius: 4px",
+		"dark: --background: #0B0B0B; --glow: #C2A878; --muted: #111111",
+		STYLE_GUIDE_FOOTER,
+	].join("\n");
+}
+
+test("style-guide hitchhikes when artifacts exist and this round has not loaded", async () => {
+	const root = tempRoot();
+	try {
+		plantStyleGuide(root);
+		const result = await runDummy(root, () => originalResult());
+		assert.equal(result.content.length, 2, "original + style-guide nag");
+		assert.equal(result.content[0].text, "photo ok");
+		assert.equal(result.content[1].text, expectedStyleGuideNag());
+		assert.ok(result.content[1].text.length <= 600);
+		assert.doesNotMatch(result.content[1].text, /--ease/);
+		assert.doesNotMatch(result.content[1].text, /--extra/);
+		assert.deepEqual(result.details, { ok: true, paths: ["a.png"] });
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("a second tool call this round does not hitchhike the style guide again", async () => {
+	const root = tempRoot();
+	try {
+		plantStyleGuide(root);
+		const first = await runDummy(root, () => originalResult());
+		assert.equal(first.content[1]?.text, expectedStyleGuideNag());
+		const second = await runDummy(root, () => originalResult());
+		assert.deepEqual(second, originalResult());
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("a receipt loadedAt this process means she already loaded — no hitchhike", async () => {
+	const root = tempRoot();
+	try {
+		plantStyleGuide(root, {
+			receipt: `${JSON.stringify({
+				target: "samantha-ui",
+				sourcePath: "../samantha-ui/src/app/globals.css",
+				sourceHead: "abc",
+				loadedAt: new Date().toISOString(),
+				tokenCount: { light: 4, dark: 4 },
+			})}\n`,
+		});
+		const result = await runDummy(root, () => originalResult());
+		assert.deepEqual(result, originalResult());
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("design_system_load itself does not hitchhike; later calls stay quiet", async () => {
+	const root = tempRoot();
+	try {
+		plantStyleGuide(root);
+		const loaded = await runDummy(root, () => originalResult(), "design_system_load");
+		assert.deepEqual(loaded, originalResult());
+		const later = await runDummy(root, () => originalResult());
+		assert.deepEqual(later, originalResult());
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("no design-system artifacts add nothing — even when a todo nag is present", async () => {
+	const root = tempRoot();
+	try {
+		const quiet = await runDummy(root, () => originalResult());
+		assert.deepEqual(quiet, originalResult());
+
+		appendEvent(fromFei("n1", "too tight"), root);
+		const withTodo = await runDummy(root, () => originalResult());
+		assert.equal(withTodo.content.length, 2);
+		assert.doesNotMatch(withTodo.content.map((p) => p.text).join("\n"), /这些是产品真正 ship 的值/);
+		assert.doesNotMatch(withTodo.content.map((p) => p.text).join("\n"), /没有找到设计系统/);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("a bad JSON receipt or a directory at the receipt path does not break the wrapped tool", async () => {
+	const root = tempRoot();
+	try {
+		plantStyleGuide(root, { receipt: '{"not":' });
+		const badJson = await runDummy(root, () => originalResult());
+		assert.deepEqual(badJson, originalResult());
+
+		const dirRoot = tempRoot();
+		try {
+			plantStyleGuide(dirRoot, { receipt: "directory" });
+			const asDir = await runDummy(dirRoot, () => originalResult());
+			assert.deepEqual(asDir, originalResult());
+		} finally {
+			rmSync(dirRoot, { recursive: true, force: true });
+		}
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("todo, proposal, and style-guide nags stay in that order", async () => {
+	const root = tempRoot();
+	try {
+		appendEvent(fromFei("n1", "too tight"), root);
+		plantProposal(root, { id: "p_old", items: SAMPLE_ITEMS, from: ["d1", "d2", "d3"] });
+		plantStyleGuide(root);
+
+		const result = await runDummy(root, () => originalResult());
+		assert.equal(result.content.length, 4, "original + todo + proposal + style guide");
+		assert.equal(result.content[0].text, "photo ok");
+		assert.match(result.content[1].text, /没处理的意见/);
+		assert.equal(result.content[2].text, expectedProposalNag(SAMPLE_ITEMS, "product-list"));
+		assert.equal(result.content[3].text, expectedStyleGuideNag());
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("a huge token value still clips the style-guide nag to 600 characters", async () => {
+	const root = tempRoot();
+	try {
+		plantStyleGuide(root, {
+			css: `:root {\n\t--background: ${"X".repeat(800)};\n}\n.dark {\n\t--background: #0B0B0B;\n}\n`,
+		});
+		const result = await runDummy(root, () => originalResult());
+		assert.equal(result.content.length, 2);
+		assert.ok(result.content[1].text.length <= 600);
+		assert.equal(result.content[1].text.endsWith(STYLE_GUIDE_FOOTER), true);
+		assert.match(result.content[1].text, /samantha-ui/);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}
