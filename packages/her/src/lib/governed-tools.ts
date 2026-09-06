@@ -90,7 +90,21 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	design_asset_shot: { destructive: false },
 	design_system_load: { destructive: false },
 	// Rewrites the product's own globals.css, unlike every other design_* tool.
+	// Registered destructive, and therefore still denied: giving it a permit is a
+	// policy change, and policies/ is an anchor path.
 	design_system_apply: { destructive: true },
+	// The canvas conversation and the design-mode switch. Every one of these was
+	// denied simply by being absent here -- unregistered means destructive, and no
+	// permit covers a destructive tool. None of them touches an anchor.
+	design_lab_notes: { destructive: false },
+	design_lab_reply: { destructive: false },
+	design_lab_resolve: { destructive: false },
+	design_mode: { destructive: false },
+	design_version_list: { destructive: false },
+	design_version_show: { destructive: false },
+	design_version_since: { destructive: false },
+	// Writes refs/notes/her-design; names a commit without rewriting one.
+	design_version_name: { destructive: false },
 	design_project_create: { destructive: false },
 	design_project_get: { destructive: false },
 	design_project_list: { destructive: false },
