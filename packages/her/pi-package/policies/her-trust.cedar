@@ -186,3 +186,14 @@ permit(
   action == Action::"CallTool",
   resource == Tool::"design_system_apply"
 );
+
+// G-435 token scratch layer — same justification as design_system_apply above.
+// design_tokens_commit takes the scratch set and writes it into globals.css through
+// the same splice path. The other three scratch tools (try/scratch/discard) are
+// non-destructive and covered by allow_memory_tools.
+@id("permit_design_tokens_commit")
+permit(
+  principal == Agent::"samantha",
+  action == Action::"CallTool",
+  resource == Tool::"design_tokens_commit"
+);
