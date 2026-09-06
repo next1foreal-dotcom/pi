@@ -1,114 +1,70 @@
 // @vitest-environment jsdom
 
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { act, createElement } from "react";
+import { createRoot } from "react-dom/client";
 import { describe, expect, it } from "vitest";
+import { ProbeCard } from "../plugins/inspect/probe-fixture";
+import { LAB_PACKAGE_DIR } from "../plugins/inspect/source-location";
 import { sourceOf } from "./source-probe";
 
-const SCREEN_STACK = `Error
-    at PlaygroundScreen (http://localhost:5180/src/screens/playground/screen.tsx:19:25)`;
+/**
+ * These tests render React for real. The previous ones did not: they hung a
+ * hand-written stack string on a hand-built fiber, which proves the parser and
+ * proves nothing about the mechanism. That is how this file shipped a resolver
+ * that had never resolved a real element.
+ *
+ * The fixture lives with the inspect plugin because a fixture has to be a .tsx
+ * and vitest only collects `src/**\/*.test.ts`. One fixture, borrowed here.
+ */
+function findRepoRoot(): string {
+	let dir = process.cwd();
+	for (let i = 0; i < 8; i++) {
+		if (existsSync(join(dir, LAB_PACKAGE_DIR, "package.json"))) return dir;
+		const up = dirname(dir);
+		if (up === dir) break;
+		dir = up;
+	}
+	throw new Error(`repo root not found from ${process.cwd()}`);
+}
+const REPO_ROOT = findRepoRoot();
 
-function attachFiber(el: Element, fiber: object): void {
-	Object.assign(el, { __reactFiber$test: fiber });
+async function renderProbe(): Promise<Element> {
+	const host = document.createElement("div");
+	document.body.appendChild(host);
+	const root = createRoot(host);
+	await act(async () => {
+		root.render(createElement(ProbeCard));
+	});
+	const el = host.querySelector(".probe-button");
+	if (!el) throw new Error("probe did not render");
+	return el;
 }
 
 describe("sourceOf", () => {
-	it("reads file/line/col/component from a string _debugStack on a fake fiber", () => {
-		const el = document.createElement("div");
-		attachFiber(el, {
-			_debugStack: SCREEN_STACK,
-			return: null,
-		});
-		expect(sourceOf(el)).toEqual({
-			file: "src/screens/playground/screen.tsx",
-			line: 19,
-			col: 25,
-			component: "PlaygroundScreen",
-		});
+	it("names the line of a really-rendered element, and the file really says so there", async () => {
+		const ref = sourceOf(await renderProbe());
+		expect(ref).not.toBeNull();
+		const { file, line, col, component } = ref as NonNullable<typeof ref>;
+
+		// Repo-relative, not relative to this package: she has to be able to open it.
+		expect(file.startsWith(`${LAB_PACKAGE_DIR}/`)).toBe(true);
+		expect(component).toBe("ProbeCard");
+
+		// A plausible-looking location is not good enough. Go and look.
+		const text = readFileSync(join(REPO_ROOT, file), "utf8");
+		const target = text.split("\n")[line - 1] ?? "";
+		expect(target.slice(col - 1)).toMatch(/^<button/);
 	});
 
-	it("reads the same fields when _debugStack is an Error", () => {
-		const el = document.createElement("button");
-		const err = new Error("fiber");
-		err.stack = `Error: fiber
-    at ProductCard (http://localhost:5180/src/screens/product-list/card.tsx:42:8)`;
-		attachFiber(el, { _debugStack: err, return: null });
-		expect(sourceOf(el)).toEqual({
-			file: "src/screens/product-list/card.tsx",
-			line: 42,
-			col: 8,
-			component: "ProductCard",
-		});
-	});
-
-	it("strips the origin and query so file is repo-relative", () => {
-		const el = document.createElement("span");
-		attachFiber(el, {
-			_debugStack:
-				"at PlaygroundScreen (http://localhost:5180/src/screens/playground/screen.tsx?t=171000:19:25)",
-			return: null,
-		});
-		const ref = sourceOf(el);
-		expect(ref?.file).toBe("src/screens/playground/screen.tsx");
-		expect(ref?.file).not.toContain("http://");
-		expect(ref?.file).not.toContain("?");
-	});
-
-	it("prefers the first /src/screens/ frame when walking fiber.return", () => {
-		const el = document.createElement("div");
-		const host = {
-			_debugStack:
-				"at div (http://localhost:5180/node_modules/.vite/deps/react-dom.js:12:1)",
-			return: {
-				_debugStack: SCREEN_STACK,
-				return: null,
-			},
-		};
-		attachFiber(el, host);
-		expect(sourceOf(el)?.file).toBe("src/screens/playground/screen.tsx");
-		expect(sourceOf(el)?.component).toBe("PlaygroundScreen");
-	});
-
-	it("falls back to the first /src/ frame outside node_modules/.vite", () => {
-		const el = document.createElement("div");
-		attachFiber(el, {
-			_debugStack: `Error
-    at Button (http://localhost:5180/node_modules/.vite/deps/react.js:1:1)
-    at Header (http://localhost:5180/src/lab/core/lab-view.tsx:88:3)`,
-			return: null,
-		});
-		expect(sourceOf(el)).toEqual({
-			file: "src/lab/core/lab-view.tsx",
-			line: 88,
-			col: 3,
-			component: "Header",
-		});
-	});
-
-	it("returns null when the stack only has node_modules frames", () => {
-		const el = document.createElement("div");
-		attachFiber(el, {
-			_debugStack: `Error
-    at Button (http://localhost:5180/node_modules/.vite/deps/react.js:1:1)
-    at render (http://localhost:5180/node_modules/.vite/deps/react-dom.js:9:9)`,
-			return: null,
-		});
-		expect(sourceOf(el)).toBeNull();
-	});
-
-	it("returns null when the element has no fiber", () => {
+	it("returns null for a node React did not make", () => {
 		expect(sourceOf(document.createElement("div"))).toBeNull();
 	});
 
-	it("returns null and does not throw in production (fiber, no _debugStack)", () => {
+	it("returns null, and does not throw, when the build carries no debug stack", () => {
 		const el = document.createElement("div");
-		attachFiber(el, { return: null });
-		expect(() => sourceOf(el)).not.toThrow();
-		expect(sourceOf(el)).toBeNull();
-	});
-
-	it("returns null and does not throw when _debugStack is neither string nor Error", () => {
-		const el = document.createElement("div");
-		attachFiber(el, { _debugStack: { nope: true }, return: null });
-		expect(() => sourceOf(el)).not.toThrow();
+		Object.assign(el, { __reactFiber$test: { _debugStack: undefined, return: null } });
 		expect(sourceOf(el)).toBeNull();
 	});
 });

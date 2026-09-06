@@ -163,8 +163,13 @@ describe("pick tool", () => {
     expect(btn?.textContent).toBe("说这里");
     (btn as HTMLButtonElement).click();
     expect(spawned).toHaveLength(1);
+    // Repo-relative, which is what the name of this test always claimed and
+    // what it did not assert: the dev server serves this package at `/`, so a
+    // frame reading `/src/...` is `packages/design-lab/src/...` on disk. She
+    // opens what lands here, so the prefix is the difference between a path and
+    // a guess.
     expect(spawned[0]?.source).toEqual({
-      file: "src/screens/playground/screen.tsx",
+      file: "packages/design-lab/src/screens/playground/screen.tsx",
       line: 19,
       col: 25,
       component: "PlaygroundScreen",
