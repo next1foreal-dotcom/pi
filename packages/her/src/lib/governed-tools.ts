@@ -102,6 +102,7 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	design_lab_reply: { destructive: false },
 	design_lab_resolve: { destructive: false },
 	design_mode: { destructive: false },
+	design_direction: { destructive: false },
 	design_version_list: { destructive: false },
 	design_version_show: { destructive: false },
 	design_version_since: { destructive: false },

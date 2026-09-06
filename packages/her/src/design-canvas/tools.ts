@@ -3,8 +3,9 @@ import { Type } from "typebox";
 
 import { textResult } from "../tools/shared.ts";
 import { recordResolvedDecision } from "./decisions.ts";
+import { chooseDirection, currentDirection, proposeDirections } from "./direction.ts";
 import { type CanvasEvent, newId, type Thread } from "./feed.ts";
-import { designMode, interceptDesignToolCall, setDesignMode } from "./mode.ts";
+import { designMode, interceptDesignToolCall, interceptFirstFrameToolCall, setDesignMode } from "./mode.ts";
 import { allThreads, appendEvent, readCanvas } from "./store.ts";
 
 export { withCanvasNag } from "./nag.ts";
@@ -61,7 +62,10 @@ export function registerDesignCanvasTools(pi: ExtensionAPI, deps: DesignCanvasDe
 	// extension always has it. Returning `{ block: false }` would short-circuit
 	// other handlers; build mode must yield `undefined`.
 	if (typeof pi.on === "function") {
-		pi.on("tool_call", (event) => interceptDesignToolCall(event.toolName));
+		pi.on(
+			"tool_call",
+			(event) => interceptDesignToolCall(event.toolName) ?? interceptFirstFrameToolCall(event.toolName, repoRoot),
+		);
 	}
 
 	pi.registerTool({
@@ -97,6 +101,82 @@ export function registerDesignCanvasTools(pi: ExtensionAPI, deps: DesignCanvasDe
 			}
 			return textResult("Design mode is now build. You have the hands that change the product.", {
 				mode: requested,
+			});
+		},
+	});
+
+	pi.registerTool({
+		name: "design_direction",
+		label: "Design Direction",
+		description:
+			"The first frame commits the aesthetic for every later frame in this project; you don't get to pick it silently. " +
+			"Call with no arguments to report the current direction (or that there isn't one). " +
+			'Pass propose with named directions — short memorable names like "brutalist concrete", each with type, colour attitude, and motion character — to put them in front of him. Propose does not commit. ' +
+			"Pass choose with the name he picked to freeze it. " +
+			"Even if he says to pick for him, summarise the direction you would take as a propose and wait for choose.",
+		parameters: Type.Object({
+			propose: Type.Optional(
+				Type.Array(
+					Type.Object({
+						name: Type.String({
+							description: 'Short memorable name, e.g. "brutalist concrete". Not "option A".',
+						}),
+						character: Type.String({
+							description: "A sentence or two: type, colour attitude, and motion character.",
+						}),
+					}),
+				),
+			),
+			choose: Type.Optional(
+				Type.String({
+					description: "The name of a proposed direction he picked. This is what commits it.",
+				}),
+			),
+		}),
+		async execute(_toolCallId, params: { propose?: Array<{ name: string; character: string }>; choose?: string }) {
+			const choose = typeof params.choose === "string" ? params.choose.trim() : "";
+			if (choose) {
+				const chosen = chooseDirection(choose, repoRoot);
+				if (!chosen) {
+					return textResult(
+						`No proposed direction named "${choose}". Call design_direction with propose first, then choose one of those names.`,
+						{ ok: false },
+					);
+				}
+				return textResult(`Design direction is ${chosen.name}. Frozen. The first-frame gate is lifted.`, {
+					ok: true,
+					direction: chosen,
+				});
+			}
+			if (params.propose !== undefined) {
+				const items = Array.isArray(params.propose)
+					? params.propose
+							.map((item) => ({
+								name: typeof item?.name === "string" ? item.name.trim() : "",
+								character: typeof item?.character === "string" ? item.character.trim() : "",
+							}))
+							.filter((item) => item.name && item.character)
+					: [];
+				if (items.length === 0) {
+					return textResult(
+						"propose needs at least one direction with a name and a character. No direction was stored, and none is chosen.",
+						{ ok: false },
+					);
+				}
+				proposeDirections(items, repoRoot);
+				const lines = items.map((item) => `- ${item.name}: ${item.character}`);
+				return textResult(
+					`These directions are in front of him. They are not chosen. Wait for choose.\n${lines.join("\n")}`,
+					{ ok: true, committed: false, pending: items },
+				);
+			}
+			const current = currentDirection(repoRoot);
+			if (!current) {
+				return textResult("No design direction has been chosen yet.", { chosen: false });
+			}
+			return textResult(`Design direction is ${current.name}. ${current.character}`, {
+				chosen: true,
+				direction: current,
 			});
 		},
 	});
