@@ -19,6 +19,15 @@ export type NoteSource = {
 	component: string | null;
 };
 
+/** Relative to a screen's current layout. Page x/y are derived, not stored truth. */
+export type NoteAnchor = {
+	screenId: string;
+	/** Normalized from the screen's left edge. Not clamped; may sit slightly outside. */
+	rx: number;
+	/** Normalized from the screen's top edge. Not clamped; may sit slightly outside. */
+	ry: number;
+};
+
 export type NoteThreadState = {
 	replies: NoteReply[];
 	resolved: boolean;
@@ -27,6 +36,7 @@ export type NoteThreadState = {
 	text: string;
 	screenId: string | null;
 	source?: NoteSource;
+	anchor?: NoteAnchor;
 	/** True once a `note` event has been seen — replies alone do not count. */
 	hasBody: boolean;
 };
@@ -76,6 +86,18 @@ function isSource(value: unknown): value is NoteSource {
 	);
 }
 
+export function isAnchor(value: unknown): value is NoteAnchor {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+	const a = value as { screenId?: unknown; rx?: unknown; ry?: unknown };
+	return (
+		typeof a.screenId === "string" &&
+		typeof a.rx === "number" &&
+		Number.isFinite(a.rx) &&
+		typeof a.ry === "number" &&
+		Number.isFinite(a.ry)
+	);
+}
+
 function blankThread(): NoteThreadState {
 	return {
 		replies: [],
@@ -119,6 +141,7 @@ export function projectNoteCanvas(text: string): NoteFeedProjection {
 			y?: unknown;
 			screenId?: unknown;
 			source?: unknown;
+			anchor?: unknown;
 		};
 		if (typeof e.t !== "string" || !EVENT_TYPES.has(e.t)) continue;
 		switch (e.t) {
@@ -132,6 +155,7 @@ export function projectNoteCanvas(text: string): NoteFeedProjection {
 				th.text = typeof e.text === "string" ? e.text : "";
 				th.screenId = typeof e.screenId === "string" ? e.screenId : null;
 				if (isSource(e.source)) th.source = e.source;
+				th.anchor = isAnchor(e.anchor) ? { ...e.anchor } : undefined;
 				break;
 			}
 			case "note.move": {
@@ -144,6 +168,7 @@ export function projectNoteCanvas(text: string): NoteFeedProjection {
 					th.screenId = e.screenId;
 				}
 				if (isSource(e.source)) th.source = e.source;
+				th.anchor = isAnchor(e.anchor) ? { ...e.anchor } : undefined;
 				break;
 			}
 			case "note.edit": {

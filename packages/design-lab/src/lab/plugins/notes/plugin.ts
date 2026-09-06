@@ -25,6 +25,7 @@ export const plugin: LabPlugin = {
       host: ctx.host,
       objects: ctx.objects,
       screenAt: ctx.screenAt,
+      screenLayout: ctx.screenLayout,
     });
     return {
       handleKey: (e) =>

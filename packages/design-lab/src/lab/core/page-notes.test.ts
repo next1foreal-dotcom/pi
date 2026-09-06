@@ -883,3 +883,117 @@ describe("feed is the source of truth, localStorage is a cache", () => {
 	});
 });
 
+describe("notes pin to a screen, not to the page", () => {
+	function mountAnchored(screens: Map<string, Rect>) {
+		const host = document.createElement("div");
+		document.body.appendChild(host);
+		const objects = stubObjects();
+		const screenAt = (p: Point) => {
+			for (const [id, r] of screens) {
+				if (
+					p.x >= r.x &&
+					p.x < r.x + r.width &&
+					p.y >= r.y &&
+					p.y < r.y + r.height
+				)
+					return id;
+			}
+			return null;
+		};
+		live = new StickyNotes({
+			host,
+			objects,
+			storageKey: null,
+			screenAt,
+			screenLayout: (id) => {
+				const r = screens.get(id);
+				return r ? { ...r } : undefined;
+			},
+		});
+		return { host, objects, screens };
+	}
+
+	it("an anchored note follows when its screen moves; an unanchored one does not", () => {
+		const screens = new Map<string, Rect>([
+			["playground", { x: 0, y: 0, width: 1000, height: 500 }],
+		]);
+		const { objects } = mountAnchored(screens);
+		const pinned = live?.spawn({ x: 200, y: 100, text: "on screen" });
+		const floating = live?.spawn({ x: 5000, y: 4000, text: "on canvas" });
+		expect(pinned?.anchor).toEqual({
+			screenId: "playground",
+			rx: 0.2,
+			ry: 0.2,
+		});
+		expect(floating?.anchor).toBeUndefined();
+		objects.select(null);
+
+		screens.set("playground", { x: 400, y: 50, width: 1000, height: 500 });
+		live?.onCameraWrite();
+
+		const notes = live?.getNotes() ?? [];
+		const onScreen = notes.find((n) => n.fid === pinned?.fid);
+		const onCanvas = notes.find((n) => n.fid === floating?.fid);
+		expect(onScreen).toMatchObject({ x: 600, y: 150 });
+		expect(onCanvas).toMatchObject({ x: 5000, y: 4000 });
+	});
+
+	it("a deleted screen leaves the note in place and drops the anchor", () => {
+		const screens = new Map<string, Rect>([
+			["playground", { x: 0, y: 0, width: 1000, height: 500 }],
+		]);
+		const { objects } = mountAnchored(screens);
+		const pinned = live?.spawn({ x: 200, y: 100 });
+		objects.select(null);
+		expect(live?.getNotes()[0]?.anchor).toBeDefined();
+
+		screens.delete("playground");
+		live?.onCameraWrite();
+
+		const left = live?.getNotes()[0];
+		expect(left?.fid).toBe(pinned?.fid);
+		expect(left?.x).toBe(200);
+		expect(left?.y).toBe(100);
+		expect(left?.anchor).toBeUndefined();
+	});
+
+	it("dragging a note onto a screen stores an anchor; dragging off clears it", () => {
+		const screens = new Map<string, Rect>([
+			["playground", { x: 0, y: 0, width: 1000, height: 500 }],
+		]);
+		const { objects } = mountAnchored(screens);
+		const n = live?.spawn({ x: 5000, y: 4000 });
+		expect(n?.anchor).toBeUndefined();
+		const init = objects.inits.get(`note:${n?.id}`);
+		init?.onLayout?.({ x: 200, y: 100, width: 240, height: 240 });
+		expect(live?.getNotes()[0]?.anchor).toEqual({
+			screenId: "playground",
+			rx: 0.2,
+			ry: 0.2,
+		});
+
+		init?.onLayout?.({ x: 5000, y: 4000, width: 240, height: 240 });
+		expect(live?.getNotes()[0]?.anchor).toBeUndefined();
+		expect(live?.getNotes()[0]).toMatchObject({ x: 5000, y: 4000 });
+	});
+
+	it("a note event carries the anchor when the note sits on a screen", () => {
+		const screens = new Map<string, Rect>([
+			["playground", { x: 0, y: 0, width: 1000, height: 500 }],
+		]);
+		mountAnchored(screens);
+		const n = live?.spawn({ x: 200, y: 100, text: "pin" });
+		const posts = eventPosts().filter((p) => p.body.t === "note");
+		expect(posts[0]?.body).toMatchObject({
+			t: "note",
+			id: n?.fid,
+			screenId: "playground",
+			x: 200,
+			y: 100,
+			text: "pin",
+			anchor: { screenId: "playground", rx: 0.2, ry: 0.2 },
+		});
+	});
+});
+
+

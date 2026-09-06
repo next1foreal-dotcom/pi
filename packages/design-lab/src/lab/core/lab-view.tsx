@@ -283,6 +283,11 @@ export function InteractionLab() {
         );
       },
       screenAt: (point: Point) => screenAtPoint(point, SCREENS, session.layouts),
+      screenLayout: (id: string) => {
+        if (!screenById(id) || !session.layouts[id]) return undefined;
+        const l = liveLayout(session, id);
+        return { x: l.x, y: l.y, width: l.width, height: l.height };
+      },
       objects: labObjects,
     });
     const owned: HTMLElement[] = [];
@@ -887,7 +892,7 @@ export function InteractionLab() {
       style={{ "--color-canvas": canvasColor } as CSSProperties}
     >
       <canvas className={styles.pixelGrid} ref={stableAttach.grid} />
-      <div className={styles.layer} ref={stableAttach.layer} data-lab-layer>
+      <div className={`${styles.layer} layer`} ref={stableAttach.layer} data-lab-layer>
         {SCREENS.map((def) => (
           <ScreenSlot
             key={def.id}

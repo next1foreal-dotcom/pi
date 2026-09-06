@@ -10,9 +10,11 @@
 
 import type { LabObjects } from "../plugin-api";
 import {
+	isAnchor,
 	isNoteFid,
 	newFeedId,
 	projectNoteCanvas,
+	type NoteAnchor,
 	type NoteReply,
 	type NoteThreadState,
 } from "./note-feed";
@@ -59,6 +61,11 @@ export interface StickyNote {
 	replies: NoteReply[];
 	resolved: boolean;
 	source?: { file: string; line: number; col: number; component: string | null };
+	/**
+	 * When set, page x/y are derived from this screen's current layout.
+	 * Blank-canvas notes omit it and keep stored page coordinates.
+	 */
+	anchor?: NoteAnchor;
 }
 
 export interface StickyNotesOptions {
@@ -68,6 +75,8 @@ export interface StickyNotesOptions {
 	defaultColor?: NoteColor;
 	onChange?: (notes: StickyNotes) => void;
 	screenAt?: (point: Point) => string | null;
+	/** Current page-space rect of a screen, or undefined if that screen is gone. */
+	screenLayout?: (id: string) => Rect | undefined;
 }
 
 /** Default note edge in page units. */
@@ -369,6 +378,7 @@ export class StickyNotes {
 	private onChange: StickyNotesOptions["onChange"];
 	private objects: LabObjects;
 	private screenAt: ((point: Point) => string | null) | undefined;
+	private screenLayout: ((id: string) => Rect | undefined) | undefined;
 
 	private root!: HTMLDivElement;
 	private refs = new Map<number, NoteRefs>();
@@ -381,6 +391,7 @@ export class StickyNotes {
 	private pollTimer: ReturnType<typeof setInterval> | undefined;
 	private lastEmittedText = new Map<number, string>();
 	private applyingFeed = false;
+	private applyingAnchor = false;
 	private closed = false;
 	private feedLive = new Map<string, NoteThreadState>();
 	private threadListeners = new Set<() => void>();
@@ -394,6 +405,7 @@ export class StickyNotes {
 		this.onChange = options.onChange;
 		this.objects = options.objects;
 		this.screenAt = options.screenAt;
+		this.screenLayout = options.screenLayout;
 		if (!this.supported) return;
 		acquireStyles(
 			buildCss({
@@ -431,7 +443,10 @@ export class StickyNotes {
 				x: n.x,
 				y: n.y,
 				text: n.text,
-				screenId: this.screenAt?.({ x: n.x, y: n.y }) ?? null,
+				screenId:
+					n.anchor?.screenId ??
+					this.screenAt?.({ x: n.x, y: n.y }) ??
+					null,
 				source: n.source,
 				hasBody: true,
 			});
@@ -503,7 +518,10 @@ export class StickyNotes {
 			replies: [],
 			resolved: false,
 			source: init.source,
+			anchor: init.anchor ? { ...init.anchor } : undefined,
 		};
+		if (note.anchor) this.applyAnchorToNote(note);
+		if (!note.anchor) this.reanchorFromPage(note);
 		this.notes.push(note);
 		this.mountNote(note);
 		this.registerNote(note);
@@ -770,12 +788,83 @@ export class StickyNotes {
 	 * the viewport still flips its toolbar below itself instead of pushing it
 	 * off-screen. Costs one layout read per frame, and only while a note is
 	 * selected — placeToolbar is the only reader.
+	 *
+	 * Also re-derives page positions for notes pinned to a screen, so a frame
+	 * drag, fill, or resize carries the notes with it. The selected note is
+	 * skipped: that is the one being dragged, and rewriting it from the old
+	 * rx/ry would pin it in place.
 	 */
 	onCameraWrite() {
+		this.syncAnchoredNotes();
 		const sel = this.objects.selectedId();
 		if (sel == null) return;
 		const ours = this.notes.find((n) => this.noteObjectId(n.id) === sel);
 		if (ours) this.placeToolbar(ours.id);
+	}
+
+	/** Hit-test the note's page point and store rx/ry, or drop the anchor. */
+	private reanchorFromPage(note: StickyNote) {
+		const screenId = this.screenAt?.({ x: note.x, y: note.y }) ?? null;
+		if (!screenId) {
+			note.anchor = undefined;
+			return;
+		}
+		const layout = this.screenLayout?.(screenId);
+		if (!layout || layout.width === 0 || layout.height === 0) {
+			note.anchor = undefined;
+			return;
+		}
+		note.anchor = {
+			screenId,
+			rx: (note.x - layout.x) / layout.width,
+			ry: (note.y - layout.y) / layout.height,
+		};
+	}
+
+	/**
+	 * Derive page x/y from the stored anchor. If the screen is gone, drop the
+	 * anchor and leave the last page point (the opinion stays).
+	 * Returns true when x/y or the anchor itself changed.
+	 */
+	private applyAnchorToNote(note: StickyNote): boolean {
+		if (!note.anchor) return false;
+		const layout = this.screenLayout?.(note.anchor.screenId);
+		if (!layout) {
+			note.anchor = undefined;
+			return true;
+		}
+		const x = layout.x + note.anchor.rx * layout.width;
+		const y = layout.y + note.anchor.ry * layout.height;
+		if (note.x === x && note.y === y) return false;
+		note.x = x;
+		note.y = y;
+		return true;
+	}
+
+	private writeNotePagePos(note: StickyNote) {
+		const id = this.noteObjectId(note.id);
+		const layout = this.objects.layout(id);
+		if (!layout || (layout.x === note.x && layout.y === note.y)) return;
+		this.applyingAnchor = true;
+		try {
+			this.objects.setLayout(id, { ...layout, x: note.x, y: note.y });
+		} finally {
+			this.applyingAnchor = false;
+		}
+	}
+
+	private syncAnchoredNotes() {
+		const selected = this.objects.selectedId();
+		let detached = false;
+		for (const note of this.notes) {
+			if (!note.anchor) continue;
+			if (selected === this.noteObjectId(note.id)) continue;
+			const had = note.anchor;
+			const changed = this.applyAnchorToNote(note);
+			if (!note.anchor && had) detached = true;
+			if (changed && note.anchor) this.writeNotePagePos(note);
+		}
+		if (detached) this.commit();
 	}
 
 	private registerNote(note: StickyNote) {
@@ -794,14 +883,19 @@ export class StickyNotes {
 				note.y = rect.y;
 				note.w = rect.width;
 				note.h = note.compact ? Math.round(rect.height / NOTE_COMPACT_RATIO) : rect.height;
-				if (this.applyingFeed) return;
+				if (this.applyingFeed || this.applyingAnchor) return;
+				this.reanchorFromPage(note);
 				this.emit({
 					t: "note.move",
 					id: note.fid,
-					screenId: this.screenAt?.({ x: note.x, y: note.y }) ?? null,
+					screenId:
+						note.anchor?.screenId ??
+						this.screenAt?.({ x: note.x, y: note.y }) ??
+						null,
 					x: note.x,
 					y: note.y,
 					...(note.source ? { source: note.source } : {}),
+					...(note.anchor ? { anchor: { ...note.anchor } } : {}),
 				});
 				this.commit();
 			},
@@ -834,7 +928,9 @@ export class StickyNotes {
 			y: rect.y,
 			replies: [],
 			resolved: false,
+			anchor: undefined,
 		};
+		this.reanchorFromPage(copy);
 		this.notes.push(copy);
 		this.mountNote(copy);
 		this.registerNote(copy);
@@ -1243,6 +1339,13 @@ export class StickyNotes {
 						t: n.text,
 						h: sanitizeHtml(n.html),
 						fi: n.fid,
+						an: n.anchor
+							? {
+									screenId: n.anchor.screenId,
+									rx: n.anchor.rx,
+									ry: n.anchor.ry,
+								}
+							: undefined,
 					})),
 				}),
 			);
@@ -1283,6 +1386,7 @@ export class StickyNotes {
 					t: string;
 					h?: unknown;
 					fi?: unknown;
+					an?: unknown;
 				}[];
 			};
 			if (data.v !== 1 || !Array.isArray(data.notes)) return;
@@ -1309,7 +1413,9 @@ export class StickyNotes {
 							: textToHtml(typeof n.t === "string" ? n.t : ""),
 					replies: [],
 					resolved: false,
+					anchor: isAnchor(n.an) ? { ...n.an } : undefined,
 				};
+				if (note.anchor) this.applyAnchorToNote(note);
 				this.notes.push(note);
 				this.mountNote(note); // derives note.text from the mounted DOM
 				this.registerNote(note);
@@ -1325,11 +1431,15 @@ export class StickyNotes {
 		this.emit({
 			t: "note",
 			id: note.fid,
-			screenId: this.screenAt?.({ x: note.x, y: note.y }) ?? null,
+			screenId:
+				note.anchor?.screenId ??
+				this.screenAt?.({ x: note.x, y: note.y }) ??
+				null,
 			x: note.x,
 			y: note.y,
 			text: note.text,
 			...(note.source ? { source: note.source } : {}),
+			...(note.anchor ? { anchor: { ...note.anchor } } : {}),
 		});
 		this.lastEmittedText.set(note.id, note.text);
 	}
@@ -1430,15 +1540,33 @@ export class StickyNotes {
 	private alignExisting(note: StickyNote, st: NoteThreadState): boolean {
 		if (!st.hasBody) return false;
 		let dirty = false;
-		if (note.x !== st.x || note.y !== st.y) {
-			note.x = st.x;
-			note.y = st.y;
+		const nextAnchor = st.anchor ? { ...st.anchor } : undefined;
+		const sameAnchor =
+			note.anchor?.screenId === nextAnchor?.screenId &&
+			note.anchor?.rx === nextAnchor?.rx &&
+			note.anchor?.ry === nextAnchor?.ry;
+		if (!sameAnchor) {
+			note.anchor = nextAnchor;
+			dirty = true;
+		}
+		let x = st.x;
+		let y = st.y;
+		if (note.anchor) {
+			const screen = this.screenLayout?.(note.anchor.screenId);
+			if (screen) {
+				x = screen.x + note.anchor.rx * screen.width;
+				y = screen.y + note.anchor.ry * screen.height;
+			}
+		}
+		if (note.x !== x || note.y !== y) {
+			note.x = x;
+			note.y = y;
 			const layout = this.objects.layout(this.noteObjectId(note.id));
 			if (layout) {
 				this.objects.setLayout(this.noteObjectId(note.id), {
 					...layout,
-					x: st.x,
-					y: st.y,
+					x,
+					y,
 				});
 			}
 			dirty = true;
@@ -1476,7 +1604,9 @@ export class StickyNotes {
 			replies: st.replies,
 			resolved: st.resolved,
 			source: st.source,
+			anchor: st.anchor ? { ...st.anchor } : undefined,
 		};
+		if (note.anchor) this.applyAnchorToNote(note);
 		this.notes.push(note);
 		this.mountNote(note);
 		this.registerNote(note);

@@ -139,4 +139,56 @@ describe("projectNoteFeed", () => {
 		);
 		expect(reopened.get("n_aaaaaaaaaaaa")?.resolved).toBe(false);
 	});
+
+	it("projects an optional anchor on note and note.move", () => {
+		const threads = projectNoteFeed(
+			line({
+				t: "note",
+				id: "n_aaaaaaaaaaaa",
+				at: AT,
+				author: "fei",
+				screenId: "playground",
+				x: 10,
+				y: 20,
+				text: "pin",
+				anchor: { screenId: "playground", rx: 0.25, ry: 0.5 },
+			}) +
+				line({
+					t: "note.move",
+					id: "n_aaaaaaaaaaaa",
+					at: AT,
+					author: "fei",
+					screenId: "mosaic",
+					x: 90,
+					y: 40,
+					anchor: { screenId: "mosaic", rx: 0.1, ry: 0.2 },
+				}),
+		);
+		const note = threads.get("n_aaaaaaaaaaaa");
+		expect(note?.x).toBe(90);
+		expect(note?.y).toBe(40);
+		expect(note?.screenId).toBe("mosaic");
+		expect(note?.anchor).toEqual({ screenId: "mosaic", rx: 0.1, ry: 0.2 });
+	});
+
+	it("still projects a legacy note that has no anchor", () => {
+		const threads = projectNoteFeed(
+			line({
+				t: "note",
+				id: "n_aaaaaaaaaaaa",
+				at: AT,
+				author: "fei",
+				screenId: "playground",
+				x: 10,
+				y: 20,
+				text: "old pin",
+			}),
+		);
+		const note = threads.get("n_aaaaaaaaaaaa");
+		expect(note?.text).toBe("old pin");
+		expect(note?.x).toBe(10);
+		expect(note?.y).toBe(20);
+		expect(note?.screenId).toBe("playground");
+		expect(note?.anchor).toBeUndefined();
+	});
 });

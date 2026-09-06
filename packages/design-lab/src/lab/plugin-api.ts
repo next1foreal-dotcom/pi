@@ -1,3 +1,4 @@
+import { installTokenPreview } from "./core/token-preview";
 import type { Camera, Point, Rect, ResizeEdge } from "./core/types";
 
 /**
@@ -82,6 +83,8 @@ export interface LabPluginContext {
   viewportCenterPage(): Point;
   /** The screen whose frame contains this page-space point, if any. */
   screenAt(point: Point): string | null;
+  /** Live page-space rect of a screen (fill/drag included). Missing → gone. */
+  screenLayout?(id: string): Rect | undefined;
   objects: LabObjects;
 }
 
@@ -176,6 +179,11 @@ export type LabBridge = {
   describe(id: string): PluginApiDoc[];
   /** Every published api, keyed by plugin id. Start here. */
   help(): Record<string, PluginApiDoc[]>;
+  /**
+   * Live token preview. `css` is injected scoped to `.layer`; `null` removes it.
+   * Preview only — does not write files.
+   */
+  tokens: { preview(css: string | null): void };
 };
 
 declare global {
@@ -234,14 +242,20 @@ export function publishPluginApis(
     apis.set(m.id, m.handle.api);
     docs.set(m.id, m.docs ?? []);
   }
+  const tokens = installTokenPreview(() => {
+    const node = document.querySelector("[data-lab-layer]");
+    return node instanceof HTMLElement ? node : null;
+  });
   const bridge: LabBridge = {
     plugin: (id) => apis.get(id),
     plugins: () => [...apis.keys()],
     describe: (id) => docs.get(id) ?? [],
     help: () => Object.fromEntries(docs),
+    tokens: { preview: tokens.preview },
   };
   window.lab = bridge;
   return () => {
+    tokens.destroy();
     if (window.lab === bridge) window.lab = undefined;
   };
 }
