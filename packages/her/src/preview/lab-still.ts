@@ -36,22 +36,38 @@ export interface CaptureResult {
 	scroll?: ScrollReadout;
 }
 
+/**
+ * A frame prepared to ride back in the tool result: the base64 payload plus, when
+ * the frame had to be shrunk to fit, the note that maps its coordinates back to
+ * the real screen. She measures things off these — a silently scaled frame would
+ * make every measurement wrong.
+ */
+export interface StillImage {
+	data: string;
+	mimeType: string;
+	note?: string;
+}
+
 export interface LabStillDeps {
 	repoRoot?: string;
 	probePort?: (port: number) => Promise<boolean>;
 	capture?: (request: CaptureRequest) => Promise<CaptureResult>;
+	/** Turns raw PNG bytes into an attachable frame; null means it could not be attached. */
+	prepareImage?: (bytes: Buffer) => Promise<StillImage | null>;
 }
 
 export function registerLabStillTools(pi: ExtensionAPI, deps: LabStillDeps = {}): void {
 	const repoRoot = deps.repoRoot ?? SAMANTHA_REPO_ROOT;
 	const probePort = deps.probePort ?? probeListeningPort;
 	const capture = deps.capture ?? captureWithPlaywright;
+	const prepareImage = deps.prepareImage ?? defaultPrepareImage;
 
 	pi.registerTool({
 		name: "design_lab_still",
 		label: "Design Lab Still",
 		description:
-			"Photograph one of your design lab screens and get the PNG path back, so you can open it and look. " +
+			"Photograph one of your design lab screens. The frames come back attached to this result, so you " +
+			"see them without opening anything. " +
 			"Use it before calling any design done: a screen you have not looked at is not verified, and saying " +
 			"it looks right without looking is the one thing that fails a design outright. " +
 			"The lab must be open (design_lab_open); if it is not, this skips and tells you — skip is not failure.",
@@ -101,23 +117,57 @@ export function registerLabStillTools(pi: ExtensionAPI, deps: LabStillDeps = {})
 			}
 
 			const paths: string[] = [];
+			const frames: Array<{ type: "image"; data: string; mimeType: string }> = [];
+			const scaleNotes: string[] = [];
 			for (const shot of result.shots) {
 				const relative = join("design", "stills", `${screenId}-${shot.part}.png`).replaceAll("\\", "/");
 				const absolute = join(repoRoot, relative);
 				await mkdir(dirname(absolute), { recursive: true });
 				await writeFile(absolute, shot.bytes);
 				paths.push(relative);
+				// A frame that cannot be attached still gets written, so the path below is
+				// the fallback rather than a dead end.
+				let prepared: StillImage | null = null;
+				try {
+					prepared = await prepareImage(shot.bytes);
+				} catch {
+					prepared = null;
+				}
+				if (!prepared) continue;
+				frames.push({ type: "image", data: prepared.data, mimeType: prepared.mimeType });
+				if (prepared.note) scaleNotes.push(`${shot.part}: ${prepared.note}`);
 			}
 			const noTail = result.scroll ? result.scroll.after === result.scroll.before : false;
 			const tail = noTail
 				? ` This screen does not scroll (content ${result.scroll?.scrollHeight}px, viewport ${result.scroll?.clientHeight}px), so one frame is the whole page and there is no second half to shoot.`
 				: "";
-			return textResult(
-				`Wrote ${paths.join(" and ")}.${tail} Read the image(s) now and look before you call this done.`,
-				{ ok: true, paths, scrolls: !noTail, scroll: result.scroll },
-			);
+			const scale = scaleNotes.length > 0 ? ` ${scaleNotes.join(" ")}` : "";
+			const missing =
+				frames.length < paths.length
+					? ` ${paths.length - frames.length} frame(s) could not be attached; open those from disk.`
+					: "";
+			const text =
+				frames.length > 0
+					? `${frames.length} frame(s) of "${screenId}" are attached below — look at them before you call this done.${tail}${scale}${missing} Also saved to ${paths.join(" and ")}.`
+					: `Wrote ${paths.join(" and ")}, but could not attach the frame(s) here.${tail} Open and look at them before you call this done.`;
+			return {
+				content: [{ type: "text" as const, text }, ...frames],
+				details: { ok: true, paths, attached: frames.length, scrolls: !noTail, scroll: result.scroll },
+			};
 		},
 	});
+}
+
+/**
+ * Shrink a frame to what a model will accept, and say by how much. Imported
+ * lazily: the resize runs in a worker thread, and nothing should spin one up in
+ * a test that never attaches a frame.
+ */
+async function defaultPrepareImage(bytes: Buffer): Promise<StillImage | null> {
+	const { formatDimensionNote, resizeImage } = await import("@earendil-works/pi-coding-agent");
+	const resized = await resizeImage(bytes, "image/png");
+	if (!resized) return null;
+	return { data: resized.data, mimeType: resized.mimeType, note: formatDimensionNote(resized) };
 }
 
 /** Vite binds ::1 on this machine, so a v4-only probe reports a live server as dead. */

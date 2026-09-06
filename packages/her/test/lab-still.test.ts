@@ -18,13 +18,29 @@ function harness(deps: LabStillDeps): Map<string, ToolDefinition> {
 	return tools;
 }
 
+type ResultPart = { type: string; text?: string; data?: string; mimeType?: string };
+
 async function run(tool: ToolDefinition | undefined, params: Record<string, unknown>) {
 	assert.ok(tool);
 	const result = (await tool.execute("call-1", params, undefined, undefined, undefined as never)) as {
-		content: Array<{ type: string; text: string }>;
+		content: ResultPart[];
 		details?: Record<string, unknown>;
 	};
-	return { text: result.content.map((part) => part.text).join("\n"), details: result.details ?? {} };
+	const text = result.content
+		.filter((part) => part.type === "text")
+		.map((part) => part.text)
+		.join("\n");
+	const images = result.content.filter((part) => part.type === "image");
+	return { text, images, details: result.details ?? {} };
+}
+
+/** Stands in for the resize worker; returns a frame whose payload names its source bytes. */
+function fakePrepare(note?: string) {
+	return async (bytes: Buffer) => ({
+		data: `base64:${bytes.toString("utf8")}`,
+		mimeType: "image/png",
+		note,
+	});
 }
 
 async function tempRoot(t: test.TestContext): Promise<string> {
@@ -66,6 +82,7 @@ test("a hit writes the png and hands back the path", async (t) => {
 	const png = Buffer.from("89504e470d0a1a0a", "hex");
 	const tools = harness({
 		repoRoot: root,
+		prepareImage: fakePrepare(),
 		probePort: async () => true,
 		capture: async ({ screenId, parts }) => ({
 			screenIds: [screenId],
@@ -88,6 +105,7 @@ test("both parts is the default and produces two stills", async (t) => {
 	const png = Buffer.from("89504e470d0a1a0a", "hex");
 	const tools = harness({
 		repoRoot: root,
+		prepareImage: fakePrepare(),
 		probePort: async () => true,
 		capture: async ({ screenId, parts }) => ({
 			screenIds: [screenId],
@@ -103,11 +121,77 @@ test("design_lab_still is registered as a governed non-destructive tool", () => 
 	assert.equal(governedTools.design_lab_still?.destructive, false);
 });
 
+test("the frames come back attached, so looking is not a second thing she has to remember", async (t) => {
+	const root = await tempRoot(t);
+	const tools = harness({
+		repoRoot: root,
+		prepareImage: fakePrepare(),
+		probePort: async () => true,
+		capture: async ({ screenId }) => ({
+			screenIds: [screenId],
+			shots: [
+				{ part: "top" as const, bytes: Buffer.from("top-bytes") },
+				{ part: "bottom" as const, bytes: Buffer.from("bottom-bytes") },
+			],
+			scroll: { before: 0, after: 1200, scrollHeight: 2100, clientHeight: 900 },
+		}),
+	});
+	const { images, details } = await run(tools.get("design_lab_still"), { screenId: "product-list" });
+
+	assert.equal(details.attached, 2);
+	assert.deepEqual(
+		images.map((image) => image.data),
+		["base64:top-bytes", "base64:bottom-bytes"],
+	);
+	assert.deepEqual(new Set(images.map((image) => image.mimeType)), new Set(["image/png"]));
+});
+
+test("a frame that had to be shrunk says so, because she measures off these", async (t) => {
+	const root = await tempRoot(t);
+	const tools = harness({
+		repoRoot: root,
+		prepareImage: fakePrepare("[Image: original 3000x2000, displayed at 2000x1333. Multiply coordinates by 1.50.]"),
+		probePort: async () => true,
+		capture: async ({ screenId }) => ({
+			screenIds: [screenId],
+			shots: [{ part: "top" as const, bytes: Buffer.from("wide") }],
+			scroll: { before: 0, after: 0, scrollHeight: 900, clientHeight: 900 },
+		}),
+	});
+	const { text } = await run(tools.get("design_lab_still"), { screenId: "loora-landing" });
+
+	assert.match(text, /Multiply coordinates by 1\.50/);
+});
+
+test("a frame that cannot be attached still lands on disk and says to open it", async (t) => {
+	const root = await tempRoot(t);
+	const tools = harness({
+		repoRoot: root,
+		prepareImage: async () => {
+			throw new Error("resize worker died");
+		},
+		probePort: async () => true,
+		capture: async ({ screenId }) => ({
+			screenIds: [screenId],
+			shots: [{ part: "top" as const, bytes: Buffer.from("89504e470d0a1a0a", "hex") }],
+		}),
+	});
+	const { text, images, details } = await run(tools.get("design_lab_still"), { screenId: "loora-landing" });
+
+	assert.equal(details.ok, true);
+	assert.equal(details.attached, 0);
+	assert.equal(images.length, 0);
+	assert.deepEqual(details.paths, ["design/stills/loora-landing-top.png"]);
+	assert.match(text, /could not attach/i);
+	assert.match(text, /open and look/i);
+});
+
 test("a screen with no tail yields one frame and says why", async (t) => {
 	const root = await tempRoot(t);
 	const png = Buffer.from("89504e470d0a1a0a", "hex");
 	const tools = harness({
 		repoRoot: root,
+		prepareImage: fakePrepare(),
 		probePort: async () => true,
 		// The lab host is a fixed 900px box: scrollTop cannot move, so the tail shot is the same frame.
 		capture: async ({ screenId }) => ({
@@ -131,6 +215,7 @@ test("a screen that really scrolls yields two different frames and claims no suc
 	const bottom = Buffer.from("89504e470d0a1a0b", "hex");
 	const tools = harness({
 		repoRoot: root,
+		prepareImage: fakePrepare(),
 		probePort: async () => true,
 		capture: async ({ screenId }) => ({
 			screenIds: [screenId],
