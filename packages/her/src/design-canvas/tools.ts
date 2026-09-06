@@ -6,6 +6,7 @@ import { recordResolvedDecision } from "./decisions.ts";
 import { chooseDirection, currentDirection, proposeDirections } from "./direction.ts";
 import { type CanvasEvent, newId, type Thread } from "./feed.ts";
 import { designMode, interceptDesignToolCall, interceptFirstFrameToolCall, setDesignMode } from "./mode.ts";
+import { installCanvasNagHook } from "./nag.ts";
 import { allThreads, appendEvent, readCanvas } from "./store.ts";
 
 export { withCanvasNag } from "./nag.ts";
@@ -57,6 +58,11 @@ export function registerDesignCanvasTools(pi: ExtensionAPI, deps: DesignCanvasDe
 	const makeId = deps.makeId ?? ((p: "n" | "r") => newId(p));
 
 	const emit = (event: CanvasEvent) => appendEvent(event, repoRoot);
+
+	// Without this the hitchhikes only ride on tools registered through
+	// `withCanvasNag`, which in production is a single one. See the note on
+	// installCanvasNagHook.
+	installCanvasNagHook(pi, repoRoot);
 
 	// Existing tests fake `pi` without `on`. Skip rather than throw — the real
 	// extension always has it. Returning `{ block: false }` would short-circuit

@@ -20,10 +20,14 @@ import { summarizeForCompaction } from "../src/compaction.ts";
 import { bumpCompactionEpoch, compactionEpoch } from "../src/design-canvas/epoch.ts";
 import type { CanvasEvent } from "../src/design-canvas/feed.ts";
 import {
+	_resetReviewNudgeState,
 	acceptProposal,
 	declineProposal,
+	installCanvasNagHook,
 	pendingForHer,
 	pendingProposals,
+	VISUAL_MODIFYING_TOOLS,
+	VISUAL_OBSERVER_TOOLS,
 	withCanvasNag,
 } from "../src/design-canvas/nag.ts";
 import { appendEvent, readCanvas, readCursor } from "../src/design-canvas/store.ts";
@@ -934,6 +938,226 @@ test("mtime read failure after delivery does not throw and does not resend", asy
 		assert.match(after.content[1]?.text ?? "", /n1 on product-list: too tight/);
 		assert.doesNotMatch(after.content.map((part) => part.text).join("\n"), /这些是产品真正 ship 的值/);
 		assert.doesNotMatch(after.content.map((part) => part.text).join("\n"), /产品的 token 变了/);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+// ── visual review nudge (fourth hitchhike) ─────────────────────────────
+
+const REVIEW_NUDGE_PATTERN = /这一版你还没看过/;
+const SIX_CRITERIA_PATTERN = /贴合、间距、层次、对比、对齐、真实感/;
+const TOOL_NAME_PATTERN = /design_lab_still/;
+
+test("visual modifier without a subsequent look triggers the review nudge once", async () => {
+	_resetReviewNudgeState();
+	const root = tempRoot();
+	try {
+		// "edit" is a visual modifier — the nudge should appear on its result.
+		const result = await runDummy(root, () => originalResult(), "edit");
+		const nudge = nagText(result);
+		assert.ok(nudge, "nudge should be present after a visual modifier");
+		assert.match(nudge, REVIEW_NUDGE_PATTERN, "text says she has not looked");
+		assert.match(nudge, TOOL_NAME_PATTERN, "text names the observer tool");
+		assert.match(nudge, SIX_CRITERIA_PATTERN, "text carries the six review criteria");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("looking after a visual change clears the nudge — no nudge on the observer itself", async () => {
+	_resetReviewNudgeState();
+	const root = tempRoot();
+	try {
+		// First: a visual modifier fires the nudge.
+		await runDummy(root, () => originalResult(), "edit");
+		// Then: she looks — the observer should NOT carry the nudge.
+		const observed = await runDummy(root, () => originalResult(), "design_lab_still");
+		assert.equal(observed.content.length, 1, "observer result has no nudge");
+		assert.equal(observed.content[0].text, "photo ok");
+		// A subsequent tool should also have no nudge (she already looked).
+		const after = await runDummy(root, () => originalResult(), "dummy");
+		assert.equal(after.content.length, 1, "no nudge after she already looked");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("no visual change means no nudge — read-only tools are silent", async () => {
+	_resetReviewNudgeState();
+	const root = tempRoot();
+	try {
+		const result = await runDummy(root, () => originalResult(), "design_lab_notes");
+		assert.equal(result.content.length, 1, "no extras when nothing was modified");
+		assert.equal(result.content[0].text, "photo ok");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("one visual change then three tool calls: nudge appears only on the first", async () => {
+	_resetReviewNudgeState();
+	const root = tempRoot();
+	try {
+		// The modifier itself carries the nudge.
+		const first = await runDummy(root, () => originalResult(), "write");
+		assert.match(nagText(first) ?? "", REVIEW_NUDGE_PATTERN, "nudge on the modifier");
+		// Next three non-modifier, non-observer tools: no nudge.
+		const second = await runDummy(root, () => originalResult(), "dummy_a");
+		assert.equal(second.content.length, 1, "second call: no nudge");
+		const third = await runDummy(root, () => originalResult(), "dummy_b");
+		assert.equal(third.content.length, 1, "third call: no nudge");
+		const fourth = await runDummy(root, () => originalResult(), "dummy_c");
+		assert.equal(fourth.content.length, 1, "fourth call: no nudge");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("looking then modifying again fires a new nudge", async () => {
+	_resetReviewNudgeState();
+	const root = tempRoot();
+	try {
+		// First round: modify → nudge.
+		const r1 = await runDummy(root, () => originalResult(), "bash");
+		assert.match(nagText(r1) ?? "", REVIEW_NUDGE_PATTERN, "first nudge");
+		// Look: clears it.
+		await runDummy(root, () => originalResult(), "design_lab_still");
+		// Second round: modify again → new nudge.
+		const r2 = await runDummy(root, () => originalResult(), "design_system_apply");
+		assert.match(nagText(r2) ?? "", REVIEW_NUDGE_PATTERN, "second nudge after new change");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("design_lab_still does not trigger the review nudge on itself", async () => {
+	_resetReviewNudgeState();
+	const root = tempRoot();
+	try {
+		// Calling design_lab_still with no prior visual change: no nudge.
+		const r1 = await runDummy(root, () => originalResult(), "design_lab_still");
+		assert.equal(r1.content.length, 1, "no nudge when nothing was changed");
+		// Even after a visual change, the observer clears it — no self-trigger.
+		await runDummy(root, () => originalResult(), "edit");
+		const r2 = await runDummy(root, () => originalResult(), "design_lab_still");
+		assert.equal(r2.content.length, 1, "observer clears the flag, no nudge on itself");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("four hitchhikes in order: todo → proposal → tokens → review nudge", async () => {
+	_resetReviewNudgeState();
+	const root = tempRoot();
+	try {
+		// Set up all four conditions.
+		appendEvent(fromFei("n1", "too tight"), root);
+		plantProposal(root, { id: "p_old", items: SAMPLE_ITEMS, from: ["d1", "d2", "d3"] });
+		plantStyleGuide(root);
+		// Use a visual modifier so the review nudge fires too.
+		const result = await runDummy(root, () => originalResult(), "edit");
+		assert.equal(result.content.length, 5, "original + todo + proposal + style guide + review nudge");
+		assert.equal(result.content[0].text, "photo ok", "original at [0]");
+		assert.match(result.content[1].text, /没处理的意见/, "todo at [1]");
+		assert.equal(result.content[2].text, expectedProposalNag(SAMPLE_ITEMS, "product-list"), "proposal at [2]");
+		assert.match(result.content[3].text, /这些是产品真正 ship 的值/, "style guide at [3]");
+		assert.match(result.content[4].text, REVIEW_NUDGE_PATTERN, "review nudge at [4]");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("VISUAL_MODIFYING_TOOLS and VISUAL_OBSERVER_TOOLS are disjoint", () => {
+	for (const name of VISUAL_MODIFYING_TOOLS) {
+		assert.equal(VISUAL_OBSERVER_TOOLS.has(name), false, `${name} must not be in both sets`);
+	}
+	for (const name of VISUAL_OBSERVER_TOOLS) {
+		assert.equal(VISUAL_MODIFYING_TOOLS.has(name), false, `${name} must not be in both sets`);
+	}
+});
+
+// The wrapper only decorates tools registered through it, and in production that
+// is one tool. These cover the other path: the tool_result hook, which sees
+// every call including pi's own edit / write / bash.
+
+function fakePiWithHook(): {
+	pi: ExtensionAPI;
+	tools: Map<string, ToolDefinition>;
+	fire: (toolName: string, content: Array<{ type: "text"; text: string }>) => unknown;
+} {
+	const tools = new Map<string, ToolDefinition>();
+	const handlers: Array<(e: unknown) => unknown> = [];
+	const pi = {
+		registerTool(tool: ToolDefinition) {
+			tools.set(tool.name, tool);
+		},
+		on(event: string, handler: (e: unknown) => unknown) {
+			if (event === "tool_result") handlers.push(handler);
+		},
+	} as unknown as ExtensionAPI;
+	const fire = (toolName: string, content: Array<{ type: "text"; text: string }>) => {
+		let out: unknown;
+		for (const h of handlers) {
+			const r = h({ type: "tool_result", toolName, toolCallId: "c", input: {}, content });
+			if (r) out = r;
+		}
+		return out;
+	};
+	return { pi, tools, fire };
+}
+
+test("an unanswered note reaches her on a tool the wrapper never wrapped", async () => {
+	const root = tempRoot();
+	try {
+		appendEvent(fromFei("n1", "too tight"), root);
+		_resetReviewNudgeState();
+		const { pi, fire } = fakePiWithHook();
+		installCanvasNagHook(pi, root);
+
+		const out = fire("edit", [{ type: "text", text: "edited" }]) as
+			| { content: Array<{ type: "text"; text: string }> }
+			| undefined;
+		assert.ok(out, "edit is not registered through withCanvasNag; the hook must still decorate it");
+		assert.equal(out.content[0].text, "edited");
+		assert.match(out.content[1].text, /n1 on product-list: too tight/);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("a tool the wrapper already handles is not decorated twice", async () => {
+	const root = tempRoot();
+	try {
+		appendEvent(fromFei("n1", "too tight"), root);
+		_resetReviewNudgeState();
+		const { pi, fire } = fakePiWithHook();
+		const wrapped = withCanvasNag(pi, root);
+		wrapped.registerTool({
+			name: "wrapped_tool",
+			label: "W",
+			description: "t",
+			parameters: {},
+			async execute() {
+				return originalResult();
+			},
+		} as unknown as ToolDefinition);
+		installCanvasNagHook(pi, root);
+
+		const out = fire("wrapped_tool", [{ type: "text", text: "photo ok" }]);
+		assert.equal(out, undefined, "the wrapper already appended the nag; the hook must stay out");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("nothing to say leaves the result untouched, and a throwing nag never eats it", async () => {
+	const root = tempRoot();
+	try {
+		_resetReviewNudgeState();
+		const { pi, fire } = fakePiWithHook();
+		installCanvasNagHook(pi, root);
+		assert.equal(fire("some_unwrapped_reader", [{ type: "text", text: "read" }]), undefined);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}

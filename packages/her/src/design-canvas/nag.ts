@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ToolDefinition, ToolResultEvent } from "@earendil-works/pi-coding-agent";
 
 import { SAMANTHA_REPO_ROOT } from "../her-core/channel-probe-gate.ts";
 import { acceptProposal, declineProposal, proposalStates, type RuleProposal } from "./decisions.ts";
@@ -15,6 +15,31 @@ const DESIGN_SYSTEM_LOAD = "design_system_load";
 const COMPACTION_NAG_LINE =
 	"这一轮之前的上下文被压缩过。你的设计纪律在 skill `her-design` 里,需要时重新读它——尤其 process/steps 与 review/rubric。";
 
+const REVIEW_NUDGE_TEXT =
+	"这一版你还没看过。用 `design_lab_still` 取一帧,按这六条看:贴合、间距、层次、对比、对齐、真实感。不对就先修,再往下走。";
+
+/**
+ * Tools whose execution changes the visible canvas or product appearance.
+ * When one runs and she has not looked since, the review nudge fires once.
+ *
+ * This is NOT the same list as `PRODUCT_MUTATING_TOOLS` in mode.ts.
+ * That list answers "will this change the product?" (includes project management).
+ * This list answers "will the screen look different?" — narrower.
+ */
+export const VISUAL_MODIFYING_TOOLS: ReadonlySet<string> = new Set([
+	"edit",
+	"write",
+	"bash",
+	"powershell",
+	"design_system_apply",
+]);
+
+/**
+ * Tools that constitute "having looked at the current visual state".
+ * Calling one clears the pending visual-change flag.
+ */
+export const VISUAL_OBSERVER_TOOLS: ReadonlySet<string> = new Set(["design_lab_still"]);
+
 type StyleGuideDelivery = {
 	epoch: number;
 	/** The target directory this delivery spoke about; undefined if none was found. */
@@ -28,8 +53,42 @@ type StyleGuideDelivery = {
 const styleGuideDelivered = new Map<string, StyleGuideDelivery>();
 const PROCESS_STARTED_MS = Date.now();
 
+/** Whether a visual-modifying tool has run without a subsequent observer call. */
+let _visualChangePending = false;
+/** Whether the review nudge has been delivered for the current pending change. */
+let _reviewNudgeDelivered = false;
+
 function resolveRoot(repoRoot?: string): string {
 	return repoRoot ?? SAMANTHA_REPO_ROOT;
+}
+
+/** Test-only: reset visual-change tracking between test cases. */
+export function _resetReviewNudgeState(): void {
+	_visualChangePending = false;
+	_reviewNudgeDelivered = false;
+	wrappedToolNames.clear();
+}
+
+/** Signal that a visual-modifying tool ran (for callers outside the nag wrapper). */
+export function markVisualChange(): void {
+	_visualChangePending = true;
+	_reviewNudgeDelivered = false;
+}
+
+/** Signal that an observer tool ran (for callers outside the nag wrapper). */
+export function markVisualReview(): void {
+	_visualChangePending = false;
+	_reviewNudgeDelivered = false;
+}
+
+/**
+ * Consume the review nudge for the current pending visual change.
+ * Returns the nudge text once, then stays quiet until a new change happens.
+ */
+function takeReviewNudge(): string | undefined {
+	if (!_visualChangePending || _reviewNudgeDelivered) return undefined;
+	_reviewNudgeDelivered = true;
+	return REVIEW_NUDGE_TEXT;
 }
 
 export type Proposal = RuleProposal;
@@ -97,17 +156,43 @@ function formatProposalNag(proposal: Proposal): string {
 	].join("\n");
 }
 
+/**
+ * Tool names that already go through `withCanvasNag`. The tool_result hook skips
+ * them so a wrapped tool is not decorated twice.
+ */
+const wrappedToolNames = new Set<string>();
+
+/** The text parts that ride along on a tool result. Order is load-bearing. */
+function buildExtras(repoRoot?: string, toolName?: string): Array<{ type: "text"; text: string }> {
+	const extras: Array<{ type: "text"; text: string }> = [];
+	const pending = pendingForHer(repoRoot);
+	if (pending.length > 0) extras.push({ type: "text", text: formatNag(pending) });
+	const oldest = pendingProposals(repoRoot)[0];
+	if (oldest) extras.push({ type: "text", text: formatProposalNag(oldest) });
+	const style = takeStyleGuideNag(repoRoot, toolName);
+	if (style) extras.push({ type: "text", text: style });
+	const reviewNudge = takeReviewNudge();
+	if (reviewNudge) extras.push({ type: "text", text: reviewNudge });
+	return extras;
+}
+
 function decorateResult<T>(result: T, repoRoot?: string, toolName?: string): T {
 	try {
 		if (!result || typeof result !== "object") return result;
+		// Update visual-change tracking before assembling extras.
+		// Observer first: seeing the result clears the pending flag.
+		// Modifier second: a new change re-arms the nudge.
+		// A tool in neither set leaves the state untouched.
+		if (toolName && VISUAL_OBSERVER_TOOLS.has(toolName)) {
+			_visualChangePending = false;
+			_reviewNudgeDelivered = false;
+		}
+		if (toolName && VISUAL_MODIFYING_TOOLS.has(toolName)) {
+			_visualChangePending = true;
+			_reviewNudgeDelivered = false;
+		}
 		const current = result as { content?: unknown };
-		const extras: Array<{ type: "text"; text: string }> = [];
-		const pending = pendingForHer(repoRoot);
-		if (pending.length > 0) extras.push({ type: "text", text: formatNag(pending) });
-		const oldest = pendingProposals(repoRoot)[0];
-		if (oldest) extras.push({ type: "text", text: formatProposalNag(oldest) });
-		const style = takeStyleGuideNag(repoRoot, toolName);
-		if (style) extras.push({ type: "text", text: style });
+		const extras = buildExtras(repoRoot, toolName);
 		if (extras.length === 0) return result;
 		const content = Array.isArray(current.content) ? [...current.content, ...extras] : extras;
 		return { ...current, content } as T;
@@ -385,6 +470,7 @@ export function withCanvasNag(pi: ExtensionAPI, repoRoot?: string): ExtensionAPI
 			if (prop !== "registerTool") return Reflect.get(target, prop, receiver);
 			return (definition: ToolDefinition) => {
 				const original = definition.execute;
+				wrappedToolNames.add(definition.name);
 				return target.registerTool({
 					...definition,
 					async execute(toolCallId, params, signal, onUpdate, ctx) {
@@ -394,5 +480,45 @@ export function withCanvasNag(pi: ExtensionAPI, repoRoot?: string): ExtensionAPI
 				});
 			};
 		},
+	});
+}
+
+/**
+ * Hitchhiking reaches every tool, not only the ones registered through
+ * `withCanvasNag`.
+ *
+ * Measured 2026-09-06: the wrapper wrapped exactly one registration, which
+ * registered exactly one tool. So his unanswered notes, the taste proposals and
+ * the product's real token values only ever reached her when she happened to
+ * call `design_lab_still` — and the review nudge, whose whole point is "you
+ * changed something and have not looked", could only ride on the very tool that
+ * means she did look. It could not fire at all.
+ *
+ * The `tool_result` hook sees every call, including pi's own edit / write /
+ * bash, so the extras ride on whatever she actually just did. Tools the wrapper
+ * already handles are skipped, or they would carry the same text twice.
+ *
+ * Failure here must never take a tool result down: a nag that throws would cost
+ * her the result she was waiting for.
+ */
+export function installCanvasNagHook(pi: ExtensionAPI, repoRoot?: string): void {
+	if (typeof (pi as { on?: unknown }).on !== "function") return;
+	pi.on("tool_result", (event: ToolResultEvent) => {
+		try {
+			const toolName = event.toolName;
+			if (toolName && wrappedToolNames.has(toolName)) return undefined;
+			if (toolName && VISUAL_OBSERVER_TOOLS.has(toolName)) {
+				markVisualReview();
+			}
+			if (toolName && VISUAL_MODIFYING_TOOLS.has(toolName)) {
+				markVisualChange();
+			}
+			const extras = buildExtras(repoRoot, toolName);
+			if (extras.length === 0) return undefined;
+			const content = Array.isArray(event.content) ? [...event.content, ...extras] : extras;
+			return { content };
+		} catch {
+			return undefined;
+		}
 	});
 }
