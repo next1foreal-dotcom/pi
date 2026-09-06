@@ -52,6 +52,31 @@ interface PreviewApiBody {
 	/** Echo of what an act applied (agent-act). */
 	ref?: string;
 	action?: string;
+	/** Find results (agent-find). */
+	hits?: Array<{ ref: string; line: string }>;
+	total?: number;
+	/** Page text (agent-page-text). */
+	text?: string;
+	/** Console/network entries (agent-console, agent-network). */
+	entries?: unknown[];
+	droppedUnread?: number;
+	counts?: Record<string, unknown>;
+	/** Network response body (agent-network with requestId). */
+	body?: string;
+	base64Encoded?: boolean;
+	/** Screenshot (agent-screenshot). */
+	base64?: string;
+	width?: number;
+	height?: number;
+	frozen?: boolean;
+	/** Eval result (agent-eval). */
+	value?: unknown;
+	/** Viewport emulation state (agent-viewport). */
+	state?: Record<string, unknown>;
+	/** Control-owner gate refusal (act-class routes). */
+	reason?: string;
+	/** Computer act note (agent-computer). */
+	note?: string;
 }
 
 export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {}): void {
@@ -96,14 +121,18 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 		label: "Browser Read Page",
 		description:
 			"Read the structure of whatever the shared co-drive live browser is showing: a YAML accessibility tree " +
-			"where every actionable node carries a handle like [ref=s7e5]. Those refs are the ONLY way to point " +
-			"browser_act at an element. A ref belongs to the read that issued it — your next read, any navigation, or " +
-			"the element leaving the page retires it, so read again rather than reusing an old ref. Reading is NOT " +
-			"blocked while Fei holds control (the gate stops you acting, not seeing), so this is also how you catch up " +
-			"after a handback. Optional maxChars caps the tree (default 20000, clamped to 500..100000); a truncated " +
-			"tree says so on its last line, and any ref the cut removed is NOT actionable — raise maxChars rather " +
-			"than guess at what was dropped. When the tree shows a password, verification-code, payment or agreement " +
-			"field, do not plan to fill it — read the browser-discipline skill and ask Fei to take over.",
+			"where every actionable node carries a handle like [ref_7]. Each line looks like: " +
+			'role "name" [ref_7] href="..." — the ref is the ONLY way to point browser_act, browser_computer, or ' +
+			"browser_form_input at an element. Refs are bound to the DOM element itself (via WeakRef): the same " +
+			"element keeps the same ref across multiple reads, and a ref only expires when the element truly leaves " +
+			"the DOM (navigation, page change, or the element being removed). Reading is NOT blocked while Fei holds " +
+			"control (the gate stops you acting, not seeing — Fei's screencast already shows every pixel), so this is " +
+			"also how you catch up after a handback. Optional maxChars caps the tree (default 20000, clamped to " +
+			"500..100000); a truncated tree says so on its last line, and any ref the cut removed is NOT actionable — " +
+			"raise maxChars rather than guess at what was dropped. When the tree shows a password, verification-code, " +
+			"payment or agreement field, do not plan to fill it — read the browser-discipline skill and ask Fei to " +
+			"take over. If the response is an error mentioning 'browser not started', the live browser has not been " +
+			"launched yet — ask Fei to open a page or use browser_navigate first.",
 		parameters: Type.Object({ maxChars: Type.Optional(Type.Number()) }),
 		async execute(_toolCallId, params, signal) {
 			const base = uiBase();
@@ -118,15 +147,18 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 		name: "browser_act",
 		label: "Browser Act",
 		description:
-			"Act on ONE element from your latest browser_read_page, by its ref: click, type (text required — an empty " +
-			"string clears the field), press (put the key name in text, e.g. Enter or Control+a), or scroll_to. Then " +
-			"read the page again — 'I clicked' is not evidence, 'the page now shows X' is. The act goes through the " +
-			"UI host's control-owner gate: while Fei holds the wheel OR the browser is paused you get " +
-			"control-owner-denied, which is a guardrail working, " +
-			"not a fault — stop and wait for his handback instead of retrying. You have no takeover or handback tool " +
-			"BY DESIGN: handing the wheel over is always Fei's move, never yours. Never use this on a password, " +
-			"verification-code, payment-confirm or terms-agreement control — those three classes are his to press; " +
-			"read the browser-discipline skill and ask him to take over.",
+			"Act on ONE element from a browser_read_page, by its ref: click, type (text required — an empty " +
+			"string clears the field), press (put the key name in text, e.g. Enter or Control+a), or scroll_to. " +
+			"Refs are bound to the DOM element (WeakRef) and survive across reads — they only expire when the element " +
+			"leaves the DOM. Then read the page again — 'I clicked' is not evidence, 'the page now shows X' is. " +
+			"This tool covers ref-targeted actions (click/type/press/scroll_to). For coordinate-based clicks, " +
+			"right-click, double/triple click, drag, hover, scrolling, key repeat, or wait, use browser_computer " +
+			"instead. The act goes through the UI host's control-owner gate: while Fei holds the wheel OR the " +
+			"browser is paused you get control-owner-denied, which is a guardrail working, not a fault — stop and " +
+			"wait for his handback instead of retrying. You have no takeover or handback tool BY DESIGN: handing " +
+			"the wheel over is always Fei's move, never yours. Never use this on a password, verification-code, " +
+			"payment-confirm or terms-agreement control — those four classes are his to press; read the " +
+			"browser-discipline skill and ask him to take over.",
 		parameters: Type.Object({
 			ref: Type.String(),
 			action: Type.Union([
@@ -168,6 +200,384 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 						`${errorLine(parsed)} A ref must be one browser_read_page handed you (they look like s7e5).`,
 				},
 			});
+		},
+	});
+
+	// ── new browser tools (task-E) ────────────────────────────────────────────
+
+	pi.registerTool({
+		name: "browser_find",
+		label: "Browser Find",
+		description:
+			"Search the latest browser_read_page tree for elements matching a text query (case-insensitive " +
+			"substring match on role, name, and value). Returns up to 20 matching refs with their tree lines. " +
+			"This searches the ALREADY-READ tree, not the live page — call browser_read_page first if you have " +
+			"not read recently. Fei holding the wheel does NOT block this (the gate stops acting, not searching). " +
+			"When the result says truncated: true, your query matched more than 20 elements — narrow it. " +
+			"If nothing matches, the query may be wrong, the element may not be on screen, or the page may " +
+			"have changed since your last read — read the page again and retry before concluding it is absent.",
+		parameters: Type.Object({ query: Type.String() }),
+		async execute(_toolCallId, params, signal) {
+			const base = uiBase();
+			return await postJson(
+				fetchImpl,
+				base,
+				"/api/browser/agent-find",
+				{ query: params.query },
+				signal,
+				browserTimeoutMs,
+				{
+					successText: (parsed) => {
+						const hits = parsed?.hits as Array<{ ref: string; line: string }> | undefined;
+						const total = parsed?.total ?? 0;
+						const truncated = parsed?.truncated ?? false;
+						if (!hits || hits.length === 0)
+							return `No elements matching "${params.query}" in the current page read.`;
+						const lines = hits.map((h) => `  ${h.ref}: ${h.line}`).join("\n");
+						const cap = truncated ? ` (showing ${hits.length} of ${total} — narrow your query)` : "";
+						return `Found ${total} match${total === 1 ? "" : "es"} for "${params.query}"${cap}:\n${lines}`;
+					},
+				},
+			);
+		},
+	});
+
+	pi.registerTool({
+		name: "browser_get_text",
+		label: "Browser Get Text",
+		description:
+			"Extract the visible text content of the current page (article/main content first, falls back to " +
+			"body innerText). Useful when you need raw text rather than the accessibility tree structure. " +
+			"Fei holding the wheel does NOT block this (the gate stops acting, not reading). " +
+			"Optional maxChars limits the response length. When truncated is true, the text was cut — raise " +
+			"maxChars to see more. If the response mentions 'browser not started', ask Fei to open a page first.",
+		parameters: Type.Object({ maxChars: Type.Optional(Type.Number()) }),
+		async execute(_toolCallId, params, signal) {
+			const base = uiBase();
+			const body = params.maxChars === undefined ? {} : { maxChars: params.maxChars };
+			return await postJson(fetchImpl, base, "/api/browser/agent-page-text", body, signal, browserTimeoutMs, {
+				successText: (parsed) => {
+					const truncation = parsed?.truncated ? "\n[truncated — raise maxChars to see more]" : "";
+					return `${parsed?.text ?? "(empty page)"}${truncation}`;
+				},
+			});
+		},
+	});
+
+	pi.registerTool({
+		name: "browser_console",
+		label: "Browser Console",
+		description:
+			"Read captured console output (log, info, warn, error, debug) from the live page. " +
+			"Fei holding the wheel does NOT block this (the gate stops acting, not reading). " +
+			"Optional filter: 'all' (default), 'error', or 'warn'. " +
+			"The response includes droppedUnread — the number of console entries that were evicted from the " +
+			"ring buffer before you read them. When droppedUnread > 0, the returned entries are NOT the " +
+			"complete log — some were pushed out before you got here. Do not treat a partial buffer as evidence " +
+			"that no errors occurred. If the entries array is empty and droppedUnread is 0, the page genuinely " +
+			"has no console output of that type.",
+		parameters: Type.Object({
+			filter: Type.Optional(Type.Union([Type.Literal("all"), Type.Literal("error"), Type.Literal("warn")])),
+		}),
+		async execute(_toolCallId, params, signal) {
+			const base = uiBase();
+			const body = params.filter ? { filter: params.filter } : {};
+			return await postJson(fetchImpl, base, "/api/browser/agent-console", body, signal, browserTimeoutMs, {
+				successText: (parsed) => {
+					const entries = (parsed?.entries ?? []) as unknown[];
+					const dropped = parsed?.droppedUnread ?? 0;
+					const dropNote =
+						dropped > 0
+							? `\n[WARNING: ${dropped} entries were evicted before you read them — this is not the full log]`
+							: "";
+					if (entries.length === 0) return `No console entries.${dropNote}`;
+					return `${entries.length} console entries:\n${JSON.stringify(entries, null, 2)}${dropNote}`;
+				},
+			});
+		},
+	});
+
+	pi.registerTool({
+		name: "browser_network",
+		label: "Browser Network",
+		description:
+			"Read captured network requests from the live page, or fetch a specific response body by requestId. " +
+			"Fei holding the wheel does NOT block this (the gate stops acting, not reading). " +
+			"Optional filter: 'all' (default) or 'failed'. Pass requestId to fetch the response body of a " +
+			"specific request instead of listing. The listing includes droppedUnread — the number of network " +
+			"entries evicted from the ring buffer before you read them. When droppedUnread > 0, the returned " +
+			"entries are NOT the complete request log — some were pushed out. Do not treat a partial buffer " +
+			"as evidence that no failed requests occurred.",
+		parameters: Type.Object({
+			filter: Type.Optional(Type.Union([Type.Literal("all"), Type.Literal("failed")])),
+			requestId: Type.Optional(Type.String()),
+		}),
+		async execute(_toolCallId, params, signal) {
+			const base = uiBase();
+			const body: Record<string, unknown> = {};
+			if (params.filter) body.filter = params.filter;
+			if (params.requestId) body.requestId = params.requestId;
+			return await postJson(fetchImpl, base, "/api/browser/agent-network", body, signal, browserTimeoutMs, {
+				successText: (parsed) => {
+					// Response body mode
+					if (params.requestId) {
+						return `Response body for ${params.requestId}:\n${parsed?.body ?? "(empty)"}`;
+					}
+					// Listing mode
+					const entries = (parsed?.entries ?? []) as unknown[];
+					const dropped = parsed?.droppedUnread ?? 0;
+					const dropNote =
+						dropped > 0
+							? `\n[WARNING: ${dropped} entries were evicted before you read them — this is not the full request log]`
+							: "";
+					if (entries.length === 0) return `No network entries.${dropNote}`;
+					return `${entries.length} network entries:\n${JSON.stringify(entries, null, 2)}${dropNote}`;
+				},
+			});
+		},
+	});
+
+	pi.registerTool({
+		name: "browser_screenshot",
+		label: "Browser Screenshot",
+		description:
+			"Capture a screenshot of the live browser viewport. Returns a base64-encoded PNG image. " +
+			"Fei holding the wheel does NOT block this (the gate stops acting, not reading). " +
+			"Optional scale (0.1 to 1.0, default 1) reduces the image; optional region " +
+			"({ x, y, width, height }) crops to a rectangle. The response includes a frozen flag: when " +
+			"frozen is true, Fei has paused the browser feed and the image is a stale frame — do NOT treat " +
+			"it as the current page state. If the response mentions 'browser not started', ask Fei to open " +
+			"a page first. Do not use this when you only need text or structure — browser_read_page and " +
+			"browser_get_text are faster and cheaper for those.",
+		parameters: Type.Object({
+			scale: Type.Optional(Type.Number()),
+			region: Type.Optional(
+				Type.Object({
+					x: Type.Number(),
+					y: Type.Number(),
+					width: Type.Number(),
+					height: Type.Number(),
+				}),
+			),
+		}),
+		async execute(_toolCallId, params, signal) {
+			const base = uiBase();
+			const body: Record<string, unknown> = {};
+			if (params.scale !== undefined) body.scale = params.scale;
+			if (params.region !== undefined) body.region = params.region;
+			return await postJson(fetchImpl, base, "/api/browser/agent-screenshot", body, signal, browserTimeoutMs, {
+				successText: (parsed) => {
+					const frozenNote = parsed?.frozen
+						? " [FROZEN: Fei paused the feed — this is a stale frame, not the current page]"
+						: "";
+					return `Screenshot captured (${parsed?.width ?? "?"}x${parsed?.height ?? "?"}).${frozenNote}`;
+				},
+			});
+		},
+	});
+
+	pi.registerTool({
+		name: "browser_computer",
+		label: "Browser Computer",
+		description:
+			"Low-level mouse and keyboard automation in the live browser. Use this for actions that " +
+			"browser_act cannot do: coordinate-based clicks (left/right/double/triple), hover, scrolling, " +
+			"key presses with repeat, drag, and wait. For ref-targeted click/type/press/scroll_to, use " +
+			"browser_act instead — it is simpler and safer. The act is a ComputerAct union: " +
+			"left_click / right_click / double_click / triple_click / hover (with optional modifiers), " +
+			"key (text + optional repeat), scroll (direction + optional amount), left_click_drag (with to), " +
+			"or wait (with duration up to 10s). Target is { ref } (from browser_read_page) or " +
+			"{ coordinate: [x, y] } (viewport pixels) or absent. " +
+			"Act-class: gated by the control owner. When Fei holds the wheel or the browser is paused, " +
+			"you get control-owner-denied — that is the guardrail working, not a fault. Stop and wait for " +
+			"him to hand control back; do not retry. Never use this to type into a password, verification-code, " +
+			"payment-confirm, or terms-agreement control — those are Fei's; read the browser-discipline skill " +
+			"and ask him to take over.",
+		parameters: Type.Object({
+			act: Type.Object({
+				action: Type.String(),
+				text: Type.Optional(Type.String()),
+				repeat: Type.Optional(Type.Number()),
+				direction: Type.Optional(Type.String()),
+				amount: Type.Optional(Type.Number()),
+				modifiers: Type.Optional(Type.String()),
+				to: Type.Optional(Type.Object({ x: Type.Number(), y: Type.Number() })),
+				duration: Type.Optional(Type.Number()),
+			}),
+			target: Type.Optional(
+				Type.Union([
+					Type.Object({ ref: Type.String() }),
+					Type.Object({ coordinate: Type.Tuple([Type.Number(), Type.Number()]) }),
+				]),
+			),
+		}),
+		async execute(_toolCallId, params, signal) {
+			const base = uiBase();
+			const body: Record<string, unknown> = { act: params.act };
+			if (params.target !== undefined) body.target = params.target;
+			return await postJson(fetchImpl, base, "/api/browser/agent-computer", body, signal, browserTimeoutMs, {
+				successText: () =>
+					"Action applied. Call browser_read_page or browser_screenshot to see what it actually did.",
+				controlOwnerDeniedText: () =>
+					"Control is with Fei right now (or the browser is paused) — the gate is doing its job, " +
+					"this is not a failure to retry. Stop here and wait for him to hand control back.",
+			});
+		},
+	});
+
+	pi.registerTool({
+		name: "browser_form_input",
+		label: "Browser Form Input",
+		description:
+			"Set the value of a form element (input, textarea, select, checkbox, contenteditable) " +
+			"identified by a ref from browser_read_page. Pass the ref and the value to set. For checkboxes " +
+			"use a boolean, for selects use the option value or text, for other inputs use a string or number. " +
+			"Act-class: gated by the control owner. When Fei holds the wheel or the browser is paused, " +
+			"you get control-owner-denied — that is the guardrail working, not a fault. Stop and wait for " +
+			"him to hand control back; do not retry. Never use this on a password, verification-code, " +
+			"payment-confirm, or terms-agreement control — those are Fei's; read the browser-discipline skill " +
+			"and ask him to take over. If the ref is stale (the element left the DOM), you get stale-ref — " +
+			"call browser_read_page again and use a fresh ref.",
+		parameters: Type.Object({
+			ref: Type.String(),
+			value: Type.Union([Type.String(), Type.Number(), Type.Boolean()]),
+		}),
+		async execute(_toolCallId, params, signal) {
+			const base = uiBase();
+			return await postJson(
+				fetchImpl,
+				base,
+				"/api/browser/agent-form-input",
+				{ ref: params.ref, value: params.value },
+				signal,
+				browserTimeoutMs,
+				{
+					successText: (parsed) => `Value set on ${parsed?.ref ?? params.ref}. Call browser_read_page to verify.`,
+					controlOwnerDeniedText: () =>
+						"Control is with Fei right now (or the browser is paused) — the gate is doing its job, " +
+						"this is not a failure to retry. Stop here and wait for him to hand control back.",
+					errorTexts: {
+						"stale-ref": (parsed) =>
+							`${errorLine(parsed)} That ref is stale — the element left the DOM. Call browser_read_page ` +
+							"again and use a fresh ref.",
+						"unknown-ref": (parsed) =>
+							`${errorLine(parsed)} No such element in the current read. Call browser_read_page again.`,
+						"invalid-ref": (parsed) => `${errorLine(parsed)} A ref must be one browser_read_page handed you.`,
+					},
+				},
+			);
+		},
+	});
+
+	pi.registerTool({
+		name: "browser_eval",
+		label: "Browser Eval",
+		description:
+			"Execute JavaScript in the live page context. The code runs with REPL semantics: write the " +
+			"expression you want and its value is returned — do NOT write 'return'. Top-level await works. " +
+			"The default timeout is 45 seconds; pass timeoutMs to override. This can change the page as " +
+			"freely as a click, so it is act-class. When Fei holds the wheel or the browser is paused, " +
+			"you get control-owner-denied — that is the guardrail working, not a fault. Stop and wait for " +
+			"him to hand control back; do not retry. Use this for debugging and data extraction only — " +
+			"do not implement UI changes via eval; edit source code instead. If the result mentions " +
+			"'browser not started', ask Fei to open a page first.",
+		parameters: Type.Object({
+			code: Type.String(),
+			timeoutMs: Type.Optional(Type.Number()),
+		}),
+		async execute(_toolCallId, params, signal) {
+			const base = uiBase();
+			const body: Record<string, unknown> = { code: params.code };
+			if (params.timeoutMs !== undefined) body.timeoutMs = params.timeoutMs;
+			return await postJson(fetchImpl, base, "/api/browser/agent-eval", body, signal, browserTimeoutMs, {
+				successText: (parsed) => {
+					const val = parsed?.value;
+					if (val === undefined) return "(undefined)";
+					try {
+						return typeof val === "string" ? val : JSON.stringify(val, null, 2);
+					} catch {
+						return String(val);
+					}
+				},
+				controlOwnerDeniedText: () =>
+					"Control is with Fei right now (or the browser is paused) — the gate is doing its job, " +
+					"this is not a failure to retry. Stop here and wait for him to hand control back.",
+			});
+		},
+	});
+
+	pi.registerTool({
+		name: "browser_viewport",
+		label: "Browser Viewport",
+		description:
+			"Change the viewport size and/or colour-scheme emulation of the live browser. This changes what " +
+			"Fei is looking at, so it is act-class. Use preset 'mobile' (375x812), 'tablet' (768x1024), or " +
+			"'desktop' (clears size emulation, returns to the pane's own responsive size). For custom sizes " +
+			"pass both width and height. colorScheme ('light' or 'dark') emulates prefers-color-scheme. " +
+			"When Fei holds the wheel or the browser is paused, you get control-owner-denied — that is the " +
+			"guardrail working, not a fault. Stop and wait for him to hand control back; do not retry. " +
+			"Reset to preset 'desktop' when you are done testing responsive layouts — leaving a mobile " +
+			"emulation on would change Fei's view without him expecting it.",
+		parameters: Type.Object({
+			preset: Type.Optional(Type.Union([Type.Literal("mobile"), Type.Literal("tablet"), Type.Literal("desktop")])),
+			width: Type.Optional(Type.Number()),
+			height: Type.Optional(Type.Number()),
+			colorScheme: Type.Optional(Type.Union([Type.Literal("light"), Type.Literal("dark")])),
+		}),
+		async execute(_toolCallId, params, signal) {
+			const base = uiBase();
+			const body: Record<string, unknown> = {};
+			if (params.preset !== undefined) body.preset = params.preset;
+			if (params.width !== undefined) body.width = params.width;
+			if (params.height !== undefined) body.height = params.height;
+			if (params.colorScheme !== undefined) body.colorScheme = params.colorScheme;
+			return await postJson(fetchImpl, base, "/api/browser/agent-viewport", body, signal, browserTimeoutMs, {
+				successText: (parsed) => {
+					const s = parsed?.state as Record<string, unknown> | undefined;
+					if (!s) return "Viewport updated.";
+					const size = s.width != null ? `${s.width}x${s.height}` : "responsive (no emulation)";
+					const scheme = s.colorScheme ? ` (${s.colorScheme})` : "";
+					return `Viewport: ${size}${scheme}${s.mobile ? " (mobile)" : ""}`;
+				},
+				controlOwnerDeniedText: () =>
+					"Control is with Fei right now (or the browser is paused) — the gate is doing its job, " +
+					"this is not a failure to retry. Stop here and wait for him to hand control back.",
+			});
+		},
+	});
+
+	pi.registerTool({
+		name: "browser_history",
+		label: "Browser History",
+		description:
+			"Navigate back or forward in the browser's session history. Pass direction 'back' or 'forward'. " +
+			"A 'no-entry' response means there is nothing to go back/forward to — that is a normal answer, " +
+			"not a failure. Act-class: gated by the control owner. When Fei holds the wheel or the browser " +
+			"is paused, you get control-owner-denied — that is the guardrail working, not a fault. Stop and " +
+			"wait for him to hand control back; do not retry. After a successful history navigation, all " +
+			"refs from previous reads are invalidated (the page changed) — call browser_read_page to get " +
+			"fresh refs.",
+		parameters: Type.Object({
+			direction: Type.Union([Type.Literal("back"), Type.Literal("forward")]),
+		}),
+		async execute(_toolCallId, params, signal) {
+			const base = uiBase();
+			return await postJson(
+				fetchImpl,
+				base,
+				"/api/browser/agent-history",
+				{ direction: params.direction },
+				signal,
+				browserTimeoutMs,
+				{
+					successText: (parsed) =>
+						`Navigated ${params.direction} to ${parsed?.url ?? "(unknown)"}. Refs from previous reads are ` +
+						"now invalid — call browser_read_page to get fresh refs.",
+					controlOwnerDeniedText: () =>
+						"Control is with Fei right now (or the browser is paused) — the gate is doing its job, " +
+						"this is not a failure to retry. Stop here and wait for him to hand control back.",
+				},
+			);
 		},
 	});
 
@@ -266,8 +676,8 @@ function renderPageRead(parsed: PreviewApiBody | undefined): string {
 	const title = parsed?.title ? ` — ${parsed.title}` : "";
 	const header =
 		`Page read #${parsed?.generation ?? "?"}: ${parsed?.url ?? "(unknown url)"}${title} ` +
-		`(${parsed?.refCount ?? 0} refs). Act on a [ref=…] below with browser_act; these refs die on your next ` +
-		"read or navigation.";
+		`(${parsed?.refCount ?? 0} refs). Act on a [ref_N] below with browser_act or browser_computer; refs ` +
+		"stay valid as long as the element is in the DOM.";
 	const truncation = parsed?.truncated
 		? "\nNOTE: truncated — this is only part of the page. Raise maxChars or narrow the page before concluding."
 		: "";
@@ -325,7 +735,10 @@ async function postJson(
 	if (errorText) {
 		return textResult(errorText(parsed), { status: response.status });
 	}
-	if (parsed?.error === "control-owner-denied" && opts.controlOwnerDeniedText) {
+	if (
+		(parsed?.error === "control-owner-denied" || parsed?.reason === "control-owner-denied") &&
+		opts.controlOwnerDeniedText
+	) {
 		return textResult(opts.controlOwnerDeniedText());
 	}
 	if (parsed?.error === "artifacts_dir_not_configured" && opts.notConfiguredText) {

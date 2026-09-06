@@ -566,3 +566,351 @@ test("artifact_publish is registered as a destructive governed tool", () => {
 	assert.ok(tools.has("artifact_publish"));
 	assert.equal(governedTools.artifact_publish?.destructive, true);
 });
+
+// ── browser_find ─────────────────────────────────────────────────────────────
+
+test("browser_find posts query to agent-find and reports matching refs", async () => {
+	const fetchImpl = fakeFetch(
+		() =>
+			new Response(
+				JSON.stringify({
+					ok: true,
+					generation: 3,
+					hits: [{ ref: "ref_1", line: 'button "Submit" [ref_1]' }],
+					total: 1,
+					truncated: false,
+				}),
+				{ status: 200 },
+			),
+	);
+	const tools = previewHarness({ fetchImpl });
+
+	const text = await run(tools.get("browser_find"), { query: "Submit" });
+
+	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:3000/api/browser/agent-find");
+	assert.deepEqual(JSON.parse(String(fetchImpl.calls[0].init.body)), { query: "Submit" });
+	assert.match(text, /Submit/);
+	assert.match(text, /ref_1/);
+});
+
+test("browser_find is registered as a non-destructive governed tool", () => {
+	const tools = previewHarness({ fetchImpl: fakeFetch(() => new Response("{}", { status: 200 })) });
+
+	assert.ok(tools.has("browser_find"));
+	assert.equal(governedTools.browser_find?.destructive, false);
+});
+
+// ── browser_get_text ─────────────────────────────────────────────────────────
+
+test("browser_get_text posts maxChars to agent-page-text and returns the text", async () => {
+	const fetchImpl = fakeFetch(
+		() => new Response(JSON.stringify({ ok: true, text: "Hello world", truncated: false }), { status: 200 }),
+	);
+	const tools = previewHarness({ fetchImpl });
+
+	const text = await run(tools.get("browser_get_text"), { maxChars: 1000 });
+
+	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:3000/api/browser/agent-page-text");
+	assert.deepEqual(JSON.parse(String(fetchImpl.calls[0].init.body)), { maxChars: 1000 });
+	assert.match(text, /Hello world/);
+});
+
+test("browser_get_text is registered as a non-destructive governed tool", () => {
+	const tools = previewHarness({ fetchImpl: fakeFetch(() => new Response("{}", { status: 200 })) });
+
+	assert.ok(tools.has("browser_get_text"));
+	assert.equal(governedTools.browser_get_text?.destructive, false);
+});
+
+// ── browser_console ──────────────────────────────────────────────────────────
+
+test("browser_console posts filter to agent-console and reports entries with droppedUnread", async () => {
+	const fetchImpl = fakeFetch(
+		() =>
+			new Response(
+				JSON.stringify({
+					ok: true,
+					entries: [{ level: "error", text: "Uncaught TypeError" }],
+					droppedUnread: 5,
+					counts: { error: 1 },
+				}),
+				{ status: 200 },
+			),
+	);
+	const tools = previewHarness({ fetchImpl });
+
+	const text = await run(tools.get("browser_console"), { filter: "error" });
+
+	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:3000/api/browser/agent-console");
+	assert.deepEqual(JSON.parse(String(fetchImpl.calls[0].init.body)), { filter: "error" });
+	assert.match(text, /Uncaught TypeError/);
+	assert.match(text, /5 entries were evicted/);
+});
+
+test("browser_console is registered as a non-destructive governed tool", () => {
+	const tools = previewHarness({ fetchImpl: fakeFetch(() => new Response("{}", { status: 200 })) });
+
+	assert.ok(tools.has("browser_console"));
+	assert.equal(governedTools.browser_console?.destructive, false);
+});
+
+// ── browser_network ──────────────────────────────────────────────────────────
+
+test("browser_network posts filter to agent-network and reports entries", async () => {
+	const fetchImpl = fakeFetch(
+		() =>
+			new Response(
+				JSON.stringify({
+					ok: true,
+					entries: [{ url: "https://example.com/api", status: 500 }],
+					droppedUnread: 0,
+					counts: { failed: 1 },
+				}),
+				{ status: 200 },
+			),
+	);
+	const tools = previewHarness({ fetchImpl });
+
+	const text = await run(tools.get("browser_network"), { filter: "failed" });
+
+	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:3000/api/browser/agent-network");
+	assert.deepEqual(JSON.parse(String(fetchImpl.calls[0].init.body)), { filter: "failed" });
+	assert.match(text, /example\.com/);
+});
+
+test("browser_network passes requestId to fetch a specific response body", async () => {
+	const fetchImpl = fakeFetch(
+		() => new Response(JSON.stringify({ ok: true, body: '{"key":"value"}', base64Encoded: false }), { status: 200 }),
+	);
+	const tools = previewHarness({ fetchImpl });
+
+	const text = await run(tools.get("browser_network"), { requestId: "req-123" });
+
+	assert.deepEqual(JSON.parse(String(fetchImpl.calls[0].init.body)), { requestId: "req-123" });
+	assert.match(text, /req-123/);
+});
+
+test("browser_network is registered as a non-destructive governed tool", () => {
+	const tools = previewHarness({ fetchImpl: fakeFetch(() => new Response("{}", { status: 200 })) });
+
+	assert.ok(tools.has("browser_network"));
+	assert.equal(governedTools.browser_network?.destructive, false);
+});
+
+// ── browser_screenshot ───────────────────────────────────────────────────────
+
+test("browser_screenshot posts scale to agent-screenshot and reports dimensions and frozen", async () => {
+	const fetchImpl = fakeFetch(
+		() =>
+			new Response(JSON.stringify({ ok: true, base64: "iVBOR...", width: 1280, height: 720, frozen: false }), {
+				status: 200,
+			}),
+	);
+	const tools = previewHarness({ fetchImpl });
+
+	const text = await run(tools.get("browser_screenshot"), { scale: 0.5 });
+
+	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:3000/api/browser/agent-screenshot");
+	assert.deepEqual(JSON.parse(String(fetchImpl.calls[0].init.body)), { scale: 0.5 });
+	assert.match(text, /1280x720/);
+});
+
+test("browser_screenshot warns when the feed is frozen", async () => {
+	const fetchImpl = fakeFetch(
+		() =>
+			new Response(JSON.stringify({ ok: true, base64: "iVBOR...", width: 800, height: 600, frozen: true }), {
+				status: 200,
+			}),
+	);
+	const tools = previewHarness({ fetchImpl });
+
+	const text = await run(tools.get("browser_screenshot"), {});
+
+	assert.match(text, /FROZEN/);
+	assert.match(text, /stale/i);
+});
+
+test("browser_screenshot is registered as a non-destructive governed tool", () => {
+	const tools = previewHarness({ fetchImpl: fakeFetch(() => new Response("{}", { status: 200 })) });
+
+	assert.ok(tools.has("browser_screenshot"));
+	assert.equal(governedTools.browser_screenshot?.destructive, false);
+});
+
+// ── browser_computer ─────────────────────────────────────────────────────────
+
+test("browser_computer posts act and target to agent-computer and reports success", async () => {
+	const fetchImpl = fakeFetch(() => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+	const tools = previewHarness({ fetchImpl });
+
+	const text = await run(tools.get("browser_computer"), {
+		act: { action: "left_click" },
+		target: { coordinate: [100, 200] },
+	});
+
+	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:3000/api/browser/agent-computer");
+	const body = JSON.parse(String(fetchImpl.calls[0].init.body));
+	assert.deepEqual(body.act, { action: "left_click" });
+	assert.deepEqual(body.target, { coordinate: [100, 200] });
+	assert.match(text, /browser_read_page|browser_screenshot/);
+});
+
+test("browser_computer surfaces control-owner-denied as a guardrail, not a fault", async () => {
+	const fetchImpl = fakeFetch(
+		() => new Response(JSON.stringify({ ok: false, reason: "control-owner-denied" }), { status: 200 }),
+	);
+	const tools = previewHarness({ fetchImpl });
+
+	const text = await run(tools.get("browser_computer"), { act: { action: "left_click" } });
+
+	assert.match(text, /Fei/);
+	assert.match(text, /not a (bug|failure)|do not retry|don't retry|wait/i);
+});
+
+test("browser_computer is registered as a non-destructive governed tool", () => {
+	const tools = previewHarness({ fetchImpl: fakeFetch(() => new Response("{}", { status: 200 })) });
+
+	assert.ok(tools.has("browser_computer"));
+	assert.equal(governedTools.browser_computer?.destructive, false);
+});
+
+// ── browser_form_input ───────────────────────────────────────────────────────
+
+test("browser_form_input posts ref and value to agent-form-input and confirms", async () => {
+	const fetchImpl = fakeFetch(() => new Response(JSON.stringify({ ok: true, ref: "ref_3" }), { status: 200 }));
+	const tools = previewHarness({ fetchImpl });
+
+	const text = await run(tools.get("browser_form_input"), { ref: "ref_3", value: "hello" });
+
+	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:3000/api/browser/agent-form-input");
+	assert.deepEqual(JSON.parse(String(fetchImpl.calls[0].init.body)), { ref: "ref_3", value: "hello" });
+	assert.match(text, /ref_3/);
+});
+
+test("browser_form_input surfaces control-owner-denied as HTTP 200 guardrail", async () => {
+	const fetchImpl = fakeFetch(
+		() => new Response(JSON.stringify({ ok: false, reason: "control-owner-denied" }), { status: 200 }),
+	);
+	const tools = previewHarness({ fetchImpl });
+
+	const text = await run(tools.get("browser_form_input"), { ref: "ref_1", value: "test" });
+
+	assert.match(text, /Fei/);
+	assert.match(text, /not a (bug|failure)|do not retry|don't retry|wait/i);
+});
+
+test("browser_form_input is registered as a non-destructive governed tool", () => {
+	const tools = previewHarness({ fetchImpl: fakeFetch(() => new Response("{}", { status: 200 })) });
+
+	assert.ok(tools.has("browser_form_input"));
+	assert.equal(governedTools.browser_form_input?.destructive, false);
+});
+
+// ── browser_eval ─────────────────────────────────────────────────────────────
+
+test("browser_eval posts code to agent-eval and returns the value", async () => {
+	const fetchImpl = fakeFetch(() => new Response(JSON.stringify({ ok: true, value: 42 }), { status: 200 }));
+	const tools = previewHarness({ fetchImpl });
+
+	const text = await run(tools.get("browser_eval"), { code: "1 + 41" });
+
+	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:3000/api/browser/agent-eval");
+	assert.deepEqual(JSON.parse(String(fetchImpl.calls[0].init.body)), { code: "1 + 41" });
+	assert.match(text, /42/);
+});
+
+test("browser_eval surfaces control-owner-denied as HTTP 200 guardrail", async () => {
+	const fetchImpl = fakeFetch(
+		() => new Response(JSON.stringify({ ok: false, reason: "control-owner-denied" }), { status: 200 }),
+	);
+	const tools = previewHarness({ fetchImpl });
+
+	const text = await run(tools.get("browser_eval"), { code: "document.title" });
+
+	assert.match(text, /Fei/);
+	assert.match(text, /not a (bug|failure)|do not retry|don't retry|wait/i);
+});
+
+test("browser_eval is registered as a non-destructive governed tool", () => {
+	const tools = previewHarness({ fetchImpl: fakeFetch(() => new Response("{}", { status: 200 })) });
+
+	assert.ok(tools.has("browser_eval"));
+	assert.equal(governedTools.browser_eval?.destructive, false);
+});
+
+// ── browser_viewport ─────────────────────────────────────────────────────────
+
+test("browser_viewport posts preset to agent-viewport and reports the resulting state", async () => {
+	const fetchImpl = fakeFetch(
+		() =>
+			new Response(
+				JSON.stringify({
+					ok: true,
+					state: { width: 375, height: 812, mobile: true, colorScheme: null },
+				}),
+				{ status: 200 },
+			),
+	);
+	const tools = previewHarness({ fetchImpl });
+
+	const text = await run(tools.get("browser_viewport"), { preset: "mobile" });
+
+	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:3000/api/browser/agent-viewport");
+	assert.deepEqual(JSON.parse(String(fetchImpl.calls[0].init.body)), { preset: "mobile" });
+	assert.match(text, /375x812/);
+	assert.match(text, /mobile/);
+});
+
+test("browser_viewport surfaces control-owner-denied as HTTP 200 guardrail", async () => {
+	const fetchImpl = fakeFetch(
+		() => new Response(JSON.stringify({ ok: false, reason: "control-owner-denied" }), { status: 200 }),
+	);
+	const tools = previewHarness({ fetchImpl });
+
+	const text = await run(tools.get("browser_viewport"), { preset: "mobile" });
+
+	assert.match(text, /Fei/);
+	assert.match(text, /not a (bug|failure)|do not retry|don't retry|wait/i);
+});
+
+test("browser_viewport is registered as a non-destructive governed tool", () => {
+	const tools = previewHarness({ fetchImpl: fakeFetch(() => new Response("{}", { status: 200 })) });
+
+	assert.ok(tools.has("browser_viewport"));
+	assert.equal(governedTools.browser_viewport?.destructive, false);
+});
+
+// ── browser_history ──────────────────────────────────────────────────────────
+
+test("browser_history posts direction to agent-history and reports the new url", async () => {
+	const fetchImpl = fakeFetch(
+		() => new Response(JSON.stringify({ ok: true, url: "https://example.com/prev" }), { status: 200 }),
+	);
+	const tools = previewHarness({ fetchImpl });
+
+	const text = await run(tools.get("browser_history"), { direction: "back" });
+
+	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:3000/api/browser/agent-history");
+	assert.deepEqual(JSON.parse(String(fetchImpl.calls[0].init.body)), { direction: "back" });
+	assert.match(text, /example\.com\/prev/);
+	assert.match(text, /browser_read_page/);
+});
+
+test("browser_history surfaces control-owner-denied as HTTP 200 guardrail", async () => {
+	const fetchImpl = fakeFetch(
+		() => new Response(JSON.stringify({ ok: false, reason: "control-owner-denied" }), { status: 200 }),
+	);
+	const tools = previewHarness({ fetchImpl });
+
+	const text = await run(tools.get("browser_history"), { direction: "forward" });
+
+	assert.match(text, /Fei/);
+	assert.match(text, /not a (bug|failure)|do not retry|don't retry|wait/i);
+});
+
+test("browser_history is registered as a non-destructive governed tool", () => {
+	const tools = previewHarness({ fetchImpl: fakeFetch(() => new Response("{}", { status: 200 })) });
+
+	assert.ok(tools.has("browser_history"));
+	assert.equal(governedTools.browser_history?.destructive, false);
+});
