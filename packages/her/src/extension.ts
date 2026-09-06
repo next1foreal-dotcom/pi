@@ -16,6 +16,7 @@ import { Type } from "typebox";
 import { summarizeForCompaction } from "./compaction.ts";
 import { registerDesignCanvasTools, withCanvasNag } from "./design-canvas/tools.ts";
 import { registerDesignProjectTools } from "./design-project/tools.ts";
+import { registerDesignVersionTools } from "./design-versions/index.ts";
 import { CuaCliDriver } from "./hands/driver.ts";
 import { resolveHandsConfig } from "./hands/policy.ts";
 import { registerHandsTools } from "./hands/tools.ts";
@@ -2704,6 +2705,7 @@ export default function her(pi: ExtensionAPI): void {
 	registerAssetShotTools(pi);
 	registerDesignSystemTools(pi);
 	registerDesignCanvasTools(pi);
+	registerDesignVersionTools(pi);
 	registerShowWidgetTools(pi);
 	registerTodoWriteTools(pi);
 	registerRelayProviderTools(pi);
