@@ -124,6 +124,91 @@ test("unanswered note is appended; her reply clears it; a read does not", async 
 	}
 });
 
+/**
+ * This text rides on every tool result, so it is usually where she meets one of
+ * his notes for the first time. The canvas has known which file and line he
+ * pinned on since the source travelled with the event; she never saw it, so a
+ * note arrived as words plus a screen name and she had to guess which of that
+ * screen's elements he meant, or spend a round trip asking.
+ *
+ * Both notes are in one nag on purpose: the location has to be per-note, not a
+ * mode the whole reminder switches into. A note pinned on empty canvas must read
+ * exactly as it always did — no empty brackets, no "unknown".
+ */
+test("the reminder names the file and line, and says nothing extra when there is none", async () => {
+	const root = tempRoot();
+	try {
+		appendEvent(
+			{
+				t: "note",
+				id: "n1",
+				at: AT,
+				author: "fei",
+				screenId: "product-list",
+				x: 10,
+				y: 20,
+				text: "too tight",
+				source: {
+					file: "packages/design-lab/src/screens/playground/screen.tsx",
+					line: 19,
+					col: 25,
+					component: "PlaygroundScreen",
+				},
+			},
+			root,
+		);
+		appendEvent(fromFei("n2", "wrong green"), root);
+
+		const result = await runDummy(root, () => originalResult());
+
+		assert.equal(
+			nagText(result),
+			[
+				"他在画布上还有 2 条没处理的意见:",
+				"- n1 on product-list at packages/design-lab/src/screens/playground/screen.tsx:19 (PlaygroundScreen): too tight",
+				"- n2 on product-list: wrong green",
+				"先处理这些,再继续你原来的计划。回复用 design_lab_reply,真改完了用 design_lab_resolve。",
+			].join("\n"),
+		);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("a location with no component name gets no empty parenthesis", async () => {
+	const root = tempRoot();
+	try {
+		appendEvent(
+			{
+				t: "note",
+				id: "n1",
+				at: AT,
+				author: "fei",
+				screenId: null,
+				x: 10,
+				y: 20,
+				text: "this is off",
+				source: {
+					file: "packages/design-lab/src/screens/mosaic/screen.tsx",
+					line: 7,
+					col: 2,
+					component: null,
+				},
+			},
+			root,
+		);
+
+		const result = await runDummy(root, () => originalResult());
+
+		assert.match(
+			nagText(result) ?? "",
+			/^- n1 on the canvas at packages\/design-lab\/src\/screens\/mosaic\/screen\.tsx:7: this is off$/m,
+		);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
 test("zero pending leaves the original result untouched", async () => {
 	const root = tempRoot();
 	try {

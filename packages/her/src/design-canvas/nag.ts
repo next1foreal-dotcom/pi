@@ -5,7 +5,7 @@ import type { ExtensionAPI, ToolDefinition, ToolResultEvent } from "@earendil-wo
 import { SAMANTHA_REPO_ROOT } from "../her-core/channel-probe-gate.ts";
 import { acceptProposal, declineProposal, proposalStates, type RuleProposal } from "./decisions.ts";
 import { compactionEpoch } from "./epoch.ts";
-import type { Thread } from "./feed.ts";
+import { formatSource, type Thread } from "./feed.ts";
 import { allThreads } from "./store.ts";
 
 const STYLE_GUIDE_FOOTER = "这些是产品真正 ship 的值。要完整的调 design_system_load;不许自己发明数值。";
@@ -114,9 +114,19 @@ export function pendingForHer(repoRoot?: string): Thread[] {
 	}
 }
 
+/**
+ * The reminder carries the location too, not just the words.
+ *
+ * This text rides on every tool result, so it is usually where she meets one of
+ * his notes for the first time — sending her to design_lab_notes to find out
+ * *where* would waste the round trip this whole hitchhike exists to save. A note
+ * with no resolved location reads exactly as it always did.
+ */
 function formatNag(pending: Thread[]): string {
 	const lines = pending.map((thread) => {
-		const where = thread.screenId ?? "the canvas";
+		const screen = thread.screenId ?? "the canvas";
+		const at = formatSource(thread.source);
+		const where = at ? `${screen} at ${at}` : screen;
 		return `- ${thread.id} on ${where}: ${thread.text}`;
 	});
 	return [

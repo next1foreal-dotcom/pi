@@ -141,6 +141,71 @@ test("resolve and reopen are both just events, and the last one wins", () => {
 	assert.equal(reopened[0].resolved, false);
 });
 
+/**
+ * The source travels on the wire and is declared on the event, and until now the
+ * projection dropped it on the floor — so the one thing that would let her go
+ * straight to the code he pointed at never survived the trip into a Thread.
+ */
+test("where he pinned the note survives into the thread she reads", () => {
+	const feed = feedOf([
+		note("n1", "this gap is too tight", {
+			source: {
+				file: "packages/design-lab/src/screens/playground/screen.tsx",
+				line: 19,
+				col: 25,
+				component: "PlaygroundScreen",
+			},
+		}),
+		note("n2", "wrong green"),
+	]);
+
+	const [pinned, loose] = projectThreads(parseFeed(feed));
+	assert.deepEqual(pinned.source, {
+		file: "packages/design-lab/src/screens/playground/screen.tsx",
+		line: 19,
+		col: 25,
+		component: "PlaygroundScreen",
+	});
+	// A note pinned on empty canvas carries nothing, and must not invent it.
+	assert.equal(loose.source, undefined);
+});
+
+test("dragging the pin does not rewrite what he was talking about", () => {
+	// The move carries the original source forward on the wire, and a later
+	// version of the canvas could carry a different one. Neither may reach the
+	// thread: a drag is not him saying he meant a different button — the same
+	// reason a move is not a speaking event and gets no oid.
+	const pinned = {
+		file: "packages/design-lab/src/screens/playground/screen.tsx",
+		line: 19,
+		col: 25,
+		component: "PlaygroundScreen",
+	};
+	const feed = feedOf([
+		note("n1", "too tight", { source: pinned }),
+		{
+			t: "note.move",
+			id: "n1",
+			at: AT,
+			author: "fei",
+			screenId: "mosaic",
+			x: 900,
+			y: 40,
+			source: {
+				file: "packages/design-lab/src/screens/mosaic/screen.tsx",
+				line: 4,
+				col: 2,
+				component: "MosaicScreen",
+			},
+		},
+	]);
+
+	const [thread] = projectThreads(parseFeed(feed));
+	assert.deepEqual(thread.source, pinned);
+	// The move still does what a move is for.
+	assert.deepEqual([thread.screenId, thread.x, thread.y], ["mosaic", 900, 40]);
+});
+
 test("a move rewrites position and screen, an edit rewrites text", () => {
 	const feed = feedOf([
 		note("n1", "first words"),

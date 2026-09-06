@@ -4,7 +4,7 @@ import { Type } from "typebox";
 import { textResult } from "../tools/shared.ts";
 import { recordResolvedDecision } from "./decisions.ts";
 import { chooseDirection, currentDirection, proposeDirections } from "./direction.ts";
-import { type CanvasEvent, newId, type Thread } from "./feed.ts";
+import { type CanvasEvent, formatSource, newId, type Thread } from "./feed.ts";
 import { designMode, interceptDesignToolCall, interceptFirstFrameToolCall, setDesignMode } from "./mode.ts";
 import { installCanvasNagHook } from "./nag.ts";
 import { allThreads, appendEvent, readCanvas } from "./store.ts";
@@ -20,8 +20,19 @@ export interface DesignCanvasDeps {
 	makeId?: (prefix: "n" | "r") => string;
 }
 
+/**
+ * One thread as she reads it.
+ *
+ * The head carries the location when the canvas resolved one, so "this gap is
+ * too tight" arrives already naming the file and line that made the gap. Before
+ * this she got a screen name and a pair of page coordinates and had to guess
+ * which of the screen's elements he meant.
+ */
 function line(t: Thread): string {
-	const where = t.screenId ? `on ${t.screenId}` : "on the canvas";
+	const screen = t.screenId ? `on ${t.screenId}` : "on the canvas";
+	const at = formatSource(t.source);
+	// No location: byte-for-byte what it read before, not an empty placeholder.
+	const where = at ? `${screen} at ${at}` : screen;
 	const head = `${t.id} ${where} — ${t.text.trim() || "(empty note)"}`;
 	const replies = t.replies.map((r) => `    ${r.author}: ${r.text}`);
 	const state = t.resolved ? `    [resolved by ${t.resolvedBy}]` : "";

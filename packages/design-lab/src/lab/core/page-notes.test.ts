@@ -465,6 +465,195 @@ describe("canvas events posted to the feed", () => {
 	});
 });
 
+/**
+ * Until now only the "speak about this element" gesture handed a note a source;
+ * a note pinned by ordinary clicking carried none, which is why the real feed
+ * has never once contained one. An ordinary pin now asks the inspect plugin what
+ * it landed on.
+ *
+ * The whole risk is in the word "asks". The lookup goes out to a plugin that may
+ * not be mounted, over a point that may be empty canvas, into React internals
+ * that may not be readable. None of that is allowed to cost him a note he typed:
+ * the location is a convenience looked up on his behalf, the note is the thing
+ * he actually said.
+ */
+describe("an ordinary pin looks up what it landed on", () => {
+	const AT_BUTTON = {
+		screenId: "playground",
+		file: "packages/design-lab/src/screens/playground/screen.tsx",
+		line: 19,
+		column: 25,
+		component: "PlaygroundScreen",
+		tag: "button",
+		className: "cta",
+		text: "Buy",
+		attached: true,
+		problem: null,
+	};
+	/** The same place, in the shape the note event has always used (`col`). */
+	const AS_NOTE_SOURCE = {
+		file: "packages/design-lab/src/screens/playground/screen.tsx",
+		line: 19,
+		col: 25,
+		component: "PlaygroundScreen",
+	};
+
+	function mountPinned(): { objects: ReturnType<typeof stubObjects> } {
+		const host = document.createElement("div");
+		document.body.appendChild(host);
+		const objects = stubObjects();
+		live = new StickyNotes({
+			host,
+			objects,
+			storageKey: null,
+			screenAt: () => "playground",
+		});
+		return { objects };
+	}
+
+	/** Stand in for `window.lab`, publishing one plugin's api. */
+	function stubInspect(api: unknown): void {
+		vi.stubGlobal("lab", {
+			plugin: (id: string) => (id === "inspect" ? api : undefined),
+			plugins: () => ["inspect"],
+			describe: () => [],
+			help: () => ({}),
+			tokens: { preview: () => {} },
+		});
+	}
+
+	it("posts the file and line under the pin, reading the plugin's column as col", () => {
+		const asked: Array<[number, number]> = [];
+		stubInspect({
+			selectAt: (x: number, y: number) => {
+				asked.push([x, y]);
+				return AT_BUTTON;
+			},
+			clear: () => {},
+		});
+		mountPinned();
+
+		const n = live?.spawn({ x: 40, y: 80 });
+
+		// The MIDDLE of the note, not its top-left: noteSpawnTopLeft centres a
+		// fresh note on the point he pinned, so the middle is where he pointed.
+		expect(asked).toEqual([[40 + NOTE_DEFAULT / 2, 80 + NOTE_DEFAULT / 2]]);
+		expect(n?.source).toEqual(AS_NOTE_SOURCE);
+		expect(eventPosts().find((p) => p.body.t === "note")?.body.source).toEqual(
+			AS_NOTE_SOURCE,
+		);
+	});
+
+	it("keeps the note and every word of it when the resolver throws", () => {
+		stubInspect({
+			selectAt: () => {
+				throw new Error("no fiber here");
+			},
+		});
+		mountPinned();
+
+		const n = live?.spawn({ x: 40, y: 80, text: "this gap is too tight" });
+
+		expect(n?.source).toBeUndefined();
+		expect(live?.getNotes()).toHaveLength(1);
+		expect(live?.getNotes()[0]?.text).toBe("this gap is too tight");
+		const posted = eventPosts().find((p) => p.body.t === "note");
+		expect(posted?.body.text).toBe("this gap is too tight");
+		expect(posted?.body).not.toHaveProperty("source");
+	});
+
+	it("no plugin mounted, and empty canvas under the point, both mean no location", () => {
+		mountPinned(); // nothing ever published window.lab
+		expect(live?.spawn({ x: 0, y: 0, text: "no plugin" })?.source).toBeUndefined();
+
+		stubInspect({ selectAt: () => null, clear: () => {} });
+		expect(live?.spawn({ x: 600, y: 600, text: "empty canvas" })?.source).toBeUndefined();
+
+		const notes = eventPosts().filter((p) => p.body.t === "note");
+		expect(notes).toHaveLength(2);
+		for (const p of notes) expect(p.body).not.toHaveProperty("source");
+	});
+
+	it("drops a half-resolved location rather than half-filling one", () => {
+		// A production React build has no _debugStack, so file/line/column come
+		// back null together. Anything short of all three is not somewhere she
+		// can open, and a 0 column would be a fact nobody established.
+		stubInspect({ selectAt: () => ({ ...AT_BUTTON, column: null }), clear: () => {} });
+		mountPinned();
+
+		expect(live?.spawn({ x: 40, y: 80 })?.source).toBeUndefined();
+	});
+
+	it("dragging the pin does not re-resolve it onto whatever it landed on", () => {
+		let answer: unknown = AT_BUTTON;
+		let asked = 0;
+		stubInspect({
+			selectAt: () => {
+				asked += 1;
+				return answer;
+			},
+			clear: () => {},
+		});
+		const { objects } = mountPinned();
+		const n = live?.spawn({ x: 10, y: 20 });
+		expect(asked).toBe(1);
+
+		// He drags it clear across the canvas, over a different screen entirely.
+		answer = {
+			...AT_BUTTON,
+			file: "packages/design-lab/src/screens/mosaic/screen.tsx",
+			line: 4,
+			column: 2,
+			component: "MosaicScreen",
+		};
+		objects.inits
+			.get(`note:${n?.id}`)
+			?.onLayout?.({ x: 900, y: 40, width: 240, height: 240 });
+
+		expect(asked).toBe(1);
+		expect(eventPosts().find((p) => p.body.t === "note.move")?.body.source).toEqual(
+			AS_NOTE_SOURCE,
+		);
+		expect(live?.getNotes()[0]?.source).toEqual(AS_NOTE_SOURCE);
+	});
+
+	it("takes a source it was handed as given, without asking the plugin", () => {
+		let asked = 0;
+		stubInspect({
+			selectAt: () => {
+				asked += 1;
+				return AT_BUTTON;
+			},
+			clear: () => {},
+		});
+		mountPinned();
+
+		const given = {
+			file: "packages/design-lab/src/screens/mosaic/screen.tsx",
+			line: 4,
+			col: 2,
+			component: null,
+		};
+		expect(live?.spawn({ x: 40, y: 80, source: given })?.source).toEqual(given);
+		expect(asked).toBe(0);
+	});
+
+	it("does not leave the inspector's outline painted on the canvas", () => {
+		// selectAt selects, which paints. Pinning a note is not asking to inspect.
+		let cleared = 0;
+		stubInspect({
+			selectAt: () => AT_BUTTON,
+			clear: () => {
+				cleared += 1;
+			},
+		});
+		mountPinned();
+
+		live?.spawn({ x: 40, y: 80 });
+		expect(cleared).toBe(1);
+	});
+});
+
 describe("replies and resolved state on the sticky", () => {
 	it("the stylesheet paints replies as canvas content and a quiet resolved mark", () => {
 		mount();

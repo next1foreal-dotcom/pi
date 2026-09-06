@@ -496,20 +496,35 @@ export class StickyNotes {
 		this.emitChange();
 	}
 
-	/** Spawn a note at page coordinates and focus it. */
+	/**
+	 * Spawn a note at page coordinates and focus it.
+	 *
+	 * An ordinary pin -- one that arrives without a `source` -- looks up what is
+	 * under it, so a note dropped by hand carries the same file and line the
+	 * "speak about this element" gesture provides. Resolution happens BEFORE the
+	 * note exists: nothing that goes wrong in the lookup can reach the note, and
+	 * the sticky is never itself a candidate for what it is pinned to.
+	 */
 	spawn(init: Partial<Omit<StickyNote, "id">> = {}): StickyNote {
 		const step = (this.notes.length % 6) * 24;
+		const x = init.x ?? step;
+		const y = init.y ?? step;
+		const w = sizeOrDefault(init.w);
+		const h = sizeOrDefault(init.h);
+		// A fresh note is centred on the point he pinned (see noteSpawnTopLeft),
+		// so its middle -- not its top-left corner -- is what he pointed at.
+		const source = init.source ?? this.resolveSourceAt(x + w / 2, y + h / 2);
 		const note: StickyNote = {
 			id: this.nextId++,
 			fid: newFeedId("n"),
-			x: init.x ?? step,
-			y: init.y ?? step,
+			x,
+			y,
 			color: init.color ?? this.defaultColor,
 			fontSize: init.fontSize ?? "medium",
 			font: init.font ?? "inter",
 			compact: init.compact ?? false,
-			w: sizeOrDefault(init.w),
-			h: sizeOrDefault(init.h),
+			w,
+			h,
 			text: "",
 			html:
 				init.html !== undefined
@@ -517,7 +532,7 @@ export class StickyNotes {
 					: textToHtml(init.text ?? ""),
 			replies: [],
 			resolved: false,
-			source: init.source,
+			source,
 			anchor: init.anchor ? { ...init.anchor } : undefined,
 		};
 		if (note.anchor) this.applyAnchorToNote(note);
@@ -530,6 +545,60 @@ export class StickyNotes {
 		this.emitCreated(note);
 		this.commit();
 		return { ...note };
+	}
+
+	/**
+	 * What made the thing at a PAGE point, asked of the inspect plugin.
+	 *
+	 * Every failure returns undefined and the note is created anyway. A note is
+	 * something he typed; a location is a convenience we look up on his behalf,
+	 * and losing the first to the second would be the worst trade on this canvas.
+	 * So: no plugin mounted, no `selectAt`, empty canvas under the point, a fibre
+	 * with no readable stack, a resolver that throws -- all of them just mean the
+	 * note travels without a location, exactly as every note did before this.
+	 *
+	 * The plugin calls the third field `column`; the note event has always called
+	 * it `col`. That rename is the whole reason this maps field by field instead
+	 * of spreading the selection, and why a missing `column` drops the location
+	 * rather than defaulting to 0 -- the same all-or-nothing rule the "speak
+	 * about this element" gesture already applies, so both gestures produce the
+	 * same shape or produce nothing.
+	 *
+	 * `selectAt` paints the inspector's outline as a side effect. Pinning a note
+	 * is not asking to inspect anything, so the outline is dropped again.
+	 */
+	private resolveSourceAt(x: number, y: number): StickyNote["source"] | undefined {
+		if (typeof window === "undefined") return undefined;
+		try {
+			const api = window.lab?.plugin("inspect") as
+				| {
+						selectAt?: (x: number, y: number) => unknown;
+						clear?: () => void;
+				  }
+				| undefined;
+			if (!api || typeof api.selectAt !== "function") return undefined;
+			const selected = api.selectAt(x, y) as {
+				file?: unknown;
+				line?: unknown;
+				column?: unknown;
+				component?: unknown;
+			} | null;
+			if (typeof api.clear === "function") api.clear();
+			if (!selected) return undefined;
+			const { file, line, column, component } = selected;
+			if (typeof file !== "string" || file === "") return undefined;
+			if (typeof line !== "number" || !Number.isFinite(line)) return undefined;
+			if (typeof column !== "number" || !Number.isFinite(column)) return undefined;
+			return {
+				file,
+				line,
+				col: column,
+				component: typeof component === "string" ? component : null,
+			};
+		} catch {
+			// the lookup is optional; the note is not
+			return undefined;
+		}
 	}
 
 	removeNote(id: number) {
@@ -894,6 +963,11 @@ export class StickyNotes {
 						null,
 					x: note.x,
 					y: note.y,
+					// The note's existing source, carried forward -- never resolved
+					// again from the new position. Dragging a pin does not mean he
+					// is now talking about whatever the pin landed on, and quietly
+					// rewriting the location would change what he said. Same reason
+					// a move is not a speaking event and carries no oid.
 					...(note.source ? { source: note.source } : {}),
 					...(note.anchor ? { anchor: { ...note.anchor } } : {}),
 				});

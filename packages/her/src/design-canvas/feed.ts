@@ -29,6 +29,21 @@
 /** Who said it. The transport stamps this; a writer never claims it. */
 export type Author = "fei" | "samantha";
 
+/**
+ * The JSX that made the thing he pointed at.
+ *
+ * `file` is repo-relative (`packages/design-lab/src/screens/foo/screen.tsx`);
+ * `line`/`col` point at the tag, read from React's dev-only `_debugStack` by the
+ * lab's inspect plugin. `component` is the component that rendered the tag when
+ * the stack frame names one, and null when it does not.
+ */
+export interface NoteSource {
+	file: string;
+	line: number;
+	col: number;
+	component: string | null;
+}
+
 export type CanvasEvent =
 	| {
 			t: "note";
@@ -40,7 +55,7 @@ export type CanvasEvent =
 			x: number;
 			y: number;
 			text: string;
-			source?: { file: string; line: number; col: number; component: string | null };
+			source?: NoteSource;
 			/** samantha HEAD when this note was written. Stamped by the server, never the client. */
 			oid?: string;
 	  }
@@ -52,7 +67,7 @@ export type CanvasEvent =
 			screenId: string | null;
 			x: number;
 			y: number;
-			source?: { file: string; line: number; col: number; component: string | null };
+			source?: NoteSource;
 	  }
 	| { t: "note.edit"; id: string; at: string; author: Author; text: string; oid?: string }
 	| { t: "note.delete"; id: string; at: string; author: Author }
@@ -63,6 +78,26 @@ export type CanvasEvent =
 /** Speech, not motion. A move is not saying anything, so it does not get an oid. */
 export function isSpeakingEvent(t: string): boolean {
 	return t === "note" || t === "note.edit" || t === "reply" || t === "resolve" || t === "reopen";
+}
+
+/**
+ * The one line she needs to go straight to the code he pointed at:
+ * `path/to/screen.tsx:19 (PlaygroundScreen)`, or without the parenthesis when
+ * no component name was recovered.
+ *
+ * Returns null rather than a placeholder when there is no location, and every
+ * caller drops the whole clause on null. A note pinned on empty canvas has to
+ * read exactly as it did before this existed — "unknown" or empty brackets
+ * would be noise she has to learn to ignore, on every note, forever.
+ */
+export function formatSource(source: NoteSource | undefined): string | null {
+	if (!source) return null;
+	const file = typeof source.file === "string" ? source.file.trim() : "";
+	if (!file) return null;
+	const line = typeof source.line === "number" && Number.isFinite(source.line) ? source.line : null;
+	const where = line === null ? file : `${file}:${line}`;
+	const component = typeof source.component === "string" ? source.component.trim() : "";
+	return component ? `${where} (${component})` : where;
 }
 
 export interface Reply {
@@ -93,6 +128,15 @@ export interface Thread {
 	resolved: boolean;
 	resolvedBy?: Author;
 	resolvedNote?: string;
+	/**
+	 * Where in the source the note was pinned, when the canvas could work it out.
+	 *
+	 * Set from the opening `note` event and never touched again. A move carries
+	 * the same source forward on the wire, but re-reading it here would let a
+	 * drag rewrite what he was talking about, so the projection ignores it — the
+	 * same reason a move is not a speaking event and gets no oid.
+	 */
+	source?: NoteSource;
 	/**
 	 * samantha HEAD when this thread was opened.
 	 * Answers: what did the code look like when he first wrote this note?
@@ -194,6 +238,7 @@ export function projectThreads(events: CanvasEvent[]): Thread[] {
 					replies: [],
 					lastSpoke: e.author,
 					resolved: false,
+					source: e.source,
 					oid: e.oid,
 					lastOid: e.oid,
 				});
@@ -201,6 +246,7 @@ export function projectThreads(events: CanvasEvent[]): Thread[] {
 			case "note.move": {
 				const th = threads.get(e.id);
 				if (th) {
+					// Position only. `source` is deliberately not re-read here: see Thread.source.
 					th.screenId = e.screenId;
 					th.x = e.x;
 					th.y = e.y;
