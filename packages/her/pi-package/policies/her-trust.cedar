@@ -197,3 +197,34 @@ permit(
   action == Action::"CallTool",
   resource == Tool::"design_tokens_commit"
 );
+
+// Package K direct manipulation — design_element_classes rewrites one JSX tag's
+// class list in the product's own .tsx/.jsx, at a file/line/column the inspect
+// plugin resolved. Registered destructive:true, so none of the permits above
+// reach it and a live call would hit `cedar: deny (no permit matched)`.
+//
+// This grants no new capability. permit_coding_destructive_tools already lets
+// edit/write touch every non-anchor path, and a screen's .tsx is a non-anchor
+// path — she could already overwrite the whole file. This narrows that to a
+// single named, scoped, ledger-legible call: it opens the file, refuses unless
+// the tag at that exact line and column is still the tag she selected, refuses a
+// computed className={...} by name instead of guessing, changes one attribute's
+// value span and leaves every other byte alone. It is a narrowing, not a widening.
+//
+// Still impossible after this permit:
+//   · anchors: forbid_anchor_write overrides it as it overrides everything — the
+//     tool's own `file` parameter is one of the PATH_FIELD_KEYS the anchor
+//     resolver reads, so a target resolving to SOUL/FACTS/CONTEXT/evals/policies/
+//     .githooks/.env is refused before this permit is consulted. The tool also
+//     opens nothing but .tsx and .jsx inside the repo.
+//   · unattended rounds: her-trust-heartbeat.cedar is a separate policy set that
+//     permits only destructive == false; this tool is destructive:true, so this
+//     permit cannot leak into a heartbeat round.
+//   · more than one tag: there is no "every button on this screen" — one call,
+//     one location, one tag.
+@id("permit_design_element_classes")
+permit(
+  principal == Agent::"samantha",
+  action == Action::"CallTool",
+  resource == Tool::"design_element_classes"
+);
