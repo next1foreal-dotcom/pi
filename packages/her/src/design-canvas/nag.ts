@@ -4,6 +4,7 @@ import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-age
 
 import { SAMANTHA_REPO_ROOT } from "../her-core/channel-probe-gate.ts";
 import { acceptProposal, declineProposal, proposalStates, type RuleProposal } from "./decisions.ts";
+import { compactionEpoch } from "./epoch.ts";
 import type { Thread } from "./feed.ts";
 import { allThreads } from "./store.ts";
 
@@ -11,9 +12,20 @@ const STYLE_GUIDE_FOOTER = "这些是产品真正 ship 的值。要完整的调 
 const STYLE_GUIDE_MAX = 600;
 const STYLE_GUIDE_PER_GROUP = 3;
 const DESIGN_SYSTEM_LOAD = "design_system_load";
+const COMPACTION_NAG_LINE =
+	"这一轮之前的上下文被压缩过。你的设计纪律在 skill `her-design` 里,需要时重新读它——尤其 process/steps 与 review/rubric。";
 
-/** Roots that already got a style-guide ride this process. Delivery is once. */
-const styleGuideDelivered = new Set<string>();
+type StyleGuideDelivery = {
+	epoch: number;
+	/** The target directory this delivery spoke about; undefined if none was found. */
+	dir: string | undefined;
+	receiptMtime: number;
+	cssMtime: number;
+	stampedAt: string;
+};
+
+/** Last hitchhike per root: compaction epoch + token-file mtimes at send time. */
+const styleGuideDelivered = new Map<string, StyleGuideDelivery>();
 const PROCESS_STARTED_MS = Date.now();
 
 function resolveRoot(repoRoot?: string): string {
@@ -105,7 +117,8 @@ function decorateResult<T>(result: T, repoRoot?: string, toolName?: string): T {
 }
 
 /**
- * At most one style-guide summary per process per root.
+ * Style-guide hitchhike is once per root per compaction epoch. A later
+ * compaction or a newer tokens.css / receipt.json mtime sends it again.
  * `design_system_load` is registered on the unwrapped `pi`, so a this-round
  * load is detected from receipt.loadedAt, not from the tool name. Wrapping
  * a tool named design_system_load still counts, for tests and future wiring.
@@ -113,18 +126,54 @@ function decorateResult<T>(result: T, repoRoot?: string, toolName?: string): T {
  */
 function takeStyleGuideNag(repoRoot?: string, toolName?: string): string | undefined {
 	const key = resolveRoot(repoRoot);
+	const epoch = compactionEpoch();
 	if (toolName === DESIGN_SYSTEM_LOAD) {
-		styleGuideDelivered.add(key);
+		rememberStyleGuideDelivery(key, epoch);
 		return undefined;
 	}
-	if (styleGuideDelivered.has(key)) return undefined;
-	const text = formatStyleGuideNag(key);
-	if (!text) return undefined;
-	styleGuideDelivered.add(key);
-	return text;
+	const prev = styleGuideDelivered.get(key);
+	const epochBumped = prev !== undefined && epoch > prev.epoch;
+	const mtimeBumped = prev !== undefined && tokensChangedSince(prev);
+	if (prev && !epochBumped && !mtimeBumped) return undefined;
+	const found = formatStyleGuideNag(key, epochBumped || mtimeBumped);
+	if (!found) return undefined;
+	rememberStyleGuideDelivery(key, epoch, found.dir);
+	if (prev && mtimeBumped) {
+		return `产品的 token 变了(上次是 ${prev.stampedAt}),这是现在的:\n${found.text}`;
+	}
+	if (prev && epochBumped) {
+		return `${COMPACTION_NAG_LINE}\n${found.text}`;
+	}
+	return found.text;
 }
 
-function formatStyleGuideNag(root: string): string | undefined {
+/**
+ * Watch the target we actually spoke about. Picking it by "first directory that
+ * has both files" instead would drift: a target with an unreadable receipt is
+ * skipped when composing the text but not when picking files to watch, so its
+ * mtimes would stand in for a different target's and the resend would never fire.
+ */
+function rememberStyleGuideDelivery(key: string, epoch: number, dir?: string): void {
+	const watched = dir ?? firstStyleGuidePaths(key)?.dir;
+	const mtimes = watched ? readStyleGuideMtimes(watched) : undefined;
+	styleGuideDelivered.set(key, {
+		epoch,
+		dir: watched,
+		receiptMtime: mtimes?.receiptMtime ?? 0,
+		cssMtime: mtimes?.cssMtime ?? 0,
+		stampedAt: mtimes?.stampedAt ?? new Date(0).toISOString(),
+	});
+}
+
+function readMtimeMs(path: string): number | undefined {
+	try {
+		return statSync(path).mtimeMs;
+	} catch {
+		return undefined;
+	}
+}
+
+function firstStyleGuidePaths(root: string): { dir: string } | undefined {
 	try {
 		const systemDir = join(root, "design", "system");
 		if (!existsSync(systemDir) || !statSync(systemDir).isDirectory()) return undefined;
@@ -132,8 +181,11 @@ function formatStyleGuideNag(root: string): string | undefined {
 			try {
 				const dir = join(systemDir, name);
 				if (!statSync(dir).isDirectory()) continue;
-				const nag = nagForTarget(dir, name);
-				if (nag) return nag;
+				const receiptPath = join(dir, "receipt.json");
+				const cssPath = join(dir, "tokens.css");
+				if (!existsSync(receiptPath) || !statSync(receiptPath).isFile()) continue;
+				if (!existsSync(cssPath) || !statSync(cssPath).isFile()) continue;
+				return { dir };
 			} catch {}
 		}
 		return undefined;
@@ -142,7 +194,49 @@ function formatStyleGuideNag(root: string): string | undefined {
 	}
 }
 
-function nagForTarget(dir: string, fallbackName: string): string | undefined {
+function readStyleGuideMtimes(dir: string): { receiptMtime: number; cssMtime: number; stampedAt: string } | undefined {
+	const receiptMtime = readMtimeMs(join(dir, "receipt.json"));
+	const cssMtime = readMtimeMs(join(dir, "tokens.css"));
+	if (receiptMtime === undefined && cssMtime === undefined) return undefined;
+	const receipt = receiptMtime ?? 0;
+	const css = cssMtime ?? 0;
+	return {
+		receiptMtime: receipt,
+		cssMtime: css,
+		stampedAt: new Date(Math.max(receipt, css)).toISOString(),
+	};
+}
+
+function tokensChangedSince(prev: StyleGuideDelivery): boolean {
+	try {
+		if (!prev.dir) return false;
+		const mtimes = readStyleGuideMtimes(prev.dir);
+		if (!mtimes) return false;
+		return mtimes.receiptMtime > prev.receiptMtime || mtimes.cssMtime > prev.cssMtime;
+	} catch {
+		return false;
+	}
+}
+
+function formatStyleGuideNag(root: string, ignoreLoadedThisProcess = false): { text: string; dir: string } | undefined {
+	try {
+		const systemDir = join(root, "design", "system");
+		if (!existsSync(systemDir) || !statSync(systemDir).isDirectory()) return undefined;
+		for (const name of readdirSync(systemDir).sort()) {
+			try {
+				const dir = join(systemDir, name);
+				if (!statSync(dir).isDirectory()) continue;
+				const nag = nagForTarget(dir, name, ignoreLoadedThisProcess);
+				if (nag) return { text: nag, dir };
+			} catch {}
+		}
+		return undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+function nagForTarget(dir: string, fallbackName: string, ignoreLoadedThisProcess = false): string | undefined {
 	const receiptPath = join(dir, "receipt.json");
 	const cssPath = join(dir, "tokens.css");
 	if (!existsSync(receiptPath) || !statSync(receiptPath).isFile()) return undefined;
@@ -155,7 +249,7 @@ function nagForTarget(dir: string, fallbackName: string): string | undefined {
 	}
 	if (!receipt || typeof receipt !== "object") return undefined;
 	const rec = receipt as { target?: unknown; loadedAt?: unknown };
-	if (loadedThisProcess(rec.loadedAt)) return undefined;
+	if (!ignoreLoadedThisProcess && loadedThisProcess(rec.loadedAt)) return undefined;
 	const target = rec.target;
 	const project = typeof target === "string" && target.trim() !== "" ? target.trim() : fallbackName;
 	const groups = parseTokenGroups(readFileSync(cssPath, "utf8"));
@@ -209,8 +303,8 @@ function clipStyleGuide(body: string): string {
 
 /**
  * Wrap `registerTool` so every execute result can carry unanswered canvas notes,
- * at most one pending taste-rule proposal, and a one-shot style-guide summary,
- * as separate text parts.
+ * at most one pending taste-rule proposal, and a style-guide summary (once per
+ * compaction epoch, or again if the token files changed), as separate text parts.
  * The original result is returned unchanged when there is nothing to say, and a
  * throwing execute still throws.
  */

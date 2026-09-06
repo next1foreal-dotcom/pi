@@ -8,6 +8,7 @@ import {
 	readFileSync,
 	rmSync,
 	statSync,
+	utimesSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -15,6 +16,8 @@ import { join, relative } from "node:path";
 import test from "node:test";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 
+import { summarizeForCompaction } from "../src/compaction.ts";
+import { bumpCompactionEpoch, compactionEpoch } from "../src/design-canvas/epoch.ts";
 import type { CanvasEvent } from "../src/design-canvas/feed.ts";
 import {
 	acceptProposal,
@@ -24,6 +27,7 @@ import {
 	withCanvasNag,
 } from "../src/design-canvas/nag.ts";
 import { appendEvent, readCanvas, readCursor } from "../src/design-canvas/store.ts";
+import { FakeModel } from "../src/her-core/index.ts";
 
 const AT = "2026-09-05T20:00:00.000Z";
 
@@ -788,6 +792,148 @@ test("a huge token value still clips the style-guide nag to 600 characters", asy
 		assert.ok(result.content[1].text.length <= 600);
 		assert.equal(result.content[1].text.endsWith(STYLE_GUIDE_FOOTER), true);
 		assert.match(result.content[1].text, /samantha-ui/);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+const COMPACTION_NAG_LINE =
+	"这一轮之前的上下文被压缩过。你的设计纪律在 skill `her-design` 里,需要时重新读它——尤其 process/steps 与 review/rubric。";
+
+function styleGuideStamp(root: string, target = "samantha-ui"): string {
+	const dir = join(root, "design", "system", target);
+	return new Date(
+		Math.max(statSync(join(dir, "receipt.json")).mtimeMs, statSync(join(dir, "tokens.css")).mtimeMs),
+	).toISOString();
+}
+
+function touchStyleGuide(root: string, target = "samantha-ui"): void {
+	const dir = join(root, "design", "system", target);
+	const later = new Date(Date.now() + 10_000);
+	utimesSync(join(dir, "receipt.json"), later, later);
+	utimesSync(join(dir, "tokens.css"), later, later);
+}
+
+test("style-guide hitchhike returns after compaction epoch bump, with the compaction line", async () => {
+	const root = tempRoot();
+	try {
+		plantStyleGuide(root);
+		const first = await runDummy(root, () => originalResult());
+		assert.equal(first.content[1]?.text, expectedStyleGuideNag());
+		const second = await runDummy(root, () => originalResult());
+		assert.deepEqual(second, originalResult(), "same epoch, same files: stay quiet");
+
+		bumpCompactionEpoch();
+		const after = await runDummy(root, () => originalResult());
+		assert.equal(after.content.length, 2);
+		assert.equal(after.content[1]?.text, `${COMPACTION_NAG_LINE}\n${expectedStyleGuideNag()}`);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("newer token file mtime resends with a change line and without the compaction line", async () => {
+	const root = tempRoot();
+	try {
+		plantStyleGuide(root);
+		const first = await runDummy(root, () => originalResult());
+		assert.equal(first.content[1]?.text, expectedStyleGuideNag());
+		const oldStamp = styleGuideStamp(root);
+
+		touchStyleGuide(root);
+		const after = await runDummy(root, () => originalResult());
+		assert.equal(
+			after.content[1]?.text,
+			`产品的 token 变了(上次是 ${oldStamp}),这是现在的:\n${expectedStyleGuideNag()}`,
+		);
+		assert.doesNotMatch(after.content[1]?.text ?? "", /上下文被压缩过/);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("unchanged mtime and no compaction does not hitchhike the style guide again", async () => {
+	const root = tempRoot();
+	try {
+		plantStyleGuide(root);
+		const first = await runDummy(root, () => originalResult());
+		assert.equal(first.content[1]?.text, expectedStyleGuideNag());
+		const again = await runDummy(root, () => originalResult());
+		assert.deepEqual(again, originalResult());
+		assert.doesNotMatch(again.content.map((part) => part.text).join("\n"), /上下文被压缩过/);
+		assert.doesNotMatch(again.content.map((part) => part.text).join("\n"), /产品的 token 变了/);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("it watches the target it spoke about, not whichever one sorts first", async () => {
+	const root = tempRoot();
+	try {
+		// Sorts first and has both files, so a naive "first on disk" pick lands here —
+		// but its receipt is unreadable, so the nag skips it and speaks about the other.
+		plantStyleGuide(root, { target: "a-unreadable", receipt: "{ not json" });
+		plantStyleGuide(root);
+		const first = await runDummy(root, () => originalResult());
+		assert.equal(first.content[1]?.text, expectedStyleGuideNag());
+
+		touchStyleGuide(root, "samantha-ui");
+		const after = await runDummy(root, () => originalResult());
+		assert.equal(after.content.length, 2, "a newer tokens.css on the spoken-about target resends");
+		assert.match(after.content[1]?.text ?? "", /产品的 token 变了/);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("summarizeForCompaction structured fallback bumps the compaction epoch", async () => {
+	const before = compactionEpoch();
+	const result = await summarizeForCompaction({
+		grounding: {
+			context: "c",
+			facts: "f",
+			soul: "s",
+			self: "self",
+			choiceModel: "m",
+		},
+		preparation: { messagesToSummarize: [{ role: "user", content: [{ type: "text", text: "hi" }] }] },
+	});
+	assert.equal(result.source, "structured-fallback");
+	assert.equal(compactionEpoch(), before + 1);
+});
+
+test("summarizeForCompaction bumps epoch on the model path too", async () => {
+	const before = compactionEpoch();
+	const result = await summarizeForCompaction({
+		grounding: {
+			context: "c",
+			facts: "f",
+			soul: "s",
+			self: "self",
+			choiceModel: "m",
+		},
+		preparation: {},
+		envModel: new FakeModel("ok"),
+	});
+	assert.equal(result.source, "summary-model");
+	assert.equal(compactionEpoch(), before + 1);
+});
+
+test("mtime read failure after delivery does not throw and does not resend", async () => {
+	const root = tempRoot();
+	try {
+		plantStyleGuide(root);
+		appendEvent(fromFei("n1", "too tight"), root);
+		const first = await runDummy(root, () => originalResult());
+		assert.equal(first.content.length, 3, "todo nag + style guide");
+		assert.match(first.content[2]?.text ?? "", /这些是产品真正 ship 的值/);
+
+		rmSync(join(root, "design", "system"), { recursive: true, force: true });
+		const after = await runDummy(root, () => originalResult());
+		assert.equal(after.content.length, 2, "todo nag still hitchhikes; vanished tokens are silence");
+		assert.match(after.content[1]?.text ?? "", /n1 on product-list: too tight/);
+		assert.doesNotMatch(after.content.map((part) => part.text).join("\n"), /这些是产品真正 ship 的值/);
+		assert.doesNotMatch(after.content.map((part) => part.text).join("\n"), /产品的 token 变了/);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}

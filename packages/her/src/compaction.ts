@@ -1,6 +1,7 @@
 import { contentText } from "@earendil-works/pi-ai";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { bumpCompactionEpoch } from "./design-canvas/epoch.ts";
 import type { ModelLike } from "./her-core/index.ts";
 import { ANTI_NESTING_CLAUSE } from "./her-core/prompts.ts";
 
@@ -59,13 +60,17 @@ export async function summarizeForCompaction(input: {
 	for (const candidate of candidates) {
 		try {
 			const summary = await candidate.model.complete(prompt);
-			if (summary.trim()) return { summary, source: candidate.source, ...(errors.length ? { errors } : {}) };
+			if (summary.trim()) {
+				bumpCompactionEpoch();
+				return { summary, source: candidate.source, ...(errors.length ? { errors } : {}) };
+			}
 			errors.push(`${candidate.source}: empty summary`);
 		} catch (error) {
 			errors.push(`${candidate.source}: ${errorMessage(error)}`);
 		}
 	}
 
+	bumpCompactionEpoch();
 	return {
 		summary: fallbackCompactionSummary({
 			...input.grounding,
