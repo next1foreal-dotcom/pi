@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
@@ -22,12 +22,17 @@ const TARGETS = {
 
 type TargetName = keyof typeof TARGETS;
 
+/** Breakpoint-scoped token values, keyed by the raw media condition string. */
+export type MediaTokens = Map<string, Map<string, string>>;
+
 export interface DesignSystemDeps {
 	repoRoot?: string;
 	now?: () => string;
 	readSource?: (absPath: string) => Promise<string>;
 	writeSource?: (absPath: string, content: string) => Promise<void>;
 	headOf?: (repoDir: string) => Promise<string | undefined>;
+	/** Override for usage-scan root (defaults to <repoRoot>/../samantha-ui). */
+	usageScanRoot?: string;
 }
 
 export function registerDesignSystemTools(pi: ExtensionAPI, deps: DesignSystemDeps = {}): void {
@@ -43,7 +48,7 @@ export function registerDesignSystemTools(pi: ExtensionAPI, deps: DesignSystemDe
 		description:
 			"Load the product's real design tokens before you draw. " +
 			"These are the values the product actually ships — not a palette you invent for the screen. " +
-			"Writes tokens.md, tokens.css, a receipt, and a copy into the design lab.",
+			"Writes tokens.md, tokens.css, a receipt, a snapshot, and a copy into the design lab.",
 		parameters: Type.Object({
 			target: Type.Optional(Type.String({ description: 'design system to load; default "samantha-ui"' })),
 		}),
@@ -75,14 +80,31 @@ export function registerDesignSystemTools(pi: ExtensionAPI, deps: DesignSystemDe
 				);
 			}
 
+			const mediaLight = tokensForMedia(css, spec.light);
+			const mediaDark = tokensForMedia(css, spec.dark);
+
+			const usageScanDir = deps.usageScanRoot ?? join(repoRoot, ...spec.repoDir);
+			const usage = await scanTokenUsage(usageScanDir, light, dark);
+
 			const iso = now();
 			const sourceHead = await headOf(join(repoRoot, ...spec.repoDir));
 			const headLabel = sourceHead ?? "no-git-head";
 			const mdRel = `design/system/${target}/tokens.md`;
 			const cssRel = `design/system/${target}/tokens.css`;
 			const receiptRel = `design/system/${target}/receipt.json`;
-			const mdText = renderMd(target, sourcePath, headLabel, iso, docCommentBefore(css, spec.light), light, dark);
-			const cssText = renderCss(sourcePath, headLabel, iso, light, dark);
+			const snapshotRel = `design/system/${target}/snapshot.css`;
+			const mdText = renderMd(
+				target,
+				sourcePath,
+				headLabel,
+				iso,
+				docCommentBefore(css, spec.light),
+				light,
+				dark,
+				mediaLight,
+				mediaDark,
+			);
+			const cssText = renderCss(sourcePath, headLabel, iso, light, dark, mediaLight, mediaDark);
 			const receiptText = `${JSON.stringify(
 				{
 					target,
@@ -90,6 +112,8 @@ export function registerDesignSystemTools(pi: ExtensionAPI, deps: DesignSystemDe
 					sourceHead: sourceHead ?? null,
 					loadedAt: iso,
 					tokenCount: { light: light.size, dark: dark.size },
+					mediaBreakpoints: mergeMediaKeys(mediaLight, mediaDark),
+					usage,
 				},
 				null,
 				"\t",
@@ -98,13 +122,19 @@ export function registerDesignSystemTools(pi: ExtensionAPI, deps: DesignSystemDe
 			await writeRel(repoRoot, mdRel, mdText);
 			await writeRel(repoRoot, cssRel, cssText);
 			await writeRel(repoRoot, receiptRel, receiptText);
+			await writeRel(repoRoot, snapshotRel, css);
 			await writeRel(repoRoot, PRODUCT_CSS_REL, cssText);
 
+			const mediaSummary =
+				mediaLight.size + mediaDark.size > 0
+					? ` ${mergeMediaKeys(mediaLight, mediaDark).length} breakpoint group(s).`
+					: "";
+
 			return textResult(
-				`Loaded ${light.size} light and ${dark.size} dark tokens.\n` +
-					`Wrote ${mdRel}, ${cssRel}, ${receiptRel}, and ${PRODUCT_CSS_REL}.\n` +
+				`Loaded ${light.size} light and ${dark.size} dark tokens.${mediaSummary}\n` +
+					`Wrote ${mdRel}, ${cssRel}, ${receiptRel}, ${snapshotRel}, and ${PRODUCT_CSS_REL}.\n` +
 					DISCIPLINE,
-				{ ok: true, paths: [mdRel, cssRel, receiptRel, PRODUCT_CSS_REL] },
+				{ ok: true, paths: [mdRel, cssRel, receiptRel, snapshotRel, PRODUCT_CSS_REL] },
 			);
 		},
 	});
@@ -117,6 +147,8 @@ export function registerDesignSystemTools(pi: ExtensionAPI, deps: DesignSystemDe
 			"This modifies the actual source code — not a preview. " +
 			"Only tokens that design_system_load can read are accepted; " +
 			"unknown names reject the entire write. " +
+			"Changes can target a specific breakpoint via the media field " +
+			"(the exact media condition string, e.g. '(min-width: 768px)'). " +
 			"For preview-only changes, use window.lab.tokens.preview.",
 		parameters: Type.Object({
 			target: Type.Optional(Type.String({ description: 'target project; default "samantha-ui"' })),
@@ -125,6 +157,12 @@ export function registerDesignSystemTools(pi: ExtensionAPI, deps: DesignSystemDe
 					name: Type.String({ description: "CSS custom property name, e.g. --background" }),
 					light: Type.Optional(Type.String({ description: "new value for the light-mode declaration" })),
 					dark: Type.Optional(Type.String({ description: "new value for the dark-mode declaration" })),
+					media: Type.Optional(
+						Type.String({
+							description:
+								"media condition to target, e.g. '(min-width: 768px)'. Omit for the base (non-media) block.",
+						}),
+					),
 				}),
 			),
 		}),
@@ -138,7 +176,12 @@ export function registerDesignSystemTools(pi: ExtensionAPI, deps: DesignSystemDe
 				});
 			}
 
-			const changes = params.changes as Array<{ name: string; light?: string; dark?: string }>;
+			const changes = params.changes as Array<{
+				name: string;
+				light?: string;
+				dark?: string;
+				media?: string;
+			}>;
 			if (!changes || changes.length === 0) {
 				return textResult("No changes provided.", { ok: false });
 			}
@@ -153,14 +196,34 @@ export function registerDesignSystemTools(pi: ExtensionAPI, deps: DesignSystemDe
 
 			const knownLight = tokensFor(css, spec.light);
 			const knownDark = tokensFor(css, spec.dark);
+			const knownMediaLight = tokensForMedia(css, spec.light);
+			const knownMediaDark = tokensForMedia(css, spec.dark);
 
 			const unknowns: string[] = [];
 			for (const change of changes) {
-				if (change.light !== undefined && !knownLight.has(change.name)) {
-					if (!unknowns.includes(change.name)) unknowns.push(change.name);
-				}
-				if (change.dark !== undefined && !knownDark.has(change.name)) {
-					if (!unknowns.includes(change.name)) unknowns.push(change.name);
+				const mediaKey = typeof change.media === "string" ? change.media.trim() : "";
+				if (mediaKey) {
+					if (change.light !== undefined) {
+						const mediaMap = knownMediaLight.get(mediaKey);
+						if (!mediaMap || !mediaMap.has(change.name)) {
+							if (!unknowns.includes(`${change.name} @media ${mediaKey} (light)`))
+								unknowns.push(`${change.name} @media ${mediaKey} (light)`);
+						}
+					}
+					if (change.dark !== undefined) {
+						const mediaMap = knownMediaDark.get(mediaKey);
+						if (!mediaMap || !mediaMap.has(change.name)) {
+							if (!unknowns.includes(`${change.name} @media ${mediaKey} (dark)`))
+								unknowns.push(`${change.name} @media ${mediaKey} (dark)`);
+						}
+					}
+				} else {
+					if (change.light !== undefined && !knownLight.has(change.name)) {
+						if (!unknowns.includes(change.name)) unknowns.push(change.name);
+					}
+					if (change.dark !== undefined && !knownDark.has(change.name)) {
+						if (!unknowns.includes(change.name)) unknowns.push(change.name);
+					}
 				}
 			}
 
@@ -173,28 +236,58 @@ export function registerDesignSystemTools(pi: ExtensionAPI, deps: DesignSystemDe
 				);
 			}
 
-			const lightPatches = new Map<string, string>();
-			const darkPatches = new Map<string, string>();
-			for (const change of changes) {
-				if (change.light !== undefined) lightPatches.set(change.name, change.light);
-				if (change.dark !== undefined) darkPatches.set(change.name, change.dark);
-			}
-
 			let modified = css;
 			const allApplied: Array<{ name: string; side: string; before: string; after: string }> = [];
 
-			if (lightPatches.size > 0) {
-				const result = patchSelectorBlock(modified, spec.light, lightPatches);
+			// Group changes: base changes (no media) and per-media changes
+			const baseLightPatches = new Map<string, string>();
+			const baseDarkPatches = new Map<string, string>();
+			const mediaLightPatches = new Map<string, Map<string, string>>();
+			const mediaDarkPatches = new Map<string, Map<string, string>>();
+
+			for (const change of changes) {
+				const mediaKey = typeof change.media === "string" ? change.media.trim() : "";
+				if (mediaKey) {
+					if (change.light !== undefined) {
+						if (!mediaLightPatches.has(mediaKey)) mediaLightPatches.set(mediaKey, new Map());
+						mediaLightPatches.get(mediaKey)!.set(change.name, change.light);
+					}
+					if (change.dark !== undefined) {
+						if (!mediaDarkPatches.has(mediaKey)) mediaDarkPatches.set(mediaKey, new Map());
+						mediaDarkPatches.get(mediaKey)!.set(change.name, change.dark);
+					}
+				} else {
+					if (change.light !== undefined) baseLightPatches.set(change.name, change.light);
+					if (change.dark !== undefined) baseDarkPatches.set(change.name, change.dark);
+				}
+			}
+
+			if (baseLightPatches.size > 0) {
+				const result = patchSelectorBlock(modified, spec.light, baseLightPatches);
 				if (typeof result === "string") return textResult(result, { ok: false });
 				modified = result.css;
 				for (const a of result.applied) allApplied.push({ ...a, side: "light" });
 			}
 
-			if (darkPatches.size > 0) {
-				const result = patchSelectorBlock(modified, spec.dark, darkPatches);
+			if (baseDarkPatches.size > 0) {
+				const result = patchSelectorBlock(modified, spec.dark, baseDarkPatches);
 				if (typeof result === "string") return textResult(result, { ok: false });
 				modified = result.css;
 				for (const a of result.applied) allApplied.push({ ...a, side: "dark" });
+			}
+
+			for (const [mediaKey, patches] of mediaLightPatches) {
+				const result = patchMediaSelectorBlock(modified, mediaKey, spec.light, patches);
+				if (typeof result === "string") return textResult(result, { ok: false });
+				modified = result.css;
+				for (const a of result.applied) allApplied.push({ ...a, side: `light @media ${mediaKey}` });
+			}
+
+			for (const [mediaKey, patches] of mediaDarkPatches) {
+				const result = patchMediaSelectorBlock(modified, mediaKey, spec.dark, patches);
+				if (typeof result === "string") return textResult(result, { ok: false });
+				modified = result.css;
+				for (const a of result.applied) allApplied.push({ ...a, side: `dark @media ${mediaKey}` });
 			}
 
 			try {
@@ -212,6 +305,73 @@ export function registerDesignSystemTools(pi: ExtensionAPI, deps: DesignSystemDe
 			lines.push("", "⚠️ This modified the product source code. Preview-only changes use window.lab.tokens.preview.");
 
 			return textResult(lines.join("\n"), { ok: true, applied: allApplied });
+		},
+	});
+
+	pi.registerTool({
+		name: "design_system_review",
+		label: "Design System Review",
+		description:
+			"Compare the product's current CSS against the snapshot saved at the last design_system_load. " +
+			"Reports which tokens changed, were added, or disappeared — without accepting any of them. " +
+			"Product-side changes may be intentional or accidental; this tool only reports. " +
+			"To accept the current state, run design_system_load again.",
+		parameters: Type.Object({
+			target: Type.Optional(Type.String({ description: 'target project; default "samantha-ui"' })),
+		}),
+		async execute(_toolCallId, params) {
+			const raw = typeof params.target === "string" ? params.target.trim() : "";
+			const target = raw || DEFAULT_TARGET;
+			const spec = TARGETS[target as TargetName];
+			if (!spec) {
+				return textResult(`Unknown target "${target}". Known targets: ${Object.keys(TARGETS).join(", ")}.`, {
+					ok: false,
+				});
+			}
+
+			const snapshotRel = `design/system/${target}/snapshot.css`;
+			const absSnapshot = join(repoRoot, ...snapshotRel.split("/"));
+			let snapshotCss: string;
+			try {
+				snapshotCss = await readSource(absSnapshot);
+			} catch {
+				return textResult(
+					`No snapshot found at ${snapshotRel}. Run design_system_load first to create a baseline.`,
+					{ ok: false, reason: "no-snapshot" },
+				);
+			}
+
+			const absCss = join(repoRoot, ...spec.cssPath);
+			let currentCss: string;
+			try {
+				currentCss = await readSource(absCss);
+			} catch {
+				return textResult(`Cannot read ${absCss}. The file may not exist.`, { ok: false });
+			}
+
+			const oldLight = tokensFor(snapshotCss, spec.light);
+			const oldDark = tokensFor(snapshotCss, spec.dark);
+			const newLight = tokensFor(currentCss, spec.light);
+			const newDark = tokensFor(currentCss, spec.dark);
+
+			const diffs: Array<{ name: string; side: string; type: string; old?: string; new?: string }> = [];
+
+			diffMaps(oldLight, newLight, "light", diffs);
+			diffMaps(oldDark, newDark, "dark", diffs);
+
+			if (diffs.length === 0) {
+				return textResult(`No token changes in ${target} since the last load.`, { ok: true, changes: [] });
+			}
+
+			const lines = [`${diffs.length} token change(s) in ${target} since last load:`];
+			for (const d of diffs) {
+				if (d.type === "changed") lines.push(`  ${d.name} (${d.side}): ${d.old} → ${d.new}`);
+				else if (d.type === "added") lines.push(`  ${d.name} (${d.side}): NEW ${d.new}`);
+				else if (d.type === "removed") lines.push(`  ${d.name} (${d.side}): REMOVED (was ${d.old})`);
+			}
+			lines.push("", "To accept these changes, run design_system_load again.");
+
+			return textResult(lines.join("\n"), { ok: true, changes: diffs });
 		},
 	});
 }
@@ -542,6 +702,8 @@ function renderMd(
 	leading: string | undefined,
 	light: Map<string, string>,
 	dark: Map<string, string>,
+	mediaLight: MediaTokens = new Map(),
+	mediaDark: MediaTokens = new Map(),
 ): string {
 	const lines = [`# ${target} design system`, "", `Source: ${sourcePath} @ ${headLabel}`, `Loaded: ${iso}`, ""];
 	if (leading) {
@@ -555,6 +717,19 @@ function renderMd(
 	for (const name of names) {
 		lines.push(`| ${name} | ${light.get(name) ?? "—"} | ${dark.get(name) ?? "—"} |`);
 	}
+	const mediaKeys = mergeMediaKeys(mediaLight, mediaDark);
+	for (const media of mediaKeys) {
+		const ml = mediaLight.get(media) ?? new Map<string, string>();
+		const md = mediaDark.get(media) ?? new Map<string, string>();
+		lines.push("", `### @media ${media}`, "", "| token | light | dark |", "| --- | --- | --- |");
+		const mNames: string[] = [...ml.keys()];
+		for (const n of md.keys()) {
+			if (!ml.has(n)) mNames.push(n);
+		}
+		for (const n of mNames) {
+			lines.push(`| ${n} | ${ml.get(n) ?? "—"} | ${md.get(n) ?? "—"} |`);
+		}
+	}
 	return `${lines.join("\n")}\n`;
 }
 
@@ -564,6 +739,8 @@ function renderCss(
 	iso: string,
 	light: Map<string, string>,
 	dark: Map<string, string>,
+	mediaLight: MediaTokens = new Map(),
+	mediaDark: MediaTokens = new Map(),
 ): string {
 	const lines = [
 		`/* Generated by design_system_load from ${sourcePath} @ ${headLabel} at ${iso}. Do not hand-edit. */`,
@@ -577,6 +754,23 @@ function renderCss(
 		lines.push(`\t${name}: ${value};`);
 	}
 	lines.push("}");
+	const mediaKeys = mergeMediaKeys(mediaLight, mediaDark);
+	for (const media of mediaKeys) {
+		const ml = mediaLight.get(media) ?? new Map<string, string>();
+		const md = mediaDark.get(media) ?? new Map<string, string>();
+		lines.push(`@media ${media} {`);
+		if (ml.size > 0) {
+			lines.push("\t:root {");
+			for (const [name, value] of ml) lines.push(`\t\t${name}: ${value};`);
+			lines.push("\t}");
+		}
+		if (md.size > 0) {
+			lines.push("\t.dark {");
+			for (const [name, value] of md) lines.push(`\t\t${name}: ${value};`);
+			lines.push("\t}");
+		}
+		lines.push("}");
+	}
 	return `${lines.join("\n")}\n`;
 }
 
@@ -708,4 +902,187 @@ function scanDeclarations(body: string, wanted: Set<string>): Map<string, DeclSp
 		i++;
 	}
 	return found;
+}
+
+/**
+ * Extract tokens declared inside `@media (...) { selector { --x: y; } }` blocks.
+ * Returns a map of media-condition-string → Map<tokenName, value>.
+ */
+function tokensForMedia(css: string, wanted: string): MediaTokens {
+	const result: MediaTokens = new Map();
+	const stripped = stripComments(css);
+	for (const rule of collectRules(stripped)) {
+		if (!rule.selector.startsWith("@media")) continue;
+		const condition = extractMediaCondition(rule.selector);
+		if (!condition) continue;
+		// Look inside the @media body for rules matching the wanted selector
+		for (const inner of collectRules(rule.body)) {
+			if (!selectorListContains(inner.selector, wanted)) continue;
+			const props = customProperties(inner.body);
+			if (props.length === 0) continue;
+			if (!result.has(condition)) result.set(condition, new Map());
+			const map = result.get(condition)!;
+			for (const { name, value } of props) {
+				map.set(name, value);
+			}
+		}
+	}
+	return result;
+}
+
+function extractMediaCondition(selector: string): string | undefined {
+	const match = /^@media\s+(.+)$/s.exec(selector.trim());
+	return match?.[1]?.trim() || undefined;
+}
+
+/**
+ * Patch a selector block that lives inside a specific @media rule.
+ */
+function patchMediaSelectorBlock(
+	css: string,
+	mediaCondition: string,
+	selector: string,
+	patches: Map<string, string>,
+): { css: string; applied: Array<{ name: string; before: string; after: string }> } | string {
+	// Find the @media block that has this condition
+	let mediaStart = -1;
+	let mediaBraceIdx = -1;
+
+	// We need to find the @media block in the ORIGINAL css (not stripped), since we patch original.
+	// But the original may have comments. Strategy: search for @media with matching condition.
+	let searchFrom = 0;
+	while (searchFrom < css.length) {
+		const atIdx = css.indexOf("@media", searchFrom);
+		if (atIdx < 0) break;
+
+		// Find the opening brace
+		let bi = atIdx + 6;
+		while (bi < css.length && css[bi] !== "{") bi++;
+		if (bi >= css.length) break;
+
+		const rawPrelude = css.slice(atIdx + 6, bi).trim();
+		// Compare with stripped comments
+		const preludeClean = stripComments(rawPrelude).trim();
+		if (preludeClean === mediaCondition) {
+			mediaStart = atIdx;
+			mediaBraceIdx = bi;
+			break;
+		}
+		searchFrom = bi + 1;
+	}
+
+	if (mediaStart < 0 || mediaBraceIdx < 0) {
+		return `Cannot find @media ${mediaCondition} block in CSS.`;
+	}
+
+	const mediaBlock = readBlock(css, mediaBraceIdx);
+	const mediaBodyStart = mediaBraceIdx + 1;
+	const mediaBodyEnd = mediaBlock.end - 1;
+	const mediaBody = css.slice(mediaBodyStart, mediaBodyEnd);
+
+	// Find the selector block within the media body
+	const innerResult = patchSelectorBlock(mediaBody, selector, patches);
+	if (typeof innerResult === "string") return innerResult;
+
+	const newMediaBody = innerResult.css;
+	return {
+		css: css.slice(0, mediaBodyStart) + newMediaBody + css.slice(mediaBodyEnd),
+		applied: innerResult.applied,
+	};
+}
+
+function mergeMediaKeys(a: MediaTokens, b: MediaTokens): string[] {
+	const set = new Set<string>();
+	for (const k of a.keys()) set.add(k);
+	for (const k of b.keys()) set.add(k);
+	return [...set].sort();
+}
+
+/**
+ * Scan source files under a directory for `var(--name)` references to known tokens.
+ * Returns a record of token name → reference count.
+ * Only counts direct `var(--name)` usage in .ts, .tsx, .css, and .module.css files.
+ */
+async function scanTokenUsage(
+	scanDir: string,
+	light: Map<string, string>,
+	dark: Map<string, string>,
+): Promise<Record<string, number>> {
+	const allTokens = new Set<string>();
+	for (const name of light.keys()) allTokens.add(name);
+	for (const name of dark.keys()) allTokens.add(name);
+
+	const usage: Record<string, number> = {};
+	for (const name of allTokens) usage[name] = 0;
+
+	try {
+		const srcDir = join(scanDir, "src");
+		await scanDirForUsage(srcDir, allTokens, usage);
+	} catch {
+		// Directory may not exist (tests use fake roots)
+	}
+	return usage;
+}
+
+async function scanDirForUsage(dir: string, tokens: Set<string>, usage: Record<string, number>): Promise<void> {
+	let entries: string[];
+	try {
+		entries = await readdir(dir);
+	} catch {
+		return;
+	}
+	for (const entry of entries) {
+		const full = join(dir, entry);
+		let info: Awaited<ReturnType<typeof stat>>;
+		try {
+			info = await stat(full);
+		} catch {
+			continue;
+		}
+		if (info.isDirectory()) {
+			if (entry === "node_modules" || entry === ".next") continue;
+			await scanDirForUsage(full, tokens, usage);
+		} else if (/\.(tsx?|css)$/.test(entry)) {
+			try {
+				const content = await readFile(full, "utf8");
+				countVarReferences(content, tokens, usage);
+			} catch {
+				// skip unreadable files
+			}
+		}
+	}
+}
+
+function countVarReferences(content: string, tokens: Set<string>, usage: Record<string, number>): void {
+	// Match var(--name) patterns
+	const re = /var\(\s*(--[A-Za-z_0-9-]+)/g;
+	let match = re.exec(content);
+	while (match) {
+		const name = match[1]!;
+		if (tokens.has(name)) {
+			usage[name] = (usage[name] ?? 0) + 1;
+		}
+		match = re.exec(content);
+	}
+}
+
+function diffMaps(
+	oldMap: Map<string, string>,
+	newMap: Map<string, string>,
+	side: string,
+	diffs: Array<{ name: string; side: string; type: string; old?: string; new?: string }>,
+): void {
+	for (const [name, oldVal] of oldMap) {
+		const newVal = newMap.get(name);
+		if (newVal === undefined) {
+			diffs.push({ name, side, type: "removed", old: oldVal });
+		} else if (newVal !== oldVal) {
+			diffs.push({ name, side, type: "changed", old: oldVal, new: newVal });
+		}
+	}
+	for (const [name, newVal] of newMap) {
+		if (!oldMap.has(name)) {
+			diffs.push({ name, side, type: "added", new: newVal });
+		}
+	}
 }

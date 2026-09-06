@@ -139,7 +139,11 @@ function takeStyleGuideNag(repoRoot?: string, toolName?: string): string | undef
 	if (!found) return undefined;
 	rememberStyleGuideDelivery(key, epoch, found.dir);
 	if (prev && mtimeBumped) {
-		return `产品的 token 变了(上次是 ${prev.stampedAt}),这是现在的:\n${found.text}`;
+		const changeSummary = summarizeTokenChanges(key, found.dir);
+		const prefix = changeSummary
+			? `产品的 token 变了(上次是 ${prev.stampedAt}):${changeSummary}\n`
+			: `产品的 token 变了(上次是 ${prev.stampedAt}),这是现在的:\n`;
+		return `${prefix}${found.text}`;
 	}
 	if (prev && epochBumped) {
 		return `${COMPACTION_NAG_LINE}\n${found.text}`;
@@ -248,17 +252,25 @@ function nagForTarget(dir: string, fallbackName: string, ignoreLoadedThisProcess
 		return undefined;
 	}
 	if (!receipt || typeof receipt !== "object") return undefined;
-	const rec = receipt as { target?: unknown; loadedAt?: unknown };
+	const rec = receipt as { target?: unknown; loadedAt?: unknown; usage?: unknown };
 	if (!ignoreLoadedThisProcess && loadedThisProcess(rec.loadedAt)) return undefined;
 	const target = rec.target;
 	const project = typeof target === "string" && target.trim() !== "" ? target.trim() : fallbackName;
 	const groups = parseTokenGroups(readFileSync(cssPath, "utf8"));
 	if (groups.length === 0) return undefined;
+	const usage = readUsageFromReceipt(rec);
 	const lines = [`${project} · ${groups.length} 组`];
 	for (const group of groups) {
 		const picked = group.tokens.slice(0, STYLE_GUIDE_PER_GROUP);
 		if (picked.length === 0) continue;
-		lines.push(`${group.name}: ${picked.map(([n, v]) => `${n}: ${v}`).join("; ")}`);
+		lines.push(
+			`${group.name}: ${picked
+				.map(([n, v]) => {
+					const count = usage?.[n];
+					return count !== undefined ? `${n}: ${v} (${count}处)` : `${n}: ${v}`;
+				})
+				.join("; ")}`,
+		);
 	}
 	if (lines.length < 2) return undefined;
 	return clipStyleGuide(lines.join("\n"));
@@ -268,6 +280,11 @@ function loadedThisProcess(loadedAt: unknown): boolean {
 	if (typeof loadedAt !== "string") return false;
 	const ms = Date.parse(loadedAt);
 	return Number.isFinite(ms) && ms >= PROCESS_STARTED_MS;
+}
+
+function readUsageFromReceipt(rec: { usage?: unknown }): Record<string, number> | undefined {
+	if (!rec.usage || typeof rec.usage !== "object") return undefined;
+	return rec.usage as Record<string, number>;
 }
 
 function parseTokenGroups(css: string): Array<{ name: string; tokens: Array<[string, string]> }> {
@@ -292,6 +309,60 @@ function parseTokenGroups(css: string): Array<{ name: string; tokens: Array<[str
 		groups.push({ name, tokens });
 	}
 	return groups;
+}
+
+/**
+ * Compare stored tokens.css against the current snapshot.css to summarize changes.
+ * Returns a short string like " 3 条变了(--background, --accent, --muted)" or undefined.
+ */
+function summarizeTokenChanges(_root: string, dir: string): string | undefined {
+	try {
+		const cssPath = join(dir, "tokens.css");
+		const snapshotPath = join(dir, "snapshot.css");
+		if (!existsSync(snapshotPath) || !statSync(snapshotPath).isFile()) return undefined;
+		if (!existsSync(cssPath) || !statSync(cssPath).isFile()) return undefined;
+
+		const oldCss = readFileSync(cssPath, "utf8");
+		const newCss = readFileSync(snapshotPath, "utf8");
+		const oldTokens = parseAllTokens(oldCss);
+		const newTokens = parseAllTokens(newCss);
+
+		const changed: string[] = [];
+		const added: string[] = [];
+		const removed: string[] = [];
+
+		for (const [name, oldVal] of oldTokens) {
+			const newVal = newTokens.get(name);
+			if (newVal === undefined) removed.push(name);
+			else if (newVal !== oldVal) changed.push(name);
+		}
+		for (const name of newTokens.keys()) {
+			if (!oldTokens.has(name)) added.push(name);
+		}
+
+		const total = changed.length + added.length + removed.length;
+		if (total === 0) return undefined;
+
+		const names = [...changed, ...added, ...removed];
+		const shown = names.slice(0, 3).join(", ");
+		const rest = names.length > 3 ? ` 等` : "";
+		return ` ${total} 条变了(${shown}${rest})`;
+	} catch {
+		return undefined;
+	}
+}
+
+function parseAllTokens(css: string): Map<string, string> {
+	const map = new Map<string, string>();
+	const propRe = /(--[A-Za-z0-9_-]+)\s*:\s*([^;]+);/g;
+	let match = propRe.exec(css);
+	while (match) {
+		const name = match[1];
+		const value = match[2]?.trim();
+		if (name && value) map.set(name, value);
+		match = propRe.exec(css);
+	}
+	return map;
 }
 
 function clipStyleGuide(body: string): string {

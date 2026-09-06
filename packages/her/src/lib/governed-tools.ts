@@ -93,6 +93,8 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	// Registered destructive, and therefore still denied: giving it a permit is a
 	// policy change, and policies/ is an anchor path.
 	design_system_apply: { destructive: true },
+	// Read-only diff between snapshot and current CSS. No side effects.
+	design_system_review: { destructive: false },
 	// The canvas conversation and the design-mode switch. Every one of these was
 	// denied simply by being absent here -- unregistered means destructive, and no
 	// permit covers a destructive tool. None of them touches an anchor.
