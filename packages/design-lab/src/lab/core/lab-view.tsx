@@ -35,7 +35,7 @@ import { labFs } from "./fs-client";
 import { applyResize, cleanupRow } from "./frame-ops";
 import { ScreenFrame, type ResizeEdge } from "./screen-frame";
 import { SCREENS, screenById, type ScreenDef } from "../screens";
-import type { Mode, Point } from "./types";
+import type { Mode, Point, Rect } from "./types";
 import {
   LAB_PLUGINS,
   type LabObjects,
@@ -350,12 +350,20 @@ export function InteractionLab() {
       getCamera,
       spawnNote: (init) => {
         const notes = session.pluginApis.get("notes") as
-          | { spawn: (arg: { x: number; y: number; source?: typeof init.source }) => void }
+          | {
+              spawn: (arg: {
+                x: number;
+                y: number;
+                source?: typeof init.source;
+                regionPage?: Rect;
+              }) => void;
+            }
           | undefined;
         notes?.spawn({
           x: init.x,
           y: init.y,
           ...(init.source ? { source: init.source } : {}),
+          ...(init.region ? { regionPage: init.region } : {}),
         });
       },
     });

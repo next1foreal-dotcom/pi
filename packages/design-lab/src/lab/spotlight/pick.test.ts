@@ -247,6 +247,140 @@ describe("pick tool", () => {
   });
 });
 
+/**
+ * Drawing a box is the other half of "say something about this". Clicking asks
+ * about an element, which is only ever the thing someone else already decided
+ * to make an element -- a remark about the gap between two of them, or about
+ * half of one, had nowhere to land.
+ *
+ * The pair is the whole test. A press that never moves must still be the click
+ * it has always been: "a drag is a region" alone would pass with every click
+ * turned into a one-pixel region, and nobody would be able to point at anything
+ * again.
+ */
+describe("drawing a region", () => {
+  const spawned: {
+    x: number;
+    y: number;
+    region?: { x: number; y: number; width: number; height: number };
+  }[] = [];
+  let host: HTMLDivElement;
+  let tree: ReturnType<typeof screenTree>;
+  let camera: Camera;
+
+  afterEach(() => {
+    spawned.length = 0;
+    document.body.innerHTML = "";
+  });
+
+  function mount() {
+    tree = screenTree();
+    host = document.createElement("div");
+    tree.root.appendChild(host);
+    camera = { ...CAM };
+    return createPickTool({
+      host,
+      getRoot: () => tree.root,
+      getOrigin: () => ({ x: 0, y: 0 }),
+      getCamera: () => camera,
+      spawnNote: (init) => {
+        spawned.push({ x: init.x, y: init.y, region: init.region ?? undefined });
+      },
+    });
+  }
+
+  const press = (x: number, y: number, on: Element) =>
+    on.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        bubbles: true,
+        cancelable: true,
+        clientX: x,
+        clientY: y,
+      }),
+    );
+  const move = (x: number, y: number, on: Element) =>
+    on.dispatchEvent(
+      new PointerEvent("pointermove", { bubbles: true, clientX: x, clientY: y }),
+    );
+  const release = () =>
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+
+  it("a press that travels draws a box, and 说这里 posts a note about it", () => {
+    const pick = mount();
+    pick.enter();
+    press(110, 90, tree.target);
+    move(190, 170, tree.target);
+    release();
+
+    const box = host.querySelector("[data-pick-overlay]");
+    expect(box?.hasAttribute("data-region")).toBe(true);
+    expect(box?.hasAttribute("data-show")).toBe(true);
+
+    (host.querySelector("[data-pick-speak]") as HTMLButtonElement).click();
+    expect(spawned).toHaveLength(1);
+    // Page units, not client: camera { x: 10, y: 20, z: 0.5 } means the 80x80
+    // client box drawn above is 160x160 on the canvas.
+    expect(spawned[0]?.region).toEqual({
+      x: 110 / 0.5 - 10,
+      y: 90 / 0.5 - 20,
+      width: 160,
+      height: 160,
+    });
+    pick.destroy();
+  });
+
+  it("a press that does not travel is still a click on an element", () => {
+    const pick = mount();
+    pick.enter();
+    press(110, 90, tree.target);
+    move(112, 91, tree.target); // inside DRAG_MIN
+    release();
+
+    const box = host.querySelector("[data-pick-overlay]");
+    expect(box?.hasAttribute("data-region")).toBe(false);
+    expect(box?.hasAttribute("data-selected")).toBe(true);
+
+    (host.querySelector("[data-pick-speak]") as HTMLButtonElement).click();
+    expect(spawned).toHaveLength(1);
+    expect(spawned[0]?.region).toBeUndefined();
+    pick.destroy();
+  });
+
+  it("a box too small to have been meant is a click too", () => {
+    const pick = mount();
+    pick.enter();
+    press(110, 90, tree.target);
+    move(113, 92, tree.target);
+    move(114, 93, tree.target);
+    release();
+    (host.querySelector("[data-pick-speak]") as HTMLButtonElement).click();
+    expect(spawned[0]?.region).toBeUndefined();
+    pick.destroy();
+  });
+
+  it("Escape drops the region before it drops the tool", () => {
+    // One stray Escape must not cost both the box and the mode it was drawn in.
+    const pick = mount();
+    pick.enter();
+    press(110, 90, tree.target);
+    move(190, 170, tree.target);
+    release();
+    expect(
+      host.querySelector("[data-pick-overlay]")?.hasAttribute("data-region"),
+    ).toBe(true);
+
+    pick.handleKey(new KeyboardEvent("keydown", { key: "Escape" }));
+    expect(pick.isActive()).toBe(true);
+    expect(
+      host.querySelector("[data-pick-overlay]")?.hasAttribute("data-region"),
+    ).toBe(false);
+
+    pick.handleKey(new KeyboardEvent("keydown", { key: "Escape" }));
+    expect(pick.isActive()).toBe(false);
+    pick.destroy();
+  });
+});
+
 describe("pick chip placement", () => {
   const spawned: {
     x: number;

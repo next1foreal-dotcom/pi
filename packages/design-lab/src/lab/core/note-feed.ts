@@ -98,6 +98,55 @@ export function isAnchor(value: unknown): value is NoteAnchor {
 	);
 }
 
+/** A stored source location, checked field by field. */
+export function isSourceRef(value: unknown): value is {
+	file: string;
+	line: number;
+	col: number;
+	component: string | null;
+} {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+	const r = value as {
+		file?: unknown;
+		line?: unknown;
+		col?: unknown;
+		component?: unknown;
+	};
+	return (
+		typeof r.file === "string" &&
+		r.file !== "" &&
+		typeof r.line === "number" &&
+		Number.isFinite(r.line) &&
+		typeof r.col === "number" &&
+		Number.isFinite(r.col) &&
+		(r.component === null || typeof r.component === "string")
+	);
+}
+
+/**
+ * A stored region, checked field by field. Same shape as an anchor plus a size,
+ * and the size is what has to be real: a region with a NaN width would paint an
+ * invisible box that still claims the note is about something.
+ */
+export function isRegion(value: unknown): value is {
+	screenId: string;
+	rx: number;
+	ry: number;
+	rw: number;
+	rh: number;
+} {
+	if (!isAnchor(value)) return false;
+	const r = value as { rw?: unknown; rh?: unknown };
+	return (
+		typeof r.rw === "number" &&
+		Number.isFinite(r.rw) &&
+		r.rw > 0 &&
+		typeof r.rh === "number" &&
+		Number.isFinite(r.rh) &&
+		r.rh > 0
+	);
+}
+
 function blankThread(): NoteThreadState {
 	return {
 		replies: [],

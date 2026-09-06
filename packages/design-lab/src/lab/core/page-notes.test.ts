@@ -257,6 +257,117 @@ describe("note resizing (page units)", () => {
 	});
 });
 
+/**
+ * A note drawn around an area has to keep the area. Held as fractions of its
+ * screen, like the note's own anchor, so it follows the screen being moved or
+ * resized -- and kept apart from that anchor on purpose: dragging the sticky
+ * somewhere with more room must not drag what it is a remark about.
+ *
+ * Both sides. "Every note draws a box" would pass the first of these and put a
+ * stray rectangle under every note anyone has ever pinned.
+ */
+describe("a note about an area", () => {
+	const SCREEN = { x: 1000, y: 2000, width: 1440, height: 900 };
+
+	function labWithScreen(storageKey: string | null) {
+		const host = document.createElement("div");
+		document.body.appendChild(host);
+		return new StickyNotes({
+			host,
+			objects: stubObjects(),
+			storageKey,
+			screenAt: () => "main-landing",
+			screenLayout: () => ({ ...SCREEN }),
+		});
+	}
+
+	it("stores the drawn rect as fractions of its screen", () => {
+		live = labWithScreen(null);
+		const note = live.spawn({
+			x: 2000,
+			y: 2100,
+			regionPage: { x: 1360, y: 2090, width: 720, height: 450 },
+		});
+		expect(note.region).toEqual({
+			screenId: "main-landing",
+			rx: (1360 - 1000) / 1440,
+			ry: (2090 - 2000) / 900,
+			rw: 720 / 1440,
+			rh: 450 / 900,
+		});
+	});
+
+	it("draws it back at the page rect it was drawn at", () => {
+		live = labWithScreen(null);
+		live.spawn({
+			x: 2000,
+			y: 2100,
+			regionPage: { x: 1360, y: 2090, width: 720, height: 450 },
+		});
+		const el = document.querySelector(".sn-region") as HTMLElement | null;
+		expect(el).not.toBeNull();
+		expect(el?.style.transform).toBe("translate(1360px, 2090px)");
+		expect(el?.style.width).toBe("720px");
+		expect(el?.style.height).toBe("450px");
+	});
+
+	it("an ordinary pinned note draws no box at all", () => {
+		live = labWithScreen(null);
+		live.spawn({ x: 2000, y: 2100 });
+		expect(document.querySelector(".sn-region")).toBeNull();
+	});
+
+	it("deleting the note takes its box with it", () => {
+		live = labWithScreen(null);
+		const note = live.spawn({
+			x: 2000,
+			y: 2100,
+			regionPage: { x: 1360, y: 2090, width: 720, height: 450 },
+		});
+		expect(document.querySelector(".sn-region")).not.toBeNull();
+		live.removeNote(note.id);
+		expect(document.querySelector(".sn-region")).toBeNull();
+	});
+
+	it("comes back after a reload, box and source both", async () => {
+		// The source used to be dropped here: a note knew which line it was about
+		// right up until you closed the tab, which is most of the value of knowing.
+		const key = "test:notes:region";
+		localStorage.removeItem(key);
+		const a = labWithScreen(key);
+		a.spawn({
+			x: 2000,
+			y: 2100,
+			regionPage: { x: 1360, y: 2090, width: 720, height: 450 },
+			source: { file: "packages/x/src/a.tsx", line: 12, col: 3, component: "A" },
+		});
+		await new Promise((r) => setTimeout(r, 220));
+		a.destroy();
+		document.body.innerHTML = "";
+
+		live = labWithScreen(key);
+		const back = live.getNotes()[0];
+		expect(back.region).toEqual({
+			screenId: "main-landing",
+			rx: (1360 - 1000) / 1440,
+			ry: (2090 - 2000) / 900,
+			rw: 720 / 1440,
+			rh: 450 / 900,
+		});
+		expect(back.source).toEqual({
+			file: "packages/x/src/a.tsx",
+			line: 12,
+			col: 3,
+			component: "A",
+		});
+		expect(
+			(document.querySelector(".sn-region") as HTMLElement | null)?.style
+				.transform,
+		).toBe("translate(1360px, 2090px)");
+		localStorage.removeItem(key);
+	});
+});
+
 describe("injected CSS migration checks", () => {
 	it("the .sn-note rule has no scale(var(--inv-zoom (toolbar is allowed to)", () => {
 		mount();

@@ -12,6 +12,8 @@ import type { LabObjects } from "../plugin-api";
 import {
 	isAnchor,
 	isNoteFid,
+	isRegion,
+	isSourceRef,
 	newFeedId,
 	projectNoteCanvas,
 	type NoteAnchor,
@@ -66,6 +68,22 @@ export interface StickyNote {
 	 * Blank-canvas notes omit it and keep stored page coordinates.
 	 */
 	anchor?: NoteAnchor;
+	/**
+	 * The area this note is about, drawn rather than clicked. Held relative to
+	 * its screen the same way `anchor` is, so it survives the screen moving and
+	 * resizing -- and kept SEPARATE from `anchor` on purpose: dragging the sticky
+	 * somewhere with more room must not drag what it is a remark about.
+	 */
+	region?: NoteRegion;
+}
+
+/** A drawn region, as fractions of its screen's box. */
+export interface NoteRegion {
+	screenId: string;
+	rx: number;
+	ry: number;
+	rw: number;
+	rh: number;
 }
 
 export interface StickyNotesOptions {
@@ -204,6 +222,7 @@ function buildCss(fonts: { woff2: string; woff: string }): string {
 	return `
 @font-face{font-family:"Mynerve";src:url("${fonts.woff2}") format("woff2"),url("${fonts.woff}") format("woff");font-display:swap}
 .sn-root{position:absolute;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;font-family:Inter,system-ui,-apple-system,sans-serif}
+.sn-region{position:absolute;top:0;left:0;transform-origin:0 0;pointer-events:none;box-sizing:border-box;border:calc(1px * var(--inv-zoom, 1)) solid var(--sn-region-ink,#f2c94c);border-radius:2px;background:color-mix(in srgb, var(--sn-region-ink,#f2c94c) 14%, transparent);z-index:3}
 .sn-note{position:absolute;top:0;left:0;transform-origin:0 0;pointer-events:auto;cursor:grab;display:flex;flex-direction:column;box-shadow:0 10px 30px rgba(0,0,0,.28),0 2px 6px rgba(0,0,0,.16);border-radius:2px;width:100%;height:100%}
 .sn-bar{height:${BAR_H}px;flex:none;cursor:grab;background:rgba(0,0,0,.09);display:flex;align-items:center;padding:0 5px;touch-action:none;border-radius:2px 2px 0 0}
 .sn-note:active{cursor:grabbing}
@@ -382,6 +401,7 @@ export class StickyNotes {
 
 	private root!: HTMLDivElement;
 	private refs = new Map<number, NoteRefs>();
+	private regions = new Map<number, HTMLDivElement>();
 	private notes: StickyNote[] = [];
 	private nextId = 1;
 	private openPop: HTMLElement | null = null;
@@ -505,7 +525,9 @@ export class StickyNotes {
 	 * note exists: nothing that goes wrong in the lookup can reach the note, and
 	 * the sticky is never itself a candidate for what it is pinned to.
 	 */
-	spawn(init: Partial<Omit<StickyNote, "id">> = {}): StickyNote {
+	spawn(
+		init: Partial<Omit<StickyNote, "id">> & { regionPage?: Rect } = {},
+	): StickyNote {
 		const step = (this.notes.length % 6) * 24;
 		const x = init.x ?? step;
 		const y = init.y ?? step;
@@ -534,11 +556,17 @@ export class StickyNotes {
 			resolved: false,
 			source,
 			anchor: init.anchor ? { ...init.anchor } : undefined,
+			region: init.region
+				? { ...init.region }
+				: init.regionPage
+					? this.regionFromPage(init.regionPage)
+					: undefined,
 		};
 		if (note.anchor) this.applyAnchorToNote(note);
 		if (!note.anchor) this.reanchorFromPage(note);
 		this.notes.push(note);
 		this.mountNote(note);
+		this.mountRegion(note);
 		this.registerNote(note);
 		this.objects.select(`note:${note.id}`);
 		this.enterEdit(note.id);
@@ -608,6 +636,8 @@ export class StickyNotes {
 		this.objects.unregister(`note:${id}`);
 		this.refs.get(id)?.el.remove();
 		this.refs.delete(id);
+		this.regions.get(id)?.remove();
+		this.regions.delete(id);
 		this.lastEmittedText.delete(id);
 		if (this.applyingFeed) return;
 		if (note) this.emit({ t: "note.delete", id: note.fid });
@@ -620,6 +650,8 @@ export class StickyNotes {
 			this.emit({ t: "note.delete", id: note.fid });
 		}
 		for (const r of this.refs.values()) r.el.remove();
+		for (const el of this.regions.values()) el.remove();
+		this.regions.clear();
 		this.refs.clear();
 		this.notes = [];
 		this.lastEmittedText.clear();
@@ -922,6 +954,69 @@ export class StickyNotes {
 		}
 	}
 
+	/** A page-space rect as fractions of the screen it lands on, or nothing. */
+	private regionFromPage(rect: Rect): NoteRegion | undefined {
+		const screenId = this.screenAt?.({
+			x: rect.x + rect.width / 2,
+			y: rect.y + rect.height / 2,
+		});
+		if (!screenId) return undefined;
+		const layout = this.screenLayout?.(screenId);
+		if (!layout || layout.width === 0 || layout.height === 0) return undefined;
+		return {
+			screenId,
+			rx: (rect.x - layout.x) / layout.width,
+			ry: (rect.y - layout.y) / layout.height,
+			rw: rect.width / layout.width,
+			rh: rect.height / layout.height,
+		};
+	}
+
+	/** Where a stored region sits on the canvas right now, or nothing if its screen is gone. */
+	private regionPageRect(note: StickyNote): Rect | null {
+		if (!note.region) return null;
+		const layout = this.screenLayout?.(note.region.screenId);
+		if (!layout) return null;
+		return {
+			x: layout.x + note.region.rx * layout.width,
+			y: layout.y + note.region.ry * layout.height,
+			width: note.region.rw * layout.width,
+			height: note.region.rh * layout.height,
+		};
+	}
+
+	private mountRegion(note: StickyNote) {
+		if (!note.region) return;
+		const el = document.createElement("div");
+		el.className = "sn-region";
+		el.dataset.noteRegion = String(note.id);
+		this.root.appendChild(el);
+		this.regions.set(note.id, el);
+		this.writeRegionPos(note);
+	}
+
+	private writeRegionPos(note: StickyNote) {
+		const el = this.regions.get(note.id);
+		if (!el) return;
+		const rect = this.regionPageRect(note);
+		if (!rect) {
+			// The screen it was drawn on is gone. The remark survives; the box it
+			// pointed at cannot, and drawing it at a guessed place would be worse
+			// than not drawing it.
+			el.style.display = "none";
+			return;
+		}
+		el.style.display = "";
+		el.style.setProperty("--sn-region-ink", COLORS[note.color][0]);
+		el.style.transform = `translate(${rect.x}px, ${rect.y}px)`;
+		el.style.width = `${rect.width}px`;
+		el.style.height = `${rect.height}px`;
+	}
+
+	private syncRegions() {
+		for (const note of this.notes) if (note.region) this.writeRegionPos(note);
+	}
+
 	private syncAnchoredNotes() {
 		const selected = this.objects.selectedId();
 		let detached = false;
@@ -933,6 +1028,7 @@ export class StickyNotes {
 			if (!note.anchor && had) detached = true;
 			if (changed && note.anchor) this.writeNotePagePos(note);
 		}
+		this.syncRegions();
 		if (detached) this.commit();
 	}
 
@@ -1420,6 +1516,10 @@ export class StickyNotes {
 									ry: n.anchor.ry,
 								}
 							: undefined,
+						rg: n.region ? { ...n.region } : undefined,
+						// A note that knows which line it is about only knows it until the
+						// next reload, unless it is written down here with everything else.
+						src: n.source ? { ...n.source } : undefined,
 					})),
 				}),
 			);
@@ -1461,6 +1561,8 @@ export class StickyNotes {
 					h?: unknown;
 					fi?: unknown;
 					an?: unknown;
+					rg?: unknown;
+					src?: unknown;
 				}[];
 			};
 			if (data.v !== 1 || !Array.isArray(data.notes)) return;
@@ -1488,10 +1590,13 @@ export class StickyNotes {
 					replies: [],
 					resolved: false,
 					anchor: isAnchor(n.an) ? { ...n.an } : undefined,
+					region: isRegion(n.rg) ? { ...n.rg } : undefined,
+					source: isSourceRef(n.src) ? { ...n.src } : undefined,
 				};
 				if (note.anchor) this.applyAnchorToNote(note);
 				this.notes.push(note);
 				this.mountNote(note); // derives note.text from the mounted DOM
+				this.mountRegion(note);
 				this.registerNote(note);
 				this.lastEmittedText.set(note.id, note.text);
 			}
@@ -1514,6 +1619,7 @@ export class StickyNotes {
 			text: note.text,
 			...(note.source ? { source: note.source } : {}),
 			...(note.anchor ? { anchor: { ...note.anchor } } : {}),
+			...(note.region ? { region: { ...note.region } } : {}),
 		});
 		this.lastEmittedText.set(note.id, note.text);
 	}

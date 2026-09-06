@@ -40,6 +40,17 @@
   border-style: solid;
 }
 
+/*
+ * A drawn region is an AREA, not an element outline, and it has to read as one
+ * while the pointer is still moving -- an unfilled dashed box mid-drag looks
+ * exactly like the hover outline it just replaced. The fill is faint enough to
+ * read the page through.
+ */
+.pickBox[data-region] {
+  border-style: solid;
+  background: rgba(76, 159, 254, 0.14);
+}
+
 .pickChip {
   position: absolute;
   left: 50%;
