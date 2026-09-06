@@ -95,6 +95,12 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	design_system_apply: { destructive: true },
 	// Read-only diff between snapshot and current CSS. No side effects.
 	design_system_review: { destructive: false },
+	// Token scratch set: try/read/discard write only to design/token-overrides.json,
+	// never the product. commit is the destructive half — it splices into globals.css.
+	design_tokens_try: { destructive: false },
+	design_tokens_scratch: { destructive: false },
+	design_tokens_discard: { destructive: false },
+	design_tokens_commit: { destructive: true },
 	// The canvas conversation and the design-mode switch. Every one of these was
 	// denied simply by being absent here -- unregistered means destructive, and no
 	// permit covers a destructive tool. None of them touches an anchor.

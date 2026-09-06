@@ -96,11 +96,94 @@ export function labFsPlugin(projectRoot: string): Plugin {
       });
 
       server.middlewares.use("/__lab-fs", (req, res, next) => {
-        if (!req.url || req.method !== "POST") {
+        if (!req.url) {
           next();
           return;
         }
         const url = req.url.split("?")[0];
+
+        // GET /scratch-tokens.css — serve the persisted scratch set as CSS.
+        // The lab fetches this on boot so that a fresh page (including a
+        // Playwright snapshot) already carries the token overrides.
+        if (req.method === "GET" && url === "/scratch-tokens.css") {
+          const scratchFile = path.resolve(
+            projectRoot,
+            "..",
+            "..",
+            "design",
+            "token-overrides.json",
+          );
+          try {
+            if (!fs.existsSync(scratchFile)) {
+              res.statusCode = 204;
+              res.end();
+              return;
+            }
+            const raw = JSON.parse(fs.readFileSync(scratchFile, "utf8")) as {
+              changes?: Array<{
+                name: string;
+                light?: string;
+                dark?: string;
+                media?: string;
+              }>;
+            };
+            const changes = Array.isArray(raw.changes) ? raw.changes : [];
+            if (changes.length === 0) {
+              res.statusCode = 204;
+              res.end();
+              return;
+            }
+            // Build CSS inline — the same logic as token-scratch.ts but we
+            // cannot import browser-side ESM here. Keep it simple; duplication
+            // is two dozen lines of string concatenation.
+            const baseLight: string[] = [];
+            const baseDark: string[] = [];
+            const mediaLight = new Map<string, string[]>();
+            const mediaDark = new Map<string, string[]>();
+            for (const c of changes) {
+              const mk = typeof c.media === "string" ? c.media.trim() : "";
+              if (mk) {
+                if (c.light !== undefined) {
+                  if (!mediaLight.has(mk)) mediaLight.set(mk, []);
+                  mediaLight.get(mk)!.push(`\t\t${c.name}: ${c.light};`);
+                }
+                if (c.dark !== undefined) {
+                  if (!mediaDark.has(mk)) mediaDark.set(mk, []);
+                  mediaDark.get(mk)!.push(`\t\t${c.name}: ${c.dark};`);
+                }
+              } else {
+                if (c.light !== undefined) baseLight.push(`\t${c.name}: ${c.light};`);
+                if (c.dark !== undefined) baseDark.push(`\t${c.name}: ${c.dark};`);
+              }
+            }
+            const blocks: string[] = [];
+            if (baseLight.length > 0) blocks.push(`:root {\n${baseLight.join("\n")}\n}`);
+            if (baseDark.length > 0) blocks.push(`.dark {\n${baseDark.join("\n")}\n}`);
+            const allMediaKeys = new Set<string>();
+            for (const k of mediaLight.keys()) allMediaKeys.add(k);
+            for (const k of mediaDark.keys()) allMediaKeys.add(k);
+            for (const mk of [...allMediaKeys].sort()) {
+              const inner: string[] = [];
+              const ld = mediaLight.get(mk);
+              if (ld && ld.length > 0) inner.push(`\t:root {\n${ld.join("\n")}\n\t}`);
+              const dd = mediaDark.get(mk);
+              if (dd && dd.length > 0) inner.push(`\t.dark {\n${dd.join("\n")}\n\t}`);
+              if (inner.length > 0) blocks.push(`@media ${mk} {\n${inner.join("\n")}\n}`);
+            }
+            res.statusCode = 200;
+            res.setHeader("content-type", "text/css; charset=utf-8");
+            res.end(blocks.join("\n"));
+          } catch {
+            res.statusCode = 204;
+            res.end();
+          }
+          return;
+        }
+
+        if (req.method !== "POST") {
+          next();
+          return;
+        }
         void (async () => {
           try {
             const body = JSON.parse((await readBody(req)) || "{}") as Record<

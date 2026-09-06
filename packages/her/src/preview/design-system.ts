@@ -5,13 +5,13 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { SAMANTHA_REPO_ROOT } from "../her-core/channel-probe-gate.ts";
 
-const DEFAULT_TARGET = "samantha-ui";
+export const DEFAULT_TARGET = "samantha-ui";
 const DISCIPLINE =
 	"These are the values the product actually ships. Design with them — do not invent a colour, radius or easing. If you need a role that does not exist yet, say why it must exist before you add it.";
 const GIT_HEAD_TIMEOUT_MS = 8_000;
 const PRODUCT_CSS_REL = "packages/design-lab/src/tokens/product.css";
 
-const TARGETS = {
+export const TARGETS = {
 	"samantha-ui": {
 		cssPath: ["..", "samantha-ui", "src", "app", "globals.css"],
 		repoDir: ["..", "samantha-ui"],
@@ -20,7 +20,7 @@ const TARGETS = {
 	},
 } as const;
 
-type TargetName = keyof typeof TARGETS;
+export type TargetName = keyof typeof TARGETS;
 
 /** Breakpoint-scoped token values, keyed by the raw media condition string. */
 export type MediaTokens = Map<string, Map<string, string>>;
@@ -457,7 +457,7 @@ interface CssRule {
 	body: string;
 }
 
-function tokensFor(css: string, wanted: string): Map<string, string> {
+export function tokensFor(css: string, wanted: string): Map<string, string> {
 	const map = new Map<string, string>();
 	for (const rule of collectRules(stripComments(css))) {
 		if (!selectorListContains(rule.selector, wanted)) continue;
@@ -784,7 +784,7 @@ interface DeclSpan {
 	before: string;
 }
 
-function patchSelectorBlock(
+export function patchSelectorBlock(
 	css: string,
 	selector: string,
 	patches: Map<string, string>,
@@ -908,7 +908,7 @@ function scanDeclarations(body: string, wanted: Set<string>): Map<string, DeclSp
  * Extract tokens declared inside `@media (...) { selector { --x: y; } }` blocks.
  * Returns a map of media-condition-string → Map<tokenName, value>.
  */
-function tokensForMedia(css: string, wanted: string): MediaTokens {
+export function tokensForMedia(css: string, wanted: string): MediaTokens {
 	const result: MediaTokens = new Map();
 	const stripped = stripComments(css);
 	for (const rule of collectRules(stripped)) {
@@ -938,7 +938,7 @@ function extractMediaCondition(selector: string): string | undefined {
 /**
  * Patch a selector block that lives inside a specific @media rule.
  */
-function patchMediaSelectorBlock(
+export function patchMediaSelectorBlock(
 	css: string,
 	mediaCondition: string,
 	selector: string,
@@ -991,7 +991,7 @@ function patchMediaSelectorBlock(
 	};
 }
 
-function mergeMediaKeys(a: MediaTokens, b: MediaTokens): string[] {
+export function mergeMediaKeys(a: MediaTokens, b: MediaTokens): string[] {
 	const set = new Set<string>();
 	for (const k of a.keys()) set.add(k);
 	for (const k of b.keys()) set.add(k);
