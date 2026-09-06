@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin, ViteDevServer } from "vite";
+import { stampOidOnEvent } from "../her/src/design-canvas/store.ts";
 
 type Positions = Record<string, { x: number; y: number }>;
 
@@ -210,7 +211,7 @@ export function labFsPlugin(projectRoot: string): Plugin {
                 typeof body.at === "string" && body.at
                   ? body.at
                   : new Date().toISOString();
-              const event = { ...body, t, at, author: "fei" };
+              const event = stampOidOnEvent({ ...body, t, at, author: "fei" });
               fs.mkdirSync(path.dirname(feedFile), { recursive: true });
               fs.appendFileSync(feedFile, `${JSON.stringify(event)}\n`);
               json(res, 200, { ok: true });

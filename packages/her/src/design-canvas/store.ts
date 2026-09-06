@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -6,12 +7,96 @@ import {
 	type CanvasEvent,
 	CURSOR_START,
 	cursorOf,
+	isSpeakingEvent,
 	parseFeed,
 	projectThreads,
 	readSince,
 	serializeEvent,
 	type Thread,
 } from "./feed.ts";
+
+const HEAD_CACHE_MS = 2000;
+const HEAD_GIT_TIMEOUT_MS = 5_000;
+
+function gitEnv(): NodeJS.ProcessEnv {
+	const env: NodeJS.ProcessEnv = { ...process.env };
+	for (const key of [
+		"GIT_DIR",
+		"GIT_WORK_TREE",
+		"GIT_INDEX_FILE",
+		"GIT_OBJECT_DIRECTORY",
+		"GIT_ALTERNATE_OBJECT_DIRECTORIES",
+		"GIT_COMMON_DIR",
+		"GIT_NOTES_REF",
+	]) {
+		delete env[key];
+	}
+	return env;
+}
+
+function readSamanthaHead(): string | undefined {
+	try {
+		const spawned = spawnSync("git", ["-C", SAMANTHA_REPO_ROOT, "rev-parse", "HEAD"], {
+			encoding: "utf8",
+			env: gitEnv(),
+			timeout: HEAD_GIT_TIMEOUT_MS,
+			windowsHide: true,
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+		if (spawned.error || spawned.status !== 0) return undefined;
+		const oid = (spawned.stdout ?? "").trim();
+		return oid.length > 0 ? oid : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+let readHeadOid: () => string | undefined = readSamanthaHead;
+let nowMs: () => number = Date.now;
+let cachedHead: { oid: string | undefined; at: number } | null = null;
+
+/**
+ * Test seam: swap the HEAD reader / clock and drop the 2s cache.
+ * Production always reads `git rev-parse HEAD` in the samantha repo.
+ */
+export function resetHeadCacheForTest(opts?: { read?: () => string | undefined; now?: () => number }): void {
+	cachedHead = null;
+	readHeadOid = opts?.read ?? readSamanthaHead;
+	nowMs = opts?.now ?? Date.now;
+}
+
+function currentHeadOid(): string | undefined {
+	const at = nowMs();
+	if (cachedHead && at - cachedHead.at < HEAD_CACHE_MS) return cachedHead.oid;
+	let oid: string | undefined;
+	try {
+		oid = readHeadOid();
+	} catch {
+		oid = undefined;
+	}
+	if (typeof oid === "string") {
+		const trimmed = oid.trim();
+		oid = trimmed.length > 0 ? trimmed : undefined;
+	} else {
+		oid = undefined;
+	}
+	cachedHead = { oid, at };
+	return oid;
+}
+
+/**
+ * Drop any client-supplied `oid`, then stamp speaking events with HEAD.
+ * A missing git is silence, not a failed write.
+ */
+export function stampOidOnEvent(event: Record<string, unknown>): Record<string, unknown> {
+	const next: Record<string, unknown> = { ...event };
+	delete next.oid;
+	if (typeof next.t === "string" && isSpeakingEvent(next.t)) {
+		const oid = currentHeadOid();
+		if (oid) next.oid = oid;
+	}
+	return next;
+}
 
 /** Everything the design canvas has ever been told, one event per line. */
 export function feedPath(repoRoot: string = SAMANTHA_REPO_ROOT): string {
@@ -36,7 +121,8 @@ export function readFeedText(repoRoot?: string): string {
 export function appendEvent(event: CanvasEvent, repoRoot?: string): void {
 	const file = feedPath(repoRoot);
 	mkdirSync(dirname(file), { recursive: true });
-	appendFileSync(file, serializeEvent(event), "utf8");
+	const stamped = stampOidOnEvent(event as unknown as Record<string, unknown>) as CanvasEvent;
+	appendFileSync(file, serializeEvent(stamped), "utf8");
 }
 
 export function readCursor(repoRoot?: string): string {

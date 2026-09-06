@@ -41,6 +41,8 @@ export type CanvasEvent =
 			y: number;
 			text: string;
 			source?: { file: string; line: number; col: number; component: string | null };
+			/** samantha HEAD when this note was written. Stamped by the server, never the client. */
+			oid?: string;
 	  }
 	| {
 			t: "note.move";
@@ -52,11 +54,16 @@ export type CanvasEvent =
 			y: number;
 			source?: { file: string; line: number; col: number; component: string | null };
 	  }
-	| { t: "note.edit"; id: string; at: string; author: Author; text: string }
+	| { t: "note.edit"; id: string; at: string; author: Author; text: string; oid?: string }
 	| { t: "note.delete"; id: string; at: string; author: Author }
-	| { t: "reply"; id: string; noteId: string; at: string; author: Author; text: string }
-	| { t: "resolve"; noteId: string; at: string; author: Author; note?: string }
-	| { t: "reopen"; noteId: string; at: string; author: Author };
+	| { t: "reply"; id: string; noteId: string; at: string; author: Author; text: string; oid?: string }
+	| { t: "resolve"; noteId: string; at: string; author: Author; note?: string; oid?: string }
+	| { t: "reopen"; noteId: string; at: string; author: Author; oid?: string };
+
+/** Speech, not motion. A move is not saying anything, so it does not get an oid. */
+export function isSpeakingEvent(t: string): boolean {
+	return t === "note" || t === "note.edit" || t === "reply" || t === "resolve" || t === "reopen";
+}
 
 export interface Reply {
 	id: string;
@@ -86,6 +93,17 @@ export interface Thread {
 	resolved: boolean;
 	resolvedBy?: Author;
 	resolvedNote?: string;
+	/**
+	 * samantha HEAD when this thread was opened.
+	 * Answers: what did the code look like when he first wrote this note?
+	 */
+	oid?: string;
+	/**
+	 * samantha HEAD the last time someone spoke on this thread
+	 * (open / edit / reply / resolve / reopen — not a move).
+	 * Answers: what did the code look like when the last thing was said?
+	 */
+	lastOid?: string;
 }
 
 /** Read from the very beginning. */
@@ -176,6 +194,8 @@ export function projectThreads(events: CanvasEvent[]): Thread[] {
 					replies: [],
 					lastSpoke: e.author,
 					resolved: false,
+					oid: e.oid,
+					lastOid: e.oid,
 				});
 				break;
 			case "note.move": {
@@ -192,6 +212,7 @@ export function projectThreads(events: CanvasEvent[]): Thread[] {
 				if (th) {
 					th.text = e.text;
 					th.lastSpoke = e.author;
+					if (e.oid) th.lastOid = e.oid;
 				}
 				break;
 			}
@@ -204,6 +225,7 @@ export function projectThreads(events: CanvasEvent[]): Thread[] {
 				if (th) {
 					th.replies.push({ id: e.id, at: e.at, author: e.author, text: e.text });
 					th.lastSpoke = e.author;
+					if (e.oid) th.lastOid = e.oid;
 				}
 				break;
 			}
@@ -213,6 +235,7 @@ export function projectThreads(events: CanvasEvent[]): Thread[] {
 					th.resolved = true;
 					th.resolvedBy = e.author;
 					if (e.note !== undefined) th.resolvedNote = e.note;
+					if (e.oid) th.lastOid = e.oid;
 				}
 				break;
 			}
@@ -223,6 +246,7 @@ export function projectThreads(events: CanvasEvent[]): Thread[] {
 					th.resolvedBy = undefined;
 					th.resolvedNote = undefined;
 					th.lastSpoke = e.author;
+					if (e.oid) th.lastOid = e.oid;
 				}
 				break;
 			}

@@ -10,6 +10,8 @@ import { join, resolve } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
+import { allThreads } from "../design-canvas/store.ts";
+
 export const NOTES_REF = "refs/notes/her-design";
 export const MAX_NAME_LENGTH = 80;
 const GIT_TIMEOUT_MS = 15_000;
@@ -42,6 +44,17 @@ export interface ShowCheckpointResult {
 	ok: boolean;
 	error?: string;
 	checkpoint?: Checkpoint;
+}
+
+export interface SinceNoteResult {
+	ok: boolean;
+	error?: string;
+	noteId?: string;
+	oid?: string;
+	head?: string;
+	commitCount?: number;
+	stat?: string;
+	subjects?: string[];
 }
 
 export interface DesignCheckpointToolDeps {
@@ -235,6 +248,89 @@ export function nameCheckpoint(oid: string, name: string, opts: CheckpointOption
 	}
 }
 
+export function commitsSinceNote(noteId: string, opts: CheckpointOptions = {}): SinceNoteResult {
+	const id = noteId.trim();
+	const thread = allThreads(opts.repoRoot).find((row) => row.id === id);
+	if (!thread) {
+		return { ok: false, noteId: id, error: `找不到这条意见（${id || "empty"}）。` };
+	}
+	if (!thread.oid) {
+		return {
+			ok: false,
+			noteId: thread.id,
+			error: "这条意见写下时没有记下当时的代码版本。",
+		};
+	}
+	try {
+		if (!insideWorkTree(opts)) {
+			return { ok: false, noteId: thread.id, oid: thread.oid, error: "not a git repository" };
+		}
+		const parsed = runGit(["rev-parse", "--verify", `${thread.oid}^{commit}`], opts);
+		if (parsed.status !== 0) {
+			return {
+				ok: false,
+				noteId: thread.id,
+				oid: thread.oid,
+				error: `这个提交不在仓里（${thread.oid.slice(0, 8)}）。可能被 rebase 过了。`,
+			};
+		}
+		const range = `${thread.oid}..HEAD`;
+		const head = runGit(["rev-parse", "HEAD"], opts);
+		const counted = runGit(["rev-list", "--count", range], opts);
+		const logged = runGit(["log", "--format=%s", range], opts);
+		const diffed = runGit(["diff", "--stat", range], opts);
+		if (counted.status !== 0) {
+			return { ok: false, noteId: thread.id, oid: thread.oid, error: gitError(counted, "git rev-list failed") };
+		}
+		if (logged.status !== 0) {
+			return { ok: false, noteId: thread.id, oid: thread.oid, error: gitError(logged, "git log failed") };
+		}
+		if (diffed.status !== 0) {
+			return { ok: false, noteId: thread.id, oid: thread.oid, error: gitError(diffed, "git diff failed") };
+		}
+		const commitCount = Number.parseInt(counted.stdout.trim(), 10);
+		const subjects = logged.stdout
+			.replace(/\r\n/g, "\n")
+			.split("\n")
+			.map((line) => line.trimEnd())
+			.filter((line) => line.length > 0);
+		return {
+			ok: true,
+			noteId: thread.id,
+			oid: thread.oid,
+			head: head.status === 0 ? head.stdout.trim() : undefined,
+			commitCount: Number.isFinite(commitCount) ? commitCount : subjects.length,
+			stat: diffed.stdout.replace(/\r\n/g, "\n").trimEnd(),
+			subjects,
+		};
+	} catch (error) {
+		return {
+			ok: false,
+			noteId: thread.id,
+			oid: thread.oid,
+			error: error instanceof Error ? error.message : String(error),
+		};
+	}
+}
+
+function renderSince(result: SinceNoteResult): string {
+	const oidShort = result.oid?.slice(0, 8) ?? "?";
+	const count = result.commitCount ?? 0;
+	const subjects =
+		count === 0
+			? ["No commits since this note — that commit is still HEAD."]
+			: (result.subjects ?? []).map((subject) => `  ${subject}`);
+	const stat = result.stat?.trim() ?? "";
+	return [
+		`Since note ${result.noteId} (${oidShort}..HEAD): ${count} commit${count === 1 ? "" : "s"}.`,
+		"",
+		...subjects,
+		...(stat ? ["", stat] : []),
+		"",
+		"This tool is read-only. It does not restore, checkout, or change the working tree.",
+	].join("\n");
+}
+
 export function showCheckpoint(oid: string, opts: CheckpointOptions = {}): ShowCheckpointResult {
 	try {
 		if (!insideWorkTree(opts)) return { ok: false, error: "not a git repository" };
@@ -356,6 +452,28 @@ export function registerDesignVersionTools(pi: ExtensionAPI, deps: DesignCheckpo
 				return textResult(result.error ?? "failed to show checkpoint", { ok: false, error: result.error });
 			}
 			return textResult(renderShow(result.checkpoint), { ok: true, checkpoint: result.checkpoint });
+		},
+	});
+
+	pi.registerTool({
+		name: "design_version_since",
+		label: "Design Changes Since Note",
+		description:
+			"Show what the code has done since a canvas note was written: commit count, git diff --stat, " +
+			"and each commit subject between that note's recorded HEAD and current HEAD (`<oid>..HEAD`). " +
+			"Read-only — this tool does not restore, checkout, move HEAD, or change any ref or the working tree. " +
+			"It reports what changed so a human can decide whether to go back; it never goes back itself.",
+		parameters: Type.Object({
+			noteId: Type.String({
+				description: "The sticky-note / thread id (the opening note's id).",
+			}),
+		}),
+		async execute(_toolCallId, params) {
+			const result = commitsSinceNote(params.noteId, opts());
+			if (!result.ok) {
+				return textResult(result.error ?? "failed to compare since this note", { ...result, ok: false });
+			}
+			return textResult(renderSince(result), { ...result, ok: true });
 		},
 	});
 }
