@@ -1,0 +1,695 @@
+/*
+ * Samantha landing — direction B (夜班).
+ *
+ * Neutral ground, one sage signal, no second accent. Sibling groups are laid
+ * out with flex/grid + gap rather than margins, so a drag-reorder or a delete
+ * in the canvas editor does not leave orphaned spacing behind.
+ */
+
+.lp {
+	/*
+	 * The ruler is THIS frame, not the browser window. An artboard is a
+	 * transform on the canvas, so the window says nothing about how wide the
+	 * screen actually is — a 390 frame on a 1440 monitor must get the phone
+	 * layout, and a 1440 screen filling a small laptop must get the wide one.
+	 * A container query asks the only question that is true in both directions,
+	 * and it answers on resize without waiting for a React render.
+	 */
+	container-type: inline-size;
+	container-name: lp;
+
+	--ink: #e7e9e5;
+	--ink-2: #9ea59b;
+	--ink-3: #6e746b;
+	--bg: #101210;
+	--bg-2: #171a17;
+	--line: #232622;
+	--line-2: #1c1f1c;
+	--sage: #7d9a82;
+	--sage-lift: #94b598;
+	--amber: #b8a06a;
+	--paper: #f6f6f3;
+	--paper-ink: #16181a;
+
+	background: var(--bg);
+	color: var(--ink);
+	font-family: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+	font-size: 16px;
+	line-height: 1.55;
+	display: flex;
+	flex-direction: column;
+}
+
+.lp h1,
+.lp h2,
+.lp h3 {
+	margin: 0;
+	letter-spacing: -0.025em;
+	text-wrap: balance;
+}
+
+.lp p {
+	margin: 0;
+}
+
+.lp code {
+	font-family: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+
+/* ── nav ──────────────────────────────────────────────────── */
+.lp-nav {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 20px 64px;
+	border-bottom: 1px solid var(--line);
+	position: sticky;
+	top: 0;
+	background: color-mix(in oklab, var(--bg) 88%, transparent);
+	backdrop-filter: blur(10px);
+	z-index: 5;
+}
+
+.lp-wordmark {
+	font-family: "IBM Plex Mono", monospace;
+	font-size: 12px;
+	letter-spacing: 0.18em;
+	text-transform: uppercase;
+}
+
+.lp-nav-links {
+	display: flex;
+	align-items: center;
+	gap: 28px;
+	font-size: 13.5px;
+	color: var(--ink-2);
+}
+
+.lp-nav-cta {
+	color: var(--ink);
+	border: 1px solid var(--line);
+	padding: 7px 14px;
+}
+
+/* ── hero ─────────────────────────────────────────────────── */
+.lp-hero {
+	display: grid;
+	grid-template-columns: 1fr 1.15fr;
+	gap: 0;
+	border-bottom: 1px solid var(--line);
+}
+
+.lp-hero-copy {
+	display: flex;
+	flex-direction: column;
+	gap: 24px;
+	padding: 84px 64px 96px;
+	border-right: 1px solid var(--line);
+}
+
+.lp-eyebrow {
+	display: flex;
+	align-items: center;
+	gap: 9px;
+	font-family: "IBM Plex Mono", monospace;
+	font-size: 11px;
+	letter-spacing: 0.16em;
+	text-transform: uppercase;
+	color: var(--ink-3);
+}
+
+.lp-pulse {
+	width: 7px;
+	height: 7px;
+	border-radius: 4px;
+	background: var(--sage);
+}
+
+.lp h1 {
+	font-size: 64px;
+	line-height: 1.02;
+	font-weight: 500;
+}
+
+.lp-lede {
+	max-width: 42ch;
+	font-size: 18px;
+	color: var(--ink-2);
+}
+
+.lp-actions {
+	display: flex;
+	gap: 12px;
+	align-items: center;
+	margin-top: 6px;
+}
+
+.lp-btn {
+	display: inline-flex;
+	align-items: center;
+	height: 46px;
+	padding: 0 26px;
+	background: var(--sage);
+	color: #0e100e;
+	font-size: 14px;
+	font-weight: 600;
+}
+
+.lp-btn.is-ghost {
+	background: transparent;
+	color: var(--ink);
+	border: 1px solid var(--line);
+	font-weight: 500;
+}
+
+.lp-fine {
+	font-family: "IBM Plex Mono", monospace;
+	font-size: 11px;
+	letter-spacing: 0.08em;
+	color: var(--ink-3);
+}
+
+/* ── the log panel ────────────────────────────────────────── */
+.lp-log {
+	display: flex;
+	flex-direction: column;
+	padding: 84px 64px 96px;
+	gap: 0;
+}
+
+.lp-log-head {
+	display: flex;
+	justify-content: space-between;
+	font-family: "IBM Plex Mono", monospace;
+	font-size: 10.5px;
+	letter-spacing: 0.18em;
+	text-transform: uppercase;
+	color: var(--ink-3);
+	padding-bottom: 14px;
+}
+
+.lp-log-row {
+	display: flex;
+	align-items: baseline;
+	gap: 15px;
+	padding: 13px 0;
+	border-top: 1px solid var(--line-2);
+	font-size: 13.5px;
+}
+
+.lp-log-time {
+	font-family: "IBM Plex Mono", monospace;
+	font-size: 11.5px;
+	color: var(--ink-3);
+	width: 46px;
+	flex: none;
+}
+
+.lp-log-dot {
+	width: 6px;
+	height: 6px;
+	border-radius: 3px;
+	flex: none;
+	transform: translateY(-2px);
+}
+
+.lp-log-verb {
+	width: 62px;
+	flex: none;
+	color: var(--ink-2);
+}
+
+.lp-log-what {
+	flex: 1;
+}
+
+.lp-log-what.is-wait {
+	color: var(--amber);
+}
+
+.lp-log-foot {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	margin-top: 22px;
+	padding: 16px 18px;
+	border: 1px dashed #2e322d;
+	font-family: "IBM Plex Mono", monospace;
+	font-size: 11px;
+	color: var(--ink-3);
+}
+
+/* ── act two ──────────────────────────────────────────────── */
+.lp-turn {
+	display: grid;
+	grid-template-columns: 1.1fr 1fr;
+	gap: 72px;
+	padding: 104px 64px;
+	border-bottom: 1px solid var(--line);
+}
+
+.lp-turn-copy {
+	display: flex;
+	flex-direction: column;
+	gap: 22px;
+}
+
+.lp-turn h2 {
+	font-size: 46px;
+	line-height: 1.06;
+	font-weight: 500;
+}
+
+.lp-turn p {
+	max-width: 46ch;
+	color: var(--ink-2);
+	font-size: 16.5px;
+}
+
+.lp-turn-claim {
+	color: var(--ink) !important;
+	border-left: 2px solid var(--sage);
+	padding-left: 16px;
+}
+
+.lp-commits {
+	display: flex;
+	flex-direction: column;
+	align-self: start;
+	background: var(--bg-2);
+	border: 1px solid var(--line);
+	padding: 22px 24px;
+}
+
+.lp-commits-head {
+	font-family: "IBM Plex Mono", monospace;
+	font-size: 10.5px;
+	letter-spacing: 0.16em;
+	text-transform: uppercase;
+	color: var(--ink-3);
+	padding-bottom: 12px;
+}
+
+.lp-commit {
+	display: flex;
+	gap: 16px;
+	align-items: baseline;
+	padding: 11px 0;
+	border-top: 1px solid var(--line-2);
+	font-family: "IBM Plex Mono", monospace;
+	font-size: 12px;
+}
+
+.lp-commit-date {
+	color: var(--ink-3);
+	width: 84px;
+	flex: none;
+}
+
+.lp-commit-path {
+	flex: 1;
+}
+
+.lp-commit-delta {
+	color: var(--ink-2);
+}
+
+/* ── section furniture ────────────────────────────────────── */
+.lp-section-head {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+	max-width: 58ch;
+}
+
+.lp-kicker {
+	font-family: "IBM Plex Mono", monospace;
+	font-size: 10.5px;
+	letter-spacing: 0.18em;
+	text-transform: uppercase;
+	color: var(--ink-3);
+}
+
+.lp-section-head h2 {
+	font-size: 40px;
+	line-height: 1.08;
+	font-weight: 500;
+}
+
+.lp-section-head p {
+	color: var(--ink-2);
+	font-size: 16.5px;
+}
+
+.lp-section-head.is-light .lp-kicker {
+	color: #7b807a;
+}
+
+.lp-section-head.is-light h2,
+.lp-section-head.is-light p {
+	color: var(--paper-ink);
+}
+
+.lp-section-head.is-light p {
+	color: #555953;
+}
+
+/* ── how ──────────────────────────────────────────────────── */
+.lp-how {
+	display: flex;
+	flex-direction: column;
+	gap: 52px;
+	padding: 104px 64px;
+	border-bottom: 1px solid var(--line);
+}
+
+.lp-how-grid {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 1px;
+	background: var(--line);
+	border: 1px solid var(--line);
+}
+
+.lp-card {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	background: var(--bg);
+	padding: 32px 30px 34px;
+}
+
+.lp-card-n {
+	font-family: "IBM Plex Mono", monospace;
+	font-size: 11px;
+	letter-spacing: 0.14em;
+	color: var(--sage);
+}
+
+.lp-card h3 {
+	font-size: 20px;
+	font-weight: 500;
+}
+
+.lp-card p {
+	color: var(--ink-2);
+	font-size: 14.5px;
+	flex: 1;
+}
+
+.lp-card code {
+	font-size: 12px;
+	color: var(--ink-3);
+	padding-top: 4px;
+}
+
+/* ── ladder, light plate ──────────────────────────────────── */
+.lp-ladder {
+	display: flex;
+	flex-direction: column;
+	gap: 48px;
+	padding: 104px 64px;
+	background: var(--paper);
+	color: var(--paper-ink);
+}
+
+.lp-rungs {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 40px;
+}
+
+.lp-rung {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	padding-top: 20px;
+	border-top: 1px solid #d8d6cf;
+}
+
+.lp-rung.is-here {
+	border-top: 1px solid var(--paper-ink);
+}
+
+.lp-rung-top {
+	display: flex;
+	align-items: baseline;
+	gap: 12px;
+}
+
+.lp-rung-n {
+	font-family: "IBM Plex Mono", monospace;
+	font-size: 11px;
+	letter-spacing: 0.12em;
+	color: #9a9e96;
+}
+
+.lp-rung.is-here .lp-rung-n {
+	color: #4e6b53;
+}
+
+.lp-rung-title {
+	font-size: 22px;
+	font-weight: 500;
+}
+
+.lp-rung-badge {
+	font-family: "IBM Plex Mono", monospace;
+	font-size: 10px;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	color: #4e6b53;
+	border: 1px solid #c6cdc4;
+	padding: 3px 8px;
+}
+
+.lp-rung p {
+	color: #555953;
+	font-size: 14.5px;
+	max-width: 32ch;
+}
+
+/* ── objections ───────────────────────────────────────────── */
+.lp-nots {
+	display: flex;
+	flex-direction: column;
+	gap: 44px;
+	padding: 104px 64px;
+	border-bottom: 1px solid var(--line);
+}
+
+.lp-nots-grid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 36px 64px;
+}
+
+.lp-not {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding-top: 18px;
+	border-top: 1px solid var(--line);
+}
+
+.lp-not h3 {
+	font-size: 18px;
+	font-weight: 500;
+}
+
+.lp-not p {
+	color: var(--ink-2);
+	font-size: 14.5px;
+	max-width: 44ch;
+}
+
+/* ── start ────────────────────────────────────────────────── */
+.lp-start {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 22px;
+	padding: 116px 64px 120px;
+	text-align: center;
+}
+
+.lp-start h2 {
+	font-size: 46px;
+	font-weight: 500;
+}
+
+.lp-start p {
+	max-width: 48ch;
+	color: var(--ink-2);
+	font-size: 16.5px;
+}
+
+.lp-cmd {
+	display: flex;
+	align-items: center;
+	gap: 14px;
+	margin-top: 8px;
+	padding: 0 18px;
+	height: 52px;
+	background: var(--bg-2);
+	border: 1px solid var(--line);
+	font-family: "IBM Plex Mono", monospace;
+	font-size: 14px;
+}
+
+.lp-cmd-prompt {
+	color: var(--sage);
+}
+
+.lp-cmd-copy {
+	color: var(--ink-3);
+	font-size: 11px;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	padding-left: 14px;
+	border-left: 1px solid var(--line);
+}
+
+/* ── foot ─────────────────────────────────────────────────── */
+.lp-foot {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	padding: 26px 64px;
+	border-top: 1px solid var(--line);
+	font-family: "IBM Plex Mono", monospace;
+	font-size: 11px;
+	letter-spacing: 0.1em;
+	color: var(--ink-3);
+	margin-top: auto;
+}
+
+/* ── the frame narrows ─────────────────────────────────────── */
+@container lp (max-width: 900px) {
+.lp-nav {
+	padding: 16px 28px;
+}
+
+.lp-nav-links span:not(.lp-nav-cta) {
+	display: none;
+}
+
+.lp-hero,
+.lp-turn {
+	grid-template-columns: 1fr;
+	gap: 0;
+}
+
+.lp-hero-copy {
+	border-right: none;
+	border-bottom: 1px solid var(--line);
+	padding: 48px 28px 56px;
+}
+
+.lp h1,
+h1 {
+	font-size: 42px;
+}
+
+.lp-log,
+.lp-turn,
+.lp-how,
+.lp-ladder,
+.lp-nots,
+.lp-start {
+	padding-left: 28px;
+	padding-right: 28px;
+}
+
+.lp-turn {
+	padding-top: 56px;
+	padding-bottom: 56px;
+}
+
+.lp-turn h2,
+.lp-start h2 {
+	font-size: 32px;
+}
+
+.lp-section-head h2 {
+	font-size: 28px;
+}
+
+.lp-how-grid,
+.lp-rungs,
+.lp-nots-grid {
+	grid-template-columns: 1fr;
+}
+
+.lp-rungs {
+	gap: 24px;
+}
+
+.lp-foot {
+	flex-direction: column;
+	gap: 8px;
+	text-align: center;
+}
+}
+
+/* ── phone ─────────────────────────────────────────────────── */
+@container lp (max-width: 560px) {
+	.lp-nav {
+		padding: 14px 20px;
+	}
+
+	.lp-hero-copy,
+	.lp-log,
+	.lp-turn,
+	.lp-how,
+	.lp-ladder,
+	.lp-nots,
+	.lp-start {
+		padding-left: 20px;
+		padding-right: 20px;
+	}
+
+	.lp h1 {
+		font-size: 34px;
+	}
+
+	.lp-lede {
+		font-size: 16px;
+	}
+
+	.lp-actions {
+		flex-direction: column;
+		align-items: stretch;
+		gap: 10px;
+	}
+
+	.lp-btn {
+		justify-content: center;
+	}
+
+	.lp-log-row {
+		flex-wrap: wrap;
+		row-gap: 4px;
+	}
+
+	.lp-log-what {
+		flex-basis: 100%;
+		padding-left: 61px;
+	}
+
+	.lp-turn h2,
+	.lp-start h2 {
+		font-size: 26px;
+	}
+
+	.lp-section-head h2 {
+		font-size: 23px;
+	}
+
+	.lp-cmd {
+		width: 100%;
+		font-size: 12.5px;
+		gap: 10px;
+		padding: 0 12px;
+	}
+}

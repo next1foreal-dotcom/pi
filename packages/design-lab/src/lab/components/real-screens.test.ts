@@ -54,6 +54,7 @@ describe("the real screens", () => {
       "playground",
       "product-list",
       "loora-landing",
+      "main-landing",
       "mosaic",
     ]);
     expect(index().problems).toEqual([]);
@@ -78,7 +79,7 @@ describe("the real screens", () => {
       }
     }
     // A silent zero would pass every assertion above without proving anything.
-    expect(checked.length).toBe(7);
+    expect(checked.length).toBe(8);
   });
 
   it("keeps a renamed default import under its declared name", () => {
@@ -153,6 +154,8 @@ describe("the real screens", () => {
       "LocationPin",
       "LooraLandingWireframe",
       "LiveCanvas",
+      "LandingDesktop",
+      "SamanthaLanding",
       "MosaicScreen",
       "PaneBox",
       "MosaicPaneHost",

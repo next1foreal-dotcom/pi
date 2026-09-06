@@ -104,11 +104,12 @@ function firing(s: Screen, width: number): number {
 	return s.thresholds.filter((t) => width <= t).length;
 }
 
-describe("the four screens are measured against their frame", () => {
+describe("every screen is measured against its frame", () => {
 	it("found all four screens", () => {
 		// A gate over an empty list is a green light that means nothing.
 		expect(screens.map((s) => s.dir).sort()).toEqual([
 			"loora-landing",
+			"main-landing",
 			"mosaic",
 			"playground",
 			"product-list",
