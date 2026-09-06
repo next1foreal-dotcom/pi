@@ -44,6 +44,9 @@ import {
   publishPluginApis,
 } from "../plugin-api";
 import { dispatchLabKey } from "./keyboard-dispatch";
+import { StickyNotes } from "./page-notes";
+import { threadRows, unresolvedCount } from "./open-threads";
+import type { NoteThreadState } from "./note-feed";
 import { screenAt as screenAtPoint } from "./screen-at";
 import {
   attachLabSpotlight,
@@ -110,6 +113,8 @@ export function InteractionLab() {
   );
   const [pickerOpen, setPickerOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [threadsOpen, setThreadsOpen] = useState(false);
+  const [showResolved, setShowResolved] = useState(false);
   const [hexDraft, setHexDraft] = useState(canvasColor);
   const [renaming, setRenaming] = useState<string | null>(null);
 
@@ -187,6 +192,12 @@ export function InteractionLab() {
     session.pluginApis.get("ruler") as ToolToggle | undefined
   )?.isEnabled();
   const pickOn = session.root?.hasAttribute("data-pick") ?? false;
+  const notesApi = session.pluginApis.get("notes");
+  const notes =
+    notesApi instanceof StickyNotes ? notesApi : undefined;
+  const threadMap = notes?.threads() ?? new Map<string, NoteThreadState>();
+  const openCount = unresolvedCount(threadMap.values());
+  const threadList = threadRows(threadMap, showResolved);
 
   // The locked-screen hint. It names both ways out, because there are two and
   // Tab is the one nobody guesses (keyboard-dispatch handles Tab before the
@@ -304,6 +315,12 @@ export function InteractionLab() {
     for (const m of mounted) {
       if (m.handle.api !== undefined) session.pluginApis.set(m.id, m.handle.api);
     }
+    const notesApi = session.pluginApis.get("notes");
+    const unsubThreads =
+      notesApi instanceof StickyNotes
+        ? notesApi.subscribeThreads(() => session.bump())
+        : () => {};
+    if (notesApi instanceof StickyNotes) session.bump();
     const unpublish = publishPluginApis(mounted);
     const layerEl = el.querySelector("[data-lab-layer]");
     const pickHost = document.createElement("div");
@@ -719,6 +736,9 @@ export function InteractionLab() {
           pushToast("Layout reset");
           break;
         }
+        case "toggle-threads":
+          setThreadsOpen((o) => !o);
+          break;
         case "nudge": {
           const id = session.selectedId;
           if (!id) break;
@@ -776,6 +796,7 @@ export function InteractionLab() {
     });
 
     return () => {
+      unsubThreads();
       pick.destroy();
       pickHost.remove();
       stopSpotlight();
@@ -1049,6 +1070,21 @@ export function InteractionLab() {
           <button
             type="button"
             className={styles.tool}
+            data-open-threads=""
+            data-on={threadsOpen || undefined}
+            title="Open threads — T"
+            aria-label="Open threads"
+            aria-pressed={threadsOpen}
+            onClick={() => pressShortcut("KeyT", "t")}
+          >
+            <IconThreads />
+            {openCount > 0 ? (
+              <span className={styles.threadCount}>{openCount}</span>
+            ) : null}
+          </button>
+          <button
+            type="button"
+            className={styles.tool}
             title="New label — Shift L"
             aria-label="New label"
             onClick={() => pressShortcut("KeyL", "L", { shiftKey: true })}
@@ -1092,6 +1128,63 @@ export function InteractionLab() {
           </button>
         </div>
       </div>
+      {threadsOpen ? (
+        <div
+          className={styles.threadList}
+          data-lab-chrome
+          data-thread-list=""
+        >
+          <button
+            type="button"
+            className={styles.threadResolved}
+            data-thread-resolved-toggle=""
+            data-on={showResolved || undefined}
+            aria-pressed={showResolved}
+            onClick={() => setShowResolved((o) => !o)}
+          >
+            Resolved
+          </button>
+          {threadList.map((row) => {
+            const screen = row.screenId
+              ? (session.names[row.screenId] ??
+                screenById(row.screenId)?.name ??
+                row.screenId)
+              : "";
+            return (
+              <button
+                key={row.id}
+                type="button"
+                className={styles.threadRow}
+                data-thread-row={row.id}
+                data-resolved={row.resolved || undefined}
+                onClick={() => {
+                  const id = notes?.objectIdForFid(row.id);
+                  if (!id) return;
+                  selectObject(session, id);
+                  const layout = session.layouts[id];
+                  if (!layout) return;
+                  animateCamera(
+                    getCamera(),
+                    zoomToBounds(layout, session.viewport),
+                    session.viewport,
+                  );
+                }}
+              >
+                {screen ? (
+                  <span className={styles.threadScreen}>{screen}</span>
+                ) : null}
+                <span className={styles.threadText}>{row.text}</span>
+                {row.hasReply ? (
+                  <span
+                    data-thread-replied=""
+                    className={styles.threadReplied}
+                  />
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
       {helpOpen ? (
         <div className={styles.help} data-lab-chrome>
           {HELP.map((group) => (
@@ -1184,6 +1277,17 @@ const IconLabel = () => (
   </svg>
 );
 
+const IconThreads = () => (
+  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+    <path
+      d="M2.5 3.5h9M2.5 7h9M2.5 10.5h6"
+      stroke="currentColor"
+      strokeWidth="1.2"
+      strokeLinecap="round"
+    />
+  </svg>
+);
+
 const IconPoint = () => (
   <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
     <path
@@ -1255,6 +1359,7 @@ export const HELP: { title: string; rows: [string[], string][] }[] = [
       [["Shift", "L"], "New label"],
       [["Ctrl", "Shift", "L"], "Hide every label"],
       [["I"], "Point"],
+      [["T"], "Open threads"],
     ],
   },
 ];

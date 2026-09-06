@@ -16,6 +16,7 @@ import {
 	type NoteReply,
 	type NoteThreadState,
 } from "./note-feed";
+import { unresolvedCount } from "./open-threads";
 import type { Point, Rect } from "./types";
 
 const MYNERVE_WOFF2 = "/fonts/mynerve/regular.woff2";
@@ -381,6 +382,8 @@ export class StickyNotes {
 	private lastEmittedText = new Map<number, string>();
 	private applyingFeed = false;
 	private closed = false;
+	private feedLive = new Map<string, NoteThreadState>();
+	private threadListeners = new Set<() => void>();
 
 	constructor(options: StickyNotesOptions) {
 		this.storageKey =
@@ -414,6 +417,49 @@ export class StickyNotes {
 		return this.notes.map((n) => ({ ...n }));
 	}
 
+	/**
+	 * Last G-429 projection, plus any local note the feed has not named yet.
+	 * Does not re-parse the feed.
+	 */
+	threads(): Map<string, NoteThreadState> {
+		const out = new Map(this.feedLive);
+		for (const n of this.notes) {
+			if (out.has(n.fid)) continue;
+			out.set(n.fid, {
+				replies: n.replies,
+				resolved: n.resolved,
+				x: n.x,
+				y: n.y,
+				text: n.text,
+				screenId: this.screenAt?.({ x: n.x, y: n.y }) ?? null,
+				source: n.source,
+				hasBody: true,
+			});
+		}
+		return out;
+	}
+
+	openThreadCount(): number {
+		return unresolvedCount(this.threads().values());
+	}
+
+	objectIdForFid(fid: string): string | null {
+		const n = this.notes.find((x) => x.fid === fid);
+		return n ? this.noteObjectId(n.id) : null;
+	}
+
+	subscribeThreads(fn: () => void): () => void {
+		this.threadListeners.add(fn);
+		return () => {
+			this.threadListeners.delete(fn);
+		};
+	}
+
+	private emitChange() {
+		this.onChange?.(this);
+		for (const fn of this.threadListeners) fn();
+	}
+
 	get hidden() {
 		return this._hidden;
 	}
@@ -432,7 +478,7 @@ export class StickyNotes {
 			this.closePop();
 			this.objects.select(null);
 		}
-		this.onChange?.(this);
+		this.emitChange();
 	}
 
 	/** Spawn a note at page coordinates and focus it. */
@@ -1215,7 +1261,7 @@ export class StickyNotes {
 				this.lastEmittedText.set(n.id, n.text);
 			}
 		}, 150);
-		this.onChange?.(this);
+		this.emitChange();
 	}
 
 	private loadNotes() {
@@ -1332,9 +1378,11 @@ export class StickyNotes {
 	private applyFeed(text: string) {
 		if (this.closed) return;
 		const { live, deleted } = projectNoteCanvas(text);
+		this.feedLive = live;
 		this.applyingFeed = true;
 		try {
 			let dirty = false;
+			let threadsChanged = false;
 			const byFid = new Map(this.notes.map((n) => [n.fid, n] as const));
 			for (const fid of deleted) {
 				const note = byFid.get(fid);
@@ -1342,22 +1390,30 @@ export class StickyNotes {
 				this.removeNote(note.id);
 				byFid.delete(fid);
 				dirty = true;
+				threadsChanged = true;
 			}
 			for (const [fid, st] of live) {
 				const note = byFid.get(fid);
 				if (note) {
 					if (!this.isEditingNote(note) && this.alignExisting(note, st))
 						dirty = true;
+					const prevResolved = note.resolved;
+					const prevReplies = note.replies.length;
 					this.paintThread(note, st);
+					if (
+						note.resolved !== prevResolved ||
+						note.replies.length !== prevReplies
+					) {
+						threadsChanged = true;
+					}
 				} else if (st.hasBody) {
 					this.adoptFromFeed(fid, st);
 					dirty = true;
+					threadsChanged = true;
 				}
 			}
-			if (dirty) {
-				this.persistLocal();
-				this.onChange?.(this);
-			}
+			if (dirty) this.persistLocal();
+			if (dirty || threadsChanged) this.emitChange();
 		} finally {
 			this.applyingFeed = false;
 		}

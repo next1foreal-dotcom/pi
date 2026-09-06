@@ -486,6 +486,110 @@
   background: rgba(255, 255, 255, 0.16);
 }
 
+.threadCount {
+  font-variant-numeric: tabular-nums;
+  margin-left: 2px;
+  color: #fff;
+}
+
+.threadList {
+  pointer-events: auto;
+  position: absolute;
+  bottom: 52px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--lab-pill);
+  color: #fff;
+  border-radius: 10px;
+  padding: 6px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+  z-index: 21;
+  font-size: 12px;
+  min-width: 280px;
+  max-width: min(420px, calc(100vw - 24px));
+  max-height: min(50vh, 360px);
+  overflow-y: auto;
+  scrollbar-width: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.threadList::-webkit-scrollbar {
+  display: none;
+}
+
+.threadResolved {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.45);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  align-self: flex-end;
+}
+
+.threadResolved[data-on] {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.threadRow {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+  min-width: 0;
+}
+
+.threadRow:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.threadRow[data-resolved] {
+  opacity: 0.55;
+}
+
+.threadScreen {
+  flex: none;
+  color: rgba(255, 255, 255, 0.45);
+  max-width: 7em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.threadText {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.threadReplied {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.7);
+  flex: none;
+}
+
 /* ── the shortcut sheet ── */
 .help {
   pointer-events: auto;

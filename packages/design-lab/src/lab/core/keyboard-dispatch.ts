@@ -28,7 +28,8 @@ export type KeyAction =
   | { action: "zoom-step"; direction: 1 | -1 }
   | { action: "nudge"; dx: number; dy: number }
   | { action: "cleanup" }
-  | { action: "reset-layout" };
+  | { action: "reset-layout" }
+  | { action: "toggle-threads" };
 
 // ───────────────────────────── inputs ────────────────────────────────
 
@@ -128,6 +129,11 @@ export function dispatchLabKey(
   }
 
   // ── Explore-only shortcuts ──────────────────────────────────────
+
+  // T  →  open/close the unresolved-thread list
+  if (code === "KeyT" && !shiftKey && !meta && !altKey) {
+    return { action: "toggle-threads" };
+  }
 
   // Zoom in
   if (key === "+" || key === "=" || code === "Equal") {

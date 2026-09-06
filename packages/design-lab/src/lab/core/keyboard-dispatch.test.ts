@@ -237,6 +237,47 @@ describe("Shift+0 → zoom-100", () => {
   });
 });
 
+// ─── T open-threads ───────────────────────────────────────────────────
+
+describe("T → toggle-threads", () => {
+  it("explore: toggle-threads", () => {
+    const result = dispatchLabKey(
+      key({ key: "t", code: "KeyT" }),
+      EXPLORE,
+    );
+    expect(result).toEqual({ action: "toggle-threads" });
+  });
+
+  it("caps-lock T still toggles", () => {
+    const result = dispatchLabKey(
+      key({ key: "T", code: "KeyT" }),
+      EXPLORE,
+    );
+    expect(result).toEqual({ action: "toggle-threads" });
+  });
+
+  it("typing target: T is typing, not a shortcut", () => {
+    expect(
+      dispatchLabKey(key({ key: "t", code: "KeyT" }), ON_INPUT),
+    ).toBeNull();
+  });
+
+  it("focus mode: T is ignored", () => {
+    expect(
+      dispatchLabKey(key({ key: "t", code: "KeyT" }), FOCUS),
+    ).toBeNull();
+  });
+
+  it("Shift+T is not the shortcut", () => {
+    expect(
+      dispatchLabKey(
+        key({ key: "T", code: "KeyT", shiftKey: true }),
+        EXPLORE,
+      ),
+    ).toBeNull();
+  });
+});
+
 // ─── Shift+F ──────────────────────────────────────────────────────────
 
 describe("Shift+F → fill-toggle", () => {
