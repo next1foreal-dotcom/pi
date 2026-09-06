@@ -14,6 +14,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { summarizeForCompaction } from "./compaction.ts";
+import { registerDesignCanvasTools, withCanvasNag } from "./design-canvas/tools.ts";
 import { registerDesignProjectTools } from "./design-project/tools.ts";
 import { CuaCliDriver } from "./hands/driver.ts";
 import { resolveHandsConfig } from "./hands/policy.ts";
@@ -124,6 +125,7 @@ import { cancelWakeup, fireDueWakeups, listWakeups, scheduleWakeup } from "./her
 import { applyHerStatus, herStatusParameters } from "./her-core/status.ts";
 import { buildWidgetMessage } from "./her-core/widget.ts";
 import { appendAuditLog } from "./lib/audit.ts";
+import { installHerStatusAutoModeBypass } from "./lib/automode-bypass.ts";
 import { evaluate, policyEnvelope, resolveToolCallAnchor } from "./lib/cedar.ts";
 import { governedTools, resolveGovernedTool } from "./lib/governed-tools.ts";
 import { CONTEXT_INJECTION_SOURCES, injectLoggedContent } from "./lib/injection-ledger.ts";
@@ -667,6 +669,7 @@ export function withUi(ctx: ExtensionContext | undefined, fn: (ui: ExtensionCont
 }
 
 export default function her(pi: ExtensionAPI): void {
+	installHerStatusAutoModeBypass();
 	const memoryDir = getMemoryDir();
 	const summaryModel = createSummaryModel();
 	const mem = new Memory(memoryDir, { model: summaryModel, semanticSearch: createEmbeddingSearch() });
@@ -2697,9 +2700,10 @@ export default function her(pi: ExtensionAPI): void {
 	registerDesignProjectTools(pi);
 	registerPreviewStillTools(pi);
 	registerExtractDesignTools(pi);
-	registerLabStillTools(pi);
+	registerLabStillTools(withCanvasNag(pi));
 	registerAssetShotTools(pi);
 	registerDesignSystemTools(pi);
+	registerDesignCanvasTools(pi);
 	registerShowWidgetTools(pi);
 	registerTodoWriteTools(pi);
 	registerRelayProviderTools(pi);
