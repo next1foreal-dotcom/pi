@@ -26,6 +26,8 @@ over-read, never under-read.
 | Task | Read |
 |---|---|
 | Starting any design project / which step am I in | process/steps |
+| Working while he is watching — status, waiting, session name | process/narrating |
+| The first section just rendered — before building on it | review/rubric (the hero commits the design system; fix direction problems there, not at the end) |
 | Turning an idea into a brief | process/brief |
 | Researching before designing | process/research |
 | Needing a sourced example / building a direction board | research/positive-samples |

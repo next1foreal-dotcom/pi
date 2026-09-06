@@ -12,6 +12,29 @@ those laws, not a second set of them.
 Judge the exported image, never the tool return. `Created 12 node(s)` says the call was accepted. It
 says nothing about whether the composition reads.
 
+## When it must run
+
+Not only at the end. Three moments, and the first is the one that pays:
+
+**1 — The first rendered section, before anything is built on it.** The design system commits
+there: the palette, the type scale, the spacing rhythm and the density are all decided by the
+hero, and every section after it inherits them. A direction-level mistake caught in the hero
+costs one section; the same mistake caught at the end has propagated through the page and costs
+the page. So render the hero, look at it, and fix direction problems *now* — before there is a
+page's worth of work agreeing with them.
+
+**2 — After any significant edit.** Not after every tweak, but whenever the structure moved.
+
+**3 — Before the owner sees it.** The full pass, every question.
+
+## Do not restart what he has been reacting to
+
+Prefer targeted fixes over rewrites, and never delete a mostly-good screen to rebuild it from
+scratch. Regenerating is cheap for you and expensive for him: his notes are attached to what is
+on the canvas, and the version he has been looking at and forming opinions about disappears —
+along with the reason he was about to give you. If the structure is genuinely wrong, say so and
+change the structure deliberately; do not launder a redesign as a fix.
+
 ## How to run it
 
 1. `export_canvas { "format": "png", "scale": 2 }` — the export covers the whole canvas, every artboard.

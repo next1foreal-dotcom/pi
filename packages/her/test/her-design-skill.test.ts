@@ -90,3 +90,37 @@ test("her-design is machine-owned, not just claimed: SELFMOD_OWNED_SKILLS includ
 	// or every her-design proposal dies at isOwnedSkillPath.
 	assert.ok(SELFMOD_OWNED_SKILLS.includes("her-design"));
 });
+
+/**
+ * Every reference the routing table points at must exist.
+ *
+ * The list above is hand-maintained, so a new row in SKILL.md's table was
+ * guarded by nobody: delete the file it names and this suite stayed green
+ * while she got routed to a path that is not there. Derive the check from the
+ * table itself and a new row cannot be unguarded.
+ */
+function referencedInTable(skillMd: string): string[] {
+	const out = new Set<string>();
+	for (const line of skillMd.replace(/\r\n/g, "\n").split("\n")) {
+		if (!line.startsWith("|") || line.includes("---")) continue;
+		const cells = line.split("|");
+		const read = cells[2] ?? "";
+		// `design/blocks/layout`, `process/steps` — but not globs (`charts/*`)
+		// and not tool names, which are in backticks.
+		for (const m of read.replace(/`[^`]*`/g, "").matchAll(/\b([a-z][a-z-]*(?:\/[a-z][a-z-]*)+)\b/g)) {
+			const ref = m[1] as string;
+			if (ref.includes("*")) continue;
+			out.add(ref);
+		}
+	}
+	return [...out];
+}
+
+test("every reference named in the routing table is a real file", async () => {
+	const skill = await readFile(join(skillRoot, "SKILL.md"), "utf8");
+	const refs = referencedInTable(skill);
+	assert.ok(refs.length >= 20, `expected the table to name many references, found ${refs.length}`);
+	for (const ref of refs) {
+		await mustBeFile(join(skillRoot, "references", `${ref}.md`));
+	}
+});
