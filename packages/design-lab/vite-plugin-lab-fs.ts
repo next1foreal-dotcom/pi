@@ -224,6 +224,47 @@ export function labFsPlugin(projectRoot: string): Plugin {
               json(res, 200, { ok: true, feed });
               return;
             }
+            if (url === "/preview-probe") {
+              const target = String(body.url ?? "");
+              let parsed: URL;
+              try {
+                parsed = new URL(target);
+              } catch {
+                json(res, 400, { ok: false, reachable: false, error: "bad url" });
+                return;
+              }
+              if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+                json(res, 400, { ok: false, reachable: false, error: "only http(s)" });
+                return;
+              }
+              const ac = new AbortController();
+              const timer = setTimeout(() => ac.abort(), 5000);
+              try {
+                const upstream = await fetch(parsed.href, {
+                  method: "GET",
+                  redirect: "follow",
+                  signal: ac.signal,
+                  headers: { accept: "text/html, */*;q=0.1" },
+                });
+                await upstream.body?.cancel();
+                json(res, 200, {
+                  ok: true,
+                  reachable: true,
+                  status: upstream.status,
+                  xFrameOptions: upstream.headers.get("x-frame-options"),
+                  csp: upstream.headers.get("content-security-policy"),
+                });
+              } catch (err) {
+                json(res, 200, {
+                  ok: true,
+                  reachable: false,
+                  error: err instanceof Error ? err.message : "unreachable",
+                });
+              } finally {
+                clearTimeout(timer);
+              }
+              return;
+            }
             json(res, 404, { ok: false, error: "unknown op" });
           } catch (err) {
             json(res, 500, {
