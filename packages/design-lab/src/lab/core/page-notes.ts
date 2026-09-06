@@ -77,13 +77,22 @@ export interface StickyNote {
 	region?: NoteRegion;
 }
 
-/** A drawn region, as fractions of its screen's box. */
+/**
+ * A drawn region: a rect in the screen's own pixels, measured from the top of
+ * its scrolled CONTENT rather than from the top of its window.
+ *
+ * The difference only shows on a screen tall enough to scroll, and there it is
+ * the whole thing: window coordinates mark a place on the artboard, so scrolling
+ * slides the box onto whatever is passing by. These are also exactly the numbers
+ * `design_element_at` is aimed with, which is what makes a drawn remark
+ * something she can act on rather than just look at.
+ */
 export interface NoteRegion {
 	screenId: string;
-	rx: number;
-	ry: number;
-	rw: number;
-	rh: number;
+	x: number;
+	y: number;
+	w: number;
+	h: number;
 }
 
 export interface StickyNotesOptions {
@@ -438,6 +447,9 @@ export class StickyNotes {
 		options.host.appendChild(this.root);
 		this.loadNotes();
 		document.addEventListener("pointerdown", this.onDocPointerDown, true);
+		// A screen scrolling inside its own frame is not a camera write, so the
+		// frame tick never hears about it. Capture, because scroll does not bubble.
+		window.addEventListener("scroll", this.syncRegions, true);
 		document.addEventListener("visibilitychange", this.onVisibility);
 		this.pollTimer = setInterval(() => {
 			if (!document.hidden) void this.pullThreads();
@@ -714,6 +726,7 @@ export class StickyNotes {
 		if (!this.supported) return;
 		this.closed = true;
 		document.removeEventListener("pointerdown", this.onDocPointerDown, true);
+		window.removeEventListener("scroll", this.syncRegions, true);
 		document.removeEventListener("visibilitychange", this.onVisibility);
 		clearTimeout(this.saveTimer);
 		clearInterval(this.pollTimer);
@@ -954,7 +967,21 @@ export class StickyNotes {
 		}
 	}
 
-	/** A page-space rect as fractions of the screen it lands on, or nothing. */
+/**
+	 * How far the screen's content is scrolled right now. Read off the DOM the
+	 * same way every other part of the lab reaches a screen's scroller; zero for
+	 * a screen that does not scroll, which is every screen that fits its host.
+	 */
+	private scrollOf(screenId: string): Point {
+		if (typeof document === "undefined") return { x: 0, y: 0 };
+		const el = document.querySelector(
+			`[data-screen-id="${screenId}"] [data-screen-scroll]`,
+		);
+		if (!(el instanceof HTMLElement)) return { x: 0, y: 0 };
+		return { x: el.scrollLeft, y: el.scrollTop };
+	}
+
+	/** A page-space rect in the screen's own content pixels, or nothing. */
 	private regionFromPage(rect: Rect): NoteRegion | undefined {
 		const screenId = this.screenAt?.({
 			x: rect.x + rect.width / 2,
@@ -963,12 +990,13 @@ export class StickyNotes {
 		if (!screenId) return undefined;
 		const layout = this.screenLayout?.(screenId);
 		if (!layout || layout.width === 0 || layout.height === 0) return undefined;
+		const scroll = this.scrollOf(screenId);
 		return {
 			screenId,
-			rx: (rect.x - layout.x) / layout.width,
-			ry: (rect.y - layout.y) / layout.height,
-			rw: rect.width / layout.width,
-			rh: rect.height / layout.height,
+			x: rect.x - layout.x + scroll.x,
+			y: rect.y - layout.y + scroll.y,
+			w: rect.width,
+			h: rect.height,
 		};
 	}
 
@@ -977,11 +1005,12 @@ export class StickyNotes {
 		if (!note.region) return null;
 		const layout = this.screenLayout?.(note.region.screenId);
 		if (!layout) return null;
+		const scroll = this.scrollOf(note.region.screenId);
 		return {
-			x: layout.x + note.region.rx * layout.width,
-			y: layout.y + note.region.ry * layout.height,
-			width: note.region.rw * layout.width,
-			height: note.region.rh * layout.height,
+			x: layout.x + note.region.x - scroll.x,
+			y: layout.y + note.region.y - scroll.y,
+			width: note.region.w,
+			height: note.region.h,
 		};
 	}
 
@@ -1006,6 +1035,22 @@ export class StickyNotes {
 			el.style.display = "none";
 			return;
 		}
+		// Scrolled out of its own screen: the box belongs to the page, not to the
+		// canvas, so it must not go on drawing itself over the neighbours.
+		const layout = this.screenLayout?.(note.region?.screenId ?? "");
+		if (layout) {
+			const left = Math.max(rect.x, layout.x);
+			const top = Math.max(rect.y, layout.y);
+			const right = Math.min(rect.x + rect.width, layout.x + layout.width);
+			const bottom = Math.min(rect.y + rect.height, layout.y + layout.height);
+			if (!(right > left && bottom > top)) {
+				el.style.display = "none";
+				return;
+			}
+			// Partly out: clip rather than clamp, so the part still showing stays
+			// where it really is instead of being squashed to fit.
+			el.style.clipPath = `inset(${top - rect.y}px ${rect.x + rect.width - right}px ${rect.y + rect.height - bottom}px ${left - rect.x}px)`;
+		}
 		el.style.display = "";
 		el.style.setProperty("--sn-region-ink", COLORS[note.color][0]);
 		el.style.transform = `translate(${rect.x}px, ${rect.y}px)`;
@@ -1013,9 +1058,9 @@ export class StickyNotes {
 		el.style.height = `${rect.height}px`;
 	}
 
-	private syncRegions() {
+	private syncRegions = () => {
 		for (const note of this.notes) if (note.region) this.writeRegionPos(note);
-	}
+	};
 
 	private syncAnchoredNotes() {
 		const selected = this.objects.selectedId();

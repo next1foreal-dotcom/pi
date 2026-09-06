@@ -44,6 +44,22 @@ export interface NoteSource {
 	component: string | null;
 }
 
+/**
+ * The area a note is about, when he drew a box instead of clicking one thing.
+ *
+ * In the screen's OWN pixels, measured from the top of its scrolled content --
+ * which is deliberately the same space `design_element_at` is aimed with, so a
+ * remark about an area is something she can go and look at rather than a set of
+ * numbers she has to work out what to do with.
+ */
+export interface NoteRegion {
+	screenId: string;
+	x: number;
+	y: number;
+	w: number;
+	h: number;
+}
+
 export type CanvasEvent =
 	| {
 			t: "note";
@@ -56,6 +72,7 @@ export type CanvasEvent =
 			y: number;
 			text: string;
 			source?: NoteSource;
+			region?: NoteRegion;
 			/** samantha HEAD when this note was written. Stamped by the server, never the client. */
 			oid?: string;
 	  }
@@ -100,6 +117,24 @@ export function formatSource(source: NoteSource | undefined): string | null {
 	return component ? `${where} (${component})` : where;
 }
 
+/**
+ * `640x450 at 64,203` -- the region in the numbers `design_element_at` takes,
+ * so the next move after reading a note about an area is aiming at the middle
+ * of it, not converting anything.
+ *
+ * Null rather than a placeholder when there is no region, and every caller
+ * drops the whole clause on null: a note pinned by clicking has to read exactly
+ * as it did before this existed.
+ */
+export function formatRegion(region: NoteRegion | undefined): string | null {
+	if (!region) return null;
+	const num = (v: unknown) => typeof v === "number" && Number.isFinite(v);
+	if (!num(region.x) || !num(region.y) || !num(region.w) || !num(region.h)) return null;
+	if (!(region.w > 0 && region.h > 0)) return null;
+	const r = (v: number) => Math.round(v);
+	return `${r(region.w)}x${r(region.h)} at ${r(region.x)},${r(region.y)}`;
+}
+
 export interface Reply {
 	id: string;
 	at: string;
@@ -128,6 +163,12 @@ export interface Thread {
 	resolved: boolean;
 	resolvedBy?: Author;
 	resolvedNote?: string;
+	/**
+	 * The area he drew around, when he drew one. Set from the opening `note`
+	 * event and never touched again, for the same reason `source` is not: a drag
+	 * must not rewrite what he was talking about.
+	 */
+	region?: NoteRegion;
 	/**
 	 * Where in the source the note was pinned, when the canvas could work it out.
 	 *
@@ -239,6 +280,7 @@ export function projectThreads(events: CanvasEvent[]): Thread[] {
 					lastSpoke: e.author,
 					resolved: false,
 					source: e.source,
+					region: e.region,
 					oid: e.oid,
 					lastOid: e.oid,
 				});

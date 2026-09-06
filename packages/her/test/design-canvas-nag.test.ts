@@ -135,6 +135,48 @@ test("unanswered note is appended; her reply clears it; a read does not", async 
  * mode the whole reminder switches into. A note pinned on empty canvas must read
  * exactly as it always did — no empty brackets, no "unknown".
  */
+/**
+ * When he drew a box instead of clicking one thing, the reminder has to carry
+ * the box -- in the screen's own pixels, which is the space design_element_at
+ * is aimed with. Without it she gets "this whole band is too tight" and a file
+ * name, and has to spend a round trip finding out which band.
+ *
+ * The negative side is already nailed by the test below: its two notes have no
+ * region and its assertion is exact, so a stray clause breaks it.
+ */
+test("a note he drew a box around carries the box, in the units she aims with", async () => {
+	const root = tempRoot();
+	try {
+		appendEvent(
+			{
+				t: "note",
+				id: "n1",
+				at: AT,
+				author: "fei",
+				screenId: "main-landing",
+				x: 10,
+				y: 20,
+				text: "this whole band is too tight",
+				region: { screenId: "main-landing", x: 64, y: 203, w: 640, h: 450 },
+			},
+			root,
+		);
+
+		const result = await runDummy(root, () => originalResult());
+
+		assert.equal(
+			nagText(result),
+			[
+				"他在画布上还有 1 条没处理的意见:",
+				"- n1 on main-landing, framing 640x450 at 64,203: this whole band is too tight",
+				"先处理这些,再继续你原来的计划。回复用 design_lab_reply,真改完了用 design_lab_resolve。",
+			].join("\n"),
+		);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
 test("the reminder names the file and line, and says nothing extra when there is none", async () => {
 	const root = tempRoot();
 	try {

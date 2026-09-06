@@ -5,6 +5,7 @@ import {
 	type CanvasEvent,
 	CURSOR_START,
 	cursorOf,
+	formatRegion,
 	parseFeed,
 	projectThreads,
 	readSince,
@@ -245,4 +246,41 @@ test("serializeEvent writes exactly one line, newline-terminated", () => {
 	assert.equal(line.endsWith("\n"), true);
 	assert.equal(line.slice(0, -1).includes("\n"), false);
 	assert.equal(JSON.parse(line).text, "has\nnewlines\tand tabs");
+});
+
+/**
+ * A note can be about an AREA he drew, not just a thing he clicked. The numbers
+ * are the screen's own pixels measured from the top of its scrolled content --
+ * the same space `design_element_at` is aimed with, on purpose: the move after
+ * reading one of these is aiming at the middle of the box, not converting
+ * anything.
+ *
+ * Both directions here. The clause must appear when there is a box AND vanish
+ * completely when there is not -- a note pinned by clicking has to read exactly
+ * as it did before regions existed, or every note grows a placeholder she has
+ * to learn to ignore.
+ */
+test("a drawn region reads as the numbers she aims with", () => {
+	assert.equal(formatRegion({ screenId: "main-landing", x: 64, y: 203, w: 640, h: 450 }), "640x450 at 64,203");
+	// Sub-pixel from the camera conversion; she wants a number to aim, not a tail.
+	assert.equal(formatRegion({ screenId: "main-landing", x: 63.6, y: 202.5, w: 640.4, h: 450.2 }), "640x450 at 64,203");
+});
+
+test("no region is no clause at all, never an empty one", () => {
+	assert.equal(formatRegion(undefined), null);
+	// Junk off the wire is the same as none: a zero-sized box would paint nothing
+	// while claiming the note is about something.
+	assert.equal(formatRegion({ screenId: "s", x: 0, y: 0, w: 0, h: 10 } as never), null);
+	assert.equal(formatRegion({ screenId: "s", x: Number.NaN, y: 0, w: 10, h: 10 } as never), null);
+});
+
+test("the region rides the projection from the opening note", () => {
+	const region = { screenId: "main-landing", x: 64, y: 203, w: 640, h: 450 };
+	const threads = projectThreads(parseFeed(feedOf([note("n1", "this whole band is too tight", { region })])));
+	assert.deepEqual(threads[0].region, region);
+});
+
+test("a note he only clicked carries no region", () => {
+	const threads = projectThreads(parseFeed(feedOf([note("n1", "too tight")])));
+	assert.equal(threads[0].region, undefined);
 });

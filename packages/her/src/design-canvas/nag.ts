@@ -5,7 +5,7 @@ import type { ExtensionAPI, ToolDefinition, ToolResultEvent } from "@earendil-wo
 import { SAMANTHA_REPO_ROOT } from "../her-core/channel-probe-gate.ts";
 import { acceptProposal, declineProposal, proposalStates, type RuleProposal } from "./decisions.ts";
 import { compactionEpoch } from "./epoch.ts";
-import { formatSource, type Thread } from "./feed.ts";
+import { formatRegion, formatSource, type Thread } from "./feed.ts";
 import { allThreads } from "./store.ts";
 
 const STYLE_GUIDE_FOOTER = "这些是产品真正 ship 的值。要完整的调 design_system_load;不许自己发明数值。";
@@ -132,7 +132,11 @@ function formatNag(pending: Thread[]): string {
 		const screen = thread.screenId ?? "the canvas";
 		const at = formatSource(thread.source);
 		const where = at ? `${screen} at ${at}` : screen;
-		return `- ${thread.id} on ${where}: ${thread.text}`;
+		// A box, when he drew one: the size and corner she can aim
+		// design_element_at with, rather than a second round trip to find out.
+		const box = formatRegion(thread.region);
+		const framed = box ? `${where}, framing ${box}` : where;
+		return `- ${thread.id} on ${framed}: ${thread.text}`;
 	});
 	return [
 		`他在画布上还有 ${pending.length} 条没处理的意见:`,

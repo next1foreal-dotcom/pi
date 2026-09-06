@@ -124,26 +124,42 @@ export function isSourceRef(value: unknown): value is {
 }
 
 /**
- * A stored region, checked field by field. Same shape as an anchor plus a size,
- * and the size is what has to be real: a region with a NaN width would paint an
+ * A stored region: a rect in the screen's OWN pixels, measured from the top of
+ * its scrolled content -- the same numbers `design_element_at` is aimed with.
+ *
+ * It was fractions of the screen's box for about an hour, which is wrong the
+ * moment a screen scrolls: the box then marks a place on the artboard rather
+ * than a place in the page, so scrolling slid it onto whatever happened to be
+ * there. Measured: the heading moved and the box did not.
+ *
+ * The size is what has to be real. A region with a NaN width paints an
  * invisible box that still claims the note is about something.
  */
 export function isRegion(value: unknown): value is {
 	screenId: string;
-	rx: number;
-	ry: number;
-	rw: number;
-	rh: number;
+	x: number;
+	y: number;
+	w: number;
+	h: number;
 } {
-	if (!isAnchor(value)) return false;
-	const r = value as { rw?: unknown; rh?: unknown };
+	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+	const r = value as {
+		screenId?: unknown;
+		x?: unknown;
+		y?: unknown;
+		w?: unknown;
+		h?: unknown;
+	};
+	const num = (v: unknown) => typeof v === "number" && Number.isFinite(v);
 	return (
-		typeof r.rw === "number" &&
-		Number.isFinite(r.rw) &&
-		r.rw > 0 &&
-		typeof r.rh === "number" &&
-		Number.isFinite(r.rh) &&
-		r.rh > 0
+		typeof r.screenId === "string" &&
+		r.screenId !== "" &&
+		num(r.x) &&
+		num(r.y) &&
+		num(r.w) &&
+		(r.w as number) > 0 &&
+		num(r.h) &&
+		(r.h as number) > 0
 	);
 }
 

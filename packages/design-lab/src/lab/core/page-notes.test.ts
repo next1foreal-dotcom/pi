@@ -281,7 +281,9 @@ describe("a note about an area", () => {
 		});
 	}
 
-	it("stores the drawn rect as fractions of its screen", () => {
+	it("stores the drawn rect in the screen's own pixels", () => {
+		// The same units design_element_at is aimed with, which is what makes a
+		// drawn remark something she can act on rather than only look at.
 		live = labWithScreen(null);
 		const note = live.spawn({
 			x: 2000,
@@ -290,10 +292,95 @@ describe("a note about an area", () => {
 		});
 		expect(note.region).toEqual({
 			screenId: "main-landing",
-			rx: (1360 - 1000) / 1440,
-			ry: (2090 - 2000) / 900,
-			rw: 720 / 1440,
-			rh: 450 / 900,
+			x: 360,
+			y: 90,
+			w: 720,
+			h: 450,
+		});
+	});
+
+	/**
+	 * Measured in the running lab before this was fixed: scrolled the screen by
+	 * 800 and the heading moved while the box did not. Held in window
+	 * coordinates a region marks a place on the ARTBOARD, so scrolling slides it
+	 * onto whatever is passing by -- it renders, it looks right, and it is about
+	 * the wrong thing.
+	 *
+	 * Both directions, because "add the scroll everywhere" would pass the first
+	 * of these and put every region on a non-scrolling screen 800px off.
+	 */
+	describe("on a screen that scrolls", () => {
+		function scroller(top: number, left = 0) {
+			const screen = document.createElement("div");
+			screen.setAttribute("data-screen-id", "main-landing");
+			const inner = document.createElement("div");
+			inner.setAttribute("data-screen-scroll", "main-landing");
+			screen.appendChild(inner);
+			document.body.appendChild(screen);
+			inner.scrollTop = top;
+			inner.scrollLeft = left;
+			return inner;
+		}
+
+		it("records where the box is in the page, not where it is on the artboard", () => {
+			scroller(800);
+			live = labWithScreen(null);
+			const note = live.spawn({
+				x: 2000,
+				y: 2100,
+				regionPage: { x: 1360, y: 2090, width: 720, height: 450 },
+			});
+			// 90px down the window, 800 already scrolled past: 890 into the page.
+			expect(note.region?.y).toBe(890);
+		});
+
+		it("draws it back where the page has it now", () => {
+			const inner = scroller(800);
+			live = labWithScreen(null);
+			live.spawn({
+				x: 2000,
+				y: 2100,
+				regionPage: { x: 1360, y: 2090, width: 720, height: 450 },
+			});
+			const el = () =>
+				document.querySelector(".sn-region") as HTMLElement | null;
+			expect(el()?.style.transform).toBe("translate(1360px, 2090px)");
+			// Scroll another 100 and the box has to come with the content.
+			inner.scrollTop = 900;
+			window.dispatchEvent(new Event("scroll"));
+			expect(el()?.style.transform).toBe("translate(1360px, 1990px)");
+		});
+
+		it("a screen that does not scroll is untouched by any of it", () => {
+			live = labWithScreen(null);
+			const note = live.spawn({
+				x: 2000,
+				y: 2100,
+				regionPage: { x: 1360, y: 2090, width: 720, height: 450 },
+			});
+			expect(note.region?.y).toBe(90);
+			expect(
+				(document.querySelector(".sn-region") as HTMLElement | null)?.style
+					.transform,
+			).toBe("translate(1360px, 2090px)");
+		});
+
+		it("scrolled clear of its own screen it stops drawing itself", () => {
+			// It belongs to the page, so it must not go on painting over whatever
+			// else is sitting on the canvas next door.
+			const inner = scroller(0);
+			live = labWithScreen(null);
+			live.spawn({
+				x: 2000,
+				y: 2100,
+				regionPage: { x: 1360, y: 2090, width: 720, height: 450 },
+			});
+			const el = () =>
+				document.querySelector(".sn-region") as HTMLElement | null;
+			expect(el()?.style.display).toBe("");
+			inner.scrollTop = 5000;
+			window.dispatchEvent(new Event("scroll"));
+			expect(el()?.style.display).toBe("none");
 		});
 	});
 
@@ -349,10 +436,10 @@ describe("a note about an area", () => {
 		const back = live.getNotes()[0];
 		expect(back.region).toEqual({
 			screenId: "main-landing",
-			rx: (1360 - 1000) / 1440,
-			ry: (2090 - 2000) / 900,
-			rw: 720 / 1440,
-			rh: 450 / 900,
+			x: 360,
+			y: 90,
+			w: 720,
+			h: 450,
 		});
 		expect(back.source).toEqual({
 			file: "packages/x/src/a.tsx",

@@ -4,7 +4,7 @@ import { Type } from "typebox";
 import { textResult } from "../tools/shared.ts";
 import { recordResolvedDecision } from "./decisions.ts";
 import { chooseDirection, currentDirection, proposeDirections } from "./direction.ts";
-import { type CanvasEvent, formatSource, newId, type Thread } from "./feed.ts";
+import { type CanvasEvent, formatRegion, formatSource, newId, type Thread } from "./feed.ts";
 import { designMode, interceptDesignToolCall, interceptFirstFrameToolCall, setDesignMode } from "./mode.ts";
 import { installCanvasNagHook } from "./nag.ts";
 import { allThreads, appendEvent, readCanvas } from "./store.ts";
@@ -33,7 +33,10 @@ function line(t: Thread): string {
 	const at = formatSource(t.source);
 	// No location: byte-for-byte what it read before, not an empty placeholder.
 	const where = at ? `${screen} at ${at}` : screen;
-	const head = `${t.id} ${where} — ${t.text.trim() || "(empty note)"}`;
+	// He drew a box: say how big and where, in the units she aims with.
+	const box = formatRegion(t.region);
+	const framed = box ? `${where}, framing ${box}` : where;
+	const head = `${t.id} ${framed} — ${t.text.trim() || "(empty note)"}`;
 	const replies = t.replies.map((r) => `    ${r.author}: ${r.text}`);
 	const state = t.resolved ? `    [resolved by ${t.resolvedBy}]` : "";
 	return [head, ...replies, state].filter(Boolean).join("\n");
