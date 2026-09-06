@@ -61,12 +61,20 @@
   display: none;
 }
 
-.root[data-mode="focus"] .notesHost :global(.sn-note),
-.root[data-mode="fill"] .notesHost :global(.sn-note),
-.root[data-mode="focus"] .labelsHost :global(.lb-label),
-.root[data-mode="fill"] .labelsHost :global(.lb-label) {
-  pointer-events: none;
-}
+/*
+ * Notes and labels stay live in the locked modes. They used to be forced
+ * `pointer-events: none` here, on the theory that anything above a live screen
+ * would block it -- but locked in is exactly when you annotate, and inert is
+ * the one thing a note must never be: it renders, it sits on top, and it
+ * answers nothing. Clicking one to type did nothing, dragging did nothing,
+ * and there was no way to delete it without leaving the screen first.
+ *
+ * Nothing has to be added to bring them back, only this removed: their hosts
+ * are 0x0 with `overflow: visible`, so each item takes events over its own box
+ * and over no other pixel. Measured live at fill: inside the note the stack is
+ * sn-text / sn-body / sn-note, and one screen-width away it is still the
+ * page's own lp-hero-copy. Both halves are gated in lab-css.test.ts.
+ */
 
 .pixelGrid {
   position: absolute;

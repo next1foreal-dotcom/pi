@@ -47,6 +47,8 @@ if (!HTMLElement.prototype.setPointerCapture) {
 
 import { type Session } from "./interaction-lab";
 import {
+	beginObjectMove,
+	beginObjectResize,
 	registerObject,
 	unregisterObject,
 	selectObject,
@@ -207,6 +209,65 @@ describe("sizing: content vs lab", () => {
 		s.layer?.appendChild(init.el);
 		registerObject(s, init);
 		expect(init.el.style.width).toBe("50px");
+	});
+});
+
+/**
+ * Objects stay draggable once you lock into a screen. This used to be
+ * explore-only, and the effect on a sticky note was not "it does not move" but
+ * "it does nothing at all": its own pointerdown calls preventDefault to stop
+ * the browser focusing the contenteditable, on the understanding that the lab
+ * will decide whether the press was a drag or a click and run `onClick` on
+ * pointerup. With no drag record there is no pointerup handler and no decision,
+ * so a note you wrote while zoomed out became unclickable, unmovable and
+ * undeletable the moment you looked at the page it is about.
+ *
+ * Both sides, because "works in focus" alone would still pass if the guard had
+ * been swapped for one that lets go of the canvas while space is held.
+ */
+describe("a locked screen does not freeze the notes on top of it", () => {
+	const press = (x: number, y: number) =>
+		new PointerEvent("pointerdown", { clientX: x, clientY: y, button: 0, bubbles: true });
+
+	function withObject(mode: Session["mode"]) {
+		const s = stubSession();
+		s.mode = mode;
+		s.root?.setAttribute("data-mode", mode);
+		s.focusedId = "screen-1";
+		const init = makeInit("note:1", { x: 100, y: 200, width: 240, height: 240 }, { resizable: true });
+		s.layer?.appendChild(init.el);
+		registerObject(s, init);
+		return s;
+	}
+
+	for (const mode of ["explore", "focus", "fill"] as const) {
+		it(`arms a move in ${mode} mode, with the click callback it will need`, () => {
+			const s = withObject(mode);
+			const onClick = vi.fn();
+			beginObjectMove(s, press(150, 250), "note:1", { onClick });
+			expect(s.drag?.id).toBe("note:1");
+			expect(s.drag?.kind).toBe("move");
+			// The press has not moved yet: it is a click until the pointer says
+			// otherwise, and this is the callback that puts the caret in.
+			expect(s.drag?.armed).toBe(false);
+			expect(s.drag && "onClick" in s.drag && s.drag.onClick).toBe(onClick);
+		});
+
+		it(`arms a resize in ${mode} mode`, () => {
+			const s = withObject(mode);
+			beginObjectResize(s, press(340, 440), "note:1", "se");
+			expect(s.drag?.kind).toBe("resize");
+		});
+	}
+
+	it("still lets go while space pans the canvas", () => {
+		// Space-drag pans; an object under the cursor must not steal that.
+		for (const mode of ["explore", "focus", "fill"] as const) {
+			const s = withObject(mode);
+			s.root?.setAttribute("data-space", "");
+			beginObjectMove(s, press(150, 250), "note:1", { onClick: () => {} });
+			expect(s.drag).toBeNull();
+		}
 	});
 });
 

@@ -56,6 +56,66 @@ describe("locked modes leave the live screen clickable", () => {
 	});
 });
 
+describe("a note you can see is a note you can click", () => {
+	// Locked in, the layer goes `pointer-events: auto` so the screen behaves
+	// like the app it is. A rule here then turned every note and label OFF, and
+	// the result was the worst state a control can be in: it rendered, it sat
+	// on top, and it answered nothing -- click to type, nothing; drag, nothing;
+	// no way to delete it without leaving the screen. Locked in is exactly when
+	// you annotate, so this is the mode that matters most.
+	//
+	// Two-sided on purpose. Off alone would pass with notes nailed to the
+	// canvas; on alone would pass with a host that eats the whole screen.
+
+	const notesText = readFileSync(
+		new URL("./page-notes.ts", import.meta.url),
+		"utf8",
+	);
+	const labelsText = readFileSync(
+		new URL("./page-labels.ts", import.meta.url),
+		"utf8",
+	);
+	/** The one-line style block a script writes for `selector`, verbatim. */
+	const declared = (source: string, selector: string) => {
+		const at = source.indexOf(`${selector}{`);
+		if (at === -1) return "";
+		const end = source.indexOf("}", at);
+		return end === -1 ? "" : source.slice(at, end + 1);
+	};
+
+	it("nothing turns them off in the locked modes", () => {
+		const killed = rules(css).filter(
+			(r) =>
+				/pointer-events:\s*none/.test(r.body) &&
+				r.selectors.some(
+					(s) =>
+						/\[data-mode="(focus|fill)"\]/.test(s) &&
+						/(sn-note|lb-label)/.test(s),
+				),
+		);
+		expect(killed).toEqual([]);
+	});
+
+	it("each item takes events on its own box", () => {
+		expect(declared(notesText, ".sn-note")).toMatch(/pointer-events:\s*auto/);
+		expect(declared(labelsText, ".lb-label")).toMatch(/pointer-events:\s*auto/);
+	});
+
+	it("and their hosts take none, so the rest of the screen stays the screen's", () => {
+		// 0x0 with overflow visible: the host is a coordinate origin, not a
+		// surface. Give it `auto` and it swallows the page underneath.
+		for (const host of [".notesHost", ".labelsHost"] as const) {
+			const rule = rules(css).find(
+				(r) => r.selectors.length === 1 && r.selectors[0] === host,
+			);
+			expect(rule?.body).toMatch(/pointer-events:\s*none/);
+			expect(rule?.body).toMatch(/width:\s*0/);
+			expect(rule?.body).toMatch(/height:\s*0/);
+			expect(rule?.body).toMatch(/overflow:\s*visible/);
+		}
+	});
+});
+
 describe("canvas-object decor and dragging cursor", () => {
 	it("objectDecor hidden by default", () => {
 		const decor = rules(css).find(

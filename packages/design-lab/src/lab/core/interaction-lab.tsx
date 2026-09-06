@@ -258,7 +258,16 @@ function beginObjectMove(
   id: string,
   opts?: { onClick?(): void },
 ): void {
-  if (s.mode !== "explore") return;
+  // Objects move in every mode. Screens are explore-only -- you do not shove
+  // the thing you are looking through -- but a note is not a screen, and this
+  // path is only ever reached from `objects.beginMove`.
+  //
+  // Explore-only here is what made a note inert the moment you locked in: no
+  // drag record, so pointerup never resolved the press as a click, so the
+  // `onClick` that puts the caret in never ran -- while the note's own handler
+  // had already called preventDefault to stop the browser focusing it, on the
+  // grounds that the lab would decide. The lab had stopped deciding. Click,
+  // nothing; drag, nothing; and no way to delete it without leaving first.
   if (s.root?.hasAttribute("data-space")) return;
   e.stopPropagation();
   selectObject(s, id);
@@ -286,7 +295,7 @@ function beginObjectResize(
   id: string,
   edge: ResizeEdge,
 ): void {
-  if (s.mode !== "explore") return;
+  // Same as the move above: an object is resizable wherever it is visible.
   if (s.root?.hasAttribute("data-space")) return;
   e.stopPropagation();
   selectObject(s, id);
