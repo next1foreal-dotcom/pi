@@ -4,6 +4,7 @@ import { Type } from "typebox";
 import { textResult } from "../tools/shared.ts";
 import { recordResolvedDecision } from "./decisions.ts";
 import { type CanvasEvent, newId, type Thread } from "./feed.ts";
+import { designMode, interceptDesignToolCall, setDesignMode } from "./mode.ts";
 import { allThreads, appendEvent, readCanvas } from "./store.ts";
 
 export { withCanvasNag } from "./nag.ts";
@@ -55,6 +56,50 @@ export function registerDesignCanvasTools(pi: ExtensionAPI, deps: DesignCanvasDe
 	const makeId = deps.makeId ?? ((p: "n" | "r") => newId(p));
 
 	const emit = (event: CanvasEvent) => appendEvent(event, repoRoot);
+
+	// Existing tests fake `pi` without `on`. Skip rather than throw — the real
+	// extension always has it. Returning `{ block: false }` would short-circuit
+	// other handlers; build mode must yield `undefined`.
+	if (typeof pi.on === "function") {
+		pi.on("tool_call", (event) => interceptDesignToolCall(event.toolName));
+	}
+
+	pi.registerTool({
+		name: "design_mode",
+		label: "Design Mode",
+		description:
+			"Report or switch whether you have hands that change the product. " +
+			"build (the default) is today's behaviour: edit, write, bash, and the product-writing design tools run. " +
+			"discuss is not a reminder — it is a fact: those tools are blocked. You can still read, grep, look at the canvas, and call this. " +
+			'Pass mode "discuss" or "build" to switch; omit mode to read the current value.',
+		parameters: Type.Object({
+			mode: Type.Optional(
+				Type.Union([Type.Literal("discuss"), Type.Literal("build")], {
+					description: "Switch to this mode. Omit to read the current mode.",
+				}),
+			),
+		}),
+		async execute(_toolCallId, params: { mode?: string }) {
+			const requested = params.mode;
+			if (requested === undefined) {
+				const current = designMode();
+				return textResult(`Design mode is ${current}.`, { mode: current });
+			}
+			if (requested !== "discuss" && requested !== "build") {
+				return textResult(`Unknown mode "${requested}". Use "discuss" or "build".`, { ok: false });
+			}
+			setDesignMode(requested);
+			if (requested === "discuss") {
+				return textResult(
+					'Design mode is now discuss. You do not have the hands that change the product. Call design_mode with mode "build" to get them back.',
+					{ mode: requested },
+				);
+			}
+			return textResult("Design mode is now build. You have the hands that change the product.", {
+				mode: requested,
+			});
+		},
+	});
 
 	pi.registerTool({
 		name: "design_lab_notes",
