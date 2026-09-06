@@ -3,6 +3,7 @@ import path from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin, ViteDevServer } from "vite";
 import { stampOidOnEvent } from "../her/src/design-canvas/store.ts";
+import { buildComponentIndex } from "./src/lab/components/build-index.ts";
 
 type Positions = Record<string, { x: number; y: number }>;
 
@@ -176,6 +177,28 @@ export function labFsPlugin(projectRoot: string): Plugin {
           } catch {
             res.statusCode = 204;
             res.end();
+          }
+          return;
+        }
+
+        // GET /components.json — the component index, read out of the screens
+        // by the TypeScript compiler. It lives on this side because that is
+        // where the compiler is; the canvas fetches it.
+        //
+        // Recomputed per request, and deliberately not cached. Building the
+        // program costs a few hundred milliseconds; an index that missed an
+        // edit costs a reader a trip to the wrong line, which is the worse of
+        // the two. If this ever needs a cache, the invalidation has to be a
+        // file change — the watcher above already sees them.
+        if (req.method === "GET" && url === "/components.json") {
+          try {
+            const index = buildComponentIndex({ packageRoot: projectRoot });
+            json(res, 200, { ok: true, index });
+          } catch (err) {
+            json(res, 500, {
+              ok: false,
+              error: err instanceof Error ? err.message : "index failed",
+            });
           }
           return;
         }
