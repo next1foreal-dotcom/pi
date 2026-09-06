@@ -43,6 +43,7 @@ export const PRODUCT_MUTATING_TOOLS: ReadonlySet<string> = new Set([
 	"design_project_gate",
 	"design_version_name",
 	"design_system_load",
+	"design_system_apply",
 	"design_asset_shot",
 ]);
 

@@ -89,6 +89,8 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	design_lab_still: { destructive: false },
 	design_asset_shot: { destructive: false },
 	design_system_load: { destructive: false },
+	// Rewrites the product's own globals.css, unlike every other design_* tool.
+	design_system_apply: { destructive: true },
 	design_project_create: { destructive: false },
 	design_project_get: { destructive: false },
 	design_project_list: { destructive: false },

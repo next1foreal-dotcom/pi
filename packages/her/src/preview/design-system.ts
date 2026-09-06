@@ -26,6 +26,7 @@ export interface DesignSystemDeps {
 	repoRoot?: string;
 	now?: () => string;
 	readSource?: (absPath: string) => Promise<string>;
+	writeSource?: (absPath: string, content: string) => Promise<void>;
 	headOf?: (repoDir: string) => Promise<string | undefined>;
 }
 
@@ -34,6 +35,7 @@ export function registerDesignSystemTools(pi: ExtensionAPI, deps: DesignSystemDe
 	const now = deps.now ?? (() => new Date().toISOString());
 	const readSource = deps.readSource ?? defaultReadSource;
 	const headOf = deps.headOf ?? defaultHeadOf;
+	const writeSource = deps.writeSource ?? defaultWriteSource;
 
 	pi.registerTool({
 		name: "design_system_load",
@@ -106,6 +108,112 @@ export function registerDesignSystemTools(pi: ExtensionAPI, deps: DesignSystemDe
 			);
 		},
 	});
+
+	pi.registerTool({
+		name: "design_system_apply",
+		label: "Design System Apply",
+		description:
+			"Write token changes back to the product's globals.css. " +
+			"This modifies the actual source code — not a preview. " +
+			"Only tokens that design_system_load can read are accepted; " +
+			"unknown names reject the entire write. " +
+			"For preview-only changes, use window.lab.tokens.preview.",
+		parameters: Type.Object({
+			target: Type.Optional(Type.String({ description: 'target project; default "samantha-ui"' })),
+			changes: Type.Array(
+				Type.Object({
+					name: Type.String({ description: "CSS custom property name, e.g. --background" }),
+					light: Type.Optional(Type.String({ description: "new value for the light-mode declaration" })),
+					dark: Type.Optional(Type.String({ description: "new value for the dark-mode declaration" })),
+				}),
+			),
+		}),
+		async execute(_toolCallId, params) {
+			const raw = typeof params.target === "string" ? params.target.trim() : "";
+			const target = raw || DEFAULT_TARGET;
+			const spec = TARGETS[target as TargetName];
+			if (!spec) {
+				return textResult(`Unknown target "${target}". Known targets: ${Object.keys(TARGETS).join(", ")}.`, {
+					ok: false,
+				});
+			}
+
+			const changes = params.changes as Array<{ name: string; light?: string; dark?: string }>;
+			if (!changes || changes.length === 0) {
+				return textResult("No changes provided.", { ok: false });
+			}
+
+			const absCss = join(repoRoot, ...spec.cssPath);
+			let css: string;
+			try {
+				css = await readSource(absCss);
+			} catch {
+				return textResult(`Cannot read ${absCss}. The file may not exist.`, { ok: false });
+			}
+
+			const knownLight = tokensFor(css, spec.light);
+			const knownDark = tokensFor(css, spec.dark);
+
+			const unknowns: string[] = [];
+			for (const change of changes) {
+				if (change.light !== undefined && !knownLight.has(change.name)) {
+					if (!unknowns.includes(change.name)) unknowns.push(change.name);
+				}
+				if (change.dark !== undefined && !knownDark.has(change.name)) {
+					if (!unknowns.includes(change.name)) unknowns.push(change.name);
+				}
+			}
+
+			if (unknowns.length > 0) {
+				return textResult(
+					`Refused: these tokens do not exist in ${target} globals.css:\n` +
+						unknowns.map((n) => `  • ${n}`).join("\n") +
+						"\n\nAdding a new token is a product decision. Add it to globals.css by hand first.",
+					{ ok: false, unknowns },
+				);
+			}
+
+			const lightPatches = new Map<string, string>();
+			const darkPatches = new Map<string, string>();
+			for (const change of changes) {
+				if (change.light !== undefined) lightPatches.set(change.name, change.light);
+				if (change.dark !== undefined) darkPatches.set(change.name, change.dark);
+			}
+
+			let modified = css;
+			const allApplied: Array<{ name: string; side: string; before: string; after: string }> = [];
+
+			if (lightPatches.size > 0) {
+				const result = patchSelectorBlock(modified, spec.light, lightPatches);
+				if (typeof result === "string") return textResult(result, { ok: false });
+				modified = result.css;
+				for (const a of result.applied) allApplied.push({ ...a, side: "light" });
+			}
+
+			if (darkPatches.size > 0) {
+				const result = patchSelectorBlock(modified, spec.dark, darkPatches);
+				if (typeof result === "string") return textResult(result, { ok: false });
+				modified = result.css;
+				for (const a of result.applied) allApplied.push({ ...a, side: "dark" });
+			}
+
+			try {
+				await writeSource(absCss, modified);
+			} catch (e) {
+				return textResult(`Failed to write ${absCss}: ${e instanceof Error ? e.message : String(e)}`, {
+					ok: false,
+				});
+			}
+
+			const lines = [`Applied ${allApplied.length} change(s) to ${target} globals.css.\n`];
+			for (const a of allApplied) {
+				lines.push(`${a.name}: ${a.before} → ${a.after} (${a.side})`);
+			}
+			lines.push("", "⚠️ This modified the product source code. Preview-only changes use window.lab.tokens.preview.");
+
+			return textResult(lines.join("\n"), { ok: true, applied: allApplied });
+		},
+	});
 }
 
 async function defaultReadSource(absPath: string): Promise<string> {
@@ -128,6 +236,10 @@ function defaultHeadOf(repoDir: string): Promise<string | undefined> {
 			},
 		);
 	});
+}
+
+async function defaultWriteSource(absPath: string, content: string): Promise<void> {
+	await writeFile(absPath, content);
 }
 
 async function writeRel(repoRoot: string, rel: string, contents: string): Promise<void> {
@@ -470,4 +582,130 @@ function renderCss(
 
 function textResult(text: string, details: Record<string, unknown> = {}) {
 	return { content: [{ type: "text" as const, text }], details };
+}
+
+interface DeclSpan {
+	valueStart: number;
+	valueEnd: number;
+	before: string;
+}
+
+function patchSelectorBlock(
+	css: string,
+	selector: string,
+	patches: Map<string, string>,
+): { css: string; applied: Array<{ name: string; before: string; after: string }> } | string {
+	const ruleStart = findSelectorRule(css, selector);
+	if (ruleStart < 0) return `Cannot find ${selector} block in CSS.`;
+
+	const braceIdx = css.indexOf("{", ruleStart);
+	if (braceIdx < 0) return `Cannot find opening brace for ${selector}.`;
+
+	const block = readBlock(css, braceIdx);
+	const bodyStart = braceIdx + 1;
+	const bodyEnd = block.end - 1;
+	const body = css.slice(bodyStart, bodyEnd);
+
+	const decls = scanDeclarations(body, new Set(patches.keys()));
+
+	const missing: string[] = [];
+	for (const name of patches.keys()) {
+		if (!decls.has(name)) missing.push(name);
+	}
+	if (missing.length > 0) {
+		return `Cannot locate declarations in ${selector}: ${missing.join(", ")}`;
+	}
+
+	const entries = [...decls.entries()].sort((a, b) => b[1].valueStart - a[1].valueStart);
+	let newBody = body;
+	const applied: Array<{ name: string; before: string; after: string }> = [];
+
+	for (const [name, decl] of entries) {
+		const newValue = patches.get(name)!;
+		newBody = `${newBody.slice(0, decl.valueStart)} ${newValue}${newBody.slice(decl.valueEnd)}`;
+		applied.push({ name, before: decl.before, after: newValue });
+	}
+
+	return {
+		css: css.slice(0, bodyStart) + newBody + css.slice(bodyEnd),
+		applied,
+	};
+}
+
+function scanDeclarations(body: string, wanted: Set<string>): Map<string, DeclSpan> {
+	const found = new Map<string, DeclSpan>();
+	let i = 0;
+	while (i < body.length) {
+		if (body[i] === "/" && i + 1 < body.length && body[i + 1] === "*") {
+			const close = body.indexOf("*/", i + 2);
+			i = close < 0 ? body.length : close + 2;
+			continue;
+		}
+		if (body[i] === "{") {
+			const nested = readBlock(body, i);
+			i = nested.end;
+			continue;
+		}
+		if (body[i] === "-" && i + 1 < body.length && body[i + 1] === "-") {
+			const nameStart = i;
+			let j = i + 2;
+			while (j < body.length && /[A-Za-z_0-9-]/.test(body[j]!)) j++;
+			const name = body.slice(nameStart, j);
+			if (wanted.has(name) && !found.has(name)) {
+				let k = j;
+				while (k < body.length && (body[k] === " " || body[k] === "\t")) k++;
+				if (k < body.length && body[k] === ":") {
+					const colonPos = k;
+					k++;
+					let depth = 0;
+					let inStr: string | undefined;
+					while (k < body.length) {
+						const c = body[k]!;
+						if (inStr) {
+							if (c === "\\") {
+								k += 2;
+								continue;
+							}
+							if (c === inStr) inStr = undefined;
+							k++;
+							continue;
+						}
+						if (c === "/" && k + 1 < body.length && body[k + 1] === "*") {
+							const close = body.indexOf("*/", k + 2);
+							k = close < 0 ? body.length : close + 2;
+							continue;
+						}
+						if (c === '"' || c === "'") {
+							inStr = c;
+							k++;
+							continue;
+						}
+						if (c === "(" || c === "[") {
+							depth++;
+							k++;
+							continue;
+						}
+						if (c === ")" || c === "]") {
+							depth = Math.max(0, depth - 1);
+							k++;
+							continue;
+						}
+						if (c === ";" && depth === 0) break;
+						k++;
+					}
+					if (k < body.length && body[k] === ";") {
+						found.set(name, {
+							valueStart: colonPos + 1,
+							valueEnd: k,
+							before: foldValue(body.slice(colonPos + 1, k)),
+						});
+					}
+				}
+			}
+			i = Math.max(i + 1, j);
+			continue;
+		}
+		i++;
+	}
+	return found;
 }
