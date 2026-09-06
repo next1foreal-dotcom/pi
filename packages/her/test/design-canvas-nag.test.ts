@@ -1050,6 +1050,27 @@ test("visual modifier without a subsequent look triggers the review nudge once",
 	}
 });
 
+test("five edits in a row are one unlooked-at change, not five nudges", async () => {
+	_resetReviewNudgeState();
+	const root = tempRoot();
+	try {
+		// The first edit says it. Editing again does not make it truer, and a
+		// reminder that repeats on every edit is one she learns to skip past.
+		const first = await runDummy(root, () => originalResult(), "edit");
+		assert.match(nagText(first) ?? "", REVIEW_NUDGE_PATTERN, "the first edit says it");
+		for (const tool of ["edit", "write", "edit", "design_system_apply"]) {
+			const again = await runDummy(root, () => originalResult(), tool);
+			assert.equal(again.content.length, 1, `${tool} repeated the nudge`);
+		}
+		// Looking is what re-arms it: the next edit after a look speaks again.
+		await runDummy(root, () => originalResult(), "design_lab_still");
+		const afterLooking = await runDummy(root, () => originalResult(), "edit");
+		assert.match(nagText(afterLooking) ?? "", REVIEW_NUDGE_PATTERN, "a look re-arms it");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
 test("looking after a visual change clears the nudge — no nudge on the observer itself", async () => {
 	_resetReviewNudgeState();
 	const root = tempRoot();

@@ -69,10 +69,15 @@ export function _resetReviewNudgeState(): void {
 	wrappedToolNames.clear();
 }
 
-/** Signal that a visual-modifying tool ran (for callers outside the nag wrapper). */
+/**
+ * Signal that a visual-modifying tool ran.
+ *
+ * Deliberately does NOT re-arm the nudge. Editing five times in a row is one
+ * unlooked-at change, not five, and a reminder that repeats on every edit is a
+ * reminder she learns to skip. Only looking re-arms it.
+ */
 export function markVisualChange(): void {
 	_visualChangePending = true;
-	_reviewNudgeDelivered = false;
 }
 
 /** Signal that an observer tool ran (for callers outside the nag wrapper). */
@@ -190,17 +195,11 @@ function decorateResult<T>(result: T, repoRoot?: string, toolName?: string): T {
 	try {
 		if (!result || typeof result !== "object") return result;
 		// Update visual-change tracking before assembling extras.
-		// Observer first: seeing the result clears the pending flag.
-		// Modifier second: a new change re-arms the nudge.
-		// A tool in neither set leaves the state untouched.
-		if (toolName && VISUAL_OBSERVER_TOOLS.has(toolName)) {
-			_visualChangePending = false;
-			_reviewNudgeDelivered = false;
-		}
-		if (toolName && VISUAL_MODIFYING_TOOLS.has(toolName)) {
-			_visualChangePending = true;
-			_reviewNudgeDelivered = false;
-		}
+		// Observer first: looking clears the pending change and re-arms the nudge.
+		// Modifier second: it marks a change pending but never re-arms -- see
+		// markVisualChange. A tool in neither set leaves the state untouched.
+		if (toolName && VISUAL_OBSERVER_TOOLS.has(toolName)) markVisualReview();
+		if (toolName && VISUAL_MODIFYING_TOOLS.has(toolName)) markVisualChange();
 		const current = result as { content?: unknown };
 		const extras = buildExtras(repoRoot, toolName);
 		if (extras.length === 0) return result;
