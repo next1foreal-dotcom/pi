@@ -20,6 +20,17 @@
  * `src/screens/`, which named the screen even when a shared component drew it.
  *
  * `SourceRef` stays as the spotlight's shape so `pick.ts` does not care.
+ *
+ * One thing worth knowing about the null: in the browser a location is only
+ * complete once the served module's source map has been read, because the
+ * stack's line and column are coordinates in what vite built rather than in
+ * the file. `locateElement` starts that read on the first miss and reports
+ * `source-map-pending` meanwhile, so the first call for a freshly served
+ * module can answer null and the next one answers properly. Null, and not the
+ * unmapped numbers: a chip that names the wrong line, or a note pinned to it,
+ * is worse than one that names none. The inspect plugin reads the maps for the
+ * whole tree when it mounts and after every hot update, so the pending window
+ * is normally over before anyone points at anything.
  */
 
 import { locateElement } from "../plugins/inspect/source-location";

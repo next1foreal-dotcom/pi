@@ -37,7 +37,12 @@
 
 import type { LabPlugin, LabPluginContext } from "../../plugin-api";
 import type { Camera, Point, Rect } from "../../core/types";
-import { fiberOf, parseFrame } from "../inspect/source-location";
+import {
+  fiberOf,
+  parseFrame,
+  primeSourceLocations,
+  resolveFrame,
+} from "../inspect/source-location";
 import { SKIP_HOSTS } from "../inspect/plugin";
 import type {
   ComponentEntry,
@@ -137,13 +142,33 @@ function instanceKey(at: ComponentInstance): string {
   return locationKey(at.file, at.line, at.column);
 }
 
-/** The first repo-relative frame of one fiber's creation stack. */
+/**
+ * The first repo-relative frame of one fiber's creation stack, as a key in the
+ * INDEX's coordinates.
+ *
+ * The index is built by the TypeScript compiler from the file on disk. In the
+ * browser the fiber's stack is in the coordinates of the module vite served,
+ * and those are different numbers — which is why this join used to outline
+ * nothing at all in the running lab while passing every test under vitest,
+ * where the stack arrives already mapped. `resolveFrame` is what puts both
+ * sides in the same space.
+ *
+ * A frame whose map has not been read yet has no key. Not the unmapped
+ * numbers: a key built from those cannot match, and would look like the
+ * component simply is not on screen. `show` and `componentAt` both wait for
+ * the maps before they walk, so in practice this only returns null for a node
+ * that genuinely has no location.
+ */
 function frameOf(fiber: Fiber): string | null {
   const text = stackText(fiber._debugStack);
   if (!text) return null;
   for (const raw of text.split("\n")) {
     const frame = parseFrame(raw);
-    if (frame) return locationKey(frame.file, frame.line, frame.column);
+    if (!frame) continue;
+    const at = resolveFrame(frame);
+    if (at.problem !== null || at.file === null) return null;
+    if (at.line === null || at.column === null) return null;
+    return locationKey(at.file, at.line, at.column);
   }
   return null;
 }
@@ -231,6 +256,20 @@ export class ComponentsView {
     return loaded;
   }
 
+  /**
+   * Read the source maps of every module the live tree came from.
+   *
+   * This is the half of the join that is not synchronous. The walk itself has
+   * to be — it visits every element under every screen — so the maps are read
+   * first and the walk then never waits. Repeat calls are cheap: a module
+   * already read is skipped, and a hot update mints a new URL, so an edited
+   * screen is picked up here without anything having to notice the edit.
+   */
+  private primeSources(): Promise<void> {
+    if (typeof document === "undefined") return Promise.resolve();
+    return primeSourceLocations(document);
+  }
+
   /** Fetch the index again. The server recomputes it; nothing here is cached. */
   async reload(): Promise<ComponentIndex> {
     this.index = null;
@@ -280,7 +319,7 @@ export class ComponentsView {
   // ── the propagation view ───────────────────────────────────────────────
 
   async show(name: string): Promise<ShowResult | null> {
-    const entry = await this.find(name);
+    const [entry] = await Promise.all([this.find(name), this.primeSources()]);
     if (this.closed) return null;
     this.clear();
     if (!entry) return null;
@@ -329,7 +368,7 @@ export class ComponentsView {
 
   /** The indexed component the element belongs to, nearest owner first. */
   async componentAt(el: Element): Promise<string | null> {
-    await this.ready();
+    await Promise.all([this.ready(), this.primeSources()]);
     for (const key of ownerKeys(el)) {
       const name = this.byLocation.get(key);
       if (name) return name;

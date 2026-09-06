@@ -4,10 +4,12 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { transformWithOxc } from "vite";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { checkApiDocs } from "../../plugin-api";
 import type { LabObjects, LabPluginContext } from "../../plugin-api";
 import type { Camera, Point } from "../../core/types";
+import { resetSourceMaps } from "../../sourcemap/cache";
 import { createInspect, Inspector, plugin } from "./plugin";
 import { LAB_PACKAGE_DIR, locateElement, normalizeSpec } from "./source-location";
 import { ProbeCard } from "./probe-fixture";
@@ -337,6 +339,135 @@ describe("showing", () => {
     live.selectElement(button);
     const label = host.querySelector(".li-label") as HTMLElement;
     expect(label.textContent).toBe("button.probe-button · probe-fixture.tsx:9");
+  });
+});
+
+/**
+ * The inspector in the browser's address space.
+ *
+ * Everything above renders under vitest, where the stack has already been
+ * mapped home before any of it runs — which is why a resolver that handed back
+ * the served module's coordinates passed all of it, and why `design_element_at`
+ * was quoting lines nobody could edit.
+ */
+describe("selecting something the dev server served", () => {
+  const FIXTURE_REL = "src/lab/plugins/inspect/probe-fixture.tsx";
+  const MODULE_URL = `http://localhost:5180/${FIXTURE_REL}?t=91`;
+
+  let servedModule = "";
+  let servedButton = { line: 0, column: 0 };
+
+  beforeAll(async () => {
+    const out = await transformWithOxc(
+      readFileSync(join(REPO_ROOT, FIXTURE), "utf8"),
+      "probe-fixture.tsx",
+      { lang: "tsx", jsx: { runtime: "automatic", development: true }, sourcemap: true },
+    );
+    if (!out.map) throw new Error("the transform produced no source map");
+    const base64 = Buffer.from(JSON.stringify(out.map), "utf8").toString("base64");
+    servedModule = `${out.code}\n//# sourceMappingURL=data:application/json;base64,${base64}\n`;
+    out.code.split("\n").forEach((text, i) => {
+      const at = text.indexOf('_jsxDEV("button"');
+      // V8 puts a call's column at the first character of the callee.
+      if (at >= 0 && servedButton.line === 0) servedButton = { line: i + 1, column: at + 1 };
+    });
+    if (servedButton.line === 0) throw new Error("no button call in the module");
+  });
+
+  /** A node inside a screen, carrying a stack the way chrome writes one. */
+  function servedNode(): HTMLElement {
+    const el = document.createElement("button");
+    el.className = "probe-button";
+    Object.assign(el, {
+      __reactFiber$served: {
+        _debugStack: {
+          stack: [
+            "Error: react-stack-top-frame",
+            `    at ProbeCard (${MODULE_URL}:${servedButton.line}:${servedButton.column})`,
+          ].join("\n"),
+        },
+        return: null,
+      },
+    });
+    scroll.appendChild(el);
+    return el;
+  }
+
+  function serveModule() {
+    const stub = (input: unknown): Promise<{ ok: boolean; text: () => Promise<string> }> =>
+      Promise.resolve(
+        String(input) === MODULE_URL
+          ? { ok: true, text: () => Promise.resolve(servedModule) }
+          : { ok: false, text: () => Promise.resolve("") },
+      );
+    return vi.spyOn(globalThis, "fetch").mockImplementation(stub as unknown as typeof fetch);
+  }
+
+  const settle = () => new Promise((r) => setTimeout(r, 0));
+  const labelOf = () => (host.querySelector(".li-label") as HTMLElement).textContent;
+
+  beforeEach(() => {
+    resetSourceMaps();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    resetSourceMaps();
+  });
+
+  it("reports the line in the file once the module's map has been read", async () => {
+    expect(servedButton.line).not.toBe(9);
+    serveModule();
+    const el = servedNode();
+    live = createInspect(ctxFor());
+    // What the inspector does for itself on mount: read the maps of the tree.
+    await settle();
+
+    const sel = live.selectElement(el);
+    expect(sel?.problem).toBeNull();
+    expect(sel?.file).toBe(FIXTURE);
+    expect(sel?.line).toBe(9);
+    expect(sel?.column).toBe(7);
+    expect(labelOf()).toBe("button.probe-button · probe-fixture.tsx:9");
+  });
+
+  it("says it is waiting, then corrects itself, rather than quoting the module", async () => {
+    serveModule();
+    const el = servedNode();
+    live = createInspect(ctxFor());
+
+    // Selected before the maps came back: the honest answer is that there is
+    // no line yet, and the label says so instead of reading `…tsx:null`.
+    const first = live.selectElement(el);
+    expect(first?.problem).toBe("source-map-pending");
+    expect(first?.line).toBeNull();
+    expect(first?.file).toBe(FIXTURE);
+    expect(labelOf()).toBe("button.probe-button · probe-fixture.tsx (source-map-pending)");
+
+    await settle();
+    await settle();
+
+    const then = live.selection();
+    expect(then?.problem).toBeNull();
+    expect(then?.line).toBe(9);
+    expect(then?.column).toBe(7);
+    expect(labelOf()).toBe("button.probe-button · probe-fixture.tsx:9");
+  });
+
+  it("keeps the numbers to itself when the map cannot be read at all", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline"));
+    const el = servedNode();
+    live = createInspect(ctxFor());
+    live.selectElement(el);
+    await settle();
+    await settle();
+
+    const sel = live.selection();
+    expect(sel?.problem).toBe("source-map-unavailable");
+    expect(sel?.line).toBeNull();
+    expect(sel?.column).toBeNull();
+    expect(sel?.file).toBe(FIXTURE);
+    expect(sel?.tag).toBe("button");
   });
 });
 

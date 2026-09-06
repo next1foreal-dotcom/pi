@@ -23,7 +23,13 @@
 
 import type { LabPlugin, LabPluginContext } from "../../plugin-api";
 import type { Camera, Point, Rect } from "../../core/types";
-import { locateElement, type SourceProblem } from "./source-location";
+import { subscribeScreenHotUpdate } from "../../spotlight/hmr";
+import {
+  locateElement,
+  locateElementSourced,
+  primeSourceLocations,
+  type SourceProblem,
+} from "./source-location";
 
 /** Chrome that must never be a selection target, including our own overlay. */
 export const SKIP_HOSTS =
@@ -111,6 +117,8 @@ export class Inspector {
   private selected: Element | null = null;
   private snapshot: InspectSelection | null = null;
   private closed = false;
+  private primeTimer: ReturnType<typeof setTimeout> | null = null;
+  private unsubHmr: (() => void) | null = null;
 
   constructor(opts: {
     host: HTMLElement;
@@ -134,6 +142,32 @@ export class Inspector {
     opts.host.appendChild(this.root);
     window.addEventListener("pointerdown", this.onPointerDown, true);
     window.addEventListener("scroll", this.onScroll, true);
+    // In the browser a location is only as good as the source map that turns
+    // the served coordinates back into the file's. Reading those is the one
+    // asynchronous step in a synchronous path, so it happens here rather than
+    // under the pointer — and again after a hot update, which serves every
+    // touched module at a new URL with a new map.
+    this.queuePrime();
+    this.unsubHmr = subscribeScreenHotUpdate(() => this.queuePrime());
+  }
+
+  /**
+   * Read the maps the screens on the page need, once the page has them.
+   *
+   * A macrotask late, deliberately: at construction React has not rendered the
+   * screens yet, and the hot-update signal arrives on `vite:beforeUpdate`,
+   * which is before the new modules have run. Landing early is not a
+   * correctness problem — a lookup that misses starts its own read and says
+   * `source-map-pending` — it only costs the first caller a second look.
+   */
+  private queuePrime(): void {
+    if (this.closed || this.primeTimer !== null) return;
+    if (typeof document === "undefined") return;
+    this.primeTimer = setTimeout(() => {
+      this.primeTimer = null;
+      if (this.closed) return;
+      void primeSourceLocations(document);
+    }, 0);
   }
 
   /** Content of a screen, and not the scroller itself or any lab chrome. */
@@ -152,8 +186,30 @@ export class Inspector {
     return null;
   }
 
+  /**
+   * The map arrived after the snapshot was taken. Put the real coordinates in
+   * rather than leaving a selection that says it is still waiting; a caller
+   * reading `selection()` a moment later then gets the answer.
+   */
+  private resnapWhenMapped(el: Element): void {
+    void locateElementSourced(el).then((loc) => {
+      if (this.closed || this.selected !== el || !this.snapshot) return;
+      if (loc.problem === "source-map-pending") return;
+      this.snapshot = {
+        ...this.snapshot,
+        file: loc.file,
+        line: loc.line,
+        column: loc.column,
+        component: loc.component,
+        problem: loc.problem,
+      };
+      this.label.textContent = this.labelText(this.snapshot);
+    });
+  }
+
   private capture(el: Element): InspectSelection {
     const loc = locateElement(el);
+    if (loc.problem === "source-map-pending") this.resnapWhenMapped(el);
     const screen = el.closest("[data-screen-id]");
     return {
       screenId: screen?.getAttribute("data-screen-id") ?? null,
@@ -169,13 +225,18 @@ export class Inspector {
     };
   }
 
+  /** The file and line, or what is missing — never `file.tsx:null`. */
+  private static where(sel: InspectSelection): string {
+    const base = sel.file?.split("/").pop();
+    if (!base) return `source unknown (${sel.problem})`;
+    if (sel.line === null) return `${base} (${sel.problem})`;
+    return `${base}:${sel.line}`;
+  }
+
   private labelText(sel: InspectSelection): string {
     const first = sel.className.trim().split(/\s+/)[0];
     const name = first ? `${sel.tag}.${first}` : sel.tag;
-    const where = sel.file
-      ? `${sel.file.split("/").pop()}:${sel.line}`
-      : `source unknown (${sel.problem})`;
-    return `${name} · ${where}`;
+    return `${name} · ${Inspector.where(sel)}`;
   }
 
   /**
@@ -288,6 +349,12 @@ export class Inspector {
     if (this.closed) return;
     this.closed = true;
     this.clear();
+    if (this.primeTimer !== null) {
+      clearTimeout(this.primeTimer);
+      this.primeTimer = null;
+    }
+    this.unsubHmr?.();
+    this.unsubHmr = null;
     window.removeEventListener("pointerdown", this.onPointerDown, true);
     window.removeEventListener("scroll", this.onScroll, true);
     this.root.remove();
@@ -316,7 +383,7 @@ export const plugin: LabPlugin = {
       signature:
         "selection(): { screenId, file, line, column, component, tag, className, text, attached, problem } | null",
       summary:
-        "The selected element, or null if nothing is selected. `file` is repo-relative (e.g. packages/design-lab/src/screens/playground/screen.tsx) and `line`/`column` point at the JSX tag that made the node, read from React's dev-only `_debugStack`. When the location cannot be resolved those three are null and `problem` says why: no-react-fiber (not made by React), no-debug-stack (React is a production build, so there is nothing to read), no-project-source-frame (every frame was vendor code). Screens hot-reload, so a selected node can be replaced: then `attached` is false and `problem` is node-detached, and the other fields are the snapshot taken when it was selected, not a live read.",
+        "The selected element, or null if nothing is selected. `file` is repo-relative (e.g. packages/design-lab/src/screens/playground/screen.tsx) and `line`/`column` point at the JSX tag that made the node IN THE SOURCE FILE, read from React's dev-only `_debugStack` and mapped back through the served module's source map — the raw stack is in the coordinates of what vite built, which are different numbers. When the location cannot be resolved `line` and `column` are null and `problem` says why: no-react-fiber (not made by React), no-debug-stack (React is a production build, so there is nothing to read), no-project-source-frame (every frame was vendor code), source-map-pending (the module's map was not read yet — ask once more and it will be), source-map-unavailable (the module was read and its map cannot place this spot). On the two source-map problems `file` and `component` are still real. Screens hot-reload, so a selected node can be replaced: then `attached` is false and `problem` is node-detached, and the other fields are the snapshot taken when it was selected, not a live read.",
     },
     {
       name: "selectAt",

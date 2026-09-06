@@ -12,12 +12,14 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { transformWithOxc } from "vite";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { checkApiDocs } from "../../plugin-api";
 import type { LabObjects, LabPluginContext } from "../../plugin-api";
 import type { Camera, Point } from "../../core/types";
-import { buildComponentIndex } from "../../components/build-index.ts";
+import { buildComponentIndex, LAB_PACKAGE_DIR } from "../../components/build-index.ts";
 import type { ComponentIndex } from "../../components/types";
+import { resetSourceMaps } from "../../sourcemap/cache";
 import { ComponentsView, createComponents, INDEX_URL, plugin } from "./plugin";
 import ProbePanel from "./probe-fixture";
 
@@ -451,6 +453,154 @@ describe("teardown", () => {
     expect(document.querySelectorAll("style[data-lab-components]").length).toBe(1);
     b.destroy();
     expect(document.querySelectorAll("style[data-lab-components]").length).toBe(0);
+  });
+});
+
+/**
+ * The join, in the address space it actually runs in.
+ *
+ * Everything above renders React under vitest, where a stack arrives already
+ * mapped back to the file — so both halves of the join speak source
+ * coordinates and it works. In a browser they do not: React's `_debugStack`
+ * carries coordinates in the module vite built, the index carries coordinates
+ * in the file the compiler read, and the two never meet. That is why the
+ * propagation view painted nothing at all in the running lab while this file
+ * was green, and it is the one thing no test here could see.
+ *
+ * So: the same fixture, the same compiler-built index, but the fibers carry
+ * the coordinates the transform really produces, served over http with the
+ * transform's own map behind them.
+ */
+describe("the join, in the browser's coordinates", () => {
+  const FIXTURE_REL = "src/lab/plugins/components/probe-fixture.tsx";
+  const MODULE_URL = `http://localhost:5180/${FIXTURE_REL}?t=77`;
+
+  type At = { line: number; column: number };
+
+  let servedModule = "";
+  let servedRows: At[] = [];
+  let servedSpan: At = { line: 0, column: 0 };
+
+  /** V8 puts a call's column at the first character of the callee. */
+  function callSites(code: string, callee: string): At[] {
+    const out: At[] = [];
+    code.split("\n").forEach((text, i) => {
+      let from = 0;
+      for (;;) {
+        const at = text.indexOf(callee, from);
+        if (at < 0) break;
+        out.push({ line: i + 1, column: at + 1 });
+        from = at + 1;
+      }
+    });
+    return out;
+  }
+
+  beforeAll(async () => {
+    // The same transform vite 8 runs to serve a .tsx, under the bare filename
+    // its dev maps use in `sources`.
+    const out = await transformWithOxc(
+      readFileSync(FIXTURE_FILE, "utf8"),
+      "probe-fixture.tsx",
+      { lang: "tsx", jsx: { runtime: "automatic", development: true }, sourcemap: true },
+    );
+    if (!out.map) throw new Error("the transform produced no source map");
+    const base64 = Buffer.from(JSON.stringify(out.map), "utf8").toString("base64");
+    servedModule = `${out.code}\n//# sourceMappingURL=data:application/json;base64,${base64}\n`;
+    servedRows = callSites(out.code, "_jsxDEV(Row");
+    servedSpan = callSites(out.code, '_jsxDEV("span"')[0];
+    if (servedRows.length !== 2 || !servedSpan) {
+      throw new Error(`expected two Row calls and a span, got ${servedRows.length}`);
+    }
+  });
+
+  type FakeFiber = { _debugStack: { stack: string }; return: FakeFiber | null };
+
+  function stackAt(component: string, at: At): { stack: string } {
+    return {
+      stack: [
+        "Error: react-stack-top-frame",
+        "    at jsxDEV (http://localhost:5180/node_modules/.vite/deps/react_jsx-dev-runtime.js?v=aa:333:13)",
+        `    at ${component} (${MODULE_URL}:${at.line}:${at.column})`,
+      ].join("\n"),
+    };
+  }
+
+  /** A row div with its label span, both hung off fibers like React's. */
+  function buildRow(at: At): { row: HTMLElement; label: HTMLElement } {
+    const rowFiber: FakeFiber = { _debugStack: stackAt("ProbePanel", at), return: null };
+    const row = document.createElement("div");
+    row.className = "cx-row";
+    Object.assign(row, { __reactFiber$served: rowFiber });
+    const label = document.createElement("span");
+    label.className = "cx-label";
+    Object.assign(label, {
+      __reactFiber$served: { _debugStack: stackAt("Row", servedSpan), return: rowFiber },
+    });
+    row.appendChild(label);
+    scroll.appendChild(row);
+    return { row, label };
+  }
+
+  function serveModule() {
+    const stub = (input: unknown): Promise<{ ok: boolean; text: () => Promise<string> }> =>
+      Promise.resolve(
+        String(input) === MODULE_URL
+          ? { ok: true, text: () => Promise.resolve(servedModule) }
+          : { ok: false, text: () => Promise.resolve("") },
+      );
+    return vi.spyOn(globalThis, "fetch").mockImplementation(stub as unknown as typeof fetch);
+  }
+
+  beforeEach(() => {
+    resetSourceMaps();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    resetSourceMaps();
+  });
+
+  it("outlines the rows the served coordinates point at, rather than nothing", async () => {
+    // The gap the shipped bug fell into: the compiler says line 39, the module
+    // vite serves says something else entirely, and a key built from the
+    // second can never match one built from the first.
+    const indexed = FIXTURE_INDEX.components.find((c) => c.name === "Row");
+    expect(indexed?.instances.map((i) => i.line)).toEqual([39, 40]);
+    expect(indexed?.instances[0].file).toBe(`${LAB_PACKAGE_DIR}/${FIXTURE_REL}`);
+    expect(servedRows.map((r) => r.line)).not.toEqual([39, 40]);
+
+    serveModule();
+    buildRow(servedRows[0]);
+    buildRow(servedRows[1]);
+    live = createComponents(ctxFor(), loadFixture);
+
+    const result = await live.show("Row");
+    expect(result?.component.name).toBe("Row");
+    expect(result?.outlined).toBe(2);
+    expect(boxes()).toHaveLength(2);
+  });
+
+  it("names the component a served element belongs to, nearest owner first", async () => {
+    serveModule();
+    const { row, label } = buildRow(servedRows[0]);
+    live = createComponents(ctxFor(), loadFixture);
+    // The span's own frame is the `<span>` inside Row, which is not an
+    // instance; the answer comes from climbing to the fiber that made the Row.
+    expect(await live.componentAt(label)).toBe("Row");
+    expect(await live.componentAt(row)).toBe("Row");
+  });
+
+  it("outlines nothing rather than the wrong thing when the map cannot be read", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline"));
+    buildRow(servedRows[0]);
+    buildRow(servedRows[1]);
+    live = createComponents(ctxFor(), loadFixture);
+    const result = await live.show("Row");
+    // The component is real, so it is still "shown" — there is just nothing on
+    // screen that can be proven to be one of its instances.
+    expect(result?.outlined).toBe(0);
+    expect(boxes()).toHaveLength(0);
   });
 });
 

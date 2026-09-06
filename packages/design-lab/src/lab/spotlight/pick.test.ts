@@ -1,11 +1,76 @@
 // @vitest-environment jsdom
 
-import { afterEach, describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { transformWithOxc } from "vite";
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import type { Camera } from "../core/types";
+import { primeSourceMaps, resetSourceMaps } from "../sourcemap/cache";
 import { createPickTool, pickableFrom } from "./pick";
 
-const SCREEN_STACK = `Error
-    at PlaygroundScreen (http://localhost:5180/src/screens/playground/screen.tsx:19:25)`;
+/**
+ * The stack fed to pick here is the one a BROWSER produces: coordinates in the
+ * module vite served, not in the file on disk. This test used to hand-write
+ * those numbers and assert them straight back out, which wrote the shipped bug
+ * down as an expectation — a note pinned in the lab carried a line that does
+ * not exist in the source file it names.
+ *
+ * So the module is transformed for real, the served coordinates are read out
+ * of that transform mechanically, and the map served alongside it is what has
+ * to turn them back into the tag's real position. Nothing here is hand-written,
+ * which is the only reason it can fail when the mapping stops happening.
+ */
+const SCREEN_URL =
+  "http://localhost:5180/src/screens/playground/screen.tsx";
+const FIXTURE = "src/lab/plugins/inspect/probe-fixture.tsx";
+/** Where `<button` really begins in that fixture, 1-based. */
+const SOURCE_TAG = { line: 9, col: 7 };
+
+let SCREEN_STACK = "";
+let servedModule = "";
+
+function callSite(code: string, callee: string): { line: number; col: number } {
+  const lines = code.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const at = lines[i].indexOf(callee);
+    if (at !== -1) return { line: i + 1, col: at + 1 };
+  }
+  throw new Error(`no ${callee} in the transformed module`);
+}
+
+beforeAll(async () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const source = readFileSync(join(here, "..", "..", "..", FIXTURE), "utf8");
+  const out = await transformWithOxc(source, "screen.tsx", {
+    lang: "tsx",
+    jsx: { runtime: "automatic", development: true },
+    sourcemap: true,
+  });
+  if (!out.map) throw new Error("the transform produced no source map");
+  const base64 = Buffer.from(JSON.stringify(out.map), "utf8").toString("base64");
+  servedModule = `${out.code}\n//# sourceMappingURL=data:application/json;base64,${base64}\n`;
+  const served = callSite(out.code, '_jsxDEV("button"');
+  SCREEN_STACK = `Error\n    at PlaygroundScreen (${SCREEN_URL}:${served.line}:${served.col})`;
+});
+
+beforeEach(() => {
+  resetSourceMaps();
+  vi.spyOn(globalThis, "fetch").mockImplementation((input: RequestInfo | URL) => {
+    const hit = String(input).startsWith(SCREEN_URL);
+    return Promise.resolve(
+      new Response(hit ? servedModule : "", { status: hit ? 200 : 404 }),
+    );
+  });
+});
 
 const CAM: Camera = { x: 10, y: 20, z: 0.5 };
 
@@ -147,7 +212,7 @@ describe("pick tool", () => {
     pick.destroy();
   });
 
-  it("说这里 posts a note whose source file is repo-relative", () => {
+  it("说这里 posts a note whose source file is repo-relative", async () => {
     const pick = mount();
     pick.enter();
     tree.target.dispatchEvent(
@@ -161,6 +226,9 @@ describe("pick tool", () => {
     const btn = host.querySelector("[data-pick-speak]");
     expect(btn).toBeInstanceOf(HTMLButtonElement);
     expect(btn?.textContent).toBe("说这里");
+    // The lab primes this the same way, off the screens it is about to walk;
+    // pick resolves synchronously and must find the map already parsed.
+    await primeSourceMaps([SCREEN_URL]);
     (btn as HTMLButtonElement).click();
     expect(spawned).toHaveLength(1);
     // Repo-relative, which is what the name of this test always claimed and
@@ -170,8 +238,8 @@ describe("pick tool", () => {
     // a guess.
     expect(spawned[0]?.source).toEqual({
       file: "packages/design-lab/src/screens/playground/screen.tsx",
-      line: 19,
-      col: 25,
+      line: SOURCE_TAG.line,
+      col: SOURCE_TAG.col,
       component: "PlaygroundScreen",
     });
     expect(JSON.stringify(spawned[0])).not.toContain("http://localhost:5180");
