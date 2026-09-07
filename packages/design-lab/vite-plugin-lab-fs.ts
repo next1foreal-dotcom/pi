@@ -5,6 +5,7 @@ import type { Plugin, ViteDevServer } from "vite";
 import { stampOidOnEvent } from "../her/src/design-canvas/store.ts";
 import { buildComponentIndex } from "./src/lab/components/build-index.ts";
 import { EDITABLE_SOURCE, editClassList, splitClasses } from "../her/src/preview/jsx-class-list.ts";
+import { editText } from "../her/src/preview/jsx-text.ts";
 
 type Positions = Record<string, { x: number; y: number }>;
 
@@ -366,6 +367,58 @@ export function labFsPlugin(projectRoot: string): Plugin {
                 after: edit.after,
                 missing: edit.missing,
                 present: edit.present,
+                file: back,
+              });
+              return;
+            }
+            if (url === "/element/text") {
+              // Same four gates as /element/classes: this is the other half of
+              // the same write path, and a looser guard here would be the bug.
+              const guard = req.headers[WRITE_GUARD];
+              if ((Array.isArray(guard) ? guard[0] : guard) !== "1") {
+                json(res, 403, { ok: false, error: "forbidden" });
+                return;
+              }
+              const rel = String(body.file ?? "").replaceAll("\\", "/").trim();
+              const absolute = path.resolve(repoRoot, rel);
+              const back = path.relative(repoRoot, absolute).split(path.sep).join("/");
+              if (!rel || back === "" || back.startsWith("../") || path.isAbsolute(back)) {
+                json(res, 400, { ok: false, error: `refusing ${rel}: it resolves outside the repo` });
+                return;
+              }
+              if (!EDITABLE_SOURCE.test(back)) {
+                json(res, 400, { ok: false, error: `refusing ${back}: this edits JSX tags, so only .tsx and .jsx` });
+                return;
+              }
+              const line = Number(body.line);
+              const column = Number(body.column);
+              const tag = String(body.tag ?? "").trim();
+              if (!Number.isFinite(line) || !Number.isFinite(column) || !tag) {
+                json(res, 400, { ok: false, error: "line, column and tag all come from the selection" });
+                return;
+              }
+              if (typeof body.text !== "string") {
+                json(res, 400, { ok: false, error: "text is the new copy for this element" });
+                return;
+              }
+              let source: string;
+              try {
+                source = fs.readFileSync(absolute, "utf8");
+              } catch (error) {
+                json(res, 404, { ok: false, error: `could not read ${back}: ${String(error)}` });
+                return;
+              }
+              const edit = editText(source, { line, column, tag, text: body.text });
+              if (!edit.ok) {
+                json(res, 409, { ok: false, problem: edit.problem, error: edit.reason });
+                return;
+              }
+              if (edit.changed) fs.writeFileSync(absolute, edit.source);
+              json(res, 200, {
+                ok: true,
+                changed: edit.changed,
+                before: edit.before,
+                after: edit.after,
                 file: back,
               });
               return;
