@@ -47,6 +47,41 @@ This is not tidiness. Every one of these is the difference between "he nudged it
 
 <!-- Claude Design: authoring discipline exists to serve direct manipulation -->
 
+<!-- Claude Design: "props become knobs by declaration, not inference" — and most props should not become knobs at all -->
+
+## A knob is a lever — something has to be on the other end
+
+A prop with an editor attached appears in the properties panel of every instance of
+that component, forever. That is the cost, and it is paid whether or not anyone ever
+turns it. So the question is never *could this be adjustable* — nearly anything could.
+It is *is there a second value anyone would want*.
+
+Two that fail that test, both tempting:
+
+- **Copy is not a knob.** A label, a heading, a paragraph — write it as literal text in
+  the JSX and let him change it in place on the canvas. Behind a prop it becomes a
+  string in a panel, several clicks from the thing it is printed on, and he has to work
+  out which of the six `title` props on screen is the one he is looking at.
+- **A colour used once is not a knob.** A one-off colour belongs to the element, and the
+  element is already selectable — the panel edits it where it sits. A knob is for a
+  value that appears in several places at once and has to move together.
+
+What does earn one: a value with a **range** (spacing, a size, a count), a **curated
+set** (three legal variants; six brand colours out of the whole colour space), or a
+**switch** that changes what the component does. Those are the three where turning
+something beats editing something, and where the right answer is not obvious by looking.
+
+When a prop does earn a knob, say so on the prop itself:
+
+```ts
+/** @editor range min=0 max=64 step=4 unit=px section=Spacing */
+gap?: number;
+```
+
+Those are the five things the type cannot say: the range, the step, the unit, the
+curated set, and which group it belongs in. No tag means the panel falls back to what
+the type says — the right default, and it costs nothing.
+
 ## A write request is not a receipt
 
 The call succeeding proves the request was sent, not that the page is right. Evidence is the published render, verified against the draft (review/rendered-page-verify) — states included: hover, focus-visible, disabled, dark.
@@ -57,3 +92,4 @@ The call succeeding proves the request was sent, not that the page is right. Evi
 - token-debt list delivered (or explicitly "none")
 - deviations from the draft listed, each with its reason
 - rendered output verified, not assumed
+- every knob earns its place — none for copy, none for a colour used once
