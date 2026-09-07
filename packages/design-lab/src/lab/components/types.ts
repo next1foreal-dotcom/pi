@@ -9,6 +9,26 @@
  * runtime import.
  */
 
+/** The five editors `@editor` may name. Anything else is a problem, not a guess. */
+export type EditorKind = "color" | "int" | "range" | "enum" | "boolean";
+
+/**
+ * A declared editor. Inference cannot produce this: a number has no range, a
+ * string is not a colour, and a six-way union is not a curated palette of two.
+ *
+ * Absent fields were not written. `options` is the declared list (or, for
+ * `@editor enum` with no `options=`, the inferred `literalValues`).
+ */
+export type EditorSpec = {
+  kind: EditorKind;
+  min?: number;
+  max?: number;
+  step?: number;
+  unit?: string;
+  options?: string[];
+  section?: string;
+};
+
 export type PropInfo = {
   name: string;
   /**
@@ -28,6 +48,11 @@ export type PropInfo = {
   literalValues?: string[];
   /** Source text of the destructuring default, e.g. `"solid"` or `() => {}`. */
   defaultValue?: string;
+  /**
+   * From `@editor` on this prop. Missing means there was no tag — never an
+   * empty object. Inference still fills `type` / `literalValues` either way.
+   */
+  editor?: EditorSpec;
 };
 
 export type ComponentInstance = {

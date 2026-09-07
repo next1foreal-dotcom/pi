@@ -35,6 +35,8 @@ import type {
   ComponentEntry,
   ComponentIndex,
   ComponentReach,
+  EditorKind,
+  EditorSpec,
   ExportKind,
   PropInfo,
   ScreenRef,
@@ -253,23 +255,183 @@ function constituents(type: ts.Type): ts.Type[] {
   return type.isUnion() ? type.types : [type];
 }
 
+const EDITOR_KIND_LIST = "color, int, range, enum, boolean";
+
+function isEditorKind(value: string): value is EditorKind {
+  return (
+    value === "color" ||
+    value === "int" ||
+    value === "range" ||
+    value === "enum" ||
+    value === "boolean"
+  );
+}
+
+function jsDocCommentText(
+  comment: string | ts.NodeArray<ts.JSDocComment> | undefined,
+): string {
+  if (comment === undefined) return "";
+  if (typeof comment === "string") return comment;
+  return comment.map((part) => part.text).join("");
+}
+
+/** `null` means no `@editor` tag. An empty string is a tag with no body. */
+function editorCommentOf(prop: ts.Symbol, checker: ts.TypeChecker): string | null {
+  const fromSym = prop.getJsDocTags(checker).find((t) => t.name === "editor");
+  if (fromSym) return ts.displayPartsToString(fromSym.text).trim();
+  for (const d of prop.getDeclarations() ?? []) {
+    const tag = ts.getJSDocTags(d).find((t) => t.tagName.text === "editor");
+    if (tag) return jsDocCommentText(tag.comment).trim();
+  }
+  return null;
+}
+
+function parseNumber(raw: string): number | null {
+  if (raw === "") return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
+function parseOptions(raw: string): string[] {
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/**
+ * Overlay inference with `@editor`. Invalid declarations become problems and
+ * leave the prop without an `editor` field — a half-known control is worse
+ * than none, same reason `literalValues` is all-or-nothing.
+ */
+function declaredEditor(
+  prop: ts.Symbol,
+  info: PropInfo,
+  componentName: string,
+  checker: ts.TypeChecker,
+): { editor?: EditorSpec; problems: string[] } {
+  const comment = editorCommentOf(prop, checker);
+  if (comment === null) return { problems: [] };
+
+  const where = `${componentName}.${info.name}`;
+  const tokens = comment.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) {
+    return {
+      problems: [
+        `${where}: @editor is missing a kind. Use one of ${EDITOR_KIND_LIST}.`,
+      ],
+    };
+  }
+
+  const kindToken = tokens[0];
+  if (!isEditorKind(kindToken)) {
+    return {
+      problems: [
+        `${where}: @editor "${kindToken}" is not one of ${EDITOR_KIND_LIST}. Use one of those five.`,
+      ],
+    };
+  }
+
+  const fields = new Map<string, string>();
+  for (const tok of tokens.slice(1)) {
+    const eq = tok.indexOf("=");
+    if (eq <= 0) {
+      return {
+        problems: [
+          `${where}: @editor ${kindToken} has a token "${tok}" that is not key=value. Write flags as min=0, unit=px, section=Spacing.`,
+        ],
+      };
+    }
+    fields.set(tok.slice(0, eq), tok.slice(eq + 1));
+  }
+
+  const problems: string[] = [];
+  const spec: EditorSpec = { kind: kindToken };
+
+  const readBound = (key: "min" | "max" | "step"): number | undefined => {
+    const raw = fields.get(key);
+    if (raw === undefined) return undefined;
+    const n = parseNumber(raw);
+    if (n === null) {
+      problems.push(
+        `${where}: @editor ${kindToken} has ${key}=${raw}, which is not a number. Write a number, e.g. ${key}=0.`,
+      );
+      return undefined;
+    }
+    return n;
+  };
+
+  const min = readBound("min");
+  const max = readBound("max");
+  const step = readBound("step");
+  if (min !== undefined && max !== undefined && min > max) {
+    problems.push(
+      `${where}: @editor ${kindToken} has min=${min} greater than max=${max}. Swap them, or correct the bounds.`,
+    );
+  } else {
+    if (min !== undefined) spec.min = min;
+    if (max !== undefined) spec.max = max;
+  }
+  if (step !== undefined) spec.step = step;
+
+  const unit = fields.get("unit");
+  if (unit) spec.unit = unit;
+  const section = fields.get("section");
+  if (section) spec.section = section;
+
+  let options: string[] | undefined;
+  const optionsRaw = fields.get("options");
+  if (optionsRaw !== undefined) options = parseOptions(optionsRaw);
+
+  if (kindToken === "enum" && (!options || options.length === 0)) {
+    if (info.literalValues && info.literalValues.length > 0) {
+      options = info.literalValues.slice();
+    } else {
+      problems.push(
+        `${where}: @editor enum has no options, and the type is not a union of string literals. Add options=…, or declare the prop as a string-literal union.`,
+      );
+    }
+  }
+
+  if (options && options.length > 0 && info.literalValues) {
+    const allowed = new Set(info.literalValues);
+    const extra = options.filter((o) => !allowed.has(o));
+    if (extra.length > 0) {
+      const listed = extra.map((o) => `"${o}"`).join(", ");
+      const remove =
+        extra.length === 1
+          ? `Remove "${extra[0]}" from options`
+          : "Remove them from options";
+      problems.push(
+        `${where}: @editor ${kindToken} lists ${listed}, which the type (${info.type}) does not allow. ${remove}, or widen the type.`,
+      );
+    }
+  }
+
+  if (problems.length > 0) return { problems };
+  if (options && options.length > 0) spec.options = options;
+  return { editor: spec, problems: [] };
+}
+
 function propsOf(
   decl: Decl,
   checker: ts.TypeChecker,
-): { props: PropInfo[]; problem?: string } {
+  componentName: string,
+): { props: PropInfo[]; problem?: string; problems: string[] } {
   const type = checker.getTypeAtLocation(decl);
   const signatures = type.getCallSignatures();
   if (signatures.length === 0) {
     // A class component, a `forwardRef`, something else entirely. Say so
     // rather than reporting an empty prop list, which reads as "takes none".
-    return { props: [], problem: "no call signature; props not read" };
+    return { props: [], problem: "no call signature; props not read", problems: [] };
   }
   const params = signatures[0].getParameters();
-  if (params.length === 0) return { props: [] };
+  if (params.length === 0) return { props: [], problems: [] };
 
   const propsType = checker.getTypeOfSymbolAtLocation(params[0], decl);
   const defaults = destructuringDefaults(decl);
   const props: PropInfo[] = [];
+  const problems: string[] = [];
   for (const p of checker.getPropertiesOfType(propsType)) {
     const at = p.valueDeclaration ?? p.declarations?.[0] ?? decl;
     const t = checker.getTypeOfSymbolAtLocation(p, at);
@@ -287,9 +449,12 @@ function propsOf(
     }
     const dflt = defaults.get(info.name);
     if (dflt !== undefined) info.defaultValue = dflt;
+    const declared = declaredEditor(p, info, componentName, checker);
+    problems.push(...declared.problems);
+    if (declared.editor) info.editor = declared.editor;
     props.push(info);
   }
-  return { props };
+  return { props, problems };
 }
 
 // ──────────────────────────── the walk ────────────────────────────
@@ -415,9 +580,10 @@ export function buildComponentIndex(opts: BuildOptions): ComponentIndex {
     let entry = entries.get(key);
     if (!entry) {
       const rel = relative(norm(decl.getSourceFile().fileName));
-      const read = propsOf(decl, checker);
+      const name = declName(decl) ?? fallbackName;
+      const read = propsOf(decl, checker, name);
       entry = {
-        name: declName(decl) ?? fallbackName,
+        name,
         file: rel ?? norm(decl.getSourceFile().fileName),
         exported: exportKindOf(decl, checker),
         aliases: [],
@@ -427,6 +593,7 @@ export function buildComponentIndex(opts: BuildOptions): ComponentIndex {
         instances: [],
       };
       if (read.problem) entry.problem = read.problem;
+      problems.push(...read.problems);
       entries.set(key, entry);
       order.push(key);
     }
