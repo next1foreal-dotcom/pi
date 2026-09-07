@@ -310,6 +310,62 @@ export async function locateElementSourced(el: Element): Promise<SourceLocation>
   }
 }
 
+/** A place in a source file, in the coordinates `locateElement` reports. */
+export type SourceTarget = {
+  file: string;
+  line: number;
+  column: number;
+};
+
+/**
+ * The element under `root` that the JSX at `target` produced — `locateElement`
+ * run backwards.
+ *
+ * All three numbers have to agree. File and line alone would answer with
+ * whichever of two tags sharing a line came first, and being off by one tag is
+ * the failure nobody notices: the panel would go on describing "the element",
+ * and the next edit would land on a different one.
+ *
+ * One JSX tag can make several nodes (a `.map()` over a list). They are
+ * indistinguishable here by construction — same file, same line, same column —
+ * and that is not a coincidence to paper over: they are the same source handle,
+ * so an edit through any of them writes exactly the same bytes. The first in
+ * document order is returned, and the only thing that choice decides is which
+ * twin wears the outline.
+ *
+ * `accept` is asked only about nodes that already matched the position, so a
+ * caller can add a condition of its own without reimplementing the lookup.
+ * `locate` is a seam for tests.
+ */
+export function findBySourceLocation(
+  root: ParentNode,
+  target: SourceTarget,
+  opts: {
+    accept?: (el: Element) => boolean;
+    locate?: (el: Element) => SourceLocation;
+  } = {},
+): Element | null {
+  const locate = opts.locate ?? locateElement;
+  // Indexed, not for..of: this package's lib is ES2023+DOM without
+  // DOM.Iterable, so iterating a NodeList is a type error here.
+  const all = root.querySelectorAll("*");
+  for (let i = 0; i < all.length; i += 1) {
+    const el = all[i];
+    // A node that has left the document is not somewhere he can be shown.
+    if (!el.isConnected) continue;
+    const loc = locate(el);
+    // A half answer is not a match: `source-map-pending` carries a real file
+    // and null coordinates, and null equals null.
+    if (loc.problem !== null) continue;
+    if (loc.file !== target.file) continue;
+    if (loc.line !== target.line) continue;
+    if (loc.column !== target.column) continue;
+    if (opts.accept && !opts.accept(el)) continue;
+    return el;
+  }
+  return null;
+}
+
 /**
  * Every served module the fibers under `root` name, one per fiber, matching
  * exactly the frames a later lookup will choose. Parsing only; no fetches.

@@ -34,12 +34,15 @@ import {
   originalPositionFor,
 } from "../../sourcemap/decode";
 import { ProbeCard } from "./probe-fixture";
+import { TwinRow } from "./twin-fixture";
 import {
+  findBySourceLocation,
   LAB_PACKAGE_DIR,
   locateElement,
   locateElementSourced,
   primeSourceLocations,
   servedModuleUrl,
+  type SourceLocation,
 } from "./source-location";
 
 function findRepoRoot(): string {
@@ -366,5 +369,105 @@ describe("the map decoder", () => {
     // An external map is a second fetch on a guess; it is not read.
     expect(inlineSourceMapOf("//# sourceMappingURL=out.js.map")).toBeNull();
     expect(inlineSourceMapOf("const a = 1;\n")).toBeNull();
+  });
+});
+
+/**
+ * The lookup run backwards: a position in a file -> the node it made.
+ *
+ * This is what the properties panel holds on to across a hot reload, because
+ * the edit it just made cannot move it: `editClassList` only ever rewrites
+ * bytes after the tag name. So the rule that matters here is that the position
+ * is matched in FULL. Two tags on one line is not a hypothetical -- it is what
+ * `twin-fixture.tsx` is, and matching file and line alone answers with the
+ * wrong one of them while looking completely correct.
+ */
+describe("finding by location", () => {
+  const TWIN = `${LAB_PACKAGE_DIR}/src/lab/plugins/inspect/twin-fixture.tsx`;
+
+  /** Renders the two-tags-on-one-line fixture into `mount`. */
+  async function renderTwins(): Promise<HTMLElement> {
+    (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
+    const mount = document.createElement("div");
+    document.body.appendChild(mount);
+    reactRoot = createRoot(mount);
+    const r = reactRoot;
+    await act(async () => {
+      r.render(createElement(TwinRow));
+    });
+    return mount;
+  }
+
+  /** A locator that says the same thing about every node. */
+  function saying(loc: SourceLocation): (el: Element) => SourceLocation {
+    return () => loc;
+  }
+
+  it("tells two tags on the same line apart by their column", async () => {
+    const mount = await renderTwins();
+    // Read the fixture rather than trusting the numbers: the assertion is only
+    // worth anything if these really are where those two tags start.
+    const row = readFileSync(join(REPO_ROOT, TWIN), "utf8").split("\n")[7];
+    expect(row.slice(30, 35)).toBe("<span");
+    expect(row.slice(63, 68)).toBe("<span");
+
+    const a = findBySourceLocation(mount, { file: TWIN, line: 8, column: 31 });
+    const b = findBySourceLocation(mount, { file: TWIN, line: 8, column: 64 });
+    // Both sides: each column finds its OWN tag, and the div that opens the
+    // same line (column 5, first in document order) is neither answer.
+    expect(a?.className).toBe("twin-a");
+    expect(b?.className).toBe("twin-b");
+    expect(findBySourceLocation(mount, { file: TWIN, line: 8, column: 5 })?.className).toBe(
+      "twin-row",
+    );
+  });
+
+  it("finds nothing at a column no tag starts at", async () => {
+    const mount = await renderTwins();
+    expect(findBySourceLocation(mount, { file: TWIN, line: 8, column: 32 })).toBeNull();
+  });
+
+  it("will not answer with a node that has left the document", async () => {
+    const mount = await renderTwins();
+    const target = { file: TWIN, line: 8, column: 31 };
+    expect(findBySourceLocation(mount, target)).not.toBeNull();
+    // Same tree, same fibers, same locations -- the only thing that changed is
+    // that it is no longer on screen, and that alone is enough to refuse it.
+    mount.remove();
+    expect(findBySourceLocation(mount, target)).toBeNull();
+  });
+
+  it("will not answer with a location that did not fully resolve", () => {
+    const el = document.createElement("div");
+    document.body.appendChild(el);
+    const target = { file: TWIN, line: 8, column: 31 };
+    const half: SourceLocation = { ...target, component: null, problem: "source-map-unavailable" };
+    expect(findBySourceLocation(document.body, target, { locate: saying(half) })).toBeNull();
+    // The same three numbers, now offered as a complete answer, DO match -- so
+    // what the refusal above turns on is the problem, not the numbers.
+    expect(
+      findBySourceLocation(document.body, target, {
+        locate: saying({ ...half, problem: null }),
+      }),
+    ).toBe(el);
+  });
+
+  it("takes the first of several nodes at one location, and lets a caller say otherwise", () => {
+    // One JSX tag inside a .map() makes several nodes with identical
+    // locations. They are the same source handle, so any of them is a correct
+    // answer to the position; accept is how a caller narrows it.
+    document.body.innerHTML = '<i data-n="1"></i><i data-n="2"></i><i data-n="3"></i>';
+    const target = { file: TWIN, line: 8, column: 31 };
+    const locate = saying({ ...target, component: null, problem: null });
+    expect(findBySourceLocation(document.body, target, { locate })?.getAttribute("data-n")).toBe(
+      "1",
+    );
+    expect(
+      findBySourceLocation(document.body, target, {
+        locate,
+        accept: (el) => el.getAttribute("data-n") === "3",
+      })?.getAttribute("data-n"),
+    ).toBe("3");
+    expect(findBySourceLocation(document.body, target, { locate, accept: () => false })).toBeNull();
   });
 });

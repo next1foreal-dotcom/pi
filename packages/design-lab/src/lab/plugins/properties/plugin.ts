@@ -1,4 +1,9 @@
 import type { LabPlugin, LabPluginContext, LabPluginHandle } from "../../plugin-api";
+import {
+	findBySourceLocation,
+	primeSourceLocations,
+	type SourceTarget,
+} from "../inspect/source-location";
 
 /**
  * What is selected, and what can be changed about it.
@@ -32,7 +37,107 @@ type Selection = {
 type InspectApi = {
 	selection(): Selection | null;
 	selectAt(x: number, y: number): Selection | null;
+	/** Optional because this panel does not own that plugin's shape. */
+	selectElement?(el: Element): Selection | null;
 };
+
+/** One class-list edit, as it goes over the wire. */
+export type ClassChange = { add?: string; remove?: string };
+
+/** The element to look for again, once the write has landed. */
+export type RefindTarget = SourceTarget & { screenId: string | null };
+
+export type RefindLimit = { attempts: number; intervalMs: number };
+
+/**
+ * Long enough for a save-to-repaint round trip on a slow machine, short enough
+ * that the panel is not still claiming to be working when he has moved on.
+ */
+export const REFIND_LIMIT: RefindLimit = { attempts: 24, intervalMs: 120 };
+
+/**
+ * Is the edit we just made visible on this node?
+ *
+ * The source position survives the write, which is the whole reason the panel
+ * can find its way back — but so does the OLD node, right up until the reload
+ * lands, and it is standing at exactly that position. Position alone would
+ * therefore hand back the node that is about to disappear.
+ *
+ * Asking whether the class we wrote is on it separates the two, and does it
+ * without knowing anything about how vite reloads. It also gets the case where
+ * nothing is going to reload right: the server does not write the file when the
+ * edit changes nothing (a class removed that was not there), so the node that
+ * is already on screen is the answer, and this says so on the first look.
+ *
+ * Directional on purpose — added names must be present, removed names must be
+ * gone — so a component that puts a class of its own on the node does not read
+ * as a mismatch forever.
+ */
+export function editLanded(className: string | null, change: ClassChange): boolean {
+	const have = new Set(classesOf(className));
+	if (classesOf(change.remove ?? null).some((name) => have.has(name))) return false;
+	return classesOf(change.add ?? null).every((name) => have.has(name));
+}
+
+/** What the live panel uses to look; a seam so the waiting can be tested. */
+export type RefindDeps = {
+	/** The screen's scroller, which outlives the modules rendered inside it. */
+	root(screenId: string | null): ParentNode | null;
+	/** New modules are served at new URLs, so their maps have to be read again. */
+	prime(root: ParentNode): Promise<void>;
+	find(root: ParentNode, target: SourceTarget, accept: (el: Element) => boolean): Element | null;
+	wait(ms: number): Promise<void>;
+};
+
+export const liveRefindDeps: RefindDeps = {
+	root(screenId) {
+		if (screenId === null || typeof document === "undefined") return null;
+		// Scanned rather than selected, so a screen id with a quote in it is a
+		// miss instead of a thrown selector.
+		const all = document.querySelectorAll("[data-screen-scroll]");
+		for (let i = 0; i < all.length; i += 1) {
+			if (all[i].getAttribute("data-screen-scroll") === screenId) return all[i];
+		}
+		return null;
+	},
+	prime: (root) => primeSourceLocations(root),
+	find: (root, target, accept) => findBySourceLocation(root, target, { accept }),
+	wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+};
+
+/**
+ * Look for the edited element until it comes back, or until we have looked
+ * enough times to say it is not coming.
+ *
+ * Polling and not a fixed wait, because the step that has to finish first is
+ * reading the new modules' source maps, and how long that takes is a property
+ * of the machine. A fixed wait is either too short on a slow one or wasted on a
+ * fast one; this is neither, and it has a ceiling.
+ */
+export async function refind(
+	target: RefindTarget,
+	change: ClassChange,
+	limit: RefindLimit = REFIND_LIMIT,
+	deps: RefindDeps = liveRefindDeps,
+): Promise<Element | null> {
+	// A selection with no screen was never inside one, and no amount of waiting
+	// changes that. A screen whose scroller is missing right now is a different
+	// thing — that one is worth another look.
+	if (target.screenId === null) return null;
+	const accept = (el: Element): boolean => editLanded(el.getAttribute("class"), change);
+	for (let attempt = 0; attempt < limit.attempts; attempt += 1) {
+		const root = deps.root(target.screenId);
+		if (root) {
+			// New modules are served at new URLs, so the maps behind the
+			// synchronous lookup have to be read again before it can answer.
+			await deps.prime(root);
+			const found = deps.find(root, target, accept);
+			if (found) return found;
+		}
+		if (attempt < limit.attempts - 1) await deps.wait(limit.intervalMs);
+	}
+	return null;
+}
 
 const STYLE_ID = "lab-properties-style";
 const CSS = `
@@ -102,7 +207,23 @@ export function editability(sel: Selection | null): {
 	return { show: true, editable: true, note: null, bad: false };
 }
 
-class Properties {
+/**
+ * What the panel says when the edit landed but the element did not come back.
+ *
+ * It is the honest end of this path and it stays that way: a panel that went on
+ * describing a node it could not find would be the one you edit the wrong thing
+ * from next.
+ */
+const LOST_NOTE = "改好了 · 再点一下它继续改";
+
+export type PropertiesOptions = {
+	refind?: RefindLimit;
+	deps?: RefindDeps;
+};
+
+export class Properties {
+	private readonly limit: RefindLimit;
+	private readonly deps: RefindDeps;
 	private readonly panel: HTMLDivElement;
 	private readonly tagEl: HTMLDivElement;
 	private readonly whereEl: HTMLDivElement;
@@ -115,7 +236,9 @@ class Properties {
 	private pending = false;
 	private closed = false;
 
-	constructor(host: HTMLElement) {
+	constructor(host: HTMLElement, opts: PropertiesOptions = {}) {
+		this.limit = opts.refind ?? REFIND_LIMIT;
+		this.deps = opts.deps ?? liveRefindDeps;
 		injectStyle();
 		this.panel = document.createElement("div");
 		this.panel.className = "pp-panel";
@@ -145,7 +268,7 @@ class Properties {
 			if (e.key !== "Enter") return;
 			e.preventDefault();
 			const value = this.add.value.trim();
-			if (value) void this.write({ add: value });
+			if (value) void this.addClass(value);
 		});
 		// A click in the panel is not a click on the canvas: without this the
 		// lab clears the selection the panel is describing, the instant he
@@ -178,7 +301,7 @@ class Properties {
 			// Nothing selected yet: keep the "it worked" line up instead of
 			// blanking the panel the instant the node it described went away.
 			this.panel.setAttribute("data-show", "");
-			this.note.textContent = "改好了 · 再点一下它继续改";
+			this.note.textContent = LOST_NOTE;
 		}
 	};
 
@@ -210,7 +333,7 @@ class Properties {
 				x.type = "button";
 				x.textContent = "×";
 				x.title = `remove ${name}`;
-				x.addEventListener("click", () => void this.write({ remove: name }));
+				x.addEventListener("click", () => void this.removeClass(name));
 				chip.appendChild(x);
 			}
 			this.chips.appendChild(chip);
@@ -222,19 +345,41 @@ class Properties {
 	}
 
 	/**
-	 * One edit, then re-find the element.
+	 * One edit, then the element again.
 	 *
-	 * The write makes vite replace the module, which replaces the node the
-	 * selection points at — so holding the old handle would leave the panel
-	 * describing something that is no longer on screen. The outline's own rect
-	 * is the way back: the same place, whatever node is there now.
+	 * The write makes vite replace the module, and the node this selection
+	 * points at goes with it. Two ways back were tried and neither survives
+	 * contact with the running lab: the old pixel usually moves, because the
+	 * edit is why the layout changed, and the node's place in the tree does not
+	 * find it either once the screen remounts.
+	 *
+	 * What does survive is the source position. `editClassList` never rewrites a
+	 * byte before the tag name -- it changes the text inside `className="..."`,
+	 * or lifts the whole attribute off -- so the `<` this selection was pointed
+	 * at is at the same line and column after the edit as it was before. That is
+	 * the handle, and it is matched in full: file and line alone would pick the
+	 * wrong tag when two of them share a line.
+	 *
+	 * When it does not come back, say so and let the next click re-select,
+	 * rather than leave the panel confidently describing a node that is no
+	 * longer there -- that is how you edit the wrong thing next.
 	 */
-	private async write(change: { add?: string; remove?: string }): Promise<void> {
+	private async write(change: ClassChange): Promise<void> {
 		const sel = this.shown;
 		if (!sel || !editability(sel).editable || this.busy) return;
+		// editability() has already refused a selection missing any of these.
+		const target: RefindTarget = {
+			screenId: sel.screenId,
+			file: sel.file as string,
+			line: sel.line as number,
+			column: sel.column as number,
+		};
 		this.busy = true;
 		this.note.textContent = "写入中…";
 		this.note.removeAttribute("data-bad");
+		// `undefined` means the write never got as far as looking for the node,
+		// so the note set on the way out is the one that stands.
+		let back: Element | null | undefined;
 		try {
 			const res = await fetch("/__lab-fs/element/classes", {
 				method: "POST",
@@ -251,25 +396,67 @@ class Properties {
 			if (!res.ok || !body.ok) {
 				this.note.textContent = body.error ?? `写不进去(HTTP ${res.status})`;
 				this.note.setAttribute("data-bad", "");
-				return;
+			} else {
+				this.add.value = "";
+				back = await refind(target, change, this.limit, this.deps);
 			}
-			this.add.value = "";
-			// The write makes vite replace the module, which replaces the node this
-			// selection points at. Two ways back were tried and neither survives
-			// contact with the running lab: the old pixel usually moves, because
-			// the edit is why the layout changed, and the node's position in the
-			// tree does not find it either once the screen remounts. So say what
-			// happened and let the next click re-select, rather than leave the
-			// panel confidently describing a node that is no longer there — the
-			// second is how you edit the wrong thing next.
-			this.note.textContent = "改好了 · 再点一下它继续改";
-			this.note.removeAttribute("data-bad");
-			this.shown = null;
-			this.pending = true;
+		} catch (error) {
+			// The dev server is gone, or the page is being torn down. Without
+			// this the panel sits on the "writing" line forever, which reads as
+			// still working.
+			this.note.textContent = `写不进去(${String(error)})`;
+			this.note.setAttribute("data-bad", "");
 		} finally {
 			this.busy = false;
-			this.sync();
 		}
+		if (back === undefined || this.closed) return;
+		this.shown = null;
+		// He may have shift-clicked something else while the reload was in
+		// flight. His last click wins: pulling the selection back to what he
+		// edited a moment ago would leave the panel describing one element while
+		// he is looking at another, and the next remove would land on that one.
+		if (this.movedOn(target) || (back !== null && this.claim(back))) {
+			this.pending = false;
+			this.sync();
+			return;
+		}
+		this.pending = true;
+		this.panel.setAttribute("data-show", "");
+		// The chips are now a snapshot of a node we could not find, so the
+		// controls on them come off: a × that quietly does nothing is worse than
+		// no ×. What is left is readable, and says where it came from.
+		// .forEach, not for..of: this package's lib is ES2023+DOM without
+		// DOM.Iterable, so iterating a NodeList is a type error here.
+		this.chips.querySelectorAll("button").forEach((b) => {
+			b.remove();
+		});
+		this.add.style.display = "none";
+		this.note.textContent = LOST_NOTE;
+		this.note.removeAttribute("data-bad");
+	}
+
+	/** Has he selected some OTHER element since this write started? */
+	private movedOn(target: RefindTarget): boolean {
+		const now = this.inspect()?.selection() ?? null;
+		if (!now || !now.attached) return false;
+		return now.file !== target.file || now.line !== target.line || now.column !== target.column;
+	}
+
+	/** Hand the node back to the inspect plugin, which owns what is selected. */
+	private claim(el: Element): boolean {
+		return (this.inspect()?.selectElement?.(el) ?? null) !== null;
+	}
+
+	/**
+	 * The two edits the chips and the input box make. Public so that driving the
+	 * panel and clicking it are the same path, rather than two that can drift.
+	 */
+	removeClass(name: string): Promise<void> {
+		return this.write({ remove: name });
+	}
+
+	addClass(name: string): Promise<void> {
+		return this.write({ add: name });
 	}
 
 	destroy(): void {
