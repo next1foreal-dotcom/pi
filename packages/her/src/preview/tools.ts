@@ -683,18 +683,19 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 					undefined as never,
 				)) as {
 					content: Array<{ type?: string; text?: string }>;
-					details?: { status?: unknown };
+					details?: { status?: unknown; controlOwnerDenied?: unknown };
 				};
 				const stepText = result.content[0]?.text ?? "";
-				if (batchStepSucceeded(result.details)) {
+				const denied = result.details?.controlOwnerDenied === true;
+				if (!denied && batchStepSucceeded(result.details)) {
 					lines.push(`step ${i + 1}/${total}  ${action.name}   ok`);
 					continue;
 				}
-				const reason = batchFailureReason(stepText);
+				const reason = denied ? "control-owner-denied" : batchFailureReason(stepText);
 				lines.push(`step ${i + 1}/${total}  ${action.name}   FAILED — ${reason}`);
 				if (stepText.trim()) lines.push(stepText);
 				const leftover = actions.slice(i + 1).map((next) => next.name);
-				if (isControlOwnerDeniedText(stepText)) {
+				if (denied) {
 					const leftoverNote = leftover.length > 0 ? ` Remaining steps were not run: ${leftover.join(", ")}.` : "";
 					lines.push(
 						`          (Fei took the wheel; this is the control-owner gate working, not a fault. ` +
@@ -878,11 +879,18 @@ async function postJson(
 	if (errorText) {
 		return textResult(errorText(parsed), { status: response.status });
 	}
-	if (
-		(parsed?.error === "control-owner-denied" || parsed?.reason === "control-owner-denied") &&
-		opts.controlOwnerDeniedText
-	) {
-		return textResult(opts.controlOwnerDeniedText());
+	if (parsed?.error === "control-owner-denied" || parsed?.reason === "control-owner-denied") {
+		// Flag it structurally, not in prose. `browser_batch` decides "stop, and say
+		// it was the guardrail" from this field; deriving that by regex over the
+		// text meant any tool rewording its refusal silently fell out of the branch,
+		// and nothing would have reported the loss. The default below also covers
+		// tools that never supplied their own wording.
+		return textResult(
+			opts.controlOwnerDeniedText?.() ??
+				"Refused: Fei holds the wheel (control-owner-denied). That is the gate working, not a fault — " +
+					"stop and wait for him to hand control back instead of retrying.",
+			{ controlOwnerDenied: true },
+		);
 	}
 	if (parsed?.error === "artifacts_dir_not_configured" && opts.notConfiguredText) {
 		return textResult(opts.notConfiguredText());

@@ -975,6 +975,37 @@ test("browser_batch stops after the second step fails and never calls the third"
 	assert.match(text, /browser_act/);
 });
 
+test("browser_batch treats a control-owner refusal as a stop, not as a successful step", async () => {
+	// The refusal arrives as HTTP 200 — that shape is deliberate at the route layer
+	// (a working guardrail is not an outage). So a batch that decided "step ok" from
+	// the status code alone would sail straight past Fei taking the wheel and keep
+	// driving. This is the one failure mid-batch most likely to actually happen.
+	const fetchImpl = fakeFetch((url) => {
+		if (url.endsWith("/api/browser/agent-navigate")) return okJson({ ok: true });
+		if (url.endsWith("/api/browser/agent-act")) {
+			return okJson({ ok: false, reason: "control-owner-denied" });
+		}
+		if (url.endsWith("/api/browser/agent-read")) return okJson({ ok: true, tree: "" });
+		return new Response(JSON.stringify({ ok: false, error: "unexpected path" }), { status: 500 });
+	});
+	const tools = previewHarness({ fetchImpl });
+
+	const text = await run(tools.get("browser_batch"), {
+		actions: [
+			{ name: "browser_navigate", input: { url: "https://example.com" } },
+			{ name: "browser_act", input: { ref: "ref_5", action: "click" } },
+			{ name: "browser_read_page" },
+		],
+	});
+
+	// The third step must never have been dispatched.
+	assert.equal(fetchImpl.calls.length, 2, `batch kept going after a refusal: ${text}`);
+	assert.equal(fetchImpl.calls[1].url, "http://127.0.0.1:3000/api/browser/agent-act");
+	// And she must be told it was the guardrail, not a fault — otherwise the sane
+	// reaction to a "failed" batch is to retry it, which is exactly wrong here.
+	assert.match(text, /control|wheel|Fei/i);
+});
+
 test("browser_batch rejects nested browser_batch and does not run any step", async () => {
 	const fetchImpl = fakeFetch(() => new Response(JSON.stringify({ ok: true }), { status: 200 }));
 	const tools = previewHarness({ fetchImpl });
