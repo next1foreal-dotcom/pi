@@ -50,6 +50,7 @@ over-read, never under-read.
 | Screen flows and prototypes | process/flows |
 | Judging a render before calling it done | review/rubric · review/refine-order · design/details — and `design_lab_still` first: judge the frame, not your memory of writing it |
 | Verifying a live screen / responsive sweep | review/rendered-page-verify |
+| Judging a render on a brain that cannot see images | review/no-vision-verify · process/visual-review — what you may still check, and what you must then say instead of claiming you looked |
 | Landing a design into code — export, handoff | process/to-code |
 | Ending a design session | process/filing — file decisions, patterns, tool notes, debt before you stop |
 

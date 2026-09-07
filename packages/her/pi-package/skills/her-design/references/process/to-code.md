@@ -25,6 +25,28 @@ For every value in the draft, find its home in the project:
 
 Deviating from the draft is a decision, and decisions belong to the owner — flag every deviation, including the ones that feel like improvements. An unflagged improvement is an invisible decision, and invisible decisions accumulate into an architecture nobody chose.
 
+## The draft and the product are allowed to disagree
+
+The rule above — the project wins, the design bends — governs **the moment code is written**. It does not mean the draft must always match what is shipped.
+
+The codebase is the **current** truth. The draft is a **proposed** truth. The distance between them is the proposal; erasing it on sight is erasing the work. A draft that never disagrees with the product is not a design, it is a screenshot.
+
+So: while designing, disagree freely and on purpose. While landing, every disagreement is either adopted deliberately or filed — never quietly absorbed, and never quietly discarded because the token was easier.
+
+<!-- lunagraph (closed source, docs read 2026-09-06): drift between the design and the codebase is the point, not a bug to be eliminated -->
+
+## Write it so it can be handled
+
+He edits by hand — dragging, deleting, duplicating on the canvas. Author so that survives:
+
+- **Siblings sit in a flex or grid with `gap`.** A gap holds when something between them is dragged away or duplicated; margins on each child do not, and the spacing collapses into something nobody chose.
+- **Spacing is never a whitespace text node.** It looks identical and it disappears the first time an element is moved.
+- **A repeated thing is one component used N times**, not N copies — otherwise a change he makes once has to be made N times, and he will find the one you missed.
+
+This is not tidiness. Every one of these is the difference between "he nudged it" and "he nudged it and something else broke".
+
+<!-- Claude Design: authoring discipline exists to serve direct manipulation -->
+
 ## A write request is not a receipt
 
 The call succeeding proves the request was sent, not that the page is right. Evidence is the published render, verified against the draft (review/rendered-page-verify) — states included: hover, focus-visible, disabled, dark.

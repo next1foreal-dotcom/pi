@@ -27,8 +27,19 @@ Example:
 
 The direction sentence must be written in the session reply before any canvas mutation. If the sentence cannot reject a choice, rewrite it. Do not create nodes or HTML while the gate is missing.
 
+## 已有产品里的第 0 步
+
+在一个**已经有产品**的代码库里设计,默认就是**像素级对齐它**——他不需要开口说「先照着我们的 UI 来」。
+
+取值要从**真实组件的源码**里取,而不是从截图上量、更不是四舍五入到 4/8 的网格。产品的按钮高度是 34 就是 34,把它写成 32「因为整」是在悄悄改设计,而且改的是别人已经 ship 的那个。
+
+要偏离它,那是一个**决定**,按 `process/to-code` 的规矩显影出来,不许静默。
+
+<!-- Claude Design(Anthropic 第一方 design 技能)原话:在一个代码库里,用户永远不该需要说「先照着我们的 UI 来」 -->
+
 ## Gate checklist
 
+- [ ] 在已有产品的代码库里：方向句默认对齐它，任何偏离都被点名成一个决定
 - [ ] the ground is named with a reason drawn from the subject, not inherited from the last design
 - [ ] density is named and visible in the planned spacing or information order
 - [ ] mood is translated into material, type, or composition decisions

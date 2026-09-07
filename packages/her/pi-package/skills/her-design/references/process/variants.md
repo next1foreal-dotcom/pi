@@ -37,6 +37,17 @@ This gate is not politeness. Candidates generated in parallel from the same brie
 
 While waiting, say you are waiting. A silent pause reads as work in progress.
 
+## Each candidate owes an axis, and a cost
+
+Naming the structural difference is not enough. Each candidate must say:
+
+- **which axis it explores** — the one thing it is testing. Five shades of the same taste is not a set of options; if two candidates differ only in how they feel, one of them is not a candidate.
+- **why you would take it** — and **what it costs**. A list where only your favourite carries a rationale is not a vote, it is a fix with decoration. If a candidate has no cost you can name, you have not understood it well enough to offer it.
+
+And the names stay put. A direction called "ledger" in round one is still "ledger" in round three — renaming mid-comparison quietly rewrites the record of what he already rejected, and he cannot tell whether he is looking at a new idea or an old one in a new coat.
+
+<!-- Claude Design (Anthropic first-party `design` skill): options need named axes, argued tradeoffs, stable names -->
+
 ## Comparison loop
 
 1. Write a direction sentence for each candidate using `process/direction-first`.
