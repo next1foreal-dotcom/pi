@@ -4,6 +4,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin, ViteDevServer } from "vite";
 import { stampOidOnEvent } from "../her/src/design-canvas/store.ts";
 import { buildComponentIndex } from "./src/lab/components/build-index.ts";
+import { EDITABLE_SOURCE, editClassList, splitClasses } from "../her/src/preview/jsx-class-list.ts";
 
 type Positions = Record<string, { x: number; y: number }>;
 
@@ -82,7 +83,8 @@ export function labFsPlugin(projectRoot: string): Plugin {
   const screensDir = path.resolve(projectRoot, "src/screens");
   const trashDir = path.resolve(projectRoot, ".lab-trash");
   // packages/design-lab -> the samantha repo root
-  const feedFile = path.resolve(projectRoot, "..", "..", ...FEED_REL);
+  const repoRoot = path.resolve(projectRoot, "..", "..");
+  const feedFile = path.resolve(repoRoot, ...FEED_REL);
 
   return {
     name: "lab-fs",
@@ -299,6 +301,73 @@ export function labFsPlugin(projectRoot: string): Plugin {
                 fs.writeFileSync(manifest, text);
               }
               json(res, 200, { ok: true });
+              return;
+            }
+            if (url === "/element/classes") {
+              // Writing someone's source from a browser route earns at least
+              // the guard the note feed already has.
+              const guard = req.headers[WRITE_GUARD];
+              if ((Array.isArray(guard) ? guard[0] : guard) !== "1") {
+                json(res, 403, { ok: false, error: "forbidden" });
+                return;
+              }
+              const rel = String(body.file ?? "").replaceAll("\\", "/").trim();
+              const absolute = path.resolve(repoRoot, rel);
+              const back = path.relative(repoRoot, absolute).split(path.sep).join("/");
+              if (!rel || back === "" || back.startsWith("../") || path.isAbsolute(back)) {
+                json(res, 400, { ok: false, error: `refusing ${rel}: it resolves outside the repo` });
+                return;
+              }
+              if (!EDITABLE_SOURCE.test(back)) {
+                json(res, 400, { ok: false, error: `refusing ${back}: this edits JSX tags, so only .tsx and .jsx` });
+                return;
+              }
+              const line = Number(body.line);
+              const column = Number(body.column);
+              const tag = String(body.tag ?? "").trim();
+              if (!Number.isFinite(line) || !Number.isFinite(column) || !tag) {
+                json(res, 400, { ok: false, error: "line, column and tag all come from the selection" });
+                return;
+              }
+              let source: string;
+              try {
+                source = fs.readFileSync(absolute, "utf8");
+              } catch (error) {
+                json(res, 404, { ok: false, error: `could not read ${back}: ${String(error)}` });
+                return;
+              }
+              const add = splitClasses(body.add);
+              const remove = splitClasses(body.remove);
+              const wantsReplace = typeof body.replace === "string" && body.replace.trim() !== "";
+              const replace = wantsReplace ? splitClasses(body.replace) : undefined;
+              if (replace && (add.length > 0 || remove.length > 0)) {
+                json(res, 400, { ok: false, error: "replace rewrites the whole list, so it cannot be combined with add or remove" });
+                return;
+              }
+              if (!replace && add.length === 0 && remove.length === 0) {
+                json(res, 400, { ok: false, error: "nothing to change" });
+                return;
+              }
+              // The same editor her tool uses, so the panel cannot be looser
+              // than the tool about which bytes it is willing to rewrite: a
+              // stale location is refused, and a computed className is refused
+              // by name rather than guessed at.
+              const edit = editClassList(source, { line, column, tag, add, remove, replace });
+              if (!edit.ok) {
+                json(res, 409, { ok: false, problem: edit.problem, error: edit.reason });
+                return;
+              }
+              if (edit.changed) fs.writeFileSync(absolute, edit.source);
+              json(res, 200, {
+                ok: true,
+                changed: edit.changed,
+                dropped: edit.dropped,
+                before: edit.before,
+                after: edit.after,
+                missing: edit.missing,
+                present: edit.present,
+                file: back,
+              });
               return;
             }
             if (url === "/notes/event") {
