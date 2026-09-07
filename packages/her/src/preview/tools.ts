@@ -1,5 +1,5 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { type TSchema, Type } from "typebox";
 import {
 	DESIGN_LAB_URL,
 	type DesignLabOpenDeps,
@@ -23,6 +23,25 @@ export const REQUEST_TIMEOUT_MS = 5000;
  * 30s matches Playwright's navigation budget, the longest of the three.
  */
 export const BROWSER_REQUEST_TIMEOUT_MS = 30_000;
+
+const BATCHABLE_BROWSER_TOOL_NAMES = [
+	"browser_navigate",
+	"browser_read_page",
+	"browser_act",
+	"browser_find",
+	"browser_get_text",
+	"browser_console",
+	"browser_network",
+	"browser_screenshot",
+	"browser_computer",
+	"browser_form_input",
+	"browser_eval",
+	"browser_viewport",
+	"browser_history",
+] as const;
+
+const BATCHABLE_BROWSER_TOOL_NAME_SET: ReadonlySet<string> = new Set(BATCHABLE_BROWSER_TOOL_NAMES);
+const BROWSER_BATCH_MAX_STEPS = 20;
 
 export interface PreviewToolDeps {
 	/** Override for tests; defaults to globalThis.fetch. */
@@ -86,7 +105,17 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 	// deps.browserTimeoutMs isolates the driving tier when a test needs them to differ.
 	const browserTimeoutMs = deps.browserTimeoutMs ?? deps.timeoutMs ?? BROWSER_REQUEST_TIMEOUT_MS;
 
-	pi.registerTool({
+	const batchableBrowserTools = new Map<string, ToolDefinition>();
+	function registerTool<TParams extends TSchema, TDetails = unknown, TState = unknown>(
+		tool: ToolDefinition<TParams, TDetails, TState>,
+	): void {
+		pi.registerTool(tool);
+		if (BATCHABLE_BROWSER_TOOL_NAME_SET.has(tool.name)) {
+			batchableBrowserTools.set(tool.name, tool as ToolDefinition);
+		}
+	}
+
+	registerTool({
 		name: "preview_open_review",
 		label: "Preview Open Review",
 		description:
@@ -103,7 +132,7 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 		},
 	});
 
-	pi.registerTool({
+	registerTool({
 		name: "browser_navigate",
 		label: "Browser Navigate",
 		description:
@@ -116,7 +145,7 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 		},
 	});
 
-	pi.registerTool({
+	registerTool({
 		name: "browser_read_page",
 		label: "Browser Read Page",
 		description:
@@ -143,7 +172,7 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 		},
 	});
 
-	pi.registerTool({
+	registerTool({
 		name: "browser_act",
 		label: "Browser Act",
 		description:
@@ -205,7 +234,7 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 
 	// ── new browser tools (task-E) ────────────────────────────────────────────
 
-	pi.registerTool({
+	registerTool({
 		name: "browser_find",
 		label: "Browser Find",
 		description:
@@ -242,7 +271,7 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 		},
 	});
 
-	pi.registerTool({
+	registerTool({
 		name: "browser_get_text",
 		label: "Browser Get Text",
 		description:
@@ -264,7 +293,7 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 		},
 	});
 
-	pi.registerTool({
+	registerTool({
 		name: "browser_console",
 		label: "Browser Console",
 		description:
@@ -297,7 +326,7 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 		},
 	});
 
-	pi.registerTool({
+	registerTool({
 		name: "browser_network",
 		label: "Browser Network",
 		description:
@@ -337,7 +366,7 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 		},
 	});
 
-	pi.registerTool({
+	registerTool({
 		name: "browser_screenshot",
 		label: "Browser Screenshot",
 		description:
@@ -376,7 +405,7 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 		},
 	});
 
-	pi.registerTool({
+	registerTool({
 		name: "browser_computer",
 		label: "Browser Computer",
 		description:
@@ -425,7 +454,7 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 		},
 	});
 
-	pi.registerTool({
+	registerTool({
 		name: "browser_form_input",
 		label: "Browser Form Input",
 		description:
@@ -469,7 +498,7 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 		},
 	});
 
-	pi.registerTool({
+	registerTool({
 		name: "browser_eval",
 		label: "Browser Eval",
 		description:
@@ -506,7 +535,7 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 		},
 	});
 
-	pi.registerTool({
+	registerTool({
 		name: "browser_viewport",
 		label: "Browser Viewport",
 		description:
@@ -546,7 +575,7 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 		},
 	});
 
-	pi.registerTool({
+	registerTool({
 		name: "browser_history",
 		label: "Browser History",
 		description:
@@ -581,7 +610,107 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 		},
 	});
 
-	pi.registerTool({
+	registerTool({
+		name: "browser_batch",
+		label: "Browser Batch",
+		description:
+			"Run several registered browser tools in one call, in order. Use this when the steps are " +
+			"predictable and you do not need to see an intermediate result before deciding the next " +
+			"step — for example navigate to a known URL, then read the page, then click a ref you " +
+			"already know will be there. Do NOT use this when the next step depends on what the " +
+			"previous step showed: do not guess a chain; call the tools one at a time so you can " +
+			"read the result before choosing. Actions run strictly in sequence, never in parallel " +
+			"(there is only one browser; overlapping actions would race). Stops at the first " +
+			"failure: the return lists completed steps, the failed step with its original error, " +
+			"and the names of steps that were not run. Nested browser_batch is rejected before any " +
+			"step runs. Unknown tool names are rejected before any step runs (the unknown name is " +
+			"named in the error). actions must be non-empty and at most 20 steps. Each action's " +
+			"input is passed through to that tool unchanged — this tool does not pick or rewrite " +
+			"parameters. Allowed names: browser_navigate, browser_read_page, browser_act, " +
+			"browser_find, browser_get_text, browser_console, browser_network, browser_screenshot, " +
+			"browser_computer, browser_form_input, browser_eval, browser_viewport, browser_history. " +
+			"If a step returns control-owner-denied, that is the control-owner gate working, not a " +
+			"fault: Fei currently holds the wheel (or the browser is paused). Stop and wait for him " +
+			"to hand control back — do not retry the batch.",
+		parameters: Type.Object({
+			actions: Type.Array(
+				Type.Object({
+					name: Type.String(),
+					input: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+				}),
+			),
+		}),
+		async execute(_toolCallId, params, signal) {
+			const actions = params.actions;
+			if (actions.length === 0) {
+				return textResult("browser_batch rejected: actions is empty. Pass at least one step.");
+			}
+			if (actions.length > BROWSER_BATCH_MAX_STEPS) {
+				return textResult(
+					`browser_batch rejected: ${actions.length} steps exceeds the ${BROWSER_BATCH_MAX_STEPS}-step limit.`,
+				);
+			}
+			if (actions.some((action) => action.name === "browser_batch")) {
+				return textResult(
+					"browser_batch rejected: nested browser_batch is not allowed. Flatten the steps into a single batch.",
+				);
+			}
+			const unknownNames = [
+				...new Set(
+					actions.map((action) => action.name).filter((name) => !BATCHABLE_BROWSER_TOOL_NAME_SET.has(name)),
+				),
+			];
+			if (unknownNames.length > 0) {
+				return textResult(
+					`browser_batch rejected: unknown tool name${unknownNames.length === 1 ? "" : "s"}: ${unknownNames.join(", ")}. ` +
+						`Allowed: ${BATCHABLE_BROWSER_TOOL_NAMES.join(", ")}.`,
+				);
+			}
+
+			const total = actions.length;
+			const lines: string[] = [];
+			for (let i = 0; i < actions.length; i++) {
+				const action = actions[i];
+				const tool = batchableBrowserTools.get(action.name);
+				if (!tool) {
+					return textResult(`browser_batch rejected: unknown tool name: ${action.name}.`);
+				}
+				const result = (await tool.execute(
+					_toolCallId,
+					(action.input ?? {}) as never,
+					signal,
+					undefined,
+					undefined as never,
+				)) as {
+					content: Array<{ type?: string; text?: string }>;
+					details?: { status?: unknown };
+				};
+				const stepText = result.content[0]?.text ?? "";
+				if (batchStepSucceeded(result.details)) {
+					lines.push(`step ${i + 1}/${total}  ${action.name}   ok`);
+					continue;
+				}
+				const reason = batchFailureReason(stepText);
+				lines.push(`step ${i + 1}/${total}  ${action.name}   FAILED — ${reason}`);
+				if (stepText.trim()) lines.push(stepText);
+				const leftover = actions.slice(i + 1).map((next) => next.name);
+				if (isControlOwnerDeniedText(stepText)) {
+					const leftoverNote = leftover.length > 0 ? ` Remaining steps were not run: ${leftover.join(", ")}.` : "";
+					lines.push(
+						`          (Fei took the wheel; this is the control-owner gate working, not a fault. ` +
+							`Stop and wait for him to hand control back — do not retry the batch.${leftoverNote})`,
+					);
+				} else if (leftover.length > 0) {
+					const verb = leftover.length === 1 ? "was" : "were";
+					lines.push(`          (${leftover.join(", ")} ${verb} not run)`);
+				}
+				break;
+			}
+			return textResult(lines.join("\n"));
+		},
+	});
+
+	registerTool({
 		name: "artifact_publish",
 		label: "Artifact Publish",
 		description:
@@ -601,7 +730,7 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 		},
 	});
 
-	pi.registerTool({
+	registerTool({
 		name: "design_lab_open",
 		label: "Design Lab Open",
 		description:
@@ -645,6 +774,20 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 			};
 		},
 	});
+}
+
+function batchStepSucceeded(details: { status?: unknown } | undefined): boolean {
+	return typeof details?.status === "number" && details.status >= 200 && details.status < 300;
+}
+
+function isControlOwnerDeniedText(text: string): boolean {
+	return /control-owner-denied|control is with Fei|gate is doing its job/i.test(text);
+}
+
+function batchFailureReason(text: string): string {
+	if (isControlOwnerDeniedText(text)) return "control-owner-denied";
+	const first = text.trim().split(/\r?\n/, 1)[0] ?? text;
+	return first;
 }
 
 function uiBase(): string {

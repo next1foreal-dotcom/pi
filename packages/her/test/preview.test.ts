@@ -914,3 +914,119 @@ test("browser_history is registered as a non-destructive governed tool", () => {
 	assert.ok(tools.has("browser_history"));
 	assert.equal(governedTools.browser_history?.destructive, false);
 });
+
+// ── browser_batch ────────────────────────────────────────────────────────────
+
+function okJson(body: Record<string, unknown> = { ok: true }) {
+	return new Response(JSON.stringify(body), { status: 200 });
+}
+
+test("browser_batch runs three successful steps in order", async () => {
+	const fetchImpl = fakeFetch((url) => {
+		if (url.endsWith("/api/browser/agent-navigate")) return okJson({ ok: true });
+		if (url.endsWith("/api/browser/agent-read")) return readResponse();
+		if (url.endsWith("/api/browser/agent-act")) return okJson({ ok: true, ref: "s7e5", action: "click" });
+		return new Response(JSON.stringify({ ok: false, error: "unexpected path" }), { status: 500 });
+	});
+	const tools = previewHarness({ fetchImpl });
+
+	const text = await run(tools.get("browser_batch"), {
+		actions: [
+			{ name: "browser_navigate", input: { url: "https://example.com" } },
+			{ name: "browser_read_page", input: {} },
+			{ name: "browser_act", input: { ref: "s7e5", action: "click" } },
+		],
+	});
+
+	assert.equal(fetchImpl.calls.length, 3);
+	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:3000/api/browser/agent-navigate");
+	assert.equal(fetchImpl.calls[1].url, "http://127.0.0.1:3000/api/browser/agent-read");
+	assert.equal(fetchImpl.calls[2].url, "http://127.0.0.1:3000/api/browser/agent-act");
+	assert.match(text, /step 1\/3\s+browser_navigate\s+ok/);
+	assert.match(text, /step 2\/3\s+browser_read_page\s+ok/);
+	assert.match(text, /step 3\/3\s+browser_act\s+ok/);
+});
+
+test("browser_batch stops after the second step fails and never calls the third", async () => {
+	const fetchImpl = fakeFetch((url) => {
+		if (url.endsWith("/api/browser/agent-navigate")) return okJson({ ok: true });
+		if (url.endsWith("/api/browser/agent-read")) {
+			return new Response(JSON.stringify({ ok: false, error: "browser not started" }), { status: 500 });
+		}
+		if (url.endsWith("/api/browser/agent-act")) return okJson({ ok: true, ref: "s7e5", action: "click" });
+		return new Response(JSON.stringify({ ok: false, error: "unexpected path" }), { status: 500 });
+	});
+	const tools = previewHarness({ fetchImpl });
+
+	const text = await run(tools.get("browser_batch"), {
+		actions: [
+			{ name: "browser_navigate", input: { url: "https://example.com" } },
+			{ name: "browser_read_page" },
+			{ name: "browser_act", input: { ref: "s7e5", action: "click" } },
+		],
+	});
+
+	// Stop-on-first-error is the call count, not just an error string in the return.
+	assert.equal(fetchImpl.calls.length, 2);
+	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:3000/api/browser/agent-navigate");
+	assert.equal(fetchImpl.calls[1].url, "http://127.0.0.1:3000/api/browser/agent-read");
+	assert.match(text, /FAILED/);
+	assert.match(text, /browser not started/);
+	assert.match(text, /browser_act/);
+});
+
+test("browser_batch rejects nested browser_batch and does not run any step", async () => {
+	const fetchImpl = fakeFetch(() => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+	const tools = previewHarness({ fetchImpl });
+
+	const text = await run(tools.get("browser_batch"), {
+		actions: [
+			{ name: "browser_navigate", input: { url: "https://example.com" } },
+			{ name: "browser_batch", input: { actions: [] } },
+		],
+	});
+
+	assert.equal(fetchImpl.calls.length, 0);
+	assert.match(text, /nest/i);
+});
+
+test("browser_batch rejects an unknown tool name before running any step", async () => {
+	const fetchImpl = fakeFetch(() => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+	const tools = previewHarness({ fetchImpl });
+
+	const text = await run(tools.get("browser_batch"), {
+		actions: [{ name: "browser_navigate", input: { url: "https://example.com" } }, { name: "browser_explode" }],
+	});
+
+	assert.equal(fetchImpl.calls.length, 0);
+	assert.match(text, /browser_explode/);
+	assert.match(text, /unknown/i);
+});
+
+test("browser_batch rejects empty actions", async () => {
+	const fetchImpl = fakeFetch(() => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+	const tools = previewHarness({ fetchImpl });
+
+	const text = await run(tools.get("browser_batch"), { actions: [] });
+
+	assert.equal(fetchImpl.calls.length, 0);
+	assert.match(text, /empty/i);
+});
+
+test("browser_batch rejects more than 20 steps", async () => {
+	const fetchImpl = fakeFetch(() => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+	const tools = previewHarness({ fetchImpl });
+
+	const actions = Array.from({ length: 21 }, () => ({ name: "browser_read_page" }));
+	const text = await run(tools.get("browser_batch"), { actions });
+
+	assert.equal(fetchImpl.calls.length, 0);
+	assert.match(text, /20/);
+});
+
+test("browser_batch is registered as a non-destructive governed tool", () => {
+	const tools = previewHarness({ fetchImpl: fakeFetch(() => new Response("{}", { status: 200 })) });
+
+	assert.ok(tools.has("browser_batch"));
+	assert.equal(governedTools.browser_batch?.destructive, false);
+});

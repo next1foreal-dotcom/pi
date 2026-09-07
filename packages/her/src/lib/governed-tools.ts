@@ -139,6 +139,7 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	browser_eval: { destructive: false },
 	browser_viewport: { destructive: false },
 	browser_history: { destructive: false },
+	browser_batch: { destructive: false },
 	artifact_publish: { destructive: true },
 	her_show_widget: { destructive: false },
 	her_ui_act: { destructive: false },
