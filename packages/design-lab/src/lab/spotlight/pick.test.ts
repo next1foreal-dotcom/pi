@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { transformWithOxc } from "vite";
 import {
+  afterAll,
   afterEach,
   beforeAll,
   beforeEach,
@@ -15,7 +16,11 @@ import {
 } from "vitest";
 import type { Camera } from "../core/types";
 import { primeSourceMaps, resetSourceMaps } from "../sourcemap/cache";
+import { installElementsFromPointShim } from "./elements-from-point-shim";
 import { createPickTool, pickableFrom } from "./pick";
+
+const restoreElementsFromPoint = installElementsFromPointShim();
+afterAll(restoreElementsFromPoint);
 
 /**
  * The stack fed to pick here is the one a BROWSER produces: coordinates in the
@@ -73,6 +78,36 @@ beforeEach(() => {
 });
 
 const CAM: Camera = { x: 10, y: 20, z: 0.5 };
+
+function stubRect(
+  el: Element,
+  box: { top: number; left: number; width: number; height: number },
+) {
+  Object.defineProperty(el, "getBoundingClientRect", {
+    configurable: true,
+    value: () => ({
+      x: box.left,
+      y: box.top,
+      left: box.left,
+      top: box.top,
+      right: box.left + box.width,
+      bottom: box.top + box.height,
+      width: box.width,
+      height: box.height,
+      toJSON() {},
+    }),
+  });
+}
+
+function stackAt(component: string): string {
+  return SCREEN_STACK.replace("PlaygroundScreen", component);
+}
+
+function attachFiber(el: Element, component: string): void {
+  Object.assign(el, {
+    __reactFiber$test: { _debugStack: stackAt(component), return: null },
+  });
+}
 
 function screenTree(): {
   root: HTMLDivElement;
@@ -396,26 +431,6 @@ describe("pick chip placement", () => {
     document.body.innerHTML = "";
   });
 
-  function stubRect(
-    el: Element,
-    box: { top: number; left: number; width: number; height: number },
-  ) {
-    Object.defineProperty(el, "getBoundingClientRect", {
-      configurable: true,
-      value: () => ({
-        x: box.left,
-        y: box.top,
-        left: box.left,
-        top: box.top,
-        right: box.left + box.width,
-        bottom: box.top + box.height,
-        width: box.width,
-        height: box.height,
-        toJSON() {},
-      }),
-    });
-  }
-
   function mount() {
     tree = screenTree();
     host = document.createElement("div");
@@ -497,6 +512,138 @@ describe("pick chip placement", () => {
     const box = selectTarget(pick);
     expect(box?.hasAttribute("data-tb-left")).toBe(true);
     expect(box?.hasAttribute("data-tb-right")).toBe(false);
+    pick.destroy();
+  });
+});
+
+describe("elementsFromPoint shim", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("returns containing elements innermost-first and omits misses", () => {
+    const outer = document.createElement("div");
+    const inner = document.createElement("span");
+    const miss = document.createElement("div");
+    stubRect(outer, { left: 0, top: 0, width: 200, height: 200 });
+    stubRect(inner, { left: 40, top: 40, width: 40, height: 40 });
+    stubRect(miss, { left: 300, top: 300, width: 10, height: 10 });
+    outer.appendChild(inner);
+    document.body.append(outer, miss);
+
+    const hits = document.elementsFromPoint(50, 50);
+    expect(hits[0]).toBe(inner);
+    expect(hits).toContain(outer);
+    expect(hits).not.toContain(miss);
+  });
+
+  it("puts the later sibling first when both rects contain the point", () => {
+    const earlier = document.createElement("div");
+    const later = document.createElement("div");
+    stubRect(earlier, { left: 0, top: 0, width: 100, height: 100 });
+    stubRect(later, { left: 50, top: 50, width: 100, height: 100 });
+    document.body.append(earlier, later);
+
+    const hits = document.elementsFromPoint(60, 60);
+    expect(hits[0]).toBe(later);
+    expect(hits).toContain(earlier);
+  });
+});
+
+/**
+ * `containerOf` is not exported. The note's `source` is what it chose: the
+ * innermost pickable whose rect holds the whole box. These would stay green
+ * if the walker returned the element under the centre and skipped the
+ * contain check — so they are the proof the check runs.
+ */
+describe("the drawn region's host", () => {
+  const spawned: {
+    source?: { file: string; line: number; col: number; component: string | null };
+  }[] = [];
+  let host: HTMLDivElement;
+  let tree: ReturnType<typeof screenTree>;
+  let wrap: HTMLDivElement;
+  let camera: Camera;
+
+  afterEach(() => {
+    spawned.length = 0;
+    document.body.innerHTML = "";
+  });
+
+  function mount() {
+    tree = screenTree();
+    const scroll = tree.root.querySelector("[data-screen-scroll]");
+    if (!scroll) throw new Error("no scroll");
+    wrap = document.createElement("div");
+    attachFiber(wrap, "OuterWrap");
+    stubRect(wrap, { left: 40, top: 40, width: 400, height: 400 });
+    scroll.insertBefore(wrap, tree.target);
+    wrap.appendChild(tree.target);
+    host = document.createElement("div");
+    tree.root.appendChild(host);
+    camera = { ...CAM };
+    return createPickTool({
+      host,
+      getRoot: () => tree.root,
+      getOrigin: () => ({ x: 0, y: 0 }),
+      getCamera: () => camera,
+      spawnNote: (init) => {
+        spawned.push({ source: init.source ?? undefined });
+      },
+    });
+  }
+
+  const press = (x: number, y: number, on: Element) =>
+    on.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        bubbles: true,
+        cancelable: true,
+        clientX: x,
+        clientY: y,
+      }),
+    );
+  const move = (x: number, y: number, on: Element) =>
+    on.dispatchEvent(
+      new PointerEvent("pointermove", { bubbles: true, clientX: x, clientY: y }),
+    );
+  const release = () =>
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+
+  async function speak() {
+    await primeSourceMaps([SCREEN_URL]);
+    (host.querySelector("[data-pick-speak]") as HTMLButtonElement).click();
+  }
+
+  it("walks out when the box is bigger than the innermost element at its centre", async () => {
+    const pick = mount();
+    stubRect(tree.target, { left: 160, top: 130, width: 40, height: 30 });
+    pick.enter();
+    // Centre 180,145 sits in the button (160-200 x 130-160); the box does not.
+    press(150, 100, tree.target);
+    move(210, 190, tree.target);
+    release();
+    await speak();
+    expect(spawned[0]?.source?.component).toBe("OuterWrap");
+    pick.destroy();
+  });
+
+  it("names the parent when a box straddles two siblings, not either sibling", async () => {
+    const pick = mount();
+    const left = document.createElement("div");
+    const right = document.createElement("div");
+    attachFiber(left, "LeftPane");
+    attachFiber(right, "RightPane");
+    stubRect(left, { left: 80, top: 80, width: 140, height: 80 });
+    stubRect(right, { left: 200, top: 80, width: 140, height: 80 });
+    wrap.append(left, right);
+    pick.enter();
+    // Centre 205,120 is inside both siblings (right paints on top). Neither
+    // sibling's rect holds 90,90-320,150; wrap's does.
+    press(90, 90, left);
+    move(320, 150, left);
+    release();
+    await speak();
+    expect(spawned[0]?.source?.component).toBe("OuterWrap");
     pick.destroy();
   });
 });
