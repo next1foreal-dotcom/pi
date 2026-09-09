@@ -55,6 +55,45 @@ export type DispatchContext = {
 const NUDGE_SMALL = 1;
 const NUDGE_BIG = 10;
 
+/** What a US board prints above each digit, in digit order. */
+const SHIFTED_DIGITS = ")!@#$%^&*(";
+
+/**
+ * The physical key the event came from, or the best guess when it carries no
+ * `code`.
+ *
+ * Matching on `code` is right for a real keyboard: it is the key's *position*,
+ * so Shift+F stays under the same finger on AZERTY, where `key` would have
+ * moved. Every real keyboard sends it, and when it is there it wins outright —
+ * the guess below never overrides it.
+ *
+ * Nothing that drives this lab without hands sends it, though. CDP's
+ * `Input.dispatchKeyEvent` fills in only what the caller passes, and both
+ * drivers we have — her browser tool, and the preview harness used to verify a
+ * change — pass `key` alone. Measured 2026-09-09 in the pane: `Ctrl+Z` arrived
+ * as `{ key: "z", code: "", keyCode: 0 }`, the `code === "KeyZ"` arm never ran,
+ * and the move sat on the undo stack un-popped. That reads exactly like an undo
+ * that fired and failed, and it was reported as one. Escape, Tab and Enter kept
+ * working because they match on `key`, so only half the keyboard looked broken
+ * — which is what made it look like a bug in undo rather than in the keyboard.
+ *
+ * The shifted-digit row assumes a US layout. That is a guess about a synthetic
+ * event which had no layout to begin with, not a guess about a person.
+ */
+export function physicalCode(key: string, code: string): string {
+  if (code) return code;
+  if (key.length !== 1) return "";
+  if (key === " ") return "Space";
+  const upper = key.toUpperCase();
+  if (upper >= "A" && upper <= "Z") return `Key${upper}`;
+  if (key >= "0" && key <= "9") return `Digit${key}`;
+  const shifted = SHIFTED_DIGITS.indexOf(key);
+  if (shifted >= 0) return `Digit${shifted}`;
+  if (key === "=" || key === "+") return "Equal";
+  if (key === "-" || key === "_") return "Minus";
+  return "";
+}
+
 // ───────────────────────────── dispatch ──────────────────────────────
 
 /**
@@ -66,7 +105,8 @@ export function dispatchLabKey(
   input: KeyInput,
   ctx: DispatchContext,
 ): KeyAction | null {
-  const { key, code, shiftKey, ctrlKey, metaKey, altKey } = input;
+  const { key, shiftKey, ctrlKey, metaKey, altKey } = input;
+  const code = physicalCode(key, input.code);
   const meta = metaKey || ctrlKey;
   const explore = ctx.mode === "explore";
 

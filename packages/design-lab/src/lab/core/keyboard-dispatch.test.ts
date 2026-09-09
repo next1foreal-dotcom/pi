@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { dispatchLabKey, type KeyInput, type DispatchContext } from "./keyboard-dispatch";
+import {
+  dispatchLabKey,
+  physicalCode,
+  type KeyInput,
+  type DispatchContext,
+} from "./keyboard-dispatch";
 
 // ─── helpers ──────────────────────────────────────────────────────────
 
@@ -545,5 +550,111 @@ describe("typing target", () => {
         isTypingTarget: true,
       }),
     ).toBeNull();
+  });
+});
+
+// ─── events that arrive without a `code` ──────────────────────────────
+//
+// Matching on `code` is right for a real keyboard: it is the key's position,
+// so Shift+F stays under the same finger on AZERTY. But nothing that drives
+// this lab without hands sends it. CDP's Input.dispatchKeyEvent fills in only
+// what the caller passes, and both drivers we have -- her browser tool and the
+// preview harness used to verify a change -- pass `key` alone.
+//
+// Measured 2026-09-09 in the pane: Ctrl+Z arrived as
+// { key: "z", code: "", keyCode: 0 }. The `code === "KeyZ"` arm never ran, the
+// move stayed on the undo stack un-popped, and that reads exactly like an undo
+// that fired and failed -- which is what it was reported as. Escape, Tab and
+// Enter kept working because they match on `key`, so only half the keyboard
+// looked broken.
+
+describe("a key event that carries no `code`", () => {
+  it("still undoes", () => {
+    expect(dispatchLabKey(key({ key: "z", ctrlKey: true }), EXPLORE)).toEqual({
+      action: "undo",
+    });
+  });
+
+  it("still redoes", () => {
+    expect(
+      dispatchLabKey(key({ key: "z", ctrlKey: true, shiftKey: true }), EXPLORE),
+    ).toEqual({ action: "redo" });
+  });
+
+  it("still toggles fill", () => {
+    expect(dispatchLabKey(key({ key: "f", shiftKey: true }), EXPLORE)).toEqual({
+      action: "fill-toggle",
+    });
+  });
+
+  it("still duplicates the selected screen", () => {
+    expect(
+      dispatchLabKey(key({ key: "d", metaKey: true }), EXPLORE_SELECTED),
+    ).toEqual({ action: "duplicate" });
+  });
+
+  // Shift+digit reaches us as either half of the pair, depending on whether the
+  // caller sent the unshifted digit or what a US board prints above it.
+  it("still fits all, whether the driver sent \"1\" or \"!\"", () => {
+    for (const k of ["1", "!"]) {
+      expect(dispatchLabKey(key({ key: k, shiftKey: true }), EXPLORE)).toEqual({
+        action: "fit-all",
+      });
+    }
+  });
+
+  it("still zooms to 100 %, whether the driver sent \"0\" or \")\"", () => {
+    for (const k of ["0", ")"]) {
+      expect(dispatchLabKey(key({ key: k, shiftKey: true }), EXPLORE)).toEqual({
+        action: "zoom-100",
+      });
+    }
+  });
+
+  // ── and the other side ──────────────────────────────────────────────
+
+  it("leaves a real event's `code` in charge of what the key is", () => {
+    // The guess must never outrank a `code` that is actually there: on a board
+    // where the key printed "z" sits where QWERTY keeps "y", `code` is the
+    // truth and this is a redo, not an undo.
+    expect(
+      dispatchLabKey(key({ key: "z", code: "KeyY", ctrlKey: true }), EXPLORE),
+    ).toEqual({ action: "redo" });
+  });
+
+  it("invents nothing for a key that maps to no shortcut", () => {
+    expect(dispatchLabKey(key({ key: "π", metaKey: true }), EXPLORE)).toBeNull();
+    expect(dispatchLabKey(key({ key: "ß", shiftKey: true }), EXPLORE)).toBeNull();
+  });
+
+  it("still hands the key to a field he is typing in", () => {
+    expect(dispatchLabKey(key({ key: "z", ctrlKey: true }), ON_INPUT)).toBeNull();
+  });
+});
+
+// The other keydown readers in the lab -- the point tool's I, the coords
+// plugin's P, space-drag panning -- go through this same function rather than
+// reading `e.code` themselves, so it is tested on its own too.
+describe("physicalCode", () => {
+  it("hands back a real event's code untouched", () => {
+    expect(physicalCode("z", "KeyY")).toBe("KeyY");
+    expect(physicalCode("!", "Digit1")).toBe("Digit1");
+    expect(physicalCode(" ", "Space")).toBe("Space");
+  });
+
+  it("names the key from `key` when there is no code", () => {
+    expect(physicalCode("i", "")).toBe("KeyI");
+    expect(physicalCode("P", "")).toBe("KeyP");
+    expect(physicalCode(" ", "")).toBe("Space");
+    expect(physicalCode("2", "")).toBe("Digit2");
+    expect(physicalCode("@", "")).toBe("Digit2");
+    expect(physicalCode("=", "")).toBe("Equal");
+    expect(physicalCode("-", "")).toBe("Minus");
+  });
+
+  it("says nothing rather than guessing wrong", () => {
+    expect(physicalCode("Escape", "")).toBe("");
+    expect(physicalCode("é", "")).toBe("");
+    expect(physicalCode("", "")).toBe("");
   });
 });

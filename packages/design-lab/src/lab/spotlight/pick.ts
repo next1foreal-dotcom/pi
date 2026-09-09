@@ -1,5 +1,6 @@
 import { toolbarPlacement } from "../core/page-notes";
 import { isTypingTarget, pageToScreen } from "../core/math";
+import { physicalCode } from "../core/keyboard-dispatch";
 import type { Camera, Point, Rect } from "../core/types";
 import { clientRectToCanvas } from "./geometry";
 import styles from "./overlay.module.css";
@@ -371,7 +372,11 @@ export function createPickTool(opts: {
       // "I" for inspect. NOT "P": the coords plugin already owns that, and
       // taking a working shortcut away from an existing tool to feed a new
       // one is a regression, not a trade.
-      if (e.code === "KeyI") {
+      //
+      // Through `physicalCode` because a synthesised keydown carries no `code`
+      // — see its comment. Without it this tool cannot be opened by anything
+      // that drives the lab without hands, which includes her.
+      if (physicalCode(e.key, e.code) === "KeyI") {
         if (isTypingTarget(e.target)) return false;
         e.preventDefault();
         toggle();

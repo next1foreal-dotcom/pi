@@ -1,4 +1,5 @@
 import { clamp, nextZoomStep, panBy, zoomAt } from "./math";
+import { physicalCode } from "./keyboard-dispatch";
 import { getCamera, setCameraValue } from "./camera";
 import type { Point } from "./types";
 
@@ -144,15 +145,17 @@ export function bindCanvasInput(
     root.removeAttribute("data-panning");
   };
 
+  // Both through `physicalCode`: a synthesised keydown carries no `code`, and
+  // space-drag panning is the one gesture a hands-free driver reaches for most.
   const onKeyDown = (e: KeyboardEvent) => {
-    if (e.code === "Space" && !e.repeat) {
+    if (physicalCode(e.key, e.code) === "Space" && !e.repeat) {
       space = true;
       root.setAttribute("data-space", "");
     }
   };
 
   const onKeyUp = (e: KeyboardEvent) => {
-    if (e.code === "Space") {
+    if (physicalCode(e.key, e.code) === "Space") {
       space = false;
       root.removeAttribute("data-space");
     }

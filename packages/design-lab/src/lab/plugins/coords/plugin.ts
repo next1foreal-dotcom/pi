@@ -1,4 +1,5 @@
 import type { LabPlugin } from "../../plugin-api";
+import { physicalCode } from "../../core/keyboard-dispatch";
 
 /**
  * Live proof that a plugin is just a folder.
@@ -45,7 +46,9 @@ export const plugin: LabPlugin = {
 
     return {
       handleKey(e) {
-        if (e.code !== "KeyP") return false;
+        // Through `physicalCode`: a synthesised keydown carries no `code`,
+        // so a bare `e.code` test is dead to every hands-free driver.
+        if (physicalCode(e.key, e.code) !== "KeyP") return false;
         if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return false;
         on = !on;
         chip.style.display = on ? "block" : "none";
