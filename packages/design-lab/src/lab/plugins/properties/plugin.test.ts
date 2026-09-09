@@ -1081,3 +1081,87 @@ describe("a knob turn whose answer lands after the panel is gone", () => {
 		expect(peekUndo()).toBeNull();
 	});
 });
+
+/**
+ * Pointing and speaking used to be two tools. Shift-click opened this panel;
+ * saying anything about what it showed meant leaving it, pressing `I`, finding
+ * the same element again and clicking 说这里 — two gestures for one intention,
+ * and the second one undiscoverable (2026-09-09: he had been using the lab for
+ * days without knowing the point tool was there).
+ */
+describe("saying something about what the panel is showing", () => {
+	function panelWith(sel: unknown, say?: (text: string, selection: unknown) => void) {
+		const host = document.createElement("div");
+		document.body.append(host);
+		(window as unknown as { lab: unknown }).lab = {
+			plugin: (id: string) =>
+				id === "inspect" ? { selection: () => sel, selectAt: () => null } : undefined,
+		};
+		const panel = new Properties(host, say ? { say } : {});
+		panel.sync();
+		return {
+			host,
+			panel,
+			box: host.querySelector("[data-properties-say]") as HTMLInputElement,
+			note: () => (host.querySelector(".pp-note") as HTMLElement).textContent ?? "",
+		};
+	}
+
+	function enter(box: HTMLInputElement): void {
+		box.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+	}
+
+	afterEach(() => {
+		(window as unknown as { lab: unknown }).lab = undefined;
+		document.body.innerHTML = "";
+	});
+
+	it("hands over what he typed and which element he was pointing at", () => {
+		const said: Array<{ text: string; selection: unknown }> = [];
+		const { box, note } = panelWith(ok, (text, selection) => said.push({ text, selection }));
+
+		box.value = "  换个字体  ";
+		enter(box);
+
+		expect(said).toEqual([{ text: "换个字体", selection: ok }]);
+		// Cleared, or the next thing he types is appended to the last thing he said.
+		expect(box.value).toBe("");
+		expect(note()).toMatch(/说了/);
+	});
+
+	it("says nothing when he typed nothing", () => {
+		const said: string[] = [];
+		const { box } = panelWith(ok, (text) => said.push(text));
+
+		for (const value of ["", "   ", "\t"]) {
+			box.value = value;
+			enter(box);
+		}
+
+		// An empty note is a thing she then has to answer about; she already has
+		// one of those on the canvas and had to refuse it.
+		expect(said).toEqual([]);
+		// And the other side: the same box does speak when there are words in it.
+		box.value = "这里太挤";
+		enter(box);
+		expect(said).toEqual(["这里太挤"]);
+	});
+
+	it("offers no outlet when there is none", () => {
+		// No `say` wired (a test, or a lab built without notes): the line is not
+		// shown at all, rather than shown and silently doing nothing.
+		const { box } = panelWith(ok);
+		expect(box.hidden).toBe(true);
+
+		const wired = panelWith(ok, () => {});
+		expect(wired.box.hidden).toBe(false);
+	});
+
+	it("does not speak about a selection it does not have", () => {
+		const said: string[] = [];
+		const { box } = panelWith(null, (text) => said.push(text));
+		box.value = "这里";
+		enter(box);
+		expect(said).toEqual([]);
+	});
+});

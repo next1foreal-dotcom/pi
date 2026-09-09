@@ -250,6 +250,10 @@ const CSS = `
 .pp-add{all:unset;box-sizing:border-box;width:100%;padding:4px 6px;border-radius:4px;
  background:rgba(255,255,255,.07);font:11px/1.3 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 .pp-add::placeholder{opacity:.4}
+.pp-say{all:unset;box-sizing:border-box;width:100%;padding:5px 6px;border-radius:4px;
+ background:rgba(255,255,255,.07);font:11px/1.35 ui-sans-serif,system-ui,-apple-system,sans-serif}
+.pp-say::placeholder{opacity:.4}
+.pp-say[hidden]{display:none}
 .pp-note{font:11px/1.4 ui-sans-serif,system-ui;opacity:.66}
 .pp-note[data-bad]{opacity:1;color:#f39a5e}
 .pp-empty{opacity:.5;font-style:italic}
@@ -313,6 +317,19 @@ export type PropertiesOptions = {
 	deps?: RefindDeps;
 	/** Injected by tests; the live panel talks to the dev server. */
 	knobs?: Partial<KnobsDeps>;
+	/**
+	 * Say something about the selected element, from the panel that is already
+	 * describing it.
+	 *
+	 * Pointing and speaking were two tools: shift-click opened this panel, and
+	 * saying anything about what it showed meant leaving it, pressing `I`,
+	 * finding the same element again and clicking 说这里. Two gestures for one
+	 * intention, and the second one is not discoverable — 2026-09-09 he had been
+	 * using this lab for days without knowing the point tool existed.
+	 *
+	 * Injected so the panel does not have to know how a note is made.
+	 */
+	say?: (text: string, selection: Selection) => void;
 };
 
 const EMPTY_INDEX: ComponentIndex = { screens: [], components: [], problems: [] };
@@ -364,6 +381,8 @@ export class Properties {
 	private readonly panel: HTMLDivElement;
 	private readonly tagEl: HTMLDivElement;
 	private readonly whereEl: HTMLDivElement;
+	private readonly say: HTMLInputElement;
+	private readonly sayOut: PropertiesOptions["say"];
 	private readonly chips: HTMLDivElement;
 	private readonly add: HTMLInputElement;
 	private readonly note: HTMLDivElement;
@@ -391,6 +410,7 @@ export class Properties {
 	constructor(host: HTMLElement, opts: PropertiesOptions = {}) {
 		this.limit = opts.refind ?? REFIND_LIMIT;
 		this.deps = opts.deps ?? liveRefindDeps;
+		this.sayOut = opts.say;
 		injectStyle();
 		this.panel = document.createElement("div");
 		this.panel.className = "pp-panel";
@@ -410,10 +430,15 @@ export class Properties {
 		this.add.className = "pp-add";
 		this.add.placeholder = "加一个类,回车";
 		this.add.setAttribute("data-properties-add", "");
+		this.say = document.createElement("input");
+		this.say.className = "pp-say";
+		this.say.placeholder = "跟她说这里,回车";
+		this.say.setAttribute("data-properties-say", "");
+		this.say.hidden = opts.say === undefined;
 		this.note = document.createElement("div");
 		this.note.className = "pp-note";
 
-		this.panel.append(this.tagEl, this.whereEl, classesLabel, this.chips, this.add, this.note);
+		this.panel.append(this.tagEl, this.whereEl, classesLabel, this.chips, this.add, this.say, this.note);
 		this.knobs = new Knobs(this.panel, {
 			loadIndex: fetchIndex,
 			componentAt,
@@ -435,6 +460,19 @@ export class Properties {
 			e.preventDefault();
 			const value = this.add.value.trim();
 			if (value) void this.addClass(value);
+		});
+
+		this.say.addEventListener("keydown", (e) => {
+			if (e.key !== "Enter") return;
+			e.preventDefault();
+			const text = this.say.value.trim();
+			// Nothing typed is not a message. An empty note is a thing she then has
+			// to answer about, and she already has to refuse one of those.
+			if (!text || !this.shown || !this.sayOut) return;
+			this.sayOut(text, this.shown);
+			this.say.value = "";
+			this.note.textContent = "说了。她会看到这一行的位置。";
+			this.note.removeAttribute("data-bad");
 		});
 		// A click in the panel is not a click on the canvas: without this the
 		// lab clears the selection the panel is describing, the instant he
@@ -719,7 +757,55 @@ export class Properties {
 	}
 }
 
-export const plugin: LabPlugin = {
+export /** Page-space gap between a screen's right edge and a note about it. */
+const SAY_GAP = 24;
+
+type NotesApi = {
+	spawn(init: {
+		x: number;
+		y: number;
+		text?: string;
+		source?: { file: string; line: number; col: number; component: string | null };
+	}): void;
+};
+
+/**
+ * The panel's outlet: one line he typed, left on the canvas as a note that
+ * carries where he was pointing.
+ *
+ * It goes through the notes plugin rather than writing the feed itself. The feed
+ * is fed by the notes layer, and a second writer would be a second thing to keep
+ * in step with it — the id, the author stamp, the git oid, the "still typing"
+ * skip. This is the same door 说这里 walks through, opened from the panel that
+ * is already describing the element instead of from a tool he has to know about.
+ *
+ * `source` is the point of the whole thing: file, line and column, so she reads
+ * "he means this tag" rather than "he means somewhere on this screen".
+ */
+function speakFromPanel(ctx: LabPluginContext, text: string, sel: Selection): void {
+	const notes = window.lab?.plugin("notes") as NotesApi | undefined;
+	if (!notes) return;
+	const frame = sel.screenId ? ctx.screenLayout?.(sel.screenId) : undefined;
+	// Beside the frame, not on it: a note dropped over the design is a note he
+	// then has to move before he can see what he was talking about.
+	const at = frame ? { x: frame.x + frame.width + SAY_GAP, y: frame.y } : ctx.viewportCenterPage();
+	notes.spawn({
+		...at,
+		text,
+		...(sel.file && sel.line !== null
+			? {
+					source: {
+						file: sel.file,
+						line: sel.line,
+						col: sel.column ?? 0,
+						component: sel.component,
+					},
+				}
+			: {}),
+	});
+}
+
+const plugin: LabPlugin = {
 	id: "properties",
 	order: 65,
 	// No hostSelector on purpose. `[data-lab-chrome]` is display:none in the
@@ -751,7 +837,9 @@ export const plugin: LabPlugin = {
 	],
 	mount(ctx: LabPluginContext): LabPluginHandle | null {
 		if (typeof document === "undefined") return null;
-		const panel = new Properties(ctx.host);
+		const panel = new Properties(ctx.host, {
+			say: (text, sel) => speakFromPanel(ctx, text, sel),
+		});
 		// A selection only changes from a click or an api call. The first is
 		// caught here, the second by refresh(); polling every frame to catch a
 		// call nobody made would be paying rent on the rare case.
