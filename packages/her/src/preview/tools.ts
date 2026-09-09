@@ -7,7 +7,7 @@ import {
 	resolveStudioUiBase,
 } from "./design-lab-open.ts";
 
-const DEFAULT_UI_BASE_URL = "http://127.0.0.1:3000";
+const DEFAULT_UI_BASE_URL = "http://localhost:3000";
 export const REQUEST_TIMEOUT_MS = 5000;
 /**
  * Driving the live browser is slower than the panel endpoints, so every tool that
@@ -436,7 +436,22 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 			target: Type.Optional(
 				Type.Union([
 					Type.Object({ ref: Type.String() }),
-					Type.Object({ coordinate: Type.Tuple([Type.Number(), Type.Number()]) }),
+					Type.Object({
+						// Not Type.Tuple. It emits the draft-07 spelling of a tuple,
+						// `items: [ ... ]`, and the provider validates tool schemas as
+						// 2020-12, where a tuple is `prefixItems` and an array-valued
+						// `items` is a hard error. Every request carries every tool's
+						// schema, so one bad shape here is rejected before the model sees
+						// the call — measured 2026-09-09: she could not take a single turn
+						// for the three days this stood. Unsafe keeps the [x, y] type on
+						// the TypeScript side while emitting a shape both drafts accept.
+						coordinate: Type.Unsafe<[number, number]>({
+							type: "array",
+							items: { type: "number" },
+							minItems: 2,
+							maxItems: 2,
+						}),
+					}),
 				]),
 			),
 		}),
