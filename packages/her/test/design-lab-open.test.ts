@@ -11,6 +11,7 @@ import {
 	DESIGN_LAB_URL,
 	nestedStartArgs,
 	probeListeningPort,
+	resolveLabPort,
 	resolveStudioUiBase,
 } from "../src/preview/design-lab-open.ts";
 import { type PreviewToolDeps, registerPreviewTools } from "../src/preview/tools.ts";
@@ -105,7 +106,7 @@ test("design_lab_open is registered as a no-arg non-destructive governed tool", 
 	assert.deepEqual(tools.get("design_lab_open")?.parameters, { type: "object", properties: {} });
 });
 
-test("already-listening reuses the server, skips start, navigates 5180 via the human path", async () => {
+test("already-listening reuses the server, skips start, navigates 5280 via the human path", async () => {
 	const fetchImpl = fakeFetch(() => new Response(JSON.stringify({ ok: true }), { status: 200 }));
 	let starts = 0;
 	const tools = previewHarness({
@@ -128,8 +129,8 @@ test("already-listening reuses the server, skips start, navigates 5180 via the h
 	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:4321/api/browser/navigate");
 	assert.equal(fetchImpl.calls[0].init.method, "POST");
 	assert.deepEqual(JSON.parse(String(fetchImpl.calls[0].init.body)), { url: DESIGN_LAB_URL });
-	assert.equal(DESIGN_LAB_PORT, 5180);
-	assert.equal(DESIGN_LAB_URL, "http://localhost:5180");
+	assert.equal(DESIGN_LAB_PORT, 5280);
+	assert.equal(DESIGN_LAB_URL, "http://localhost:5280");
 });
 
 test("not listening starts via nested bat then reports opened after the port is actually listening", async () => {
@@ -162,7 +163,7 @@ test("not listening starts via nested bat then reports opened after the port is 
 	assert.equal(details.status, "opened");
 	assert.match(text, /opened/i);
 	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:4321/api/browser/navigate");
-	assert.deepEqual(JSON.parse(String(fetchImpl.calls[0].init.body)), { url: "http://localhost:5180" });
+	assert.deepEqual(JSON.parse(String(fetchImpl.calls[0].init.body)), { url: "http://localhost:5280" });
 });
 
 test("port never listening is failed with a reason and does not navigate (Ready-in-a-log is not green)", async () => {
@@ -188,7 +189,7 @@ test("port never listening is failed with a reason and does not navigate (Ready-
 
 	assert.equal(details.status, "failed");
 	assert.match(text, /failed/i);
-	assert.match(text, /5180|listen|timeout/i);
+	assert.match(text, /5280|listen|timeout/i);
 	assert.equal(fetchImpl.calls.length, 0);
 });
 
@@ -292,4 +293,21 @@ test("navigate connection-refused is failed naming the Studio base, no throw", a
 	assert.equal(details.status, "failed");
 	assert.match(text, /127\.0\.0\.1:4321/);
 	assert.match(text, /connection refused/i);
+});
+
+// 5180 was the lab's port until 2026-09-09, when a real bind returned EACCES:
+// this machine carries a Windows excluded TCP range 5141-5240, which swallows it
+// permanently. Her launcher had been moved to 5280 days earlier; her own tools
+// had not, so design_lab_open could not start the lab and design_lab_still could
+// not photograph it — and every test stayed green, because no test binds a port.
+test("the lab port is one that can actually be listened on, and one variable can move it", () => {
+	assert.equal(resolveLabPort({}), 5280);
+	assert.equal(DESIGN_LAB_PORT, 5280);
+	assert.equal(DESIGN_LAB_URL, `http://localhost:${DESIGN_LAB_PORT}`);
+
+	assert.equal(resolveLabPort({ HER_LAB_PORT: "5390" }), 5390);
+	// Junk is not a port. Falling back beats listening on NaN.
+	for (const bad of ["", "no", "0", "-1", "70000", "53.5"]) {
+		assert.equal(resolveLabPort({ HER_LAB_PORT: bad }), 5280, `HER_LAB_PORT=${bad}`);
+	}
 });

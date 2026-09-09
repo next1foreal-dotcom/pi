@@ -19,7 +19,12 @@ const packageRoot = dirname(fileURLToPath(import.meta.url));
 export default defineConfig({
   plugins: [react(), labFsPlugin(packageRoot)],
   server: {
-    port: 5180,
+    // 5180 until 2026-09-09, when a real bind returned EACCES: this machine has a
+    // Windows excluded TCP range 5141-5240 and nothing can ever listen inside it.
+    // `design_lab_open` starts the lab with `npm run dev`, so this line — not the
+    // launcher's flag — is the port she gets, and she got one that cannot exist.
+    // HER_LAB_PORT is the same variable her tools read; one place moves both.
+    port: Number(process.env.HER_LAB_PORT) || 5280,
     strictPort: true,
   },
 });

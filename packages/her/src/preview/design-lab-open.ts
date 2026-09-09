@@ -6,8 +6,28 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const DESIGN_LAB_PORT = 5180;
-export const DESIGN_LAB_URL = "http://localhost:5180";
+/**
+ * The lab's port, and the only place it is decided.
+ *
+ * It was 5180 until 2026-09-09, when a real bind attempt returned EACCES: this
+ * machine carries a Windows excluded TCP range 5141-5240 (`netsh int ipv4 show
+ * excludedportrange protocol=tcp`), and nothing can ever listen inside it. Her
+ * launcher had been moved to 5280 days earlier; her own tools had not — so
+ * `design_lab_open` could not start the lab and `design_lab_still` could not
+ * photograph it, and the failure reads as "the lab is not running" rather than
+ * "that port cannot exist". Every test stayed green throughout, because no test
+ * binds a port.
+ *
+ * `HER_LAB_PORT` overrides it, so the next range that eats a port costs a
+ * variable instead of a release. Junk falls back rather than listening on NaN.
+ */
+export function resolveLabPort(env: Record<string, string | undefined> = process.env): number {
+	const raw = env.HER_LAB_PORT;
+	const parsed = raw === undefined ? Number.NaN : Number(raw);
+	return Number.isInteger(parsed) && parsed > 0 && parsed < 65536 ? parsed : 5280;
+}
+export const DESIGN_LAB_PORT = resolveLabPort();
+export const DESIGN_LAB_URL = `http://localhost:${DESIGN_LAB_PORT}`;
 export const DESIGN_LAB_WAIT_MS = 30_000;
 export const DESIGN_LAB_POLL_MS = 250;
 /** Studio's real listen port. Other preview tools keep 3000; this tool does not. */

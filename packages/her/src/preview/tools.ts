@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { type TSchema, Type } from "typebox";
 import {
+	DESIGN_LAB_PORT,
 	DESIGN_LAB_URL,
 	type DesignLabOpenDeps,
 	ensureDesignLabReady,
@@ -750,8 +751,8 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 		name: "design_lab_open",
 		label: "Design Lab Open",
 		description:
-			"Open the her design-lab canvas in Fei's Studio live browser pane at http://localhost:5180. " +
-			"Probes port 5180 and reuses a running lab; otherwise starts it detached via a nested cmd start. " +
+			`Open the her design-lab canvas in Fei's Studio live browser pane at ${DESIGN_LAB_URL}. ` +
+			`Probes port ${DESIGN_LAB_PORT} and reuses a running lab; otherwise starts it detached via a nested cmd start. ` +
 			"Ready in a log is not success — the port must be listening. Opens the pane directly, no " +
 			"handback needed: the destination is fixed to the design lab and the tool takes no parameters, " +
 			"so it cannot steer the pane anywhere else. All other browser driving stays gated.",

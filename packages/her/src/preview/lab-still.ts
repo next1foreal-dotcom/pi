@@ -5,8 +5,11 @@ import { dirname, join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { SAMANTHA_REPO_ROOT } from "../her-core/channel-probe-gate.ts";
+import { DESIGN_LAB_PORT } from "./design-lab-open.ts";
 
-export const DEFAULT_LAB_PORT = 5180;
+/** One source of truth for the port; see `resolveLabPort` for why it moved. */
+export { DESIGN_LAB_PORT as DEFAULT_LAB_PORT } from "./design-lab-open.ts";
+
 /** Chromium cold start, canvas mount, and the lock-in camera flight. */
 const CAPTURE_TIMEOUT_MS = 90_000;
 /** Playwright lives in samantha-ui, not in this package's node_modules. */
@@ -89,7 +92,7 @@ export function registerLabStillTools(pi: ExtensionAPI, deps: LabStillDeps = {})
 					ok: false,
 				});
 			}
-			const port = typeof params.port === "number" ? params.port : DEFAULT_LAB_PORT;
+			const port = typeof params.port === "number" ? params.port : DESIGN_LAB_PORT;
 			const partParam = typeof params.part === "string" ? params.part : "both";
 			const parts: StillPart[] = partParam === "both" ? ["top", "bottom"] : [partParam as StillPart];
 

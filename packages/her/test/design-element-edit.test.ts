@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { DESIGN_LAB_PORT } from "../src/preview/design-lab-open.ts";
 import {
 	type ElementEditDeps,
 	type LabSelection,
@@ -446,7 +447,9 @@ test("design_element_at returns the selection for a point", async () => {
 
 	const { text, details } = await run(tools.get("design_element_at"), { screenId: "probe", x: 120, y: 240 });
 
-	assert.deepEqual(asked, [{ screenId: "probe", x: 120, y: 240, port: 5180 }]);
+	// The shared default, not a copy of it: this test recorded 5180 as a literal and
+	// went on passing after the port moved to one that can be bound.
+	assert.deepEqual(asked, [{ screenId: "probe", x: 120, y: 240, port: DESIGN_LAB_PORT }]);
 	assert.equal(details.ok, true);
 	assert.deepEqual(details.selection, SELECTION);
 	assert.match(text, /<button> rendered by Probe/);
