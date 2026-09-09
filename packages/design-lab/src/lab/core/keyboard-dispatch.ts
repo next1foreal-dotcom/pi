@@ -111,6 +111,23 @@ export function dispatchLabKey(
     return { action: "cycle-select", direction: shiftKey ? -1 : 1 };
   }
 
+  // ⌘ Z / ⌘ Shift Z  →  undo / redo. Ctrl+Y is the Windows spelling of redo.
+  //
+  // Above the locked-in gate on purpose. Every edit that rewrites source —
+  // a class taken off in the properties panel, a phrase changed in place, a
+  // knob turned — happens while locked into a screen, so leaving undo below
+  // that gate made the one gesture for taking an edit back the one gesture
+  // the mode swallowed: he had to Escape out to the canvas first, which is
+  // not something anyone would guess. The typing-target gate above already
+  // keeps these away from a contenteditable or an input, where ⌘Z belongs to
+  // the field.
+  if (code === "KeyZ" && meta && !altKey) {
+    return shiftKey ? { action: "redo" } : { action: "undo" };
+  }
+  if (code === "KeyY" && ctrlKey && !metaKey) {
+    return { action: "redo" };
+  }
+
   // Shift+F  →  toggle fill mode
   if (code === "KeyF" && shiftKey && !meta) {
     return { action: "fill-toggle" };
@@ -171,16 +188,6 @@ export function dispatchLabKey(
     !shiftKey
   ) {
     return { action: "delete-screen" };
-  }
-
-  // ⌘ Z / ⌘ Shift Z  →  undo / redo
-  if (code === "KeyZ" && meta && !altKey) {
-    return shiftKey ? { action: "redo" } : { action: "undo" };
-  }
-
-  // Ctrl+Y  →  redo (Windows convention)
-  if (code === "KeyY" && ctrlKey && !metaKey) {
-    return { action: "redo" };
   }
 
   // Ctrl+C (no ⌘)  →  cleanup row

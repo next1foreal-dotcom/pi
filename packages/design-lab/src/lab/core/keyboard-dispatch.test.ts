@@ -394,6 +394,42 @@ describe("undo / redo", () => {
     );
     expect(result).toEqual({ action: "redo" });
   });
+
+  // Every source edit — a class removed, a phrase rewritten, a knob turned —
+  // happens locked into a screen. Undo living in the explore-only section
+  // meant the gesture for taking one back was swallowed by the mode it is
+  // made in, and he had to Escape to the canvas first to reach it.
+  it("⌘Z → undo while locked into a screen", () => {
+    for (const ctx of [FOCUS, FILL]) {
+      expect(dispatchLabKey(key({ key: "z", code: "KeyZ", metaKey: true }), ctx)).toEqual({
+        action: "undo",
+      });
+    }
+  });
+
+  it("⌘Shift+Z → redo while locked into a screen", () => {
+    for (const ctx of [FOCUS, FILL]) {
+      expect(
+        dispatchLabKey(
+          key({ key: "z", code: "KeyZ", metaKey: true, shiftKey: true }),
+          ctx,
+        ),
+      ).toEqual({ action: "redo" });
+    }
+  });
+
+  // The other side: inside a text field ⌘Z belongs to the field. Editing copy
+  // in place is a contenteditable, so this is the common case, not a corner.
+  it("leaves ⌘Z alone on a typing target, in every mode", () => {
+    for (const ctx of [EXPLORE, FOCUS, FILL]) {
+      expect(
+        dispatchLabKey(key({ key: "z", code: "KeyZ", metaKey: true }), {
+          ...ctx,
+          isTypingTarget: true,
+        }),
+      ).toBeNull();
+    }
+  });
 });
 
 // ─── Ctrl+C cleanup ──────────────────────────────────────────────────
