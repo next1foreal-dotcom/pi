@@ -60,6 +60,7 @@ export const READONLY_DESIGN_TOOLS: ReadonlySet<string> = new Set([
 	"design_lab_notes",
 	"design_lab_open",
 	"design_lab_still",
+	"design_lab_export",
 	"design_element_at",
 	"design_project_get",
 	"design_project_list",

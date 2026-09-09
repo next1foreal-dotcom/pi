@@ -87,6 +87,7 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	browser_navigate: { destructive: false },
 	design_lab_open: { destructive: false },
 	design_lab_still: { destructive: false },
+	design_lab_export: { destructive: false },
 	// Hit-tests a point on a lab screen and reads back the source location. Drives
 	// the inspect plugin's published api through Playwright; writes nothing.
 	design_element_at: { destructive: false },

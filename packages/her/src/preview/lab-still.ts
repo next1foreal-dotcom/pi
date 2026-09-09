@@ -219,10 +219,23 @@ export interface PageLike {
 	goto(url: string, options: Record<string, unknown>): Promise<unknown>;
 	waitForTimeout(ms: number): Promise<void>;
 	evaluate(script: string): Promise<unknown>;
-	locator(selector: string): { first(): { count(): Promise<number>; boundingBox(): Promise<Box | null> } };
+	locator(selector: string): {
+		first(): {
+			count(): Promise<number>;
+			boundingBox(): Promise<Box | null>;
+			/** Export only: the frame without the lab around it. Optional so fakes stay small. */
+			screenshot?(): Promise<Buffer>;
+		};
+	};
 	mouse: { click(x: number, y: number): Promise<void> };
 	keyboard: { press(key: string): Promise<void> };
 	screenshot(): Promise<Buffer>;
+	/**
+	 * Printing only. Optional because every fake page in a test would otherwise
+	 * have to grow two methods it never calls; the one caller checks for them.
+	 */
+	setContent?(html: string, options?: Record<string, unknown>): Promise<void>;
+	pdf?(options: Record<string, unknown>): Promise<Buffer>;
 }
 export type Box = { x: number; y: number; width: number; height: number };
 export interface BrowserLike {

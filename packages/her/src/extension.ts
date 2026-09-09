@@ -135,6 +135,7 @@ import { registerAssetShotTools } from "./preview/asset-shot.ts";
 import { registerDesignSystemTools } from "./preview/design-system.ts";
 import { registerElementEditTools } from "./preview/element-edit.ts";
 import { registerExtractDesignTools } from "./preview/extract-design.ts";
+import { registerLabExportTools } from "./preview/lab-export.ts";
 import { registerLabStillTools } from "./preview/lab-still.ts";
 import { registerPreviewStillTools } from "./preview/still-tools.ts";
 import { registerTokenScratchTools } from "./preview/token-scratch.ts";
@@ -2704,6 +2705,7 @@ export default function her(pi: ExtensionAPI): void {
 	registerPreviewStillTools(pi);
 	registerExtractDesignTools(pi);
 	registerLabStillTools(withCanvasNag(pi));
+	registerLabExportTools(withCanvasNag(pi));
 	registerElementEditTools(pi);
 	registerAssetShotTools(pi);
 	registerDesignSystemTools(pi);
