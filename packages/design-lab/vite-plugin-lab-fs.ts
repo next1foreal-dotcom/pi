@@ -354,7 +354,9 @@ export function labFsPlugin(projectRoot: string): Plugin {
               // than the tool about which bytes it is willing to rewrite: a
               // stale location is refused, and a computed className is refused
               // by name rather than guessed at.
-              const edit = editClassList(source, { line, column, tag, add, remove, replace });
+              const expect =
+                body.expect === null || typeof body.expect === "string" ? body.expect : undefined;
+              const edit = editClassList(source, { line, column, tag, add, remove, replace, expect });
               if (!edit.ok) {
                 json(res, 409, { ok: false, problem: edit.problem, error: edit.reason });
                 return;
@@ -409,7 +411,9 @@ export function labFsPlugin(projectRoot: string): Plugin {
                 json(res, 404, { ok: false, error: `could not read ${back}: ${String(error)}` });
                 return;
               }
-              const edit = editText(source, { line, column, tag, text: body.text });
+              const expect =
+                body.expect === null || typeof body.expect === "string" ? body.expect : undefined;
+              const edit = editText(source, { line, column, tag, text: body.text, expect });
               if (!edit.ok) {
                 json(res, 409, { ok: false, problem: edit.problem, error: edit.reason });
                 return;
@@ -467,7 +471,9 @@ export function labFsPlugin(projectRoot: string): Plugin {
                 json(res, 404, { ok: false, error: `could not read ${back}: ${String(error)}` });
                 return;
               }
-              const edit = editProp(source, { line, column, tag, prop, value: parsed.value });
+              const expect =
+                body.expect === null || typeof body.expect === "string" ? body.expect : undefined;
+              const edit = editProp(source, { line, column, tag, prop, value: parsed.value, expect });
               if (!edit.ok) {
                 json(res, 409, { ok: false, problem: edit.problem, error: edit.reason });
                 return;

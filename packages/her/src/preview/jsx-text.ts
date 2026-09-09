@@ -30,13 +30,20 @@ export type TextEditProblem =
 	| "self-closing"
 	| "expression-child"
 	| "element-child"
-	| "unsafe-text";
+	| "unsafe-text"
+	| "stale-value";
 
 export interface TextEditRequest {
 	line: number;
 	column: number;
 	tag: string;
 	text: string;
+	/**
+	 * Write only if the current static text child equals this.
+	 * `null` is never a current text child (empty children are `""`).
+	 * Omitted means do not check.
+	 */
+	expect?: string | null;
 }
 
 export type TextEditResult =
@@ -47,7 +54,7 @@ export type TextEditResult =
 			after: string;
 			changed: boolean;
 	  }
-	| { ok: false; problem: TextEditProblem; reason: string };
+	| { ok: false; problem: TextEditProblem; reason: string; source?: string };
 
 interface OpenTag {
 	/** Offset of the `<`. */
@@ -407,6 +414,15 @@ export function editText(source: string, request: TextEditRequest): TextEditResu
 	if ("problem" in child) return { ok: false, problem: child.problem, reason: child.reason };
 
 	const { lead, body } = splitAroundText(child.inner);
+	if (request.expect !== undefined && request.expect !== body) {
+		const show = (value: string | null) => (value === null ? "no text" : `text ${JSON.stringify(value)}`);
+		return {
+			ok: false,
+			problem: "stale-value",
+			reason: `<${found.name}> at line ${request.line} column ${request.column} has ${show(body)}, not ${show(request.expect)}. Something changed this value since you last wrote it; read the element again rather than overwriting a change you did not make.`,
+			source,
+		};
+	}
 	const next = request.text;
 	if (next === body) {
 		return { ok: true, source, before: body, after: body, changed: false };

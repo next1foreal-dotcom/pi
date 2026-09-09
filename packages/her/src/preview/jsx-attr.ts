@@ -33,7 +33,8 @@ export type PropEditProblem =
 	| "bad-prop"
 	| "dynamic-prop"
 	| "spread-shadow"
-	| "unsafe-value";
+	| "unsafe-value"
+	| "stale-value";
 
 export interface PropEditRequest {
 	line: number;
@@ -41,6 +42,12 @@ export interface PropEditRequest {
 	tag: string;
 	prop: string;
 	value: PropWrite;
+	/**
+	 * Write only if the current attribute source equals this (`gap={4}`).
+	 * `null` means the attribute is absent — not the same as `""`.
+	 * Omitted means do not check.
+	 */
+	expect?: string | null;
 }
 
 export type PropEditResult =
@@ -51,7 +58,7 @@ export type PropEditResult =
 			after: string;
 			changed: boolean;
 	  }
-	| { ok: false; problem: PropEditProblem; reason: string };
+	| { ok: false; problem: PropEditProblem; reason: string; source?: string };
 
 type JsxAttribute = NonNullable<ReturnType<typeof scanAttributes>>[number];
 
@@ -255,6 +262,18 @@ export function editProp(source: string, request: PropEditRequest): PropEditResu
 				reason: `<${found.name}> at line ${request.line} has ${prop}={...} holding ${literal}. Overwriting that would throw away code that is not a plain literal. Change the expression yourself, or point at a tag whose ${prop} is a string or a simple literal.`,
 			};
 		}
+	}
+
+	const current: string | null = attr ? source.slice(attr.start, attr.end) : null;
+	if (request.expect !== undefined && request.expect !== current) {
+		const show = (value: string | null) =>
+			value === null ? `no ${prop}` : value === "" ? JSON.stringify(value) : value;
+		return {
+			ok: false,
+			problem: "stale-value",
+			reason: `<${found.name}> at line ${request.line} column ${request.column} has ${show(current)}, not ${show(request.expect)}. Something changed this value since you last wrote it; read the element again rather than overwriting a change you did not make.`,
+			source,
+		};
 	}
 
 	const write = request.value;

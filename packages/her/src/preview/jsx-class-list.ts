@@ -37,7 +37,8 @@ export type ClassListProblem =
 	| "dynamic-class-list"
 	| "no-class-attribute"
 	| "unsafe-class-name"
-	| "nothing-to-do";
+	| "nothing-to-do"
+	| "stale-value";
 
 export interface ClassEditRequest {
 	line: number;
@@ -47,6 +48,12 @@ export interface ClassEditRequest {
 	remove?: readonly string[];
 	/** Whole-list replacement. Never combined with add/remove. */
 	replace?: readonly string[];
+	/**
+	 * Write only if the current className value text equals this.
+	 * `null` means the attribute is absent — not the same as `""`, which is
+	 * an empty `className=""`. Omitted means do not check.
+	 */
+	expect?: string | null;
 }
 
 export type ClassEditResult =
@@ -63,7 +70,7 @@ export type ClassEditResult =
 			/** Names asked to be added that were already on the tag. */
 			present: string[];
 	  }
-	| { ok: false; problem: ClassListProblem; reason: string };
+	| { ok: false; problem: ClassListProblem; reason: string; source?: string };
 
 interface OpenTag {
 	/** Offset of the `<`. */
@@ -427,6 +434,17 @@ export function editClassList(source: string, request: ClassEditRequest): ClassE
 			ok: false,
 			problem: "dynamic-class-list",
 			reason: `<${found.name}> at line ${request.line} has className={...} holding ${shape}. Editing that as text cannot be correct — the class list is computed at render time. Change the expression yourself with edit, or point at an element whose className is a plain string.`,
+		};
+	}
+
+	const current: string | null = className ? source.slice(className.valueStart, className.valueEnd) : null;
+	if (request.expect !== undefined && request.expect !== current) {
+		const show = (value: string | null) => (value === null ? "no className" : `className ${JSON.stringify(value)}`);
+		return {
+			ok: false,
+			problem: "stale-value",
+			reason: `<${found.name}> at line ${request.line} column ${request.column} has ${show(current)}, not ${show(request.expect)}. Something changed this value since you last wrote it; read the element again rather than overwriting a change you did not make.`,
+			source,
 		};
 	}
 
