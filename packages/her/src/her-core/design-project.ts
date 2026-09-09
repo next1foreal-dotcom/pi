@@ -245,8 +245,44 @@ export async function setStage(
 				await writeManifest(slug, manifest, root);
 				return manifest;
 			}
+			// The last stage is the one that can never be left, and `steps` is
+			// written on the way OUT of a stage — so the final step could never
+			// record itself. Every other step ends up with a receipt in `steps`;
+			// the last one left a hole, and an audit cannot see a hole.
+			//
+			// Closing it here is the same write the departure would have made,
+			// asked for on purpose instead of falling out of moving on. Measured
+			// 2026-09-09: she called this twice at "code", was told "already at
+			// stage" both times, and filed the step-8 receipt in a markdown file
+			// beside the ledger because the ledger would not take it.
+			//
+			// Once. A receipt that can be rewritten is not a receipt, and the one
+			// rule this ledger has is that she never edits it by hand.
+			if (targetIndex === DESIGN_STAGES.length - 1 && (opts?.artifact || opts?.note)) {
+				const closed = manifest.steps[stage];
+				if (closed) {
+					throw new Error(
+						`Project "${slug}" already closed "${stage}" at ${closed.at}` +
+							`${closed.artifact ? ` with ${closed.artifact}` : ""}; a receipt is written once`,
+					);
+				}
+				manifest.steps[stage] = {
+					...(opts.artifact ? { artifact: opts.artifact } : {}),
+					...(opts.note ? { note: opts.note } : {}),
+					at,
+				};
+				manifest.updatedAt = at;
+				await writeManifest(slug, manifest, root);
+				return manifest;
+			}
 			throw new Error(
-				`Project "${slug}" is already at stage "${stage}"${stage === "iterations" ? "; pass a note to log another round" : ""}`,
+				`Project "${slug}" is already at stage "${stage}"${
+					stage === "iterations"
+						? "; pass a note to log another round"
+						: targetIndex === DESIGN_STAGES.length - 1
+							? "; pass an artifact or a note to close it"
+							: ""
+				}`,
 			);
 		}
 		if (targetIndex > currentIndex) {

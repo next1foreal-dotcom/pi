@@ -363,3 +363,56 @@ test("six design project tools are registered, describe consequences, and enforc
 	const audited = await run(tools.get("design_project_audit"), {});
 	assert.equal(audited.details.ok, true);
 });
+
+// `steps` is written on the way OUT of a stage, so the last stage could never
+// record itself: every other step has a receipt and `code` had a hole. Measured
+// 2026-09-09 — she called set_stage at `code` twice, got "already at stage"
+// both times, and filed the step-8 receipt in a markdown file beside the ledger
+// because the ledger would not take it. An audit cannot see a hole.
+test("the last stage can be closed, once, with its own receipt", async (t) => {
+	const dir = await tempDir(t);
+	await createProject("closes", "a landing page", dir);
+	await advanceTo(dir, "closes", "code");
+
+	const before = await getProject("closes", dir);
+	assert.equal(before?.stage, "code");
+	assert.equal(before?.steps.code, undefined);
+
+	const closed = await setStage(
+		"closes",
+		"code",
+		{ artifact: "design/projects/closes/to-code.md", note: "53-row mapping table" },
+		dir,
+	);
+	assert.equal(closed.stage, "code");
+	assert.equal(closed.steps.code?.artifact, "design/projects/closes/to-code.md");
+	assert.equal(closed.steps.code?.note, "53-row mapping table");
+	assert.ok(closed.steps.code?.at);
+
+	// It is on disk, not just in the returned object.
+	const reread = await getProject("closes", dir);
+	assert.equal(reread?.steps.code?.artifact, "design/projects/closes/to-code.md");
+});
+
+test("closing the last stage twice is refused, and changes nothing", async (t) => {
+	const dir = await tempDir(t);
+	await createProject("closes-twice", "a landing page", dir);
+	await advanceTo(dir, "closes-twice", "code");
+	await setStage("closes-twice", "code", { artifact: "first.md" }, dir);
+
+	const path = join(dir, "closes-twice.project.json");
+	const bytes = await readFile(path, "utf8");
+	await assert.rejects(() => setStage("closes-twice", "code", { artifact: "second.md" }, dir), /already closed/i);
+	assert.equal(await readFile(path, "utf8"), bytes);
+});
+
+test("the last stage still refuses a re-entry that carries no receipt", async (t) => {
+	const dir = await tempDir(t);
+	await createProject("bare-reentry", "a landing page", dir);
+	await advanceTo(dir, "bare-reentry", "code");
+	await assert.rejects(() => setStage("bare-reentry", "code", {}, dir), /already at stage/);
+	// And the refusal says how to close it, or nobody finds out that it can be.
+	await assert.rejects(() => setStage("bare-reentry", "code", {}, dir), /artifact|note/i);
+	const after = await getProject("bare-reentry", dir);
+	assert.equal(after?.steps.code, undefined);
+});

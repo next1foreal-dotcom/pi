@@ -109,7 +109,10 @@ export function registerDesignProjectTools(pi: ExtensionAPI, deps: DesignProject
 			"Entering code is refused unless the final hard gate is approved. Moodboard is a light gate: recorded on arrival, never blocks. " +
 			"Skipping stages is refused. " +
 			'At iterations, calling again with stage "iterations" and a note appends one round to the iteration log ' +
-			"(the tool stamps the time) — the only sanctioned way to log a round; never hand-edit the manifest.",
+			"(the tool stamps the time) — the only sanctioned way to log a round; never hand-edit the manifest. " +
+			'At code, the last stage, calling again with stage "code" and an artifact or a note writes that step\'s own ' +
+			"receipt — every earlier step gets one on the way out, and the last one has no way out. Once: a second " +
+			"call is refused rather than rewriting the receipt.",
 		parameters: Type.Object({
 			slug: Type.String(),
 			stage: StringEnum(DESIGN_STAGES),
