@@ -1,4 +1,5 @@
 import type { LabPlugin, LabPluginContext, LabPluginHandle } from "../../plugin-api";
+import { pushHistory, type HistoryCommand } from "../../core/history";
 import { SKIP_HOSTS } from "../inspect/plugin";
 import { locateElement, locateElementSourced, type SourceLocation } from "../inspect/source-location";
 
@@ -184,6 +185,44 @@ export function textEditBody(target: EditTarget, text: string): TextEditBody {
 		column: target.column,
 		tag: target.tag.toLowerCase(),
 		text: normalizeEdited(text),
+	};
+}
+
+/** The part of the endpoint's answer a history step can be built on. */
+export type TextEditReply = {
+	ok?: boolean;
+	/** The refusal sentence, when there is one. */
+	error?: string;
+	changed?: boolean;
+	before?: string;
+	after?: string;
+};
+
+/**
+ * The step that takes one typed sentence back, or null when there is none.
+ *
+ * Both directions are the same request with a different word in it, so this is
+ * the whole of it: `before` is what the file said, `after` is what he typed, and
+ * each direction expects to find the other one still in place. Between the edit
+ * and his Ctrl+Z that line can have changed underneath — he edited it, or she
+ * did — and writing back blind would take that with it.
+ *
+ * Null when the file did not change, and null when the answer did not say what
+ * it replaced: a step with no `before` has nothing to write back.
+ */
+export function textEditCommand(body: TextEditBody, reply: TextEditReply): HistoryCommand | null {
+	if (reply.ok !== true || reply.changed !== true) return null;
+	if (typeof reply.before !== "string" || typeof reply.after !== "string") return null;
+	return {
+		type: "source-edit",
+		endpoint: "text",
+		what: `改 ${body.file.split("/").pop() ?? body.file}:${body.line} 的文字`,
+		// Not `expectFor`: this route compares `expect` against the text itself,
+		// which is always a string. There is no "the text is not there" state to
+		// say null for -- a tag with no static text child is refused outright --
+		// so null here would match nothing and refuse every step.
+		undo: { body: { ...body, text: reply.before }, expect: reply.after },
+		redo: { body: { ...body, text: reply.after }, expect: reply.before },
 	};
 }
 
@@ -518,6 +557,10 @@ export class TextEditor {
 				this.say(bad, true);
 				return false;
 			}
+			// Onto the same stack as everything else on this canvas, so one
+			// Ctrl+Z walks back through what he did in the order he did it.
+			const step = textEditCommand(body, parsed as TextEditReply);
+			if (step) pushHistory(step);
 		} catch (error) {
 			// The dev server is gone, or the page is being torn down. Without
 			// this the note sits on "写入中…", which reads as still working.

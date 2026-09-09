@@ -23,6 +23,7 @@
  * decorative.
  */
 
+import { expectFor, pushHistory, type HistoryCommand } from "../../core/history";
 import type {
 	ComponentEntry,
 	ComponentIndex,
@@ -310,6 +311,44 @@ export type PropPost = {
 };
 
 export type PropAnswer = { status: number; body: PropReply };
+
+/** What an undo may write back: a value, or the attribute lifted off again. */
+export type PropUndoValue = WriteValue | { as: "remove" };
+
+/**
+ * The step that takes one turn back, or null when there is nothing to take back.
+ *
+ * `previous` comes in with the turn rather than out of the source. The panel
+ * read it off the fiber when it drew the control; the alternative — parsing the
+ * attribute text the server hands back as `before` — would be a fourth parser of
+ * the same JSX in a fourth place, kept in step with the other three by hand.
+ *
+ * `before === ""` is the server saying the tag carried no such attribute at all,
+ * and the way back from that is to lift it off again. Writing the fiber's old
+ * value would nail the component's own default into his source as if he had
+ * typed it, and the next time that default changed his tag would not follow.
+ */
+export function propEditCommand(
+	post: PropPost,
+	previous: string | number | boolean,
+	knob: KnobSpec,
+	reply: PropReply,
+): HistoryCommand | null {
+	if (reply.ok !== true || reply.changed !== true) return null;
+	if (typeof reply.before !== "string" || typeof reply.after !== "string") return null;
+	const back: PropUndoValue | null =
+		reply.before === "" ? { as: "remove" } : writeFor(knob, previous);
+	// No value this knob can write means no way back. A step that fails at the
+	// far end, minutes later, is worse than one that was never offered.
+	if (!back) return null;
+	return {
+		type: "source-edit",
+		endpoint: "prop",
+		what: `拧 ${post.prop}`,
+		undo: { body: { ...post, value: back }, expect: expectFor(reply.after) },
+		redo: { body: { ...post }, expect: expectFor(reply.before) },
+	};
+}
 
 /** What the live panel uses; a seam so the rules above can be driven in a test. */
 export type KnobsDeps = {
@@ -629,7 +668,7 @@ export class Knobs {
 
 		if (!control.disabled && instance) {
 			control.addEventListener("change", () => {
-				void this.turn(knob, instance, component, this.valueOf(knob, control));
+				void this.turn(knob, instance, component, this.valueOf(knob, control), row.value);
 			});
 			if (knob.editor.kind === "range") {
 				control.addEventListener("input", () => {
@@ -720,20 +759,28 @@ export class Knobs {
 		const entry = this.index?.components.find((c) => c.name === component) ?? null;
 		const knob = knobsOf(entry).find((k) => k.name === prop);
 		if (!knob) return;
-		await this.turn(knob, instance, component, raw);
+		await this.turn(knob, instance, component, raw, row.value);
 	}
 
+	/**
+	 * `previous` is what the control was showing before this turn, and it is a
+	 * parameter rather than a read of `this.state` for the same reason the
+	 * component name is: the click that turns a knob has already queued the sync
+	 * that clears the state, so by the time this runs there is nothing to read.
+	 * The row it came from is held by the control's own listener.
+	 */
 	async turn(
 		knob: KnobSpec,
 		instance: ComponentInstance,
 		component: string,
 		raw: string | number | boolean,
+		previous: string | number | boolean,
 	): Promise<void> {
 		// Synchronously, before the first await: the sync() that would drop the
 		// selection is already queued by the same click that got us here.
 		this.deps.busy(true);
 		try {
-			await this.write(knob, instance, component, raw);
+			await this.write(knob, instance, component, raw, previous);
 		} finally {
 			this.deps.busy(false);
 		}
@@ -744,26 +791,37 @@ export class Knobs {
 		instance: ComponentInstance,
 		component: string,
 		raw: string | number | boolean,
+		previous: string | number | boolean,
 	): Promise<void> {
 		const value = writeFor(knob, raw);
 		if (!value) {
 			this.warn.textContent = `${knob.name} 不接受 ${String(raw)}`;
 			return;
 		}
+		const post: PropPost = {
+			file: instance.file,
+			line: instance.line,
+			column: instance.column,
+			tag: instance.tag,
+			prop: knob.name,
+			value,
+		};
 		let answer: PropAnswer;
 		try {
-			answer = await this.deps.post({
-				file: instance.file,
-				line: instance.line,
-				column: instance.column,
-				tag: instance.tag,
-				prop: knob.name,
-				value,
-			});
+			answer = await this.deps.post(post);
 		} catch (error) {
 			this.warn.textContent = `写不进去(${String(error)})`;
 			return;
 		}
+		// Before the closed check, and deliberately: writing a SCREEN's source
+		// makes vite replace the modules this panel lives in, and that teardown
+		// arrives while this answer is still in flight. The panel is right to
+		// stop touching its own DOM then — but his file has already changed, and
+		// a step dropped for that reason is an edit he cannot take back. Found
+		// in the running lab: a knob turn on the playground screen rewrote the
+		// tag and left the undo stack empty. The stack is not the panel.
+		const step = propEditCommand(post, previous, knob, answer.body);
+		if (step) pushHistory(step);
 		if (this.closed) return;
 		if (answer.status !== 200 || answer.body.ok !== true) {
 			// The probe said yes and the write said no. Whatever changed since,

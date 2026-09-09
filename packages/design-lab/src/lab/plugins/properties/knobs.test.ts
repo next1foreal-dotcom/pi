@@ -10,6 +10,8 @@ import {
 	optionsFor,
 	pickInstance,
 	PROBE_VALUE,
+	propEditCommand,
+	type PropPost,
 	propsOfComponent,
 	sectionsOf,
 	UNSECTIONED,
@@ -466,5 +468,130 @@ describe("the value a control starts at", () => {
 			displayValue(knob({ editor: { kind: "enum" }, literalValues: ["quiet", "loud"] }), undefined),
 		).toBe("quiet");
 		expect(displayValue(knob({ editor: { kind: "color" } }), "var(--ink)")).toBe("#000000");
+	});
+});
+
+// ──────────────────────── a turned knob as an undoable step ──────────────────
+
+/**
+ * The step that takes a turn back.
+ *
+ * The old value comes in with the turn rather than out of the source: the panel
+ * read it off the fiber, and the alternative — parsing the attribute text the
+ * server hands back — would be a fourth parser of the same JSX, kept in step
+ * with three others by hand.
+ *
+ * Both sides throughout: a builder that recorded every answer would put a step
+ * on the stack for a probe (a write the editor always refuses) and for a turn
+ * to the value already in the file, and either one is a Ctrl+Z that reverses
+ * something he never did.
+ */
+describe("a knob turn as an undoable step", () => {
+	const post: PropPost = {
+		file: TILE,
+		line: 49,
+		column: 11,
+		tag: "Tile",
+		prop: "gap",
+		value: { as: "expression", value: 24 },
+	};
+	const gap = knob({ editor: { kind: "range", min: 0, max: 48 } });
+
+	it("writes the old value back, and expects to find the new one", () => {
+		const cmd = propEditCommand(post, 16, gap, {
+			ok: true,
+			changed: true,
+			before: "gap={16}",
+			after: "gap={24}",
+		});
+		expect(cmd).toEqual({
+			type: "source-edit",
+			endpoint: "prop",
+			what: "拧 gap",
+			undo: {
+				body: { ...post, value: { as: "expression", value: 16 } },
+				expect: "gap={24}",
+			},
+			redo: {
+				body: { ...post, value: { as: "expression", value: 24 } },
+				expect: "gap={16}",
+			},
+		});
+	});
+
+	it("takes the attribute off again when the turn is what put it there", () => {
+		// `before:""` is the server saying the tag had no such attribute. Writing
+		// the fiber's old value back would nail the component's own default into
+		// his source as if he had typed it.
+		const cmd = propEditCommand(post, 16, gap, {
+			ok: true,
+			changed: true,
+			before: "",
+			after: "gap={24}",
+		});
+		if (cmd?.type !== "source-edit") throw new Error("no source edit built");
+		expect(cmd.undo.body.value).toEqual({ as: "remove" });
+		expect(cmd.undo.expect).toBe("gap={24}");
+		// And putting it back has to expect the tag to be bare again, or the
+		// redo would overwrite whatever was written there since.
+		expect(cmd.redo.expect).toBeNull();
+	});
+
+	it("keeps a choice a quoted string on the way back", () => {
+		const tone = knob({
+			name: "tone",
+			type: "string",
+			editor: { kind: "enum" },
+			literalValues: ["quiet", "loud"],
+		});
+		const cmd = propEditCommand(
+			{ ...post, prop: "tone", value: { as: "string", value: "loud" } },
+			"quiet",
+			tone,
+			{ ok: true, changed: true, before: 'tone="quiet"', after: 'tone="loud"' },
+		);
+		if (cmd?.type !== "source-edit") throw new Error("no source edit built");
+		expect(cmd.undo.body.value).toEqual({ as: "string", value: "quiet" });
+		expect(cmd.what).toBe("拧 tone");
+	});
+
+	it("records nothing for the probe, which is a write that never lands", () => {
+		expect(
+			propEditCommand({ ...post, value: PROBE_VALUE }, 16, gap, {
+				ok: false,
+				problem: "unsafe-value",
+				error: "refusing to write ...",
+			}),
+		).toBeNull();
+	});
+
+	it("records nothing when the file did not change", () => {
+		expect(
+			propEditCommand(post, 24, gap, {
+				ok: true,
+				changed: false,
+				before: "gap={24}",
+				after: "gap={24}",
+			}),
+		).toBeNull();
+	});
+
+	it("records nothing when the answer did not say what it replaced", () => {
+		expect(propEditCommand(post, 16, gap, { ok: true, changed: true })).toBeNull();
+	});
+
+	it("records nothing when the old value is not one this knob can write", () => {
+		// A colour knob whose fiber value was never a hex string: there is no
+		// value to write back, so there is no step. Recording one anyway would
+		// give him an undo that fails at the far end, long after the turn.
+		const colour = knob({ name: "ink", type: "string", editor: { kind: "color" } });
+		expect(
+			propEditCommand(
+				{ ...post, prop: "ink", value: { as: "string", value: "#3a3a3a" } },
+				"rebeccapurple",
+				colour,
+				{ ok: true, changed: true, before: 'ink="var(--x)"', after: 'ink="#3a3a3a"' },
+			),
+		).toBeNull();
 	});
 });

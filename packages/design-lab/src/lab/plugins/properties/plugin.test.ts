@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { peekUndo } from "../../core/history";
 import {
 	findBySourceLocation,
 	type SourceLocation,
@@ -8,6 +9,7 @@ import {
 } from "../inspect/source-location";
 import { PROBE_VALUE } from "./knobs";
 import {
+	classEditCommand,
 	classesOf,
 	editability,
 	editLanded,
@@ -632,5 +634,379 @@ describe("turning a knob across the reload it causes", () => {
 		expect(gap).toBe(24);
 		expect(selectionOf()).toBe(other);
 		expect(claimed).toEqual([]);
+	});
+});
+
+// ─────────────────────── a class edit as an undoable step ────────────────────
+
+/**
+ * The step that takes a class edit back.
+ *
+ * The reverse of "remove x" is "add x" and nothing else: it is not "write the
+ * whole list back", because between the edit and the Ctrl+Z the list may have
+ * gained a class he typed in his editor, and replacing the list would throw it
+ * away while telling him it undid one thing.
+ *
+ * Both sides, because a builder that recorded every answer would leave a step
+ * on the stack for a refused write, and undo would then reverse an edit that
+ * never happened.
+ */
+describe("a class edit as an undoable step", () => {
+	const where = {
+		file: "packages/design-lab/src/screens/product-list/components/Browse.tsx",
+		line: 116,
+		column: 11,
+		tag: "p",
+	};
+
+	it("records a removal as the add that puts it back", () => {
+		const cmd = classEditCommand(where, { remove: "product-title" }, {
+			ok: true,
+			changed: true,
+			before: "row-title product-title",
+			after: "row-title",
+		});
+		expect(cmd).toEqual({
+			type: "source-edit",
+			endpoint: "classes",
+			what: "拿掉 product-title",
+			undo: { body: { ...where, add: "product-title" }, expect: "row-title" },
+			redo: { body: { ...where, remove: "product-title" }, expect: "row-title product-title" },
+		});
+	});
+
+	it("records an add as the removal that takes it off", () => {
+		const cmd = classEditCommand(where, { add: "lead" }, {
+			ok: true,
+			changed: true,
+			before: "row-title",
+			after: "row-title lead",
+		});
+		expect(cmd).toEqual({
+			type: "source-edit",
+			endpoint: "classes",
+			what: "加上 lead",
+			undo: { body: { ...where, remove: "lead" }, expect: "row-title lead" },
+			redo: { body: { ...where, add: "lead" }, expect: "row-title" },
+		});
+	});
+
+	it("expects a bare tag on the side where the attribute is not there", () => {
+		// Taking the last class off lifts `className` clean away, and adding one
+		// to a tag that had none puts it there. Both ends of that are "" from the
+		// server, and the undo has to say it expects nothing rather than expect
+		// an empty string, or it would not tell the two apart.
+		const born = classEditCommand(where, { add: "lead" }, {
+			ok: true,
+			changed: true,
+			before: "",
+			after: "lead",
+		});
+		if (born?.type !== "source-edit") throw new Error("no source edit built");
+		expect(born.redo.expect).toBeNull();
+		expect(born.undo.expect).toBe("lead");
+
+		const gone = classEditCommand(where, { remove: "lead" }, {
+			ok: true,
+			changed: true,
+			before: "lead",
+			after: "",
+		});
+		if (gone?.type !== "source-edit") throw new Error("no source edit built");
+		expect(gone.undo.expect).toBeNull();
+		expect(gone.redo.expect).toBe("lead");
+	});
+
+	it("records nothing when the file did not change", () => {
+		// Removing a class that is not on the tag answers ok with changed:false.
+		// A step here is a Ctrl+Z that appears to do nothing.
+		expect(
+			classEditCommand(where, { remove: "nope" }, {
+				ok: true,
+				changed: false,
+				before: "row-title",
+				after: "row-title",
+			}),
+		).toBeNull();
+	});
+
+	it("records nothing when the write was refused", () => {
+		expect(
+			classEditCommand(where, { remove: "x" }, { ok: false, error: "className is computed" }),
+		).toBeNull();
+	});
+
+	it("records nothing when the answer did not say what it replaced", () => {
+		expect(classEditCommand(where, { remove: "x" }, { ok: true, changed: true })).toBeNull();
+	});
+});
+
+describe("the panel putting its writes on the stack", () => {
+	const FILE = "packages/design-lab/src/screens/playground/screen.tsx";
+	let host: HTMLElement;
+	let scroll: HTMLElement;
+
+	function fakeLocate(el: Element): SourceLocation {
+		if (el.getAttribute("data-src") === "hit") {
+			return { file: FILE, line: 8, column: 31, component: "Screen", problem: null };
+		}
+		return { file: null, line: null, column: null, component: null, problem: "no-react-fiber" };
+	}
+
+	function build(answer: unknown): Properties {
+		document.body.innerHTML = "";
+		const group = document.createElement("div");
+		group.setAttribute("data-screen-id", "playground");
+		scroll = document.createElement("div");
+		scroll.setAttribute("data-screen-scroll", "playground");
+		const p = document.createElement("p");
+		p.setAttribute("data-src", "hit");
+		p.className = "title big";
+		scroll.appendChild(p);
+		group.appendChild(scroll);
+		host = document.createElement("div");
+		document.body.append(group, host);
+
+		let current: Element | null = p;
+		const inspect = {
+			selection: () => {
+				if (!current) return null;
+				const loc = fakeLocate(current);
+				return {
+					screenId: "playground",
+					file: loc.file,
+					line: loc.line,
+					column: loc.column,
+					component: loc.component,
+					tag: current.tagName.toLowerCase(),
+					className: current.getAttribute("class") ?? "",
+					text: "",
+					attached: current.isConnected,
+					problem: loc.problem,
+				};
+			},
+			selectAt: () => null,
+			selectElement: (el: Element) => {
+				current = el;
+				return null;
+			},
+		};
+		(window as unknown as { lab: unknown }).lab = {
+			plugin: (id: string) => (id === "inspect" ? inspect : undefined),
+		};
+
+		vi.spyOn(globalThis, "fetch").mockImplementation((() =>
+			Promise.resolve({
+				ok: true,
+				status: 200,
+				json: () => Promise.resolve(answer),
+			})) as unknown as typeof fetch);
+
+		const deps: RefindDeps = {
+			root: liveRefindDeps.root,
+			prime: () => Promise.resolve(),
+			find: (root, want, accept) =>
+				findBySourceLocation(root, want, { accept, locate: fakeLocate }),
+			wait: () => Promise.resolve(),
+		};
+		return new Properties(host, { refind: { attempts: 1, intervalMs: 0 }, deps });
+	}
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+		(window as unknown as { lab: unknown }).lab = undefined;
+		document.body.innerHTML = "";
+		sessionStorage.clear();
+	});
+
+	it("pushes one step for a class it really took off", async () => {
+		sessionStorage.clear();
+		const panel = build({ ok: true, changed: true, before: "title big", after: "title" });
+		panel.sync();
+		await panel.removeClass("big");
+
+		const cmd = peekUndo();
+		expect(cmd?.type).toBe("source-edit");
+		if (cmd?.type !== "source-edit") throw new Error("no source edit on the stack");
+		expect(cmd.endpoint).toBe("classes");
+		expect(cmd.what).toBe("拿掉 big");
+		expect(cmd.undo.body).toEqual({ file: FILE, line: 8, column: 31, tag: "p", add: "big" });
+		expect(cmd.undo.expect).toBe("title");
+		expect(cmd.redo.expect).toBe("title big");
+	});
+
+	it("pushes nothing when the class was not on the tag", async () => {
+		sessionStorage.clear();
+		const panel = build({ ok: true, changed: false, before: "title big", after: "title big" });
+		panel.sync();
+		await panel.removeClass("small");
+
+		expect(peekUndo()).toBeNull();
+	});
+});
+
+/**
+ * The step survives the teardown its own write caused.
+ *
+ * Found in the running lab, not here: turning a knob on the playground screen
+ * changed the file and left nothing on the undo stack. Writing a SCREEN's
+ * source makes vite replace the modules this panel lives in, and that teardown
+ * arrives over the websocket while the answer to the write is still in flight.
+ * The panel is right to stop touching its own DOM at that point — but the file
+ * has already changed, and a step dropped for that reason is an edit he cannot
+ * take back, with no sign that anything went wrong.
+ *
+ * Both sides: the step must still be refused when the write itself was, or a
+ * teardown would turn every refusal into an undoable step.
+ */
+describe("a knob turn whose answer lands after the panel is gone", () => {
+	const SCREEN = "packages/design-lab/src/screens/playground/screen.tsx";
+	const TILE = "packages/design-lab/src/screens/playground/components/Tile.tsx";
+
+	let host: HTMLElement;
+	let release: ((answer: { status: number; body: unknown }) => void) | null;
+
+	function locate(el: Element): SourceLocation {
+		if (el.getAttribute("data-src") === "tick") {
+			return { file: TILE, line: 69, column: 6, component: "Tile", problem: null };
+		}
+		return { file: null, line: null, column: null, component: null, problem: "no-react-fiber" };
+	}
+
+	const index = {
+		screens: [{ id: "playground", file: SCREEN }],
+		problems: [],
+		components: [
+			{
+				name: "Tile",
+				file: TILE,
+				exported: "default" as const,
+				aliases: ["Tile"],
+				reach: { kind: "screen" as const, path: ["playground"] },
+				screens: ["playground"],
+				instances: [{ screenId: "playground", file: SCREEN, line: 49, column: 11, tag: "Tile" }],
+				props: [
+					{
+						name: "gap",
+						type: "number",
+						optional: true,
+						editor: { kind: "range" as const, min: 0, max: 48, step: 4 },
+					},
+				],
+			},
+		],
+	};
+
+	function build(): Properties {
+		document.body.innerHTML = "";
+		const group = document.createElement("div");
+		group.setAttribute("data-screen-id", "playground");
+		const scroll = document.createElement("div");
+		scroll.setAttribute("data-screen-scroll", "playground");
+		const span = document.createElement("span");
+		span.setAttribute("data-src", "tick");
+		scroll.appendChild(span);
+		group.appendChild(scroll);
+		host = document.createElement("div");
+		document.body.append(group, host);
+
+		const inspect = {
+			selection: () => ({
+				screenId: "playground",
+				file: TILE,
+				line: 69,
+				column: 6,
+				component: "Tile",
+				tag: "span",
+				className: "",
+				text: "",
+				attached: true,
+				problem: null,
+			}),
+			selectAt: () => null,
+			selectElement: () => null,
+		};
+		(window as unknown as { lab: unknown }).lab = {
+			plugin: (id: string) => (id === "inspect" ? inspect : undefined),
+		};
+
+		release = null;
+		const probe = JSON.stringify(PROBE_VALUE);
+		return new Properties(host, {
+			refind: { attempts: 1, intervalMs: 0 },
+			deps: {
+				root: liveRefindDeps.root,
+				prime: () => Promise.resolve(),
+				find: (root, want, accept) => findBySourceLocation(root, want, { accept, locate }),
+				wait: () => Promise.resolve(),
+			},
+			knobs: {
+				loadIndex: () => Promise.resolve(index),
+				componentAt: () => Promise.resolve("Tile"),
+				fiberOf: () => ({ type: function Tile() {}, memoizedProps: { gap: 8 } }),
+				post: (body) => {
+					if (JSON.stringify(body.value) === probe) {
+						return Promise.resolve({ status: 409, body: { problem: "unsafe-value" } });
+					}
+					// The real write: held open so the teardown can land first.
+					return new Promise((resolve) => {
+						release = resolve as typeof release;
+					}) as Promise<{ status: number; body: Record<string, unknown> }>;
+				},
+				settle: () => Promise.resolve(null),
+			},
+		});
+	}
+
+	async function idle(): Promise<void> {
+		for (let i = 0; i < 16; i += 1) await Promise.resolve();
+	}
+
+	afterEach(() => {
+		(window as unknown as { lab: unknown }).lab = undefined;
+		document.body.innerHTML = "";
+		sessionStorage.clear();
+	});
+
+	it("still records the turn", async () => {
+		sessionStorage.clear();
+		const panel = build();
+		panel.sync();
+		await idle();
+
+		const turning = panel.turnKnob("gap", 24);
+		await idle();
+		// vite replaced the modules this panel lives in, because of this write.
+		panel.destroy();
+		release?.({
+			status: 200,
+			body: { ok: true, changed: true, before: "gap={8}", after: "gap={24}" },
+		});
+		await turning;
+		await idle();
+
+		const cmd = peekUndo();
+		expect(cmd?.type).toBe("source-edit");
+		if (cmd?.type !== "source-edit") throw new Error("no source edit on the stack");
+		expect(cmd.endpoint).toBe("prop");
+		expect(cmd.undo.body.value).toEqual({ as: "expression", value: 8 });
+		expect(cmd.undo.expect).toBe("gap={24}");
+	});
+
+	it("records nothing when that write was refused", async () => {
+		// The other side: a teardown must not turn a refusal into a step.
+		sessionStorage.clear();
+		const panel = build();
+		panel.sync();
+		await idle();
+
+		const turning = panel.turnKnob("gap", 24);
+		await idle();
+		panel.destroy();
+		release?.({ status: 409, body: { ok: false, problem: "dynamic-prop", error: "not a literal" } });
+		await turning;
+		await idle();
+
+		expect(peekUndo()).toBeNull();
 	});
 });

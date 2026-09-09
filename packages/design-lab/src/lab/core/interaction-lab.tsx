@@ -23,7 +23,12 @@ import { pushToast } from "./lab-toasts";
 import { paintPixelGrid } from "./pixel-grid";
 import { animateCamera } from "./animate-camera";
 import { measureSegments, paintMeasurements } from "./measurements";
-import { pushHistory, setNotice, type HistoryCommand } from "./history";
+import {
+  pushHistory,
+  sendSourceEdit,
+  setNotice,
+  type HistoryCommand,
+} from "./history";
 import { labFs } from "./fs-client";
 import type { ResizeEdge } from "./screen-frame";
 import { SCREENS, screenById } from "../screens";
@@ -732,6 +737,19 @@ async function applyHistory(
     }
     setNotice(invert ? "Restored" : "Deleted");
     location.reload();
+    return;
+  }
+  if (cmd.type === "source-edit") {
+    const dir = invert ? cmd.undo : cmd.redo;
+    const r = await sendSourceEdit(cmd.endpoint, dir);
+    if (!r.ok) {
+      // The step is already off the undo stack and it cannot be applied, so it
+      // is spent either way. Saying nothing would read as "undo did nothing";
+      // this says which step went and, in the server's words, why.
+      pushToast(`dropped ${cmd.what} — ${r.note}`);
+    }
+    // Nothing on success: the write reloads the module and he sees it change,
+    // which is the same answer the class panel gives its own edits.
     return;
   }
   if (cmd.type === "duplicate") {

@@ -35,7 +35,95 @@ export type HistoryCommand =
       copyDir: string;
       copyId: string;
     }
-  | { type: "rename"; dir: string; id: string; from: string; to: string };
+  | { type: "rename"; dir: string; id: string; from: string; to: string }
+  | {
+      type: "source-edit";
+      /** Which of the three element writes this step goes back through. */
+      endpoint: SourceEditEndpoint;
+      /** One line of his own language, for the toast when a step is refused. */
+      what: string;
+      undo: SourceEditDirection;
+      redo: SourceEditDirection;
+    };
+
+/** The three routes that rewrite his source from the canvas. */
+export type SourceEditEndpoint = "classes" | "text" | "prop";
+
+/**
+ * One direction of a source edit: the request that applies it, and the state of
+ * the file it may be applied to.
+ *
+ * Both halves are worked out by whoever made the edit, at the moment it landed,
+ * and carried here as plain data. The alternative -- deriving the reverse from
+ * the `before` the server hands back -- would mean parsing his JSX a fourth
+ * time, in a fourth place, kept in step with the other three by hand.
+ *
+ * `expect` is the whole reason this is safe to replay later. Between the edit
+ * and the Ctrl+Z, that line can have changed: he edited it in his editor, or
+ * she did. Sending the reverse write blind would overwrite that silently, and
+ * he would believe he had taken one step back.
+ */
+export type SourceEditDirection = {
+  /** The endpoint's own body, minus `expect`. */
+  body: Record<string, unknown>;
+  /** What that write must be replacing, or null for "nothing is there". */
+  expect: string | null;
+};
+
+/**
+ * The `before`/`after` the endpoints answer with, as an `expect`.
+ *
+ * They say "" for a tag that has no such attribute at all -- no `className`, no
+ * `tone=`. Null is how the wire says that, because "" is also a legal value for
+ * an attribute that IS there (`className=""`), and an undo that could not tell
+ * those apart would put the attribute back where it never was.
+ */
+export function expectFor(value: string): string | null {
+  return value === "" ? null : value;
+}
+
+export type SourceEditOutcome = { ok: true } | { ok: false; note: string };
+
+/** The header those routes require. Writing source from a browser earns it. */
+const WRITE_GUARD = "x-lab-canvas";
+
+/**
+ * Send one direction of a source edit and say plainly whether it landed.
+ *
+ * A refusal comes back as the server's own sentence. It knows what it expected
+ * and what it found instead; anything friendlier written here would be a
+ * paraphrase of the one piece of information he needs.
+ */
+export async function sendSourceEdit(
+  endpoint: SourceEditEndpoint,
+  dir: SourceEditDirection,
+): Promise<SourceEditOutcome> {
+  let status = 0;
+  let reply: { ok?: unknown; error?: unknown } = {};
+  try {
+    const res = await fetch(`/__lab-fs/element/${endpoint}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", [WRITE_GUARD]: "1" },
+      body: JSON.stringify({ ...dir.body, expect: dir.expect }),
+    });
+    status = res.status;
+    try {
+      reply = (await res.json()) as { ok?: unknown; error?: unknown };
+    } catch {
+      reply = {};
+    }
+  } catch (error) {
+    // The dev server is gone, or the page is being torn down. Reporting this
+    // as a success would leave the step off the stack and the file unchanged.
+    return { ok: false, note: String(error) };
+  }
+  if (status >= 200 && status < 300 && reply.ok === true) return { ok: true };
+  const said =
+    typeof reply.error === "string" && reply.error.trim() !== ""
+      ? reply.error
+      : `写不进去(HTTP ${status})`;
+  return { ok: false, note: said };
+}
 
 type Stacks = { undo: HistoryCommand[]; redo: HistoryCommand[] };
 

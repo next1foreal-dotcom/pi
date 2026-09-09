@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { peekUndo } from "../../core/history";
 import type { SourceLocation } from "../inspect/source-location";
 import {
 	decideEdit,
@@ -16,6 +17,8 @@ import {
 	TextEditor,
 	type TextEditorDeps,
 	textEditBody,
+	textEditCommand,
+	type TextEditBody,
 } from "./plugin";
 
 /**
@@ -548,5 +551,184 @@ describe("the editor on a live screen", () => {
 		editor.destroy();
 		dbl(target);
 		expect(editing()).toBe(false);
+	});
+});
+
+/**
+ * A text edit is a step he can take back.
+ *
+ * Everything else he does on this canvas — moving a screen, deleting one,
+ * renaming one — is on one stack under one shortcut. Typing over a sentence was
+ * the one direct manipulation with no way back, and a direct manipulation you
+ * cannot undo is one he stops using.
+ *
+ * Both sides, because a builder that records every call would put a step on the
+ * stack for a write the server refused, and pressing undo would then reverse an
+ * edit that never happened.
+ */
+describe("a text edit as an undoable step", () => {
+	const body: TextEditBody = {
+		file: "packages/design-lab/src/screens/product-list/components/Browse.tsx",
+		line: 116,
+		column: 11,
+		tag: "p",
+		text: "Read the plan",
+	};
+
+	it("records the sentence that was there as the way back", () => {
+		const cmd = textEditCommand(body, {
+			ok: true,
+			changed: true,
+			before: "Read the spec",
+			after: "Read the plan",
+		});
+		expect(cmd).toEqual({
+			type: "source-edit",
+			endpoint: "text",
+			what: "改 Browse.tsx:116 的文字",
+			undo: {
+				body: { ...body, text: "Read the spec" },
+				expect: "Read the plan",
+			},
+			redo: {
+				body: { ...body, text: "Read the plan" },
+				expect: "Read the spec",
+			},
+		});
+	});
+
+	it("expects an empty text child as an empty string, not as nothing", () => {
+		// The classes and prop routes answer "" for an attribute that is not on
+		// the tag, and their compare-and-swap says null for that. This route has
+		// no such state -- a tag with no static text child is refused outright --
+		// and it compares against the text itself, so null would match nothing
+		// and refuse every step built over copy that started out empty.
+		const cmd = textEditCommand(body, {
+			ok: true,
+			changed: true,
+			before: "",
+			after: "Read the plan",
+		});
+		if (cmd?.type !== "source-edit") throw new Error("no source edit built");
+		expect(cmd.redo.expect).toBe("");
+		expect(cmd.undo.expect).toBe("Read the plan");
+	});
+
+	it("records nothing when the file did not change", () => {
+		// The server answers `changed:false` for a write that matched what was
+		// already there. A step here would be a Ctrl+Z that does nothing, which
+		// is the hardest kind of undo bug to see.
+		expect(
+			textEditCommand(body, { ok: true, changed: false, before: "Read the plan", after: "Read the plan" }),
+		).toBeNull();
+	});
+
+	it("records nothing when the write was refused", () => {
+		expect(textEditCommand(body, { ok: false, error: "that location is stale" })).toBeNull();
+	});
+
+	it("records nothing when the answer did not say what it replaced", () => {
+		// Without `before` there is no text to write back and no value to
+		// compare against; a step built on a guess would overwrite blind.
+		expect(textEditCommand(body, { ok: true, changed: true })).toBeNull();
+	});
+});
+
+describe("the editor putting its write on the stack", () => {
+	let host: HTMLElement;
+	let target: HTMLElement;
+	let live: TextEditor | null = null;
+	let posted: { url: string; init: RequestInit }[];
+	let reply: { ok: boolean; status: number; body: unknown };
+
+	function located(el: Element): SourceLocation {
+		if (el === target) {
+			return {
+				file: "packages/design-lab/src/screens/main-landing/page.tsx",
+				line: 95,
+				column: 7,
+				component: "MainLanding",
+				problem: null,
+			};
+		}
+		return { file: null, line: null, column: null, component: null, problem: "no-react-fiber" };
+	}
+
+	function build(): TextEditor {
+		const group = document.createElement("div");
+		group.setAttribute("data-screen-id", "main-landing");
+		const scroll = document.createElement("div");
+		scroll.setAttribute("data-screen-scroll", "main-landing");
+		target = document.createElement("span");
+		target.textContent = "Read the spec";
+		scroll.appendChild(target);
+		group.appendChild(scroll);
+		host = document.createElement("div");
+		document.body.append(group, host);
+
+		posted = [];
+		vi.spyOn(globalThis, "fetch").mockImplementation(((url: string, init: RequestInit) => {
+			posted.push({ url, init });
+			return Promise.resolve({
+				ok: reply.ok,
+				status: reply.status,
+				json: () => Promise.resolve(reply.body),
+			});
+		}) as unknown as typeof fetch);
+
+		live = new TextEditor(host, {
+			canvasState: () => ({ mode: "focus", focusedId: "main-landing" }),
+			locate: located,
+			locateSourced: (el) => Promise.resolve(located(el)),
+			insertPlain: () => {},
+		});
+		return live;
+	}
+
+	function type(next: string): void {
+		target.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true }));
+		target.textContent = next;
+		(document.activeElement ?? document.body).dispatchEvent(
+			new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+		);
+	}
+
+	afterEach(() => {
+		live?.destroy();
+		live = null;
+		vi.restoreAllMocks();
+		document.body.innerHTML = "";
+		sessionStorage.clear();
+	});
+
+	it("pushes one step he can take back", async () => {
+		sessionStorage.clear();
+		reply = {
+			ok: true,
+			status: 200,
+			body: { ok: true, changed: true, before: "Read the spec", after: "Read the plan" },
+		};
+		const editor = build();
+		type("Read the plan");
+		await editor.settled();
+
+		expect(posted.length).toBe(1);
+		const cmd = peekUndo();
+		expect(cmd?.type).toBe("source-edit");
+		if (cmd?.type !== "source-edit") throw new Error("no source edit on the stack");
+		expect(cmd.endpoint).toBe("text");
+		expect(cmd.undo.body.text).toBe("Read the spec");
+		expect(cmd.undo.expect).toBe("Read the plan");
+	});
+
+	it("pushes nothing when the server refused the write", async () => {
+		sessionStorage.clear();
+		reply = { ok: false, status: 409, body: { ok: false, error: "that tag has no static text child" } };
+		const editor = build();
+		type("Read the plan");
+		await editor.settled();
+
+		expect(posted.length).toBe(1);
+		expect(peekUndo()).toBeNull();
 	});
 });

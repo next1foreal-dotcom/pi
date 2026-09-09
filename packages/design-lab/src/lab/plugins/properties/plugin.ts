@@ -1,5 +1,6 @@
 import type { LabPlugin, LabPluginContext, LabPluginHandle } from "../../plugin-api";
 import type { ComponentIndex } from "../../components/types";
+import { expectFor, pushHistory, type HistoryCommand } from "../../core/history";
 import { INDEX_URL } from "../components/plugin";
 import {
 	fiberOf,
@@ -54,6 +55,61 @@ type InspectApi = {
 
 /** One class-list edit, as it goes over the wire. */
 export type ClassChange = { add?: string; remove?: string };
+
+/** The tag a class edit landed on, exactly as the endpoint is addressed. */
+export type ClassEditWhere = { file: string; line: number; column: number; tag: string };
+
+/** The part of the endpoint's answer a history step can be built on. */
+export type ClassEditReply = {
+	ok?: boolean;
+	/** The refusal sentence, when there is one. */
+	error?: string;
+	changed?: boolean;
+	before?: string;
+	after?: string;
+};
+
+/**
+ * The step that takes one class edit back, or null when there is nothing to
+ * take back.
+ *
+ * The reverse of "remove x" is "add x" — not "write the whole list back". In
+ * between the edit and his Ctrl+Z that list may have gained a class he typed in
+ * his editor, and restoring the whole value would throw that away while
+ * reporting that it undid one thing.
+ *
+ * Null for a write that did not change the file: a step that applies cleanly
+ * and changes nothing is a Ctrl+Z that appears to do nothing at all, which is
+ * the hardest kind of undo bug to see. Null too when the answer did not say
+ * what it replaced, because then there is no value to compare against later and
+ * the undo would be writing blind.
+ */
+export function classEditCommand(
+	where: ClassEditWhere,
+	change: ClassChange,
+	reply: ClassEditReply,
+): HistoryCommand | null {
+	if (reply.ok !== true || reply.changed !== true) return null;
+	if (typeof reply.before !== "string" || typeof reply.after !== "string") return null;
+	const forward: ClassChange = {};
+	const back: ClassChange = {};
+	if (change.remove) {
+		forward.remove = change.remove;
+		back.add = change.remove;
+	}
+	if (change.add) {
+		forward.add = change.add;
+		back.remove = change.add;
+	}
+	if (forward.add === undefined && forward.remove === undefined) return null;
+	return {
+		type: "source-edit",
+		endpoint: "classes",
+		what: change.remove ? `拿掉 ${change.remove}` : `加上 ${change.add}`,
+		undo: { body: { ...where, ...back }, expect: expectFor(reply.after) },
+		redo: { body: { ...where, ...forward }, expect: expectFor(reply.before) },
+	};
+}
 
 /** The element to look for again, once the write has landed. */
 export type RefindTarget = SourceTarget & { screenId: string | null };
@@ -560,12 +616,26 @@ export class Properties {
 					...change,
 				}),
 			});
-			const body = (await res.json()) as { ok?: boolean; error?: string };
+			const body = (await res.json()) as ClassEditReply;
 			if (!res.ok || !body.ok) {
 				this.note.textContent = body.error ?? `写不进去(HTTP ${res.status})`;
 				this.note.setAttribute("data-bad", "");
 			} else {
 				this.add.value = "";
+				// Onto the same stack as every other thing he does here, before
+				// the wait for the element: the step belongs to the write, and
+				// the refind that follows can end in "never came back".
+				const step = classEditCommand(
+					{
+						file: target.file,
+						line: target.line,
+						column: target.column,
+						tag: String(sel.tag),
+					},
+					change,
+					body,
+				);
+				if (step) pushHistory(step);
 				back = await refind(target, change, this.limit, this.deps);
 			}
 		} catch (error) {
