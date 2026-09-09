@@ -6,6 +6,7 @@ import { stampOidOnEvent } from "../her/src/design-canvas/store.ts";
 import { buildComponentIndex } from "./src/lab/components/build-index.ts";
 import { EDITABLE_SOURCE, editClassList, splitClasses } from "../her/src/preview/jsx-class-list.ts";
 import { editText } from "../her/src/preview/jsx-text.ts";
+import { editProp, parsePropWrite } from "../her/src/preview/jsx-attr.ts";
 
 type Positions = Record<string, { x: number; y: number }>;
 
@@ -409,6 +410,64 @@ export function labFsPlugin(projectRoot: string): Plugin {
                 return;
               }
               const edit = editText(source, { line, column, tag, text: body.text });
+              if (!edit.ok) {
+                json(res, 409, { ok: false, problem: edit.problem, error: edit.reason });
+                return;
+              }
+              if (edit.changed) fs.writeFileSync(absolute, edit.source);
+              json(res, 200, {
+                ok: true,
+                changed: edit.changed,
+                before: edit.before,
+                after: edit.after,
+                file: back,
+              });
+              return;
+            }
+            if (url === "/element/prop") {
+              // Same four gates as /element/text: this is the third write
+              // path onto a selected tag, and a looser guard here would be the bug.
+              const guard = req.headers[WRITE_GUARD];
+              if ((Array.isArray(guard) ? guard[0] : guard) !== "1") {
+                json(res, 403, { ok: false, error: "forbidden" });
+                return;
+              }
+              const rel = String(body.file ?? "").replaceAll("\\", "/").trim();
+              const absolute = path.resolve(repoRoot, rel);
+              const back = path.relative(repoRoot, absolute).split(path.sep).join("/");
+              if (!rel || back === "" || back.startsWith("../") || path.isAbsolute(back)) {
+                json(res, 400, { ok: false, error: `refusing ${rel}: it resolves outside the repo` });
+                return;
+              }
+              if (!EDITABLE_SOURCE.test(back)) {
+                json(res, 400, { ok: false, error: `refusing ${back}: this edits JSX tags, so only .tsx and .jsx` });
+                return;
+              }
+              const line = Number(body.line);
+              const column = Number(body.column);
+              const tag = String(body.tag ?? "").trim();
+              if (!Number.isFinite(line) || !Number.isFinite(column) || !tag) {
+                json(res, 400, { ok: false, error: "line, column and tag all come from the selection" });
+                return;
+              }
+              const prop = typeof body.prop === "string" ? body.prop.trim() : "";
+              if (!prop) {
+                json(res, 400, { ok: false, error: "prop is the attribute name on this tag" });
+                return;
+              }
+              const parsed = parsePropWrite(body.value);
+              if (!parsed.ok) {
+                json(res, 400, { ok: false, error: parsed.error });
+                return;
+              }
+              let source: string;
+              try {
+                source = fs.readFileSync(absolute, "utf8");
+              } catch (error) {
+                json(res, 404, { ok: false, error: `could not read ${back}: ${String(error)}` });
+                return;
+              }
+              const edit = editProp(source, { line, column, tag, prop, value: parsed.value });
               if (!edit.ok) {
                 json(res, 409, { ok: false, problem: edit.problem, error: edit.reason });
                 return;
