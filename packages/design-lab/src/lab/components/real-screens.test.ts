@@ -79,7 +79,7 @@ describe("the real screens", () => {
       }
     }
     // A silent zero would pass every assertion above without proving anything.
-    expect(checked.length).toBe(8);
+    expect(checked.length).toBe(9);
   });
 
   it("keeps a renamed default import under its declared name", () => {
@@ -147,6 +147,7 @@ describe("the real screens", () => {
     expect(index().components.map((c) => c.name)).not.toContain("ProbeCard");
     expect(index().components.map((c) => c.name)).toEqual([
       "PlaygroundScreen",
+      "Tile",
       "ProductListScreen",
       "Browse",
       "BrowseRow",
@@ -162,20 +163,59 @@ describe("the real screens", () => {
     ]);
   });
 
-  it("has no literal-union prop or default anywhere, and says so honestly", () => {
-    // Not a wish: a record. Nothing on these four screens declares a
-    // `"ghost" | "solid" | "outline"` prop or a destructuring default, so the
-    // real index shows none. If a screen ever grows one this goes red, which
-    // is the moment to delete this test and assert the values instead.
+  it("reads the union and the defaults off the one component that has them", () => {
+    // This used to record an absence — nothing on these screens had a literal
+    // union or a destructuring default — with a note to delete it the day one
+    // appeared and assert the values instead. Tile is that day. It exists so
+    // the properties panel has something to turn, which makes it deliberately
+    // the only place on this canvas with a curated set and defaults.
+    //
+    // The values are the whole point. `tone?: "quiet" | "loud" | "warning"`
+    // coming back as those three strings is the single fact that makes this
+    // index worth building with the compiler instead of a regex, and the
+    // default is what a knob shows before anyone touches the prop.
     const withLiterals = index().components.flatMap((c) =>
-      c.props.filter((p) => p.literalValues).map((p) => `${c.name}.${p.name}`),
+      c.props
+        .filter((p) => p.literalValues)
+        .map((p) => [`${c.name}.${p.name}`, p.literalValues]),
     );
     const withDefaults = index().components.flatMap((c) =>
-      c.props.filter((p) => p.defaultValue !== undefined).map((p) => `${c.name}.${p.name}`),
+      c.props
+        .filter((p) => p.defaultValue !== undefined)
+        .map((p) => [`${c.name}.${p.name}`, p.defaultValue]),
     );
-    expect({ withLiterals, withDefaults }).toEqual({
-      withLiterals: [],
-      withDefaults: [],
+    // Exact arrays, so this still says "and nothing else has them".
+    expect(withLiterals).toEqual([["Tile.tone", ["quiet", "loud", "warning"]]]);
+    expect(withDefaults).toEqual([
+      ["Tile.gap", "16"],
+      ["Tile.dense", "false"],
+      ["Tile.ticks", "5"],
+      ["Tile.tone", '"quiet"'],
+      ["Tile.accent", '"#1c1c1c"'],
+    ]);
+  });
+
+  it("carries a declared editor off a real screen, not only a fixture", () => {
+    // The fixture tests next door prove `@editor` parses out of source handed
+    // to the builder. This proves it survives the real compiler on a real
+    // component — the half a fixture cannot show, and until now the half that
+    // had only ever been checked by hand in a browser.
+    const tile = index().components.find((c) => c.name === "Tile");
+    expect(tile?.props.find((p) => p.name === "gap")?.editor).toEqual({
+      kind: "range",
+      min: 0,
+      max: 48,
+      step: 4,
+      unit: "px",
+      section: "Spacing",
     });
+    // `@editor enum` with no `options=` falls back to the inferred union.
+    expect(tile?.props.find((p) => p.name === "tone")?.editor?.options).toEqual([
+      "quiet",
+      "loud",
+      "warning",
+    ]);
+    // And the copy, which is deliberately not a lever, gets no editor at all.
+    expect(tile?.props.find((p) => p.name === "children")?.editor).toBeUndefined();
   });
 });

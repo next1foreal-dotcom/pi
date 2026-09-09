@@ -6,6 +6,7 @@ import {
 	type SourceLocation,
 	type SourceTarget,
 } from "../inspect/source-location";
+import { PROBE_VALUE } from "./knobs";
 import {
 	classesOf,
 	editability,
@@ -399,5 +400,237 @@ describe("the panel across a hot reload", () => {
 
 		expect(claimed).toEqual([other]);
 		expect(noteOf()).not.toBe("改好了 · 再点一下它继续改");
+	});
+});
+
+/**
+ * Turning a knob, across the reload the turn itself causes.
+ *
+ * The failure this pins was found in the running lab, not here: a plain left
+ * click anywhere — including inside this panel — makes the inspect plugin drop
+ * its selection, because it listens on window in the capture phase and the
+ * panel's own stopPropagation is a phase too late. The very next `sync()` then
+ * saw null, dropped the selection the panel was holding, and the write that was
+ * already in flight came back to a panel with nothing to put the element into.
+ * His source changed and the panel went blank: one turn per click, re-select
+ * for the next one.
+ *
+ * Both sides, because "never let go" is as wrong as "always let go" — his last
+ * click still has to win when he really did select something else.
+ */
+describe("turning a knob across the reload it causes", () => {
+	const SCREEN = "packages/design-lab/src/screens/playground/screen.tsx";
+	const TILE = "packages/design-lab/src/screens/playground/components/Tile.tsx";
+	const spot: SourceTarget = { file: TILE, line: 69, column: 6 };
+
+	let host: HTMLElement;
+	let scroll: HTMLElement;
+	let claimed: Element[];
+	let posted: { prop: string; value: unknown }[];
+	let selectionOf: () => Element | null;
+	let setSelection: (el: Element | null) => void;
+	/** The live gap, so the fake fiber answers what the fake screen renders. */
+	let gap: number;
+
+	function locate(el: Element): SourceLocation {
+		if (el.getAttribute("data-src") === "tick") {
+			return { ...spot, component: "Tile", problem: null };
+		}
+		if (el.getAttribute("data-src") === "other") {
+			return { file: SCREEN, line: 12, column: 3, component: "Screen", problem: null };
+		}
+		return { file: null, line: null, column: null, component: null, problem: "no-react-fiber" };
+	}
+
+	function selectionFor(el: Element) {
+		const loc = locate(el);
+		return {
+			screenId: "playground",
+			file: loc.file,
+			line: loc.line,
+			column: loc.column,
+			component: loc.component,
+			tag: el.tagName.toLowerCase(),
+			className: el.getAttribute("class") ?? "",
+			text: "",
+			attached: el.isConnected,
+			problem: loc.problem,
+		};
+	}
+
+	function tick(): HTMLElement {
+		return scroll.querySelector('[data-src="tick"]') as HTMLElement;
+	}
+
+	const index = {
+		screens: [{ id: "playground", file: SCREEN }],
+		problems: [],
+		components: [
+			{
+				name: "Tile",
+				file: TILE,
+				exported: "default" as const,
+				aliases: ["Tile"],
+				reach: { kind: "screen" as const, path: ["playground", "PlaygroundScreen"] },
+				screens: ["playground"],
+				instances: [{ screenId: "playground", file: SCREEN, line: 49, column: 11, tag: "Tile" }],
+				props: [
+					{
+						name: "gap",
+						type: "number",
+						optional: true,
+						editor: { kind: "range" as const, min: 0, max: 48, step: 4, section: "Spacing" },
+					},
+					{ name: "children", type: "ReactNode", optional: true },
+				],
+			},
+		],
+	};
+
+	function build(): Properties {
+		document.body.innerHTML = "";
+		const group = document.createElement("div");
+		group.setAttribute("data-screen-id", "playground");
+		scroll = document.createElement("div");
+		scroll.setAttribute("data-screen-scroll", "playground");
+		const span = document.createElement("span");
+		span.setAttribute("data-src", "tick");
+		scroll.appendChild(span);
+		group.appendChild(scroll);
+		host = document.createElement("div");
+		document.body.append(group, host);
+
+		gap = 16;
+		claimed = [];
+		posted = [];
+		let current: Element | null = tick();
+		selectionOf = () => current;
+		setSelection = (el) => {
+			current = el;
+		};
+		const inspect = {
+			selection: () => (current ? selectionFor(current) : null),
+			selectAt: () => null,
+			selectElement: (el: Element) => {
+				claimed.push(el);
+				current = el;
+				return selectionFor(el);
+			},
+		};
+		(window as unknown as { lab: unknown }).lab = {
+			plugin: (id: string) => (id === "inspect" ? inspect : undefined),
+		};
+
+		const deps: RefindDeps = {
+			root: liveRefindDeps.root,
+			prime: () => Promise.resolve(),
+			find: (root, want, accept) => findBySourceLocation(root, want, { accept, locate }),
+			// The reload lands between two looks, which is the only place it can:
+			// a brand new node, and the fiber now carries what was written.
+			wait: () => {
+				const next = document.createElement("span");
+				next.setAttribute("data-src", "tick");
+				tick().replaceWith(next);
+				return Promise.resolve();
+			},
+		};
+
+		const probe = JSON.stringify(PROBE_VALUE);
+		return new Properties(host, {
+			refind: { attempts: 4, intervalMs: 0 },
+			deps,
+			knobs: {
+				loadIndex: () => Promise.resolve(index),
+				componentAt: () => Promise.resolve("Tile"),
+				fiberOf: () => ({ type: function Tile() {}, memoizedProps: { gap } }),
+				post: (body) => {
+					posted.push({ prop: body.prop, value: body.value });
+					// The probe is refused on its value; a real turn lands.
+					if (JSON.stringify(body.value) === probe) {
+						return Promise.resolve({ status: 409, body: { problem: "unsafe-value" } });
+					}
+					gap = body.value.value as number;
+					return Promise.resolve({ status: 200, body: { ok: true, changed: true } });
+				},
+			},
+		});
+	}
+
+	/** Let the knobs' chain of awaits run out. */
+	async function idle(): Promise<void> {
+		for (let i = 0; i < 16; i += 1) await Promise.resolve();
+	}
+
+	afterEach(() => {
+		(window as unknown as { lab: unknown }).lab = undefined;
+		document.body.innerHTML = "";
+	});
+
+	it("draws a control for the declared prop and none for the undeclared one", async () => {
+		const panel = build();
+		panel.sync();
+		await idle();
+
+		const state = panel.knobState();
+		expect(state.rows.map((r) => r.name)).toEqual(["gap"]);
+		expect(state.rows[0]).toMatchObject({ kind: "range", value: 16, writable: true });
+		expect(state.instance?.line).toBe(49);
+		// One question went out, and it was the probe — not the current value,
+		// which for a prop the tag does not carry would have been a write.
+		expect(posted).toEqual([{ prop: "gap", value: PROBE_VALUE }]);
+		expect(host.querySelectorAll('.pk-ctl[data-prop="gap"]').length).toBe(1);
+		expect(host.querySelectorAll('.pk-ctl[data-prop="children"]').length).toBe(0);
+	});
+
+	it("finds the element again although the click cleared the selection first", async () => {
+		// The live ordering, and the one that actually broke: the pointerup that
+		// turns the slider queues a sync BEFORE the browser delivers `change`, so
+		// by the time the control's own handler runs the panel has already let
+		// go and its rows are off the DOM. The control still fires — a detached
+		// input keeps its listener — and the write still lands, which is what
+		// made this look like a panel that simply forgets after every turn.
+		const panel = build();
+		panel.sync();
+		await idle();
+
+		const input = host.querySelector('.pk-ctl[data-prop="gap"]') as HTMLInputElement;
+		setSelection(null);
+		panel.sync();
+		await idle();
+		expect(panel.knobState().showing).toBe(false);
+
+		input.value = "24";
+		input.dispatchEvent(new Event("change"));
+		await idle();
+		await idle();
+
+		expect(posted[posted.length - 1]).toEqual({
+			prop: "gap",
+			value: { as: "expression", value: 24 },
+		});
+		expect(claimed.length).toBe(1);
+		expect(claimed[0]).toBe(tick());
+		expect(claimed[0].isConnected).toBe(true);
+		expect(panel.knobState().rows[0]?.value).toBe(24);
+	});
+
+	it("still lets his next click win when he really did select something else", async () => {
+		const panel = build();
+		panel.sync();
+		await idle();
+
+		const other = document.createElement("span");
+		other.setAttribute("data-src", "other");
+		scroll.appendChild(other);
+
+		const turning = panel.turnKnob("gap", 24);
+		setSelection(other);
+		await turning;
+		await idle();
+
+		// It wrote, and it did not drag him back to the element he had left.
+		expect(gap).toBe(24);
+		expect(selectionOf()).toBe(other);
+		expect(claimed).toEqual([]);
 	});
 });

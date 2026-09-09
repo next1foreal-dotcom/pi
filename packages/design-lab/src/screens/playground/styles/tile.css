@@ -1,0 +1,84 @@
+/*
+ * Tile — the same neutral ink/paper the playground already uses. No colour of
+ * its own: the one accent is a prop, and its default is the page's own ink, so
+ * a tile that nobody has touched looks like the rest of the screen.
+ *
+ * `--tl-gap` and `--tl-accent` are written by the component from its props, so
+ * turning a knob in the panel moves a real value here rather than swapping a
+ * class name for another hard-coded one.
+ */
+
+.tl-tile {
+  --tl-gap: 16px;
+  --tl-accent: #1c1c1c;
+
+  display: flex;
+  flex-direction: column;
+  gap: var(--tl-gap);
+
+  box-sizing: border-box;
+  max-width: 520px;
+  padding: 24px;
+  border: 1px solid #e2e2e2;
+  border-left: 3px solid var(--tl-accent);
+  border-radius: 10px;
+  background: #fafafa;
+}
+
+.tl-tile[data-dense="on"] {
+  padding: 14px 16px;
+  border-radius: 8px;
+}
+
+.tl-tile[data-tone="quiet"] {
+  background: #fafafa;
+  border-left-width: 2px;
+}
+
+.tl-tile[data-tone="loud"] {
+  background: #f1f1f1;
+  border-left-width: 5px;
+}
+
+.tl-tile[data-tone="warning"] {
+  background: #fafafa;
+  border-left-width: 5px;
+  border-left-style: dashed;
+}
+
+.tl-body {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--tl-gap) / 2);
+}
+
+.tl-body > * {
+  margin: 0;
+}
+
+.tl-meter {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 24px;
+}
+
+.tl-tick {
+  display: block;
+  width: 6px;
+  border-radius: 2px;
+  background: var(--tl-accent);
+  opacity: 0.55;
+}
+
+.tl-tile[data-tone="loud"] .tl-tick {
+  opacity: 0.9;
+}
+
+.tl-tile[data-dense="on"] .tl-meter {
+  height: 16px;
+}
+
+.tl-tile[data-dense="on"] .tl-tick {
+  width: 4px;
+}

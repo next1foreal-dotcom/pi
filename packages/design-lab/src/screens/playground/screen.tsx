@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useScreen } from "../../lab/screen-context";
+import Tile from "./components/Tile";
 import "./styles/screen.css";
 
 export const name = "Playground";
@@ -37,6 +38,21 @@ export default function PlaygroundScreen() {
             onChange={(e) => setText(e.target.value)}
             placeholder="Type here when locked in"
           />
+        </div>
+        {/*
+          Literal props, on purpose: this is the one call site on the canvas
+          the properties panel can actually turn. Written as expressions
+          (`gap={someVar}`) the editor would refuse them, and rightly.
+          The copy is children, not props — a knob is a lever.
+        */}
+        <div className="pg-tile-slot">
+          <Tile gap={8} dense={false} ticks={5} tone="quiet" accent="#1c1c1c">
+            <h2 className="pg-tile-head">Knobs</h2>
+            <p className="pg-tile-copy">
+              Five declared editors, one call site. Turn one in the panel and
+              this file changes.
+            </p>
+          </Tile>
         </div>
       </div>
     </div>

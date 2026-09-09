@@ -68,6 +68,23 @@
   margin-top: 16px;
 }
 
+/* The copy inside the Tile. It belongs to this screen, not to the component —
+   which is why it is written as children at the call site. */
+.pg-tile-head {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.pg-tile-copy {
+  color: #6b6b6b;
+  max-width: 40ch;
+}
+
+.pg-tile-slot {
+  margin-top: 28px;
+}
+
 .pg-input {
   padding: 8px 12px;
   border-radius: 8px;

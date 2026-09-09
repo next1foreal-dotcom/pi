@@ -1,9 +1,20 @@
 import type { LabPlugin, LabPluginContext, LabPluginHandle } from "../../plugin-api";
+import type { ComponentIndex } from "../../components/types";
+import { INDEX_URL } from "../components/plugin";
 import {
+	fiberOf,
 	findBySourceLocation,
 	primeSourceLocations,
 	type SourceTarget,
 } from "../inspect/source-location";
+import {
+	Knobs,
+	type KnobsDeps,
+	type KnobsState,
+	type KnobsTarget,
+	type PropReply,
+	type PropsFiber,
+} from "./knobs";
 
 /**
  * What is selected, and what can be changed about it.
@@ -120,11 +131,31 @@ export async function refind(
 	limit: RefindLimit = REFIND_LIMIT,
 	deps: RefindDeps = liveRefindDeps,
 ): Promise<Element | null> {
+	return pollForElement(
+		target,
+		(el) => editLanded(el.getAttribute("class"), change),
+		limit,
+		deps,
+	);
+}
+
+/**
+ * The waiting itself, with the "has it landed" question left to the caller.
+ *
+ * Two edits go through this now — a class list and a prop — and they know
+ * different things about what the new render looks like. What they share is
+ * every reason the wait exists, so that part is here once rather than twice.
+ */
+export async function pollForElement(
+	target: RefindTarget,
+	accept: (el: Element) => boolean,
+	limit: RefindLimit = REFIND_LIMIT,
+	deps: RefindDeps = liveRefindDeps,
+): Promise<Element | null> {
 	// A selection with no screen was never inside one, and no amount of waiting
 	// changes that. A screen whose scroller is missing right now is a different
 	// thing — that one is worth another look.
 	if (target.screenId === null) return null;
-	const accept = (el: Element): boolean => editLanded(el.getAttribute("class"), change);
 	for (let attempt = 0; attempt < limit.attempts; attempt += 1) {
 		const root = deps.root(target.screenId);
 		if (root) {
@@ -219,7 +250,52 @@ const LOST_NOTE = "改好了 · 再点一下它继续改";
 export type PropertiesOptions = {
 	refind?: RefindLimit;
 	deps?: RefindDeps;
+	/** Injected by tests; the live panel talks to the dev server. */
+	knobs?: Partial<KnobsDeps>;
 };
+
+const EMPTY_INDEX: ComponentIndex = { screens: [], components: [], problems: [] };
+
+/**
+ * The component index, read straight from the server rather than through the
+ * components plugin: `list()` drops the props and `show()` would paint outlines
+ * on his canvas as a side effect of opening a panel. The server recomputes the
+ * index per request, so this is never stale — it is only ever slow.
+ */
+async function fetchIndex(): Promise<ComponentIndex> {
+	try {
+		const res = await fetch(INDEX_URL);
+		if (!res.ok) return EMPTY_INDEX;
+		const body = (await res.json()) as { ok?: boolean; index?: ComponentIndex };
+		return body.ok && body.index ? body.index : EMPTY_INDEX;
+	} catch {
+		return EMPTY_INDEX;
+	}
+}
+
+/** Which component an element belongs to — the components plugin's own walk. */
+async function componentAt(el: Element): Promise<string | null> {
+	const api = window.lab?.plugin("components") as
+		| { componentAt?(el: Element): Promise<string | null> }
+		| undefined;
+	if (!api || typeof api.componentAt !== "function") return null;
+	return api.componentAt(el);
+}
+
+async function postProp(body: unknown): Promise<{ status: number; body: PropReply }> {
+	const res = await fetch("/__lab-fs/element/prop", {
+		method: "POST",
+		headers: { "content-type": "application/json", "x-lab-canvas": "1" },
+		body: JSON.stringify(body),
+	});
+	let parsed: PropReply = {};
+	try {
+		parsed = (await res.json()) as PropReply;
+	} catch {
+		parsed = {};
+	}
+	return { status: res.status, body: parsed };
+}
 
 export class Properties {
 	private readonly limit: RefindLimit;
@@ -230,6 +306,21 @@ export class Properties {
 	private readonly chips: HTMLDivElement;
 	private readonly add: HTMLInputElement;
 	private readonly note: HTMLDivElement;
+	private readonly knobs: Knobs;
+	/** Clicks overtake each other; only the newest look may paint the knobs. */
+	private knobGen = 0;
+	/**
+	 * The position the knobs were last drawn for.
+	 *
+	 * Kept apart from `shown` because of the order the browser uses: the click
+	 * that turns a slider fires `pointerup` — which queues the sync that drops
+	 * `shown` — BEFORE it delivers `change` to the control. So by the time a
+	 * turn begins, the selection it belongs to is already gone, and it is gone
+	 * for a reason that has nothing to do with him having moved on. This is what
+	 * the write finds its way back to; `movedOn` is still what decides whether
+	 * the selection is taken.
+	 */
+	private knobAnchor: RefindTarget | null = null;
 	private shown: Selection | null = null;
 	private busy = false;
 	/** A write just landed; hold the message until the next real selection. */
@@ -262,6 +353,20 @@ export class Properties {
 		this.note.className = "pp-note";
 
 		this.panel.append(this.tagEl, this.whereEl, classesLabel, this.chips, this.add, this.note);
+		this.knobs = new Knobs(this.panel, {
+			loadIndex: fetchIndex,
+			componentAt,
+			fiberOf: (el) => fiberOf(el) as PropsFiber | null,
+			post: postProp,
+			settle: (check) => this.settle(check),
+			busy: (on) => {
+				this.busy = on;
+				// Releasing is also the moment to look again: the selection either
+				// came back or he has moved on, and both are read the same way.
+				if (!on) this.sync();
+			},
+			...(opts.knobs ?? {}),
+		});
 		host.appendChild(this.panel);
 
 		this.add.addEventListener("keydown", (e) => {
@@ -305,10 +410,73 @@ export class Properties {
 		}
 	};
 
+	/**
+	 * The element this selection points at, so the knobs can ask which component
+	 * it belongs to. The selection carries a source position, not a node — this
+	 * is the same lookup the class edits use to find their way back.
+	 */
+	private async knobTarget(sel: Selection | null): Promise<KnobsTarget> {
+		if (!sel || !sel.attached || sel.file === null || sel.line === null || sel.column === null) {
+			return { el: null, screenId: null };
+		}
+		const root = this.deps.root(sel.screenId);
+		if (!root) return { el: null, screenId: sel.screenId };
+		await this.deps.prime(root);
+		const target: SourceTarget = { file: sel.file, line: sel.line, column: sel.column };
+		return { el: this.deps.find(root, target, () => true), screenId: sel.screenId };
+	}
+
+	/** Point the knobs at the current selection, newest look wins. */
+	private refreshKnobs(sel: Selection | null): void {
+		const mine = ++this.knobGen;
+		// Only ever replaced by a real selection, never cleared by the absence of
+		// one — see `knobAnchor`.
+		if (sel && sel.file !== null && sel.line !== null && sel.column !== null) {
+			this.knobAnchor = {
+				screenId: sel.screenId,
+				file: sel.file,
+				line: sel.line,
+				column: sel.column,
+			};
+		}
+		void this.knobTarget(sel).then((target) => {
+			if (this.closed || mine !== this.knobGen) return;
+			return this.knobs.update(target);
+		});
+	}
+
+	/**
+	 * Wait for a prop write to reach the screen, then hand the new node back to
+	 * the inspect plugin — the same recovery the class edits do, with the value
+	 * as the gate instead of the class name.
+	 */
+	private async settle(check: (el: Element) => boolean): Promise<Element | null> {
+		const sel = this.shown;
+		const target: RefindTarget | null =
+			sel && sel.file !== null && sel.line !== null && sel.column !== null
+				? { screenId: sel.screenId, file: sel.file, line: sel.line, column: sel.column }
+				: this.knobAnchor;
+		if (!target) return null;
+		const back = await pollForElement(target, check, this.limit, this.deps);
+		if (this.closed) return back;
+		// Same rule as a class edit: his last click wins. Pulling the selection
+		// back to the tag he turned a knob on would leave the panel describing
+		// one element while he is looking at another.
+		if (this.movedOn(target)) return back;
+		if (back && this.claim(back)) {
+			this.shown = null;
+		} else if (!back) {
+			this.note.textContent = LOST_NOTE;
+			this.note.removeAttribute("data-bad");
+		}
+		return back;
+	}
+
 	private render(): void {
 		const sel = this.shown;
 		const state = editability(sel);
 		this.panel.toggleAttribute("data-show", state.show);
+		this.refreshKnobs(state.show ? sel : null);
 		if (!sel || !state.show) return;
 
 		this.tagEl.textContent = sel.component ? `<${sel.tag}> · ${sel.component}` : `<${sel.tag}>`;
@@ -459,8 +627,19 @@ export class Properties {
 		return this.write({ add: name });
 	}
 
+	/** What the knob half is offering right now. */
+	knobState(): KnobsState {
+		return this.knobs.read();
+	}
+
+	/** Turn one knob by name — the same path the control takes. */
+	turnKnob(prop: string, value: string | number | boolean): Promise<void> {
+		return this.knobs.turnByName(prop, value);
+	}
+
 	destroy(): void {
 		this.closed = true;
+		this.knobs.destroy();
 		this.panel.remove();
 	}
 }
@@ -487,6 +666,13 @@ export const plugin: LabPlugin = {
 			summary:
 				"Re-read the inspect plugin's selection now. The panel already follows clicks and camera writes; this is for a selection made through the api, which nothing else announces.",
 		},
+		{
+			name: "knobs",
+			signature:
+				"knobs(): { showing, component, instance, rows: { name, kind, value, writable, note }[], warning }",
+			summary:
+				"The declared-editor controls for the component the selected element belongs to. Only props carrying an `@editor` tag appear — an inferred type is not enough to build a control from. `writable` is not a guess: the panel asks the source editor with a trial write it always refuses on the value, so every other gate (location, tag, literal, spread) has really passed. A false one carries the editor's own sentence in `note`, and its control is disabled before anyone touches it. `instance` is the call site being written; null with a `warning` when the screen has more than one and the panel will not guess between them.",
+		},
 	],
 	mount(ctx: LabPluginContext): LabPluginHandle | null {
 		if (typeof document === "undefined") return null;
@@ -509,6 +695,7 @@ export const plugin: LabPlugin = {
 					};
 				},
 				refresh: () => panel.sync(),
+				knobs: () => panel.knobState(),
 			},
 			destroy() {
 				window.removeEventListener("pointerup", onUp, true);
