@@ -642,10 +642,10 @@ describe("turning a knob across the reload it causes", () => {
 /**
  * The step that takes a class edit back.
  *
- * The reverse of "remove x" is "add x" and nothing else: it is not "write the
- * whole list back", because between the edit and the Ctrl+Z the list may have
- * gained a class he typed in his editor, and replacing the list would throw it
- * away while telling him it undid one thing.
+ * Both directions write the whole list the endpoint reported. Reversing a
+ * removal as an add would append the name, so the order he wrote is gone and
+ * every undo/redo shuffles it again. Empty `replace` is a no-op at the
+ * endpoint, so an add onto a bare tag still undoes by `remove`.
  *
  * Both sides, because a builder that recorded every answer would leave a step
  * on the stack for a refused write, and undo would then reverse an edit that
@@ -659,7 +659,7 @@ describe("a class edit as an undoable step", () => {
 		tag: "p",
 	};
 
-	it("records a removal as the add that puts it back", () => {
+	it("records a removal as the list the file had, written back", () => {
 		const cmd = classEditCommand(where, { remove: "product-title" }, {
 			ok: true,
 			changed: true,
@@ -670,12 +670,12 @@ describe("a class edit as an undoable step", () => {
 			type: "source-edit",
 			endpoint: "classes",
 			what: "拿掉 product-title",
-			undo: { body: { ...where, add: "product-title" }, expect: "row-title" },
-			redo: { body: { ...where, remove: "product-title" }, expect: "row-title product-title" },
+			undo: { body: { ...where, replace: "row-title product-title" }, expect: "row-title" },
+			redo: { body: { ...where, replace: "row-title" }, expect: "row-title product-title" },
 		});
 	});
 
-	it("records an add as the removal that takes it off", () => {
+	it("records an add as the list the file had, written back", () => {
 		const cmd = classEditCommand(where, { add: "lead" }, {
 			ok: true,
 			changed: true,
@@ -686,9 +686,80 @@ describe("a class edit as an undoable step", () => {
 			type: "source-edit",
 			endpoint: "classes",
 			what: "加上 lead",
-			undo: { body: { ...where, remove: "lead" }, expect: "row-title lead" },
-			redo: { body: { ...where, add: "lead" }, expect: "row-title" },
+			undo: { body: { ...where, replace: "row-title" }, expect: "row-title lead" },
+			redo: { body: { ...where, replace: "row-title lead" }, expect: "row-title" },
 		});
+	});
+
+	it("undo writes the class list back in the order the file had it", () => {
+		// The live failure: removing lp-btn from "lp-btn is-ghost" and Ctrl+Z
+		// appended it, so the file read "is-ghost lp-btn". Same classes, a line
+		// he never wrote. Undo is "put it back as it was".
+		const cmd = classEditCommand(where, { remove: "lp-btn" }, {
+			ok: true,
+			changed: true,
+			before: "lp-btn is-ghost",
+			after: "is-ghost",
+		});
+		if (cmd?.type !== "source-edit") throw new Error("no source edit built");
+		expect(cmd.undo.body).toEqual({ ...where, replace: "lp-btn is-ghost" });
+		expect(cmd.redo.body).toEqual({ ...where, replace: "is-ghost" });
+		expect(cmd.undo.expect).toBe("is-ghost");
+		expect(cmd.redo.expect).toBe("lp-btn is-ghost");
+
+		// The same removal, a different order on the tag. If undo still said
+		// "lp-btn is-ghost" here, the assertion was not reading `before`.
+		const shuffled = classEditCommand(where, { remove: "lp-btn" }, {
+			ok: true,
+			changed: true,
+			before: "is-ghost lp-btn",
+			after: "is-ghost",
+		});
+		if (shuffled?.type !== "source-edit") throw new Error("no source edit built");
+		expect(shuffled.undo.body).toEqual({ ...where, replace: "is-ghost lp-btn" });
+	});
+
+	it("an add onto a bare tag undoes by removing those names, not by replacing with empty", () => {
+		const born = classEditCommand(where, { add: "lead" }, {
+			ok: true,
+			changed: true,
+			before: "",
+			after: "lead",
+		});
+		if (born?.type !== "source-edit") throw new Error("no source edit built");
+		expect(born.undo.body).toEqual({ ...where, remove: "lead" });
+		expect(born.undo.body).not.toHaveProperty("replace");
+		expect(born.redo.body).toEqual({ ...where, replace: "lead" });
+		expect(born.undo.expect).toBe("lead");
+		expect(born.redo.expect).toBeNull();
+
+		// The other side: a tag that already had a class undoes by replace, and
+		// must not carry a `remove` — otherwise this test would pass for the
+		// empty-before path on every add.
+		const hadSome = classEditCommand(where, { add: "lead" }, {
+			ok: true,
+			changed: true,
+			before: "row-title",
+			after: "row-title lead",
+		});
+		if (hadSome?.type !== "source-edit") throw new Error("no source edit built");
+		expect(hadSome.undo.body).toEqual({ ...where, replace: "row-title" });
+		expect(hadSome.undo.body).not.toHaveProperty("remove");
+	});
+
+	it("a write that lifted the attribute redoes by removing those names, not by replacing with empty", () => {
+		const gone = classEditCommand(where, { remove: "lead" }, {
+			ok: true,
+			changed: true,
+			before: "lead",
+			after: "",
+		});
+		if (gone?.type !== "source-edit") throw new Error("no source edit built");
+		expect(gone.redo.body).toEqual({ ...where, remove: "lead" });
+		expect(gone.redo.body).not.toHaveProperty("replace");
+		expect(gone.undo.body).toEqual({ ...where, replace: "lead" });
+		expect(gone.undo.expect).toBeNull();
+		expect(gone.redo.expect).toBe("lead");
 	});
 
 	it("expects a bare tag on the side where the attribute is not there", () => {
@@ -830,7 +901,7 @@ describe("the panel putting its writes on the stack", () => {
 		if (cmd?.type !== "source-edit") throw new Error("no source edit on the stack");
 		expect(cmd.endpoint).toBe("classes");
 		expect(cmd.what).toBe("拿掉 big");
-		expect(cmd.undo.body).toEqual({ file: FILE, line: 8, column: 31, tag: "p", add: "big" });
+		expect(cmd.undo.body).toEqual({ file: FILE, line: 8, column: 31, tag: "p", replace: "title big" });
 		expect(cmd.undo.expect).toBe("title");
 		expect(cmd.redo.expect).toBe("title big");
 	});

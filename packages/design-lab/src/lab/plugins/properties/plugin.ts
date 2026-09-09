@@ -73,10 +73,10 @@ export type ClassEditReply = {
  * The step that takes one class edit back, or null when there is nothing to
  * take back.
  *
- * The reverse of "remove x" is "add x" — not "write the whole list back". In
- * between the edit and his Ctrl+Z that list may have gained a class he typed in
- * his editor, and restoring the whole value would throw that away while
- * reporting that it undid one thing.
+ * Both directions write the whole list the endpoint just reported (`before` to
+ * undo, `after` to redo). Reversing a removal as an add would append the name,
+ * so a list he wrote as `lp-btn is-ghost` comes back `is-ghost lp-btn` — same
+ * classes, a line he never typed, and every undo/redo shuffles it again.
  *
  * Null for a write that did not change the file: a step that applies cleanly
  * and changes nothing is a Ctrl+Z that appears to do nothing at all, which is
@@ -91,23 +91,28 @@ export function classEditCommand(
 ): HistoryCommand | null {
 	if (reply.ok !== true || reply.changed !== true) return null;
 	if (typeof reply.before !== "string" || typeof reply.after !== "string") return null;
-	const forward: ClassChange = {};
-	const back: ClassChange = {};
-	if (change.remove) {
-		forward.remove = change.remove;
-		back.add = change.remove;
-	}
-	if (change.add) {
-		forward.add = change.add;
-		back.remove = change.add;
-	}
-	if (forward.add === undefined && forward.remove === undefined) return null;
+	if (!change.add && !change.remove) return null;
+	// The endpoint treats `replace` as given only when `body.replace.trim() !== ""`.
+	// An empty string is therefore "not given", not "clear the attribute". Do not
+	// change that: her tool (`element-edit.ts`) exposes `replace` as an optional
+	// string, and flipping "" from omitted to "wipe the list" would turn a missed
+	// argument into a destructive write. An add onto a tag that had no className
+	// undoes by removing the names this edit put there (the dropped-attribute
+	// path). The same for redoing a write that lifted the attribute.
+	const undoBody =
+		reply.before === ""
+			? { ...where, remove: change.add }
+			: { ...where, replace: reply.before };
+	const redoBody =
+		reply.after === ""
+			? { ...where, remove: change.remove }
+			: { ...where, replace: reply.after };
 	return {
 		type: "source-edit",
 		endpoint: "classes",
 		what: change.remove ? `拿掉 ${change.remove}` : `加上 ${change.add}`,
-		undo: { body: { ...where, ...back }, expect: expectFor(reply.after) },
-		redo: { body: { ...where, ...forward }, expect: expectFor(reply.before) },
+		undo: { body: undoBody, expect: expectFor(reply.after) },
+		redo: { body: redoBody, expect: expectFor(reply.before) },
 	};
 }
 
