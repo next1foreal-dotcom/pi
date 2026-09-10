@@ -4,13 +4,26 @@ import { dirname, join } from "node:path";
 import { SAMANTHA_REPO_ROOT } from "../her-core/channel-probe-gate.ts";
 import type { Thread } from "./feed.ts";
 
+/** Where a decision was overheard. Absent on rows written before the split. */
+export type DecisionSource = "canvas" | "conversation";
+
 export interface CanvasDecision {
 	id: string;
 	at: string;
-	noteId: string;
+	/**
+	 * The note it came off, or null when he said it in conversation.
+	 *
+	 * Until 2026-09-10 the only way into this ledger was resolving a canvas
+	 * note, so everything he said in an ordinary conversation — which is most of
+	 * what he says — left no trace. doop names the reason in its own tool:
+	 * "you are the only one who hears your own conversation". The canvas can
+	 * capture what happens on the canvas; the rest only she can report.
+	 */
+	noteId: string | null;
 	screenId: string | null;
 	his: string;
 	hers: string;
+	source?: DecisionSource;
 }
 
 export type ProposalStatus = "pending" | "accepted" | "declined";
@@ -91,7 +104,10 @@ function isDecision(value: unknown): value is CanvasDecision {
 	return (
 		typeof row.id === "string" &&
 		typeof row.at === "string" &&
-		typeof row.noteId === "string" &&
+		// null is a conversation row, and a reader that only accepted strings
+		// dropped every one of them on the way back in — the tool would have
+		// answered "recorded" while the ledger stayed empty.
+		(row.noteId === null || typeof row.noteId === "string") &&
 		(row.screenId === null || typeof row.screenId === "string") &&
 		typeof row.his === "string" &&
 		typeof row.hers === "string"
@@ -273,7 +289,42 @@ export function recordResolvedDecision(thread: Thread, hers: string | undefined,
 		screenId: thread.screenId,
 		his: thread.text,
 		hers: hers !== undefined ? hers : lastSamanthaReply(thread),
+		source: "canvas",
 	};
 	appendJsonl(decisionsPath(repoRoot), decision);
 	maybePropose(repoRoot, now);
+}
+
+/**
+ * A taste he stated in conversation, and what she did about it.
+ *
+ * The pair is the same shape the canvas path writes, so both feed one ledger
+ * and one proposal loop — a rule that only ever formed out of canvas notes was
+ * being asked to generalise from the smaller half of the evidence.
+ *
+ * `screenId` is optional because a conversation is often about the work rather
+ * than about one screen ("stop using italic serif" is not about a screen). A
+ * decision with no screen groups with the other screenless ones, which is the
+ * right neighbourhood for a preference that spans the whole canvas.
+ */
+export function recordConversationDecision(
+	his: string,
+	hers: string,
+	screenId: string | null = null,
+	opts: RecordDecisionOpts = {},
+): CanvasDecision {
+	const repoRoot = rootOf(opts.repoRoot);
+	const now = opts.now ?? (() => new Date().toISOString());
+	const decision: CanvasDecision = {
+		id: newRecordId("d"),
+		at: now(),
+		noteId: null,
+		screenId,
+		his,
+		hers,
+		source: "conversation",
+	};
+	appendJsonl(decisionsPath(repoRoot), decision);
+	maybePropose(repoRoot, now);
+	return decision;
 }

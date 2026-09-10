@@ -9,6 +9,7 @@ import {
 	type CanvasDecision,
 	pendingDecisions,
 	proposeRule,
+	recordConversationDecision,
 	recordResolvedDecision,
 } from "../src/design-canvas/decisions.ts";
 import type { CanvasEvent, Thread } from "../src/design-canvas/feed.ts";
@@ -231,4 +232,52 @@ test("a proposal hands over the raw material, it does not pretend to be a rule",
 	assert.deepEqual(p.from, ["d1", "d2", "d3"]);
 	// and nothing anywhere claims to be a finished rule
 	assert.equal("rule" in p, false);
+});
+
+/**
+ * Until 2026-09-10 the only door into this ledger was resolving a canvas note,
+ * so everything he said in an ordinary conversation left no trace — and that is
+ * most of what he says. doop names the reason in its own tool: "you are the only
+ * one who hears your own conversation."
+ */
+test("a taste heard in conversation joins the same ledger the canvas feeds", () => {
+	const root = tempRoot();
+	recordConversationDecision("别再用斜体衬线", "标题换回 Merrion", null, {
+		repoRoot: root,
+		now: () => AT,
+	});
+
+	const rows = pendingDecisions(root);
+	assert.equal(rows.length, 1);
+	const row = rows[0];
+	assert.ok(row);
+	// No note behind it, and it says so rather than pretending one existed.
+	assert.equal(row.noteId, null);
+	assert.equal(row.source, "conversation");
+	assert.equal(row.screenId, null);
+	assert.equal(row.his, "别再用斜体衬线");
+	assert.equal(row.hers, "标题换回 Merrion");
+});
+
+test("both doors write one ledger, and each says which door it came through", () => {
+	const root = tempRoot();
+	recordResolvedDecision(thread({ id: "n1", text: "too tight" }), "24px", {
+		repoRoot: root,
+		now: () => AT,
+	});
+	recordConversationDecision("少点紫", "accent 换白蓝", "main-landing", {
+		repoRoot: root,
+		now: () => AT,
+	});
+
+	const rows = pendingDecisions(root);
+	assert.equal(rows.length, 2);
+	// The other side: a canvas row keeps its note and is not relabelled.
+	assert.deepEqual(
+		rows.map((r) => [r.source, r.noteId, r.screenId]),
+		[
+			["canvas", "n1", "product-list"],
+			["conversation", null, "main-landing"],
+		],
+	);
 });

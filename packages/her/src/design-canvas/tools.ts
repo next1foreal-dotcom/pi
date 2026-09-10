@@ -2,7 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 import { textResult } from "../tools/shared.ts";
-import { recordResolvedDecision } from "./decisions.ts";
+import { recordConversationDecision, recordResolvedDecision } from "./decisions.ts";
 import { chooseDirection, currentDirection, proposeDirections } from "./direction.ts";
 import { type CanvasEvent, formatRegion, formatSource, newId, type Thread } from "./feed.ts";
 import { designMode, interceptDesignToolCall, interceptFirstFrameToolCall, setDesignMode } from "./mode.ts";
@@ -267,6 +267,56 @@ export function registerDesignCanvasTools(pi: ExtensionAPI, deps: DesignCanvasDe
 			return textResult(`Replied on ${params.noteId}. He sees it on the canvas.`, {
 				noteId: params.noteId,
 			});
+		},
+	});
+
+	pi.registerTool({
+		name: "design_taste_record",
+		label: "Design Taste Record",
+		description:
+			"Write down a design taste he stated to you in conversation, and what you did about it. " +
+			"The canvas captures what he says ON the canvas; you are the only one who hears the rest, " +
+			"and until you write it here it is gone the moment the context is. " +
+			"Call it AFTER you have acted on it, not when you hear it — a taste you have not yet honoured " +
+			"is a plan, and this ledger is a record. " +
+			"Design taste only: 「圆角再大一点」「少点紫,多点白」「别再用斜体衬线」. " +
+			"NOT one-off content edits — a typo, a rewritten sentence, a number he corrected. " +
+			"Those are jobs, not preferences, and they poison the pattern this feeds. " +
+			"It lands in the same ledger the canvas notes feed, so a preference he repeats across both " +
+			"eventually becomes a rule you name in front of him and he accepts or throws out.",
+		parameters: Type.Object({
+			his: Type.String({
+				description:
+					"What he said, in HIS words, not your paraphrase. The pattern is found in his language; " +
+					'a tidied "improve visual hierarchy" is your word for five different things he said.',
+			}),
+			hers: Type.String({
+				description: "What you actually changed because of it. Not what you intend to change.",
+			}),
+			screenId: Type.Optional(
+				Type.String({
+					description:
+						"The screen it was about, when it was about one. Omit for a taste about the work as a whole.",
+				}),
+			),
+		}),
+		async execute(_toolCallId, params: { his: string; hers: string; screenId?: string }) {
+			const his = params.his.trim();
+			const hers = params.hers.trim();
+			if (his === "" || hers === "") {
+				return textResult(
+					"Both halves are required: what he said, and what you changed. A record with only one side " +
+						"cannot be read back as a preference.",
+					{ ok: false },
+				);
+			}
+			const row = recordConversationDecision(his, hers, params.screenId ?? null, { repoRoot });
+			return textResult(
+				`Recorded. ${row.screenId ? `On ${row.screenId}. ` : ""}` +
+					"It joins what the canvas notes have taught, and enough of the same preference becomes a " +
+					"rule for you to name to him.",
+				{ ok: true, id: row.id, source: row.source, screenId: row.screenId },
+			);
 		},
 	});
 
