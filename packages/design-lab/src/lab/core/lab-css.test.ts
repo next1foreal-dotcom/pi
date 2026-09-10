@@ -233,3 +233,75 @@ describe("the help sheet has no scrollbar at all", () => {
 		expect(help?.body).not.toMatch(/mask-image/);
 	});
 });
+
+describe("an overlay nobody can see is not an overlay", () => {
+	// Both of these draw a box on top of a screen, and for as long as they have
+	// existed neither has been drawn on top of anything. `[data-plugin-layer]`
+	// is `z-index: auto`, so it is not a stacking context and its children are
+	// compared against the lab's own ladder -- where naming no z-index puts you
+	// in the auto bucket, UNDER the screens at 1.
+	//
+	// Measured 2026-09-10 in the running lab: `selection()` reported the h1 it
+	// was holding, and the stack at the centre of the outline came back
+	// shield / scroll / frame / group / li-box. The screenshot agreed -- the
+	// selected h1 had nothing drawn on it.
+	//
+	// Three-sided, because there are three ways to lose it again: drop the
+	// z-index (the original bug), sink it back under the screens, or give the
+	// plugin layer a z-index of its own -- which is the quiet one, because it
+	// turns these numbers layer-local without changing a character of them.
+
+	const plugin = (rel: string) =>
+		readFileSync(new URL(rel, import.meta.url), "utf8");
+	const roots = {
+		".li-root": plugin("../plugins/inspect/plugin.ts"),
+		".lc-root": plugin("../plugins/components/plugin.ts"),
+	};
+
+	/** The z-index in the one-line style block a plugin writes for `selector`. */
+	const zOf = (source: string, selector: string): number | null => {
+		const at = source.indexOf(`${selector}{`);
+		if (at === -1) return null;
+		const end = source.indexOf("}", at);
+		if (end === -1) return null;
+		const found = /z-index:\s*(-?\d+)/.exec(source.slice(at, end));
+		return found ? Number(found[1]) : null;
+	};
+	const ladder = (selector: string): number | null => {
+		const rule = rules(css).find(
+			(r) => r.selectors.length === 1 && r.selectors[0] === selector,
+		);
+		const found = /z-index:\s*(-?\d+)/.exec(rule?.body ?? "");
+		return found ? Number(found[1]) : null;
+	};
+
+	it("each overlay root names a z-index", () => {
+		for (const [selector, source] of Object.entries(roots)) {
+			expect(zOf(source, selector), selector).not.toBeNull();
+		}
+	});
+
+	it("and every one of them is above the screens and below the chrome", () => {
+		const screens = ladder(".layer");
+		const chrome = ladder(".chrome");
+		expect(screens).not.toBeNull();
+		expect(chrome).not.toBeNull();
+		for (const [selector, source] of Object.entries(roots)) {
+			const z = zOf(source, selector);
+			expect(z, selector).toBeGreaterThan(screens as number);
+			expect(z, selector).toBeLessThan(chrome as number);
+		}
+	});
+
+	it("the selection outline wins where it overlaps a component outline", () => {
+		expect(zOf(roots[".li-root"], ".li-root")).toBeGreaterThan(
+			zOf(roots[".lc-root"], ".lc-root") as number,
+		);
+	});
+
+	it("the plugin layer stays z-index auto, so those numbers keep meaning that", () => {
+		const tag = /<div\s+data-plugin-layer[\s\S]{0,240}?\/>/.exec(view)?.[0];
+		expect(tag).toBeDefined();
+		expect(tag).not.toMatch(/zIndex/);
+	});
+});

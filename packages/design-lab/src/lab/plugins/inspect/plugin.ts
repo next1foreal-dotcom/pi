@@ -59,12 +59,71 @@ export type InspectSelection = {
   problem: InspectProblem | null;
 };
 
+/**
+ * The lab's stacking ladder, and why this number is 3.
+ *
+ * `[data-plugin-layer]` is `z-index: auto`, so it is NOT a stacking context and
+ * every plugin's root is compared against the lab's own ladder directly:
+ * pixel grid 0, screens 1, chrome 5, snap guides 7, measure 8, rulers 9,
+ * HUD 20, toasts 30. A plugin root that names no z-index therefore lands in
+ * the auto bucket — BELOW the screens — and an overlay drawn under an opaque
+ * screen is an overlay nobody has ever seen.
+ *
+ * Measured 2026-09-10 on a real page: with an element selected, the stack at
+ * the centre of the outline was shield / scroll / frame / group / li-box. The
+ * selection outline has been invisible over a screen since it was written, and
+ * so has the component outline (`.lc-root`, fixed with it). The screenshot
+ * agreed — the h1 that `selection()` reported was drawn with nothing on it.
+ *
+ * 3 puts it over the screens and under everything meant to be read on top of
+ * them: chrome labels, rulers, the properties panel, the HUD. The component
+ * outline sits at 2, one below, because a selection is the more specific
+ * answer and should win where both are drawn.
+ *
+ * Gated in lab-css.test.ts — if the plugin layer ever gets a z-index of its
+ * own these numbers silently become layer-local, and the gate says so.
+ *
+ * Both rings are two-tone, and there is no fill.
+ *
+ * The first version drew ink on ink: `outline: 1px solid #1c1c1c` over a wash
+ * of `rgba(28,28,28,0.06)`. That is a fine outline on a white page and no
+ * outline at all on a dark one — the screenshot the moment this became
+ * visible showed a dark landing page with the ring lost in it. The canvas
+ * holds whatever screens the lab is pointed at, light and dark side by side,
+ * so no single ink works, and the palette here is black, white and grey by
+ * house rule, which rules out the accent colour every other tool reaches for.
+ *
+ * A white hairline with a dark ring immediately outside it needs no accent and
+ * no guess about the content: on dark content the hairline carries it, on
+ * light content the dark ring does. The wash is gone with it — a tint that
+ * survives both is a tint you cannot see, and the ring already says where the
+ * edges are. In screen space (the overlay is not scaled by the camera) these
+ * stay one and two real pixels at every zoom.
+ */
 const CSS = `
-.li-root{position:absolute;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none}
-.li-box{position:absolute;left:0;top:0;box-sizing:border-box;display:none;pointer-events:none;outline:1px solid #1c1c1c;background:rgba(28,28,28,0.06)}
+.li-root{position:absolute;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;z-index:3}
+.li-box{position:absolute;left:0;top:0;box-sizing:border-box;display:none;pointer-events:none;outline:1px solid rgba(255,255,255,0.92);box-shadow:0 0 0 2px rgba(0,0,0,0.55)}
 .li-box[data-show]{display:block}
 .li-label{position:absolute;left:0;top:0;transform:translateY(-100%);margin-top:-3px;max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:#1c1c1c;color:#f1f1f1;font:500 11px/1.5 Inter,system-ui,sans-serif;padding:2px 6px;border-radius:3px}
+.li-hover{position:absolute;left:0;top:0;box-sizing:border-box;display:none;pointer-events:none;outline:1px solid rgba(255,255,255,0.6);box-shadow:0 0 0 2px rgba(0,0,0,0.3)}
+.li-hover[data-show]{display:block}
+.li-tag{position:absolute;left:0;top:0;transform:translateY(-100%);white-space:nowrap;background:rgba(28,28,28,0.86);color:#f1f1f1;font:600 10px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;padding:0 5px;border-radius:3px 3px 3px 0}
+.li-hover[data-flip] .li-tag{transform:none;border-radius:0 0 3px 3px}
 `;
+
+/**
+ * One frame between hit tests.
+ *
+ * doop pays 40ms for the same gesture because its probe is a postMessage round
+ * trip into a sandboxed iframe and back (`doop:hover`); onlook, whose frames
+ * are same-origin, uses 16. Ours is a walk over nodes in this very document,
+ * so it belongs with onlook.
+ */
+const HOVER_MS = 16;
+/** Under this much room above the box the tag would be drawn off the canvas. */
+const TAG_CLEAR_PX = 16;
+/** A press that travels further than this was a drag, not a click. */
+const CLICK_SLOP_PX = 3;
 
 let styleRefs = 0;
 let styleEl: HTMLStyleElement | null = null;
@@ -147,6 +206,11 @@ export class Inspector {
   private root: HTMLDivElement;
   private box: HTMLDivElement;
   private label: HTMLDivElement;
+  private hoverBox: HTMLDivElement;
+  private hoverTag: HTMLDivElement;
+  private hovered: Element | null = null;
+  private lastHover = 0;
+  private press: Point | null = null;
   private selected: Element | null = null;
   private snapshot: InspectSelection | null = null;
   private closed = false;
@@ -172,8 +236,17 @@ export class Inspector {
     this.label.className = "li-label";
     this.box.appendChild(this.label);
     this.root.appendChild(this.box);
+    this.hoverBox = document.createElement("div");
+    this.hoverBox.className = "li-hover";
+    this.hoverTag = document.createElement("div");
+    this.hoverTag.className = "li-tag";
+    this.hoverBox.appendChild(this.hoverTag);
+    this.root.appendChild(this.hoverBox);
     opts.host.appendChild(this.root);
     window.addEventListener("pointerdown", this.onPointerDown, true);
+    window.addEventListener("pointerup", this.onPointerUp, true);
+    window.addEventListener("pointermove", this.onPointerMove, true);
+    window.addEventListener("pointerleave", this.clearHover, true);
     window.addEventListener("scroll", this.onScroll, true);
     // In the browser a location is only as good as the source map that turns
     // the served coordinates back into the file's. Reading those is the one
@@ -324,6 +397,114 @@ export class Inspector {
    * `getBoundingClientRect` is already post-transform, which is why panning and
    * zooming need no camera maths here.
    */
+  /**
+   * The canvas the pointer is over, or null when the pointer is somewhere the
+   * lab owns rather than a screen.
+   */
+  private canvasRoot(): Element | null {
+    return this.root.closest("[data-mode]");
+  }
+
+  /**
+   * Whether a plain click, right now, would select what is under the cursor.
+   *
+   * In explore mode it would: every screen wears a `.shield` that already takes
+   * the press (that is what makes screens draggable), so the app underneath
+   * never sees a plain click and nothing is taken from it. This is the same
+   * bargain doop strikes and for the same reason -- its frames are covered by
+   * `{(!editing || panMode) && <div className="absolute inset-0" />}`, and
+   * click-to-select is free only because that shield is there.
+   *
+   * Locked into a screen the shield is gone and the app is live: a click is the
+   * app's click, a keystroke is the app's keystroke, and taking either would
+   * make the lab a worse place to try the thing you are building. There
+   * Shift-click stays the chord.
+   *
+   * The point tool owns the pointer outright while it is armed.
+   */
+  private plainClickSelects(): boolean {
+    const root = this.canvasRoot();
+    if (!root || root.hasAttribute("data-pick")) return false;
+    return root.getAttribute("data-mode") === "explore";
+  }
+
+  /**
+   * Outline whatever is under the cursor, and name it.
+   *
+   * The rule is one sentence: **show the outline exactly when a click would
+   * take it.** Explore mode, where a plain click selects, so always; locked in,
+   * where only Shift-click selects, so only while Shift is down. Nothing else
+   * needs to be explained to anyone -- move the mouse and the answer is there.
+   *
+   * That mattered more than it sounds. Before this the only way to learn that
+   * the things on these screens can be pointed at was for someone to tell you
+   * the chord, and on 2026-09-10, days in, he asked what the notes were even
+   * for. A feature nobody can find is not shipped.
+   *
+   * The whole overlay is `pointer-events: none` and reads nothing but the
+   * cursor position, so it cannot swallow a click, a drag or a scroll.
+   */
+  private onPointerMove = (e: PointerEvent): void => {
+    if (this.closed) return;
+    const now = Date.now();
+    if (now - this.lastHover < HOVER_MS) return;
+    this.lastHover = now;
+    const root = this.canvasRoot();
+    // Mid-drag the gesture is about the screen, not about anything inside it,
+    // and the point tool paints a box of its own -- two outlines chasing one
+    // cursor is noise, not information.
+    if (!root || root.hasAttribute("data-dragging") || root.hasAttribute("data-pick")) {
+      this.clearHover();
+      return;
+    }
+    if (!e.shiftKey && !this.plainClickSelects()) {
+      this.clearHover();
+      return;
+    }
+    const hit = this.pickAt(e.clientX, e.clientY);
+    // The selection already wears a heavier outline. Drawing the light one on
+    // top of it only makes the selected thing look unselected.
+    if (!hit || hit === this.selected) {
+      this.clearHover();
+      return;
+    }
+    if (hit !== this.hovered) this.hovered = hit;
+    this.paintHover();
+  };
+
+  private clearHover = (): void => {
+    this.hovered = null;
+    this.hoverBox.removeAttribute("data-show");
+  };
+
+  /** Screen-space, like `paint`: client rects in an untransformed host need no camera maths. */
+  private paintHover = (): void => {
+    const el = this.hovered;
+    if (!el || !el.isConnected) {
+      this.clearHover();
+      return;
+    }
+    const r = el.getBoundingClientRect();
+    const o = this.getOrigin();
+    const top = r.top - o.y;
+    this.hoverBox.style.transform = `translate(${r.left - o.x}px, ${top}px)`;
+    this.hoverBox.style.width = `${r.width}px`;
+    this.hoverBox.style.height = `${r.height}px`;
+    this.hoverTag.textContent = Inspector.tagOf(el);
+    // Against the top of the canvas the badge would be drawn off it. doop flips
+    // the same badge inside the box for the same reason: a label you cannot
+    // read is worse than one that overlaps by a few pixels.
+    this.hoverBox.toggleAttribute("data-flip", top < TAG_CLEAR_PX);
+    this.hoverBox.setAttribute("data-show", "");
+  };
+
+  /** `h1`, or `button.cta` -- enough to recognise it without reading the page. */
+  private static tagOf(el: Element): string {
+    const tag = el.tagName.toLowerCase();
+    const first = (el.getAttribute("class") ?? "").trim().split(/\s+/)[0];
+    return first ? `${tag}.${first}` : tag;
+  }
+
   private paint = (): void => {
     const el = this.selected;
     if (!el || !el.isConnected) {
@@ -340,22 +521,54 @@ export class Inspector {
 
   private onScroll = (): void => {
     if (this.selected) this.paint();
+    if (this.hovered) this.paintHover();
   };
 
   private onPointerDown = (e: PointerEvent): void => {
     if (e.button !== 0) return;
-    if (!e.shiftKey || e.altKey || e.ctrlKey || e.metaKey) {
-      // Every other press belongs to the canvas. Dropping the outline is the
-      // only thing we do, and we do it without touching the event.
-      if (this.selected) this.clear();
+    if (e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
+      const direct = e.target instanceof Element ? this.qualify(e.target) : null;
+      const hit = direct ?? this.pickAt(e.clientX, e.clientY);
+      if (!hit) return;
+      // Shift-click is ours outright, in every mode, live app included.
+      e.preventDefault();
+      e.stopPropagation();
+      this.press = null;
+      this.selectElement(hit);
       return;
     }
-    const direct = e.target instanceof Element ? this.qualify(e.target) : null;
-    const hit = direct ?? this.pickAt(e.clientX, e.clientY);
-    if (!hit) return;
-    e.preventDefault();
-    e.stopPropagation();
-    this.selectElement(hit);
+    // A plain press is the canvas's -- panning, dragging a screen, using a live
+    // app. We touch nothing here and decide on the way up, because down is too
+    // early to know which of those it was.
+    this.press = this.plainClickSelects() ? { x: e.clientX, y: e.clientY } : null;
+    if (!this.press && this.selected) this.clear();
+  };
+
+  /**
+   * The other half of the plain click, and the reason it is split in two.
+   *
+   * A drag starts with exactly the same press as a click, so selecting on the
+   * way down would either steal the drag or fire on every pan. Deciding here
+   * costs nothing and leaves both gestures whole: travel further than the slop
+   * and it was a drag, so the selection is left exactly as it was -- panning
+   * the canvas is not a reason to forget what you were looking at.
+   *
+   * No `preventDefault` on this path. The press already reached the shield and
+   * the drag has already happened or not; we are only reading the result.
+   */
+  private onPointerUp = (e: PointerEvent): void => {
+    const from = this.press;
+    this.press = null;
+    if (!from || e.button !== 0 || this.closed) return;
+    if (
+      Math.abs(e.clientX - from.x) > CLICK_SLOP_PX ||
+      Math.abs(e.clientY - from.y) > CLICK_SLOP_PX
+    )
+      return;
+    if (!this.plainClickSelects()) return;
+    const hit = this.pickAt(e.clientX, e.clientY);
+    if (hit) this.selectElement(hit);
+    else this.clear();
   };
 
   /** Select a node directly. Returns the same payload as `selection()`. */
@@ -363,6 +576,9 @@ export class Inspector {
     if (this.closed) return null;
     if (!this.qualify(el)) return null;
     this.selected = el;
+    // The heavy ring is about to land exactly here. Leaving the light one
+    // under it draws two rings around one element, which reads as neither.
+    if (this.hovered === el) this.clearHover();
     this.snapshot = this.capture(el);
     this.label.textContent = this.labelText(this.snapshot);
     this.paint();
@@ -413,6 +629,23 @@ export class Inspector {
     };
   }
 
+  /** The hover outline's box in PAGE units, or null when nothing is hovered. */
+  hoverRect(): Rect | null {
+    const el = this.hovered;
+    if (!el || !el.isConnected) return null;
+    if (!this.hoverBox.hasAttribute("data-show")) return null;
+    const cam = this.getCamera();
+    if (!cam.z) return null;
+    const r = el.getBoundingClientRect();
+    const o = this.getOrigin();
+    return {
+      x: (r.left - o.x) / cam.z - cam.x,
+      y: (r.top - o.y) / cam.z - cam.y,
+      width: r.width / cam.z,
+      height: r.height / cam.z,
+    };
+  }
+
   clear(): void {
     this.selected = null;
     this.snapshot = null;
@@ -422,6 +655,9 @@ export class Inspector {
 
   onCameraWrite(): void {
     if (this.selected) this.paint();
+    // The cursor has not moved but the thing under it has. Leaving the outline
+    // where it was would draw a box around empty canvas.
+    if (this.hovered) this.paintHover();
   }
 
   destroy(): void {
@@ -434,7 +670,11 @@ export class Inspector {
     }
     this.unsubHmr?.();
     this.unsubHmr = null;
+    this.clearHover();
     window.removeEventListener("pointerdown", this.onPointerDown, true);
+    window.removeEventListener("pointerup", this.onPointerUp, true);
+    window.removeEventListener("pointermove", this.onPointerMove, true);
+    window.removeEventListener("pointerleave", this.clearHover, true);
     window.removeEventListener("scroll", this.onScroll, true);
     this.root.remove();
     releaseStyles();
@@ -468,7 +708,7 @@ export const plugin: LabPlugin = {
       name: "selectAt",
       signature: "selectAt(x: number, y: number): selection | null",
       summary:
-        "Select the deepest screen element at a PAGE-unit point — the way to drive this without a mouse. Page units, not screen pixels, so the answer does not change when the canvas zooms. Lab chrome, sticky notes, labels, rulers and the scroller itself are never hit. Returns the new selection, or null (and clears) if nothing qualifies there.",
+        "Select the deepest screen element at a PAGE-unit point — the way to drive this without a mouse. Page units, not screen pixels, so the answer does not change when the canvas zooms. Lab chrome, sticky notes, labels, rulers and the scroller itself are never hit. Returns the new selection, or null (and clears) if nothing qualifies there. By hand the same thing happens on a plain click in explore mode, or on Shift-click in any mode including a screen that is locked in and live.",
     },
     {
       name: "selectElement",
@@ -483,9 +723,16 @@ export const plugin: LabPlugin = {
         "Where the outline is, in PAGE units — use it to check the highlight really sits on the element. Null when nothing is selected or the node has been detached.",
     },
     {
+      name: "hoverRect",
+      signature: "hoverRect(): { x, y, width, height } | null",
+      summary:
+        "Where the HOVER outline is, in PAGE units, or null when nothing is hovered. The hover outline is the light box that follows the cursor and carries a tag badge (`h1`, `button.cta`); it appears exactly when a click would select what is under the pointer — always in explore mode, and only while Shift is held inside a locked screen, where the app owns plain clicks. It never takes pointer events, so it costs the screens nothing. Use this to check the box really lands on the element without taking a screenshot.",
+    },
+    {
       name: "clear",
       signature: "clear(): void",
-      summary: "Drop the selection and hide the outline. A plain click does this too.",
+      summary:
+        "Drop the selection and hide the outline. Clicking empty canvas does this too.",
     },
   ],
   mount(ctx: LabPluginContext) {

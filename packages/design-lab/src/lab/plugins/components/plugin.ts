@@ -75,8 +75,18 @@ export type ShowResult = {
   outlined: number;
 };
 
+/**
+ * z-index 2 for the same reason the inspector's root is 3, and one below it.
+ *
+ * The plugin layer is `z-index: auto`, so a root that names no z-index is
+ * painted under the screens and can never be seen over one. The inspector's
+ * CSS carries the full ladder and the measurement; both are gated in
+ * lab-css.test.ts. A selection outlines one element on purpose, a component
+ * outline paints every instance at once, so where they overlap the selection
+ * is the answer worth reading and goes on top.
+ */
 const CSS = `
-.lc-root{position:absolute;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none}
+.lc-root{position:absolute;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;z-index:2}
 .lc-box{position:absolute;left:0;top:0;box-sizing:border-box;display:none;pointer-events:none;outline:1px dashed #1c1c1c;background:rgba(28,28,28,0.04)}
 .lc-box[data-show]{display:block}
 .lc-tag{position:absolute;left:0;top:0;transform:translateY(-100%);margin-top:-3px;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:#1c1c1c;color:#f1f1f1;font:500 10px/1.5 Inter,system-ui,sans-serif;padding:1px 5px;border-radius:3px}

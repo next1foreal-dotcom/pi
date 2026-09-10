@@ -72,6 +72,9 @@ function ctxFor(): LabPluginContext {
 function buildLab(): void {
   document.body.innerHTML = "";
   const root = document.createElement("div");
+  // The real lab stamps the mode on this element, and the plugin reads it: a
+  // plain click only selects where the shield already owns the press.
+  root.setAttribute("data-mode", "explore");
   const layer = document.createElement("div");
   layer.setAttribute("data-lab-layer", "");
   const group = document.createElement("div");
@@ -115,6 +118,18 @@ function press(
   );
 }
 
+function pointer(
+  kind: "pointerup" | "pointermove",
+  target: Element,
+  init: Partial<MouseEventInit> & { clientX?: number; clientY?: number } = {},
+): void {
+  const Ctor =
+    (globalThis as { PointerEvent?: typeof MouseEvent }).PointerEvent ?? MouseEvent;
+  target.dispatchEvent(
+    new Ctor(kind, { bubbles: true, cancelable: true, button: 0, ...init }),
+  );
+}
+
 function stubRect(el: Element, r: { left: number; top: number; width: number; height: number }) {
   Object.defineProperty(el, "getBoundingClientRect", {
     configurable: true,
@@ -134,6 +149,21 @@ function stubRect(el: Element, r: { left: number; top: number; width: number; he
 
 function boxEl(): HTMLElement {
   return host.querySelector(".li-box") as HTMLElement;
+}
+
+function hoverEl(): HTMLElement {
+  return host.querySelector(".li-hover") as HTMLElement;
+}
+
+function sheet(): string {
+  return document.querySelector("style[data-lab-inspect]")?.textContent ?? "";
+}
+
+function setMode(mode: string): void {
+  (document.querySelector("[data-mode]") as HTMLElement).setAttribute(
+    "data-mode",
+    mode,
+  );
 }
 
 beforeEach(() => {
@@ -621,6 +651,197 @@ describe("finding an element the hit test cannot see", () => {
     boxes([[scroll, [0, 0, 400, 300]]]);
     live = createInspect(ctxFor(), { elementsAt: () => [] });
     press(shield, { shiftKey: true, clientX: 5000, clientY: 5000 });
+    expect(live.selection()).toBeNull();
+  });
+});
+
+describe("the outline that follows the cursor", () => {
+  // Before this the only way to learn that anything on these screens could be
+  // pointed at was for someone to say the chord out loud, and days in he asked
+  // what the notes were even for. The rule the whole thing rests on is one
+  // sentence: SHOW THE OUTLINE EXACTLY WHEN A CLICK WOULD TAKE IT. Every test
+  // below is that sentence read back in one mode or another.
+
+  let clock = 0;
+
+  beforeEach(() => {
+    clock = 1_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => clock);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /** Each move lands past the throttle, so a test move is always a real move. */
+  function moveOver(target: Element, init: Partial<MouseEventInit> = {}): void {
+    clock += 100;
+    pointer("pointermove", target, { clientX: 340, clientY: 262, ...init });
+  }
+
+  it("outlines what is under the cursor and names it", async () => {
+    const { button } = await mountProbe();
+    stubRect(button, { left: 300, top: 250, width: 80, height: 24 });
+    live = createInspect(ctxFor(), { elementsAt: () => [shield, button] });
+
+    expect(hoverEl().hasAttribute("data-show")).toBe(false);
+    moveOver(shield);
+    expect(hoverEl().hasAttribute("data-show")).toBe(true);
+    expect(hoverEl().querySelector(".li-tag")?.textContent).toBe(
+      "button.probe-button",
+    );
+    expect(hoverEl().style.transform).toBe("translate(300px, 250px)");
+    expect(hoverEl().style.width).toBe("80px");
+  });
+
+  it("never takes the pointer while doing it", () => {
+    // The screens under this are live apps. An overlay that is `auto` anywhere
+    // would eat a click on the thing it is drawing a box around.
+    live = createInspect(ctxFor());
+    const hover = /\.li-hover\{([^}]*)\}/.exec(sheet())?.[1] ?? "";
+    expect(hover).toContain("pointer-events:none");
+    const tag = /\.li-tag\{([^}]*)\}/.exec(sheet())?.[1] ?? "";
+    expect(tag).not.toContain("pointer-events:auto");
+  });
+
+  it("says nothing inside a locked screen, where the click is the app's", async () => {
+    const { button } = await mountProbe();
+    stubRect(button, { left: 300, top: 250, width: 80, height: 24 });
+    live = createInspect(ctxFor(), { elementsAt: () => [shield, button] });
+    setMode("focus");
+
+    moveOver(shield);
+    expect(hoverEl().hasAttribute("data-show")).toBe(false);
+  });
+
+  it("unless you are holding the key that would take it", async () => {
+    const { button } = await mountProbe();
+    stubRect(button, { left: 300, top: 250, width: 80, height: 24 });
+    live = createInspect(ctxFor(), { elementsAt: () => [shield, button] });
+    setMode("focus");
+
+    moveOver(shield, { shiftKey: true });
+    expect(hoverEl().hasAttribute("data-show")).toBe(true);
+  });
+
+  it("gets out of the way while a screen is being dragged", async () => {
+    const { button } = await mountProbe();
+    stubRect(button, { left: 300, top: 250, width: 80, height: 24 });
+    live = createInspect(ctxFor(), { elementsAt: () => [shield, button] });
+
+    moveOver(shield);
+    expect(hoverEl().hasAttribute("data-show")).toBe(true);
+    (document.querySelector("[data-mode]") as HTMLElement).dataset.dragging =
+      "move";
+    moveOver(shield);
+    expect(hoverEl().hasAttribute("data-show")).toBe(false);
+  });
+
+  it("does not draw a second box around the selection", async () => {
+    // Two outlines on one element reads as neither of them.
+    const { button } = await mountProbe();
+    stubRect(button, { left: 300, top: 250, width: 80, height: 24 });
+    live = createInspect(ctxFor(), { elementsAt: () => [shield, button] });
+    live.selectElement(button);
+
+    moveOver(shield);
+    expect(hoverEl().hasAttribute("data-show")).toBe(false);
+    expect(boxEl().hasAttribute("data-show")).toBe(true);
+  });
+
+  it("reports the hovered box in page units, like the selection does", async () => {
+    const { button } = await mountProbe();
+    stubRect(button, { left: 300, top: 250, width: 80, height: 24 });
+    camera = { x: -100, y: -50, z: 2 };
+    live = createInspect(ctxFor(), { elementsAt: () => [shield, button] });
+
+    expect(live.hoverRect()).toBeNull();
+    moveOver(shield);
+    expect(live.hoverRect()).toEqual({ x: 250, y: 175, width: 40, height: 12 });
+  });
+
+  it("hands over to the selection instead of stacking two rings on one box", async () => {
+    const { button } = await mountProbe();
+    stubRect(button, { left: 300, top: 250, width: 80, height: 24 });
+    live = createInspect(ctxFor(), { elementsAt: () => [shield, button] });
+
+    moveOver(shield);
+    expect(hoverEl().hasAttribute("data-show")).toBe(true);
+    live.selectElement(button);
+    expect(hoverEl().hasAttribute("data-show")).toBe(false);
+    expect(boxEl().hasAttribute("data-show")).toBe(true);
+  });
+
+  it("draws a ring that survives dark content and light content alike", () => {
+    // Ink on ink is no outline at all, and the canvas holds both kinds of
+    // screen at once. A white hairline with a dark ring outside it needs no
+    // accent colour, which the house palette does not have to give.
+    live = createInspect(ctxFor());
+    for (const cls of ["li-box", "li-hover"] as const) {
+      const body = new RegExp(`\.${cls}\{([^}]*)\}`).exec(sheet())?.[1] ?? "";
+      expect(body, cls).toMatch(/outline:\s*1px solid rgba\(255,255,255/);
+      expect(body, cls).toMatch(/box-shadow:\s*0 0 0 2px rgba\(0,0,0/);
+      // A wash that reads on both is a wash you cannot see.
+      expect(body, cls).not.toMatch(/background:/);
+    }
+  });
+
+  it("lets go when the pointer leaves the window", async () => {
+    const { button } = await mountProbe();
+    stubRect(button, { left: 300, top: 250, width: 80, height: 24 });
+    live = createInspect(ctxFor(), { elementsAt: () => [shield, button] });
+
+    moveOver(shield);
+    expect(hoverEl().hasAttribute("data-show")).toBe(true);
+    window.dispatchEvent(new Event("pointerleave"));
+    expect(hoverEl().hasAttribute("data-show")).toBe(false);
+  });
+});
+
+describe("the click the hover promises", () => {
+  it("a plain click selects, in explore, where the shield already owns it", async () => {
+    const { button } = await mountProbe();
+    live = createInspect(ctxFor(), { elementsAt: () => [shield, button] });
+
+    press(shield, { clientX: 340, clientY: 262 });
+    pointer("pointerup", shield, { clientX: 340, clientY: 262 });
+    expect(live.selection()?.tag).toBe("button");
+  });
+
+  it("but not inside a locked screen, where the app is live", async () => {
+    // Taking a click here would make the lab a worse place to try the thing
+    // you are building. Shift-click is still there and still works.
+    const { button } = await mountProbe();
+    live = createInspect(ctxFor(), { elementsAt: () => [shield, button] });
+    setMode("focus");
+
+    press(button, { clientX: 340, clientY: 262 });
+    pointer("pointerup", button, { clientX: 340, clientY: 262 });
+    expect(live.selection()).toBeNull();
+
+    press(button, { clientX: 340, clientY: 262, shiftKey: true });
+    expect(live.selection()?.tag).toBe("button");
+  });
+
+  it("a press that travels is a drag, and a drag keeps the selection", async () => {
+    // Panning the canvas is not a reason to forget what you were looking at.
+    const { button, card } = await mountProbe();
+    live = createInspect(ctxFor(), { elementsAt: () => [shield, card] });
+    live.selectElement(button);
+
+    press(shield, { clientX: 340, clientY: 262 });
+    pointer("pointerup", shield, { clientX: 460, clientY: 300 });
+    expect(live.selection()?.className).toContain("probe-button");
+  });
+
+  it("and a plain click on empty canvas lets go", async () => {
+    const { button } = await mountProbe();
+    live = createInspect(ctxFor(), { elementsAt: () => [] });
+    live.selectElement(button);
+    expect(live.selection()).not.toBeNull();
+
+    press(shield, { clientX: 900, clientY: 700 });
+    pointer("pointerup", shield, { clientX: 900, clientY: 700 });
     expect(live.selection()).toBeNull();
   });
 });
