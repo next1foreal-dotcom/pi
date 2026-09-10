@@ -63,7 +63,7 @@ test("her_show_widget posts html+title+focus and reports success on 200 {ok:true
 	assert.match(text, /Flow/);
 	assert.match(text, /widget view/i);
 	assert.equal(fetchImpl.calls.length, 1);
-	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:3000/api/preview/widget");
+	assert.equal(fetchImpl.calls[0].url, "http://localhost:3000/api/preview/widget");
 	assert.equal(fetchImpl.calls[0].init.method, "POST");
 	assert.deepEqual(JSON.parse(String(fetchImpl.calls[0].init.body)), {
 		html: "<svg><rect/></svg>",
@@ -124,7 +124,7 @@ test("her_show_widget reports a clear connection-refused error including UI_BASE
 
 	const text = await run(tools.get("her_show_widget"), { html: "<p>x</p>" });
 
-	assert.match(text, /127\.0\.0\.1:3000/);
+	assert.match(text, /localhost:3000/);
 	assert.match(text, /connection refused/i);
 });
 

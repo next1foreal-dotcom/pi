@@ -58,7 +58,7 @@ test("preview_open_review posts url and reports success on 200 {ok:true}", async
 
 	assert.match(text, /set/i);
 	assert.equal(fetchImpl.calls.length, 1);
-	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:3000/api/preview/review");
+	assert.equal(fetchImpl.calls[0].url, "http://localhost:3000/api/preview/review");
 	assert.equal(fetchImpl.calls[0].init.method, "POST");
 	assert.deepEqual(JSON.parse(String(fetchImpl.calls[0].init.body)), { url: "http://localhost:7300/?path=D:/x.md" });
 });
@@ -94,7 +94,7 @@ test("preview_open_review reports a clear connection-refused error including UI_
 
 	const text = await run(tools.get("preview_open_review"), { url: "http://localhost:7300" });
 
-	assert.match(text, /127\.0\.0\.1:3000/);
+	assert.match(text, /localhost:3000/);
 	assert.match(text, /connection refused/i);
 });
 
@@ -201,7 +201,7 @@ test("browser_read_page posts maxChars to agent-read and hands back the tree wit
 	const text = await run(tools.get("browser_read_page"), { maxChars: 5000 });
 
 	assert.equal(fetchImpl.calls.length, 1);
-	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:3000/api/browser/agent-read");
+	assert.equal(fetchImpl.calls[0].url, "http://localhost:3000/api/browser/agent-read");
 	assert.equal(fetchImpl.calls[0].init.method, "POST");
 	assert.deepEqual(JSON.parse(String(fetchImpl.calls[0].init.body)), { maxChars: 5000 });
 	assert.match(text, /https:\/\/example\.com\//);
@@ -251,7 +251,7 @@ test("browser_act posts {ref, action} to agent-act and confirms what was applied
 
 	const text = await run(tools.get("browser_act"), { ref: "s7e5", action: "click" });
 
-	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:3000/api/browser/agent-act");
+	assert.equal(fetchImpl.calls[0].url, "http://localhost:3000/api/browser/agent-act");
 	assert.equal(fetchImpl.calls[0].init.method, "POST");
 	assert.deepEqual(JSON.parse(String(fetchImpl.calls[0].init.body)), { ref: "s7e5", action: "click" });
 	assert.match(text, /s7e5/);
@@ -382,7 +382,7 @@ test("browser_read_page and browser_act report a connection-refused error naming
 	const readText = await run(tools.get("browser_read_page"), {});
 	const actText = await run(tools.get("browser_act"), { ref: "s7e5", action: "click" });
 
-	assert.match(readText, /127\.0\.0\.1:3000/);
+	assert.match(readText, /localhost:3000/);
 	assert.match(readText, /connection refused/i);
 	assert.match(actText, /connection refused/i);
 });
@@ -490,7 +490,7 @@ test("artifact_publish posts the source path and reports the slug on 200 {ok:tru
 
 	assert.match(text, /已发布到作品面板: demo-a1b2c3d4/);
 	assert.equal(fetchImpl.calls.length, 1);
-	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:3000/api/preview/artifact");
+	assert.equal(fetchImpl.calls[0].url, "http://localhost:3000/api/preview/artifact");
 	assert.equal(fetchImpl.calls[0].init.method, "POST");
 	assert.deepEqual(JSON.parse(String(fetchImpl.calls[0].init.body)), { path: "D:/artifacts/demo.html" });
 });
@@ -526,7 +526,7 @@ test("artifact_publish reports a clear connection-refused error including UI_BAS
 
 	const text = await run(tools.get("artifact_publish"), { path: "D:/artifacts/demo.html" });
 
-	assert.match(text, /127\.0\.0\.1:3000/);
+	assert.match(text, /localhost:3000/);
 	assert.match(text, /connection refused/i);
 });
 
@@ -587,7 +587,7 @@ test("browser_find posts query to agent-find and reports matching refs", async (
 
 	const text = await run(tools.get("browser_find"), { query: "Submit" });
 
-	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:3000/api/browser/agent-find");
+	assert.equal(fetchImpl.calls[0].url, "http://localhost:3000/api/browser/agent-find");
 	assert.deepEqual(JSON.parse(String(fetchImpl.calls[0].init.body)), { query: "Submit" });
 	assert.match(text, /Submit/);
 	assert.match(text, /ref_1/);
@@ -610,7 +610,7 @@ test("browser_get_text posts maxChars to agent-page-text and returns the text", 
 
 	const text = await run(tools.get("browser_get_text"), { maxChars: 1000 });
 
-	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:3000/api/browser/agent-page-text");
+	assert.equal(fetchImpl.calls[0].url, "http://localhost:3000/api/browser/agent-page-text");
 	assert.deepEqual(JSON.parse(String(fetchImpl.calls[0].init.body)), { maxChars: 1000 });
 	assert.match(text, /Hello world/);
 });
@@ -641,7 +641,7 @@ test("browser_console posts filter to agent-console and reports entries with dro
 
 	const text = await run(tools.get("browser_console"), { filter: "error" });
 
-	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:3000/api/browser/agent-console");
+	assert.equal(fetchImpl.calls[0].url, "http://localhost:3000/api/browser/agent-console");
 	assert.deepEqual(JSON.parse(String(fetchImpl.calls[0].init.body)), { filter: "error" });
 	assert.match(text, /Uncaught TypeError/);
 	assert.match(text, /5 entries were evicted/);
@@ -673,7 +673,7 @@ test("browser_network posts filter to agent-network and reports entries", async 
 
 	const text = await run(tools.get("browser_network"), { filter: "failed" });
 
-	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:3000/api/browser/agent-network");
+	assert.equal(fetchImpl.calls[0].url, "http://localhost:3000/api/browser/agent-network");
 	assert.deepEqual(JSON.parse(String(fetchImpl.calls[0].init.body)), { filter: "failed" });
 	assert.match(text, /example\.com/);
 });
@@ -710,7 +710,7 @@ test("browser_screenshot posts scale to agent-screenshot and reports dimensions 
 
 	const text = await run(tools.get("browser_screenshot"), { scale: 0.5 });
 
-	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:3000/api/browser/agent-screenshot");
+	assert.equal(fetchImpl.calls[0].url, "http://localhost:3000/api/browser/agent-screenshot");
 	assert.deepEqual(JSON.parse(String(fetchImpl.calls[0].init.body)), { scale: 0.5 });
 	assert.match(text, /1280x720/);
 });
@@ -748,7 +748,7 @@ test("browser_computer posts act and target to agent-computer and reports succes
 		target: { coordinate: [100, 200] },
 	});
 
-	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:3000/api/browser/agent-computer");
+	assert.equal(fetchImpl.calls[0].url, "http://localhost:3000/api/browser/agent-computer");
 	const body = JSON.parse(String(fetchImpl.calls[0].init.body));
 	assert.deepEqual(body.act, { action: "left_click" });
 	assert.deepEqual(body.target, { coordinate: [100, 200] });
@@ -782,7 +782,7 @@ test("browser_form_input posts ref and value to agent-form-input and confirms", 
 
 	const text = await run(tools.get("browser_form_input"), { ref: "ref_3", value: "hello" });
 
-	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:3000/api/browser/agent-form-input");
+	assert.equal(fetchImpl.calls[0].url, "http://localhost:3000/api/browser/agent-form-input");
 	assert.deepEqual(JSON.parse(String(fetchImpl.calls[0].init.body)), { ref: "ref_3", value: "hello" });
 	assert.match(text, /ref_3/);
 });
@@ -814,7 +814,7 @@ test("browser_eval posts code to agent-eval and returns the value", async () => 
 
 	const text = await run(tools.get("browser_eval"), { code: "1 + 41" });
 
-	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:3000/api/browser/agent-eval");
+	assert.equal(fetchImpl.calls[0].url, "http://localhost:3000/api/browser/agent-eval");
 	assert.deepEqual(JSON.parse(String(fetchImpl.calls[0].init.body)), { code: "1 + 41" });
 	assert.match(text, /42/);
 });
@@ -855,7 +855,7 @@ test("browser_viewport posts preset to agent-viewport and reports the resulting 
 
 	const text = await run(tools.get("browser_viewport"), { preset: "mobile" });
 
-	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:3000/api/browser/agent-viewport");
+	assert.equal(fetchImpl.calls[0].url, "http://localhost:3000/api/browser/agent-viewport");
 	assert.deepEqual(JSON.parse(String(fetchImpl.calls[0].init.body)), { preset: "mobile" });
 	assert.match(text, /375x812/);
 	assert.match(text, /mobile/);
@@ -890,7 +890,7 @@ test("browser_history posts direction to agent-history and reports the new url",
 
 	const text = await run(tools.get("browser_history"), { direction: "back" });
 
-	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:3000/api/browser/agent-history");
+	assert.equal(fetchImpl.calls[0].url, "http://localhost:3000/api/browser/agent-history");
 	assert.deepEqual(JSON.parse(String(fetchImpl.calls[0].init.body)), { direction: "back" });
 	assert.match(text, /example\.com\/prev/);
 	assert.match(text, /browser_read_page/);
@@ -939,9 +939,9 @@ test("browser_batch runs three successful steps in order", async () => {
 	});
 
 	assert.equal(fetchImpl.calls.length, 3);
-	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:3000/api/browser/agent-navigate");
-	assert.equal(fetchImpl.calls[1].url, "http://127.0.0.1:3000/api/browser/agent-read");
-	assert.equal(fetchImpl.calls[2].url, "http://127.0.0.1:3000/api/browser/agent-act");
+	assert.equal(fetchImpl.calls[0].url, "http://localhost:3000/api/browser/agent-navigate");
+	assert.equal(fetchImpl.calls[1].url, "http://localhost:3000/api/browser/agent-read");
+	assert.equal(fetchImpl.calls[2].url, "http://localhost:3000/api/browser/agent-act");
 	assert.match(text, /step 1\/3\s+browser_navigate\s+ok/);
 	assert.match(text, /step 2\/3\s+browser_read_page\s+ok/);
 	assert.match(text, /step 3\/3\s+browser_act\s+ok/);
@@ -968,8 +968,8 @@ test("browser_batch stops after the second step fails and never calls the third"
 
 	// Stop-on-first-error is the call count, not just an error string in the return.
 	assert.equal(fetchImpl.calls.length, 2);
-	assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:3000/api/browser/agent-navigate");
-	assert.equal(fetchImpl.calls[1].url, "http://127.0.0.1:3000/api/browser/agent-read");
+	assert.equal(fetchImpl.calls[0].url, "http://localhost:3000/api/browser/agent-navigate");
+	assert.equal(fetchImpl.calls[1].url, "http://localhost:3000/api/browser/agent-read");
 	assert.match(text, /FAILED/);
 	assert.match(text, /browser not started/);
 	assert.match(text, /browser_act/);
@@ -1000,7 +1000,7 @@ test("browser_batch treats a control-owner refusal as a stop, not as a successfu
 
 	// The third step must never have been dispatched.
 	assert.equal(fetchImpl.calls.length, 2, `batch kept going after a refusal: ${text}`);
-	assert.equal(fetchImpl.calls[1].url, "http://127.0.0.1:3000/api/browser/agent-act");
+	assert.equal(fetchImpl.calls[1].url, "http://localhost:3000/api/browser/agent-act");
 	// And she must be told it was the guardrail, not a fault — otherwise the sane
 	// reaction to a "failed" batch is to retry it, which is exactly wrong here.
 	assert.match(text, /control|wheel|Fei/i);

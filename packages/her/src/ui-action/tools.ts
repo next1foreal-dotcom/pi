@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-const DEFAULT_UI_BASE_URL = "http://127.0.0.1:3000";
+const DEFAULT_UI_BASE_URL = "http://localhost:3000";
 const REQUEST_TIMEOUT_MS = 5000;
 const RECEIPT_TIMEOUT_MS = 8000;
 const POLL_INTERVAL_MS = 250;
