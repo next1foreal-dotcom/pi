@@ -90,6 +90,39 @@ function releaseStyles(): void {
   }
 }
 
+/**
+ * The deepest descendant of `root` whose box contains the point.
+ *
+ * An indexed loop, not for..of: this package's lib is ES2023+DOM without
+ * DOM.Iterable, so iterating an HTMLCollection is a type error here (the same
+ * reason `acquireStyles` uses .forEach).
+ */
+function deepestAt(root: Element, x: number, y: number): Element | null {
+  let best: Element | null = null;
+  const visit = (el: Element): void => {
+    const kids = el.children;
+    for (let i = 0; i < kids.length; i++) {
+      const kid = kids[i];
+      if (!kid) continue;
+      const r = kid.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) {
+        if (x < r.left || x > r.right || y < r.top || y > r.bottom) continue;
+        // Assigned in document order, so a later sibling and a deeper child
+        // both win — the same way the document's own hit test resolves an
+        // overlap, and the same answer it would give if it could see in here.
+        best = kid;
+      }
+      // A box of zero size is not an answer, but its subtree still is. A
+      // `display: contents` wrapper, a fragment host, or anything React mounts
+      // into measures nothing while holding everything; skipping past it cost
+      // the first version of this every element under it.
+      visit(kid);
+    }
+  };
+  visit(root);
+  return best;
+}
+
 function textOf(el: Element): string {
   return (el.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, TEXT_SAMPLE_MAX);
 }
@@ -181,6 +214,52 @@ export class Inspector {
   private pickAt(clientX: number, clientY: number): Element | null {
     for (const el of this.elementsAt(clientX, clientY)) {
       const hit = this.qualify(el);
+      if (hit) return hit;
+    }
+    return this.hitByGeometry(clientX, clientY);
+  }
+
+  /**
+   * Ask the screen, not the document.
+   *
+   * `elementsFromPoint` cannot see the contents of a screen that has not been
+   * activated: the lab makes an inert screen's content `pointer-events: none`,
+   * and a hit test skips those. The stack at a point over an inactive screen is
+   * shield, scroller, frame, group, root — no content at all. Measured
+   * 2026-09-10, and it is why selecting an element has only ever worked after
+   * double-clicking into a screen first, Shift-click included.
+   *
+   * That is backwards for anything meant to teach: the moment you most need to
+   * learn an element is addressable is before you know to activate anything.
+   *
+   * Both references solve it the same way and neither hit-tests from outside.
+   * doop posts the point into the frame and lets the frame's own runtime answer
+   * (`doop:hover`); onlook asks the frame view directly
+   * (`frameData.view.getElementAtLoc(x, y)`). Ours are same-origin nodes in this
+   * document, so asking the screen means walking its own subtree by rectangle —
+   * and a rectangle knows nothing about `pointer-events`, which is exactly the
+   * property that makes this work where the hit test cannot.
+   *
+   * Deepest wins, the same answer `elementsFromPoint` would give if it could
+   * see. Zero-sized boxes are skipped: a wrapper with no area is not a thing you
+   * pointed at.
+   */
+  private hitByGeometry(clientX: number, clientY: number): Element | null {
+    if (typeof document === "undefined") return null;
+    const scrollers = document.querySelectorAll("[data-screen-scroll]");
+    for (let i = 0; i < scrollers.length; i++) {
+      const scroll = scrollers[i];
+      if (!scroll) continue;
+      const box = scroll.getBoundingClientRect();
+      if (
+        clientX < box.left ||
+        clientX > box.right ||
+        clientY < box.top ||
+        clientY > box.bottom
+      )
+        continue;
+      const found = deepestAt(scroll, clientX, clientY);
+      const hit = found ? this.qualify(found) : null;
       if (hit) return hit;
     }
     return null;

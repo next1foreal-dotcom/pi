@@ -559,3 +559,68 @@ describe("the published api", () => {
     handle?.destroy();
   });
 });
+
+/**
+ * The lab makes an inert screen's content `pointer-events: none`, so the hit
+ * test sees shield, scroller, frame, group — and no content at all. Measured in
+ * the running lab 2026-09-10, and it is why selecting an element had only ever
+ * worked after double-clicking into a screen first, Shift-click included.
+ *
+ * Both references answer it the same way and neither hit-tests from outside:
+ * doop posts the point into the frame and lets its runtime answer, onlook asks
+ * the frame view. Ours are same-origin nodes, so asking the screen means walking
+ * its subtree by rectangle — and a rectangle knows nothing about pointer-events.
+ */
+describe("finding an element the hit test cannot see", () => {
+  /** Give the fixture real boxes; jsdom hands out zeroes. */
+  function boxes(map: Array<[Element, [number, number, number, number]]>): void {
+    for (const [el, [x, y, w, h]] of map) {
+      vi.spyOn(el, "getBoundingClientRect").mockReturnValue({
+        x, y, width: w, height: h, left: x, top: y, right: x + w, bottom: y + h,
+        toJSON: () => ({}),
+      } as DOMRect);
+    }
+  }
+
+  it("selects through a shield that swallows the whole stack", async () => {
+    const { button, card } = await mountProbe();
+    boxes([
+      [scroll, [0, 0, 400, 300]],
+      [card, [10, 10, 380, 200]],
+      [button, [20, 40, 100, 30]],
+    ]);
+    // The shield ate everything: this is what elementsFromPoint really returns
+    // over an inactive screen.
+    live = createInspect(ctxFor(), { elementsAt: () => [] });
+
+    // The real path: the press lands on the shield, which qualifies as nothing,
+    // so it falls through to the hit test — and that is where geometry answers.
+    press(shield, { shiftKey: true, clientX: 70, clientY: 55 });
+    const sel = live.selection();
+    expect(sel?.tag).toBe("button");
+    expect(sel?.className).toBe("probe-button");
+  });
+
+  it("takes the deepest box, not the first one that contains the point", async () => {
+    const { button, card } = await mountProbe();
+    boxes([
+      [scroll, [0, 0, 400, 300]],
+      [card, [10, 10, 380, 200]],
+      [button, [20, 40, 100, 30]],
+    ]);
+    live = createInspect(ctxFor(), { elementsAt: () => [] });
+
+    // Inside the card but outside the button: the card is the honest answer,
+    // which is the other side of the test above.
+    press(shield, { shiftKey: true, clientX: 200, clientY: 150 });
+    expect(live.selection()?.className).toBe("probe-card");
+  });
+
+  it("says nothing when the point is outside every screen", async () => {
+    await mountProbe();
+    boxes([[scroll, [0, 0, 400, 300]]]);
+    live = createInspect(ctxFor(), { elementsAt: () => [] });
+    press(shield, { shiftKey: true, clientX: 5000, clientY: 5000 });
+    expect(live.selection()).toBeNull();
+  });
+});
