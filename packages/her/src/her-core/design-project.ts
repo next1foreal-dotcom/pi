@@ -62,6 +62,21 @@ export interface StepRecord {
 export interface IterationRecord {
 	summary: string;
 	at: string;
+	/**
+	 * The version this round produced: the design's newest commit at the moment
+	 * it was logged.
+	 *
+	 * Optional because it always will be — rounds logged before this existed
+	 * have none, and a design that has never been committed has none either.
+	 * A reader that treats a missing commit as "no version" is right both times.
+	 *
+	 * This is a POINTER, not a copy. The bytes live in git, which is the only
+	 * place they should live; see design-version.ts for why a parallel snapshot
+	 * store would be the wrong shape.
+	 */
+	commit?: string;
+	/** The still that shows what it looked like, repo-relative, if there is one. */
+	still?: string;
 }
 
 export interface ProjectManifest {
@@ -224,7 +239,7 @@ export async function listProjects(directory?: string): Promise<ProjectSummary[]
 export async function setStage(
 	slug: string,
 	stage: DesignStage,
-	opts?: { artifact?: string; note?: string },
+	opts?: { artifact?: string; note?: string; commit?: string; still?: string },
 	directory?: string,
 ): Promise<ProjectManifest> {
 	validateProjectSlug(slug);
@@ -240,7 +255,12 @@ export async function setStage(
 		if (targetIndex === currentIndex) {
 			// A round at "iterations" is logged by calling set_stage again with a note; no other stage is re-entered.
 			if (stage === "iterations" && opts?.note && opts.note.trim() !== "") {
-				manifest.iterations.push({ summary: opts.note, at });
+				manifest.iterations.push({
+					summary: opts.note,
+					at,
+					...(opts.commit ? { commit: opts.commit } : {}),
+					...(opts.still ? { still: opts.still } : {}),
+				});
 				manifest.updatedAt = at;
 				await writeManifest(slug, manifest, root);
 				return manifest;

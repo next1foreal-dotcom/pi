@@ -1,6 +1,7 @@
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { SAMANTHA_REPO_ROOT } from "../her-core/channel-probe-gate.ts";
 import {
 	auditProjects,
 	createProject,
@@ -11,10 +12,22 @@ import {
 	recordGateVerdict,
 	setStage,
 } from "../her-core/design-project.ts";
+import {
+	DEFAULT_VERSION_LIMIT,
+	type GitRun,
+	listVersions,
+	restoreDesign,
+	stillPath,
+	uncommittedFiles,
+} from "../her-core/design-version.ts";
 
 export interface DesignProjectToolDeps {
 	/** Override the on-disk projects directory (tests). Defaults to <repo>/design/projects. */
 	projectsDir?: string;
+	/** Override the repo the versions come from (tests). Defaults to the samantha checkout. */
+	repoRoot?: string;
+	/** Override how git is run (tests). Defaults to the real thing. */
+	gitRun?: GitRun;
 }
 
 function textResult(text: string, details: Record<string, unknown> = {}) {
@@ -34,6 +47,25 @@ function fail(error: unknown) {
 
 export function registerDesignProjectTools(pi: ExtensionAPI, deps: DesignProjectToolDeps = {}): void {
 	const dir = deps.projectsDir ? projectsDirectory(deps.projectsDir) : undefined;
+	const repoRoot = deps.repoRoot ?? SAMANTHA_REPO_ROOT;
+	const gitOpts = deps.gitRun ? { run: deps.gitRun } : {};
+
+	/**
+	 * The design's newest commit, for stamping onto a round as it is logged.
+	 *
+	 * Best effort on purpose: a design that has never been committed, a
+	 * checkout with no git, a repo that is busy — none of those should stop a
+	 * round being recorded. A round with no version pointer is worth strictly
+	 * more than no round at all, and the field is optional for exactly this.
+	 */
+	async function versionNow(slug: string): Promise<{ commit?: string; still?: string }> {
+		try {
+			const [newest] = await listVersions(slug, repoRoot, { limit: 1, ...gitOpts });
+			return newest ? { commit: newest.commit, still: stillPath(slug) } : {};
+		} catch {
+			return {};
+		}
+	}
 
 	pi.registerTool({
 		name: "design_project_create",
@@ -121,12 +153,18 @@ export function registerDesignProjectTools(pi: ExtensionAPI, deps: DesignProject
 		}),
 		async execute(_toolCallId, params) {
 			try {
+				// A round at "iterations" IS a version, so it is stamped with one.
+				// Every other call is a stage move and gets no pointer: the thing
+				// that changed there was the process, not the design.
+				const logging = params.stage === "iterations" && Boolean(params.note?.trim());
+				const version = logging ? await versionNow(params.slug) : {};
 				const manifest = await setStage(
 					params.slug,
 					params.stage,
 					{
 						...(params.artifact ? { artifact: params.artifact } : {}),
 						...(params.note ? { note: params.note } : {}),
+						...version,
 					},
 					dir,
 				);
@@ -170,6 +208,96 @@ export function registerDesignProjectTools(pi: ExtensionAPI, deps: DesignProject
 					ok: true,
 					manifest,
 				});
+			} catch (error) {
+				return fail(error);
+			}
+		},
+	});
+
+	pi.registerTool({
+		name: "design_version_history",
+		label: "Design Version History",
+		description:
+			"Every version of ONE design, newest first. A version is a COMMIT that touched it — nothing is copied " +
+			"anywhere; the bytes have always been in git and this reads their history. A design is two paths: " +
+			"packages/design-lab/src/screens/<slug> and design/projects/<slug>. The manifest is deliberately not one " +
+			"of them, so restoring a version never erases the record of the restore. " +
+			"Each entry has the sha, the commit subject, the author date, the files it touched, and the display name " +
+			"someone gave it with design_version_name (null for the many that have none). " +
+			"Also reports edits under those paths that no version holds yet — that is what a restore would overwrite, " +
+			"and the only part of it git cannot give back. " +
+			"Sibling tools: design_version_list is the same names across the WHOLE repo rather than one design, and " +
+			"design_version_restore puts one of these back. Read-only.",
+		parameters: Type.Object({
+			slug: Type.String({ description: "The design's slug, e.g. loora-landing." }),
+			limit: Type.Optional(
+				Type.Number({ description: `How many versions to return. Default ${DEFAULT_VERSION_LIMIT}, max 200.` }),
+			),
+		}),
+		async execute(_toolCallId, params) {
+			try {
+				const versions = await listVersions(params.slug, repoRoot, {
+					...(params.limit ? { limit: params.limit } : {}),
+					...gitOpts,
+				});
+				const dirty = await uncommittedFiles(params.slug, repoRoot, gitOpts);
+				const head = versions[0];
+				const lines = versions.map(
+					(v) =>
+						`${v.name ? "* " : "  "}${v.commit.slice(0, 9)}  ${v.at.slice(0, 16).replace("T", " ")}  ` +
+						`${v.name ? `${v.name} — ` : ""}${v.subject}`,
+				);
+				const text = versions.length
+					? `${versions.length} version(s) of "${params.slug}", newest first:\n${lines.join("\n")}` +
+						(dirty.length ? `\n\nUncommitted under this design (${dirty.length}): ${dirty.join(", ")}` : "")
+					: `No versions of "${params.slug}" yet — nothing under its paths has been committed.`;
+				return textResult(text, { ok: true, versions, dirty, head: head?.commit ?? null });
+			} catch (error) {
+				return fail(error);
+			}
+		},
+	});
+
+	pi.registerTool({
+		name: "design_version_restore",
+		label: "Design Version Restore",
+		description:
+			"Put a version's bytes back into the working tree: git checkout <commit> -- <the design's paths>. " +
+			"NOTHING IS COMMITTED, no history is rewritten, and HEAD DOES NOT MOVE — the restore lands as ordinary " +
+			"working-tree edits, to be looked at, kept, or thrown away like any others. That last part is why this " +
+			"tool exists where design_version_list refuses to restore: switching HEAD changes the whole repo out from " +
+			"under every other session in it, and checking out one path changes one design. " +
+			"Dry run by default: without apply:true it only reports which files WOULD change, which is the cheap way " +
+			"to answer 'which version was it again?'. With apply:true it writes them. " +
+			"Uncommitted work under the design's paths is overwritten and cannot be recovered, so it is listed in the " +
+			"dry run first. The project manifest is never touched.",
+		parameters: Type.Object({
+			slug: Type.String(),
+			commit: Type.String({ description: "A git sha, 7 to 40 hex characters, from design_versions." }),
+			apply: Type.Optional(Type.Boolean({ description: "Write the files. Omitted or false = report only." })),
+		}),
+		async execute(_toolCallId, params) {
+			try {
+				const dirty = await uncommittedFiles(params.slug, repoRoot, gitOpts);
+				const plan = await restoreDesign(params.slug, params.commit, repoRoot, {
+					...(params.apply ? { apply: true } : {}),
+					...gitOpts,
+				});
+				if (plan.files.length === 0) {
+					return textResult(
+						`"${params.slug}" already matches ${params.commit.slice(0, 9)} — nothing to restore.`,
+						{ ok: true, ...plan, dirty },
+					);
+				}
+				const list = plan.files.join("\n");
+				const text = plan.applied
+					? `Restored "${params.slug}" to ${params.commit.slice(0, 9)}. ${plan.files.length} file(s) written:\n${list}\n\nNothing was committed — review and commit, or git restore to undo.`
+					: `Dry run. Restoring "${params.slug}" to ${params.commit.slice(0, 9)} would change ${plan.files.length} file(s):\n${list}` +
+						(dirty.length
+							? `\n\nUncommitted work that would be LOST (${dirty.length}): ${dirty.join(", ")}`
+							: "") +
+						"\n\nCall again with apply:true to write them.";
+				return textResult(text, { ok: true, ...plan, dirty });
 			} catch (error) {
 				return fail(error);
 			}

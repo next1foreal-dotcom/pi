@@ -69,6 +69,7 @@ export const READONLY_DESIGN_TOOLS: ReadonlySet<string> = new Set([
 	"design_version_list",
 	"design_version_show",
 	"design_version_since",
+	"design_version_history",
 	"design_mode",
 	"design_system_review",
 	"design_direction",

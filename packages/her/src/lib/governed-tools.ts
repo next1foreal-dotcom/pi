@@ -121,6 +121,9 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	design_version_list: { destructive: false },
 	design_version_show: { destructive: false },
 	design_version_since: { destructive: false },
+	design_version_history: { destructive: false },
+	// Writes files under one design. HEAD does not move and nothing is committed.
+	design_version_restore: { destructive: true },
 	// Writes refs/notes/her-design; names a commit without rewriting one.
 	design_version_name: { destructive: false },
 	design_project_create: { destructive: false },
