@@ -444,6 +444,36 @@ interface NoteRefs {
 	fontItems: Map<NoteFont, HTMLButtonElement>;
 }
 
+/**
+ * A note that has been replied to is a conversation, and a conversation is not
+ * a Post-it.
+ *
+ * The sticky/comment split shipped with "absent means sticky", which is the
+ * right rule for reading old rows and the wrong one for showing them: every
+ * comment that already existed kept its Post-it body. Measured 2026-09-10 —
+ * three notes on the canvas, `kind: "sticky"` on all three, with 1, 3 and 2
+ * replies. The one he pointed at held four characters of 「换个字体」, a source
+ * location and a thread with her, in a 240x240 yellow square.
+ *
+ * Replies are the discriminator that `source` could not be: `resolveSourceAt`
+ * hands a source to almost every note dropped over a screen, but nothing
+ * answers a note that was only ever a thought parked on the canvas. A sticky
+ * nobody has replied to stays a sticky.
+ *
+ * The size only moves when it is still exactly the default — a note he sized
+ * himself keeps the size he gave it.
+ */
+export function adoptCommentKind(note: StickyNote): void {
+	if (note.kind === "comment") return;
+	if (note.replies.length === 0) return;
+	note.kind = "comment";
+	note.color = "white";
+	if (note.w === NOTE_DEFAULT && note.h === NOTE_DEFAULT) {
+		note.w = COMMENT_W;
+		note.h = COMMENT_H;
+	}
+}
+
 export class StickyNotes {
 	readonly supported =
 		typeof window !== "undefined" && typeof document !== "undefined";
@@ -794,6 +824,7 @@ export class StickyNotes {
 	// ------------------------------------------------------------------ dom
 
 	private mountNote(note: StickyNote) {
+		adoptCommentKind(note);
 		const el = document.createElement("div");
 		el.className = "sn-note";
 		el.dataset.color = note.color;
@@ -2035,6 +2066,13 @@ export class StickyNotes {
 		note.resolved = st.resolved;
 		const r = this.refs.get(note.id);
 		if (!r) return;
+		// The first reply is the moment a note stops being a thought parked on
+		// the canvas. It arrives from the feed long after the note was mounted,
+		// so the body has to change here too and not only on the next reload.
+		adoptCommentKind(note);
+		r.el.dataset.kind = note.kind;
+		r.el.dataset.color = note.color;
+		this.setSize(note.id, note.w, note.h);
 		r.el.toggleAttribute("data-resolved", st.resolved);
 		r.replies.replaceChildren();
 		for (const reply of st.replies) {

@@ -2,6 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+	adoptCommentKind,
 	COMMENT_W,
 	COMMENT_H,
 	NOTE_DEFAULT,
@@ -1620,5 +1621,45 @@ describe("stickies and comments are two things", () => {
     expect(kinds).toContain("comment");
     expect(kinds).toContain("sticky");
     expect(comment.kind).not.toBe(sticky.kind);
+  });
+});
+
+/**
+ * The split shipped with "absent means sticky" — right for reading old rows,
+ * wrong for showing them. Measured 2026-09-10: three notes on the canvas, all
+ * `kind: "sticky"`, with 1, 3 and 2 replies. The one he pointed at held four
+ * characters, a source location and a thread with her, in a 240x240 yellow
+ * square, and he asked why the sticky was still there.
+ */
+describe("a note that has been replied to is a conversation", () => {
+  it("adopts the comment body, and only resizes a note still at the default", () => {
+    mount();
+    const notes = live as StickyNotes;
+    const plain = notes.spawn({ x: 0, y: 0, text: "一个想法" });
+    const sized = notes.spawn({ x: 400, y: 0, text: "我自己调过大小", w: 400, h: 320 });
+
+    for (const n of [plain, sized]) {
+      expect(n.kind).toBe("sticky");
+    }
+
+    plain.replies = [{ id: "r1", author: "samantha", text: "改了" }];
+    sized.replies = [{ id: "r2", author: "samantha", text: "改了" }];
+    adoptCommentKind(plain);
+    adoptCommentKind(sized);
+
+    expect(plain.kind).toBe("comment");
+    expect([plain.w, plain.h]).toEqual([COMMENT_W, COMMENT_H]);
+    // He gave this one a size; a body change is not licence to throw it away.
+    expect(sized.kind).toBe("comment");
+    expect([sized.w, sized.h]).toEqual([400, 320]);
+  });
+
+  it("leaves a note nobody answered alone", () => {
+    mount();
+    const notes = live as StickyNotes;
+    const quiet = notes.spawn({ x: 0, y: 0, text: "没人理的想法" });
+    adoptCommentKind(quiet);
+    expect(quiet.kind).toBe("sticky");
+    expect([quiet.w, quiet.h]).toEqual([NOTE_DEFAULT, NOTE_DEFAULT]);
   });
 });
