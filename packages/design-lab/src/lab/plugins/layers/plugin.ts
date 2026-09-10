@@ -61,6 +61,21 @@ const CSS = `
 .ly-screen{font-weight:600}
 .ly-of{flex:none;margin-left:4px;opacity:.42;font:10px/1.5 ui-sans-serif,system-ui}
 .ly-empty{opacity:.5;font-style:italic;padding:2px 4px}
+.ly-hist{flex:none;margin-left:auto;padding:0 3px;opacity:0;cursor:pointer;font:11px/1.5 ui-sans-serif,system-ui}
+.ly-row:hover .ly-hist,.ly-hist:focus{opacity:.55}
+.ly-hist:hover{opacity:1}
+.ly-back{display:flex;align-items:center;gap:5px;width:100%;padding:2px 4px;border-radius:4px;cursor:pointer;font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.ly-back:hover{background:rgba(255,255,255,.09)}
+.ly-ver{display:block;width:100%;padding:3px 5px;border-radius:4px;cursor:pointer;text-align:left}
+.ly-ver:hover{background:rgba(255,255,255,.09)}
+.ly-ver[data-on]{background:rgba(255,255,255,.15)}
+.ly-when{font:10px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;opacity:.55}
+.ly-what{font:11px/1.4 ui-sans-serif,system-ui;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ly-named{font-weight:600;opacity:1}
+.ly-plan{padding:3px 6px 5px;font:10px/1.5 ui-sans-serif,system-ui;opacity:.8}
+.ly-cost{color:#f39a5e}
+.ly-go{all:unset;margin-top:4px;display:inline-block;padding:2px 8px;border-radius:4px;cursor:pointer;background:rgba(255,255,255,.14);font:11px/1.5 ui-sans-serif,system-ui}
+.ly-go:hover{background:rgba(255,255,255,.24)}
 `;
 
 /** How deep a row can indent before the indent stops growing and the text wins. */
@@ -89,6 +104,22 @@ function releaseStyles(): void {
 		styleEl?.remove();
 		styleEl = null;
 	}
+}
+
+/** One row of history. Mirrors what `design-version.ts` hands the endpoint. */
+export interface LabVersion {
+	commit: string;
+	subject: string;
+	at: string;
+	name: string | null;
+	files: string[];
+}
+
+interface RestorePlan {
+	commit: string;
+	files: string[];
+	applied: boolean;
+	dirty: string[];
 }
 
 type InspectApi = {
@@ -153,6 +184,13 @@ export class LayersPanel {
 	private rows = new Map<Element, HTMLElement>();
 	private closed = false;
 	private folded = false;
+	/** Null while showing the tree; a slug while showing that design's history. */
+	private history: string | null = null;
+	private versions: LabVersion[] = [];
+	private dirty: string[] = [];
+	private picked: string | null = null;
+	private plan: RestorePlan | null = null;
+	private note = "";
 
 	constructor(private host: HTMLElement) {
 		acquireStyles();
@@ -198,6 +236,9 @@ export class LayersPanel {
 	private onUp = (): void => {
 		setTimeout(() => {
 			if (this.closed) return;
+			// Not while the history is up: a press anywhere would throw away the
+			// version you were reading about.
+			if (this.history) return;
 			this.render();
 			// Selecting on the canvas opens the tree to it. That is the whole
 			// point of having both: point at a thing and the list says where it
@@ -254,6 +295,10 @@ export class LayersPanel {
 	}
 
 	private render(): void {
+		if (this.history) {
+			this.renderHistory(this.history);
+			return;
+		}
 		const doc = this.host.ownerDocument;
 		const roots = screenRoots(doc);
 		const selected = this.inspect()?.selectedElement() ?? null;
@@ -344,20 +389,209 @@ export class LayersPanel {
 				else this.open.add(el);
 				this.render();
 			});
+			// Its versions live behind this, not in the tree. A screen's history
+			// is about the whole design; the rows under it are about one element
+			// each, and mixing the two would make both harder to read.
+			const hist = document.createElement("span");
+			hist.className = "ly-hist";
+			hist.textContent = "\u27f2";
+			hist.title = `${screenId} 的版本`;
+			hist.addEventListener("click", (e) => {
+				e.stopPropagation();
+				void this.openHistory(screenId);
+			});
+			row.appendChild(hist);
 		}
 
 		this.rows.set(el, row);
 		this.list.appendChild(row);
 	}
 
+	/**
+	 * Swap the panel over to one design's history.
+	 *
+	 * Fetched when it is opened and not before: a version count on every screen
+	 * row would mean a `git log` per screen on every render of a panel that
+	 * re-renders on every press. Nobody wants the number badly enough for that.
+	 */
+	async openHistory(slug: string): Promise<void> {
+		if (this.closed) return;
+		this.history = slug;
+		this.picked = null;
+		this.plan = null;
+		this.versions = [];
+		this.dirty = [];
+		this.note = "读取中…";
+		this.render();
+		try {
+			const reply = await fetch(`/__lab-fs/versions?slug=${encodeURIComponent(slug)}`);
+			const body = (await reply.json()) as {
+				ok?: boolean;
+				versions?: LabVersion[];
+				dirty?: string[];
+				error?: string;
+			};
+			if (this.closed || this.history !== slug) return;
+			if (!body.ok) {
+				this.note = body.error ?? "读不到版本";
+			} else {
+				this.versions = body.versions ?? [];
+				this.dirty = body.dirty ?? [];
+				this.note = this.versions.length === 0 ? "还没有提交过" : "";
+			}
+		} catch (error) {
+			if (this.closed || this.history !== slug) return;
+			// The dev server is what serves this; without it there is no history
+			// to show and saying so is better than an empty list that looks like
+			// a design with no past.
+			this.note = `读不到版本 · ${String(error)}`;
+		}
+		this.render();
+	}
+
+	/** Back to the tree. */
+	closeHistory(): void {
+		this.history = null;
+		this.picked = null;
+		this.plan = null;
+		this.note = "";
+		this.render();
+	}
+
+	/**
+	 * Ask what a version would change, or change it.
+	 *
+	 * Always the question first, even on the way to the answer: the panel shows
+	 * the file list and the uncommitted work that would be lost, and only then
+	 * offers the button. Nothing here moves HEAD or commits anything — the
+	 * files land as ordinary edits, which is what makes two clicks enough.
+	 */
+	private async restore(commit: string, apply: boolean): Promise<void> {
+		const slug = this.history;
+		if (!slug || this.closed) return;
+		this.picked = commit;
+		this.note = apply ? "恢复中…" : "";
+		this.render();
+		try {
+			const reply = await fetch("/__lab-fs/versions/restore", {
+				method: "POST",
+				headers: { "content-type": "application/json", "x-lab-canvas": "1" },
+				body: JSON.stringify({ slug, commit, apply }),
+			});
+			const body = (await reply.json()) as RestorePlan & { ok?: boolean; error?: string };
+			if (this.closed || this.history !== slug) return;
+			if (!body.ok) {
+				this.note = body.error ?? "恢复失败";
+				this.plan = null;
+			} else {
+				this.plan = body;
+				this.note = body.applied
+					? `已恢复 ${body.files.length} 个文件 · 没有提交,不满意就 git restore`
+					: "";
+			}
+		} catch (error) {
+			if (this.closed) return;
+			this.note = `恢复失败 · ${String(error)}`;
+			this.plan = null;
+		}
+		this.render();
+	}
+
+	private renderHistory(slug: string): void {
+		this.rows.clear();
+		this.list.replaceChildren();
+		this.panel.toggleAttribute("data-show", true);
+
+		const back = document.createElement("div");
+		back.className = "ly-back";
+		back.textContent = `\u2190 ${slug}`;
+		back.addEventListener("click", () => this.closeHistory());
+		this.list.appendChild(back);
+
+		for (const version of this.versions) {
+			const row = document.createElement("button");
+			row.type = "button";
+			row.className = "ly-ver";
+			if (version.commit === this.picked) row.setAttribute("data-on", "");
+
+			const when = document.createElement("div");
+			when.className = "ly-when";
+			when.textContent = `${version.commit.slice(0, 8)}  ${version.at.slice(5, 16).replace("T", " ")}`;
+			const what = document.createElement("div");
+			what.className = "ly-what";
+			// A name someone chose says more than a commit subject ever will, so
+			// it wins the line when there is one.
+			if (version.name) {
+				what.classList.add("ly-named");
+				what.textContent = version.name;
+			} else {
+				what.textContent = version.subject;
+			}
+			row.append(when, what);
+			row.addEventListener("click", () => {
+				void this.restore(version.commit, false);
+			});
+			this.list.appendChild(row);
+
+			if (version.commit !== this.picked) continue;
+			const plan = this.plan;
+			if (!plan || plan.commit !== version.commit) continue;
+			const detail = document.createElement("div");
+			detail.className = "ly-plan";
+			if (plan.applied) {
+				detail.textContent = this.note;
+			} else if (plan.files.length === 0) {
+				detail.textContent = "和现在一模一样,没什么可恢复的";
+			} else {
+				detail.textContent = `会改 ${plan.files.length} 个文件`;
+				if (plan.dirty.length > 0) {
+					const cost = document.createElement("div");
+					cost.className = "ly-cost";
+					// The one part git cannot give back. Said before the button,
+					// not after it.
+					cost.textContent = `${plan.dirty.length} 个没提交的改动会丢`;
+					detail.appendChild(cost);
+				}
+				const go = document.createElement("button");
+				go.type = "button";
+				go.className = "ly-go";
+				go.textContent = "恢复到这一版";
+				go.addEventListener("click", (e) => {
+					e.stopPropagation();
+					void this.restore(version.commit, true);
+				});
+				detail.appendChild(go);
+			}
+			this.list.appendChild(detail);
+		}
+
+		if (this.note && !this.plan?.applied) {
+			const note = document.createElement("div");
+			note.className = "ly-empty";
+			note.textContent = this.note;
+			this.list.appendChild(note);
+		}
+	}
+
 	/** What the panel is showing, for a caller with no eyes. */
-	state(): { folded: boolean; rows: number; open: number; selected: string | null } {
+	state(): {
+		folded: boolean;
+		rows: number;
+		open: number;
+		selected: string | null;
+		history: string | null;
+		versions: number;
+		note: string;
+	} {
 		const selected = this.inspect()?.selectedElement() ?? null;
 		return {
 			folded: this.folded,
 			rows: this.rows.size,
 			open: this.open.size,
 			selected: selected ? labelOf(selected) : null,
+			history: this.history,
+			versions: this.versions.length,
+			note: this.note,
 		};
 	}
 
@@ -401,9 +635,20 @@ export const plugin: LabPlugin = {
 		{
 			name: "state",
 			signature:
-				"state(): { folded: boolean; rows: number; open: number; selected: string | null }",
+				"state(): { folded, rows, open, selected, history, versions, note }",
 			summary:
-				"What the tree is showing. `rows` counts the rows currently rendered, which is one per screen plus the children of everything opened — not the size of the page. `selected` is the label of the row marked as selected (`div.lp-hero`, or a bare tag when it has no class), or null when the selection is elsewhere or empty.",
+				"What the panel is showing. `rows` counts the rows currently rendered, which is one per screen plus the children of everything opened — not the size of the page. `selected` is the label of the row marked as selected (`div.lp-hero`, or a bare tag when it has no class), or null when the selection is elsewhere or empty. `history` is the slug whose versions are on screen instead of the tree, or null for the tree; `versions` is how many were read; `note` is the one line the panel is saying about itself, empty when it has nothing to say.",
+		},
+		{
+			name: "openHistory",
+			signature: "openHistory(slug: string): Promise<void>",
+			summary:
+				"Swap the panel from the element tree to one design's version history, and read it. A version is a commit that touched that design — the same history `design_version_history` reports, from the same code. Clicking a row asks what restoring it would change; a second click on the button that appears does it. Nothing is committed and HEAD never moves.",
+		},
+		{
+			name: "closeHistory",
+			signature: "closeHistory(): void",
+			summary: "Back from the version history to the element tree.",
 		},
 		{
 			name: "reveal",
@@ -430,6 +675,8 @@ export const plugin: LabPlugin = {
 		return {
 			api: {
 				state: () => panel.state(),
+				openHistory: (slug: string) => panel.openHistory(slug),
+				closeHistory: () => panel.closeHistory(),
 				reveal: (el: Element) => panel.reveal(el),
 				refresh: () => panel.refresh(),
 				setFolded: (folded: boolean) => panel.setFolded(folded),

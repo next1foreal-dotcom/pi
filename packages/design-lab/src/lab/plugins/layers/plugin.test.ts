@@ -338,6 +338,220 @@ describe("the panel itself", () => {
 	});
 });
 
+describe("a design's versions, in the panel", () => {
+	// The tools her side got (`design_version_history` / `design_version_restore`)
+	// answer the same two questions from the same code. This is the half Fei can
+	// reach without asking her, which for "put yesterday's back" is the half that
+	// matters.
+
+	const V1 = "a".repeat(40);
+	const V2 = "b".repeat(40);
+	const VERSIONS = [
+		{
+			commit: V2,
+			at: "2026-09-09T12:00:00Z",
+			subject: "feat: second pass",
+			name: null,
+			files: ["packages/design-lab/src/screens/playground/screen.tsx"],
+		},
+		{
+			commit: V1,
+			at: "2026-09-08T09:00:00Z",
+			subject: "feat: first pass",
+			name: "the one with the wide hero",
+			files: ["packages/design-lab/src/screens/playground/screen.tsx"],
+		},
+	];
+
+	let sent: { url: string; init?: RequestInit }[] = [];
+
+	/** Answers the two endpoints, and remembers exactly what was asked. */
+	function stubFetch(over: { versions?: unknown; restore?: unknown; fail?: boolean } = {}): void {
+		sent = [];
+		(globalThis as { fetch: unknown }).fetch = (url: string, init?: RequestInit) => {
+			sent.push({ url, ...(init ? { init } : {}) });
+			if (over.fail) return Promise.reject(new Error("no dev server"));
+			const body = url.startsWith("/__lab-fs/versions?")
+				? (over.versions ?? { ok: true, versions: VERSIONS, dirty: ["screen.tsx"] })
+				: (over.restore ?? {
+						ok: true,
+						commit: V1,
+						files: ["a.tsx", "b.tsx"],
+						applied: false,
+						dirty: ["a.tsx"],
+					});
+			return Promise.resolve({ json: () => Promise.resolve(body) } as Response);
+		};
+	}
+
+	function versionRows(): HTMLElement[] {
+		return Array.from(host.querySelectorAll<HTMLElement>(".ly-ver"));
+	}
+
+	afterEach(() => {
+		(globalThis as { fetch?: unknown }).fetch = undefined;
+	});
+
+	it("swaps the tree for the history, newest first", async () => {
+		stubFetch();
+		panel = new LayersPanel(host);
+		await panel.openHistory("playground");
+
+		expect(panel.state().history).toBe("playground");
+		expect(panel.state().versions).toBe(2);
+		expect(versionRows().length).toBe(2);
+		expect(host.querySelector(".ly-back")?.textContent).toContain("playground");
+		// The tree is gone while the history is up — one panel, two things to say.
+		expect(host.querySelectorAll(".ly-row").length).toBe(0);
+		expect(sent[0]?.url).toBe("/__lab-fs/versions?slug=playground");
+	});
+
+	it("a name someone chose wins the line over a commit subject", async () => {
+		// Naming is how a person marks the handful worth coming back to, and it
+		// says more than "feat: first pass" ever will.
+		stubFetch();
+		panel = new LayersPanel(host);
+		await panel.openHistory("playground");
+
+		expect(versionRows()[1]?.textContent).toContain("the one with the wide hero");
+		expect(versionRows()[1]?.textContent).not.toContain("first pass");
+		expect(versionRows()[0]?.textContent).toContain("second pass");
+	});
+
+	it("clicking a version asks what it would change, and writes nothing", async () => {
+		stubFetch();
+		panel = new LayersPanel(host);
+		await panel.openHistory("playground");
+
+		versionRows()[1]?.click();
+		await new Promise((r) => setTimeout(r, 0));
+		const post = sent.find((s) => s.url === "/__lab-fs/versions/restore");
+		expect(JSON.parse(String(post?.init?.body))).toEqual({
+			slug: "playground",
+			commit: V1,
+			apply: false,
+		});
+		expect(host.querySelector(".ly-plan")?.textContent).toContain("2");
+	});
+
+	it("and says what it would cost before it offers the button", async () => {
+		// Uncommitted work is the only part of this git cannot give back. It is
+		// named above the button, not in a message after it.
+		stubFetch();
+		panel = new LayersPanel(host);
+		await panel.openHistory("playground");
+		versionRows()[1]?.click();
+		await new Promise((r) => setTimeout(r, 0));
+
+		const cost = host.querySelector(".ly-cost");
+		const go = host.querySelector(".ly-go");
+		expect(cost?.textContent).toContain("1");
+		expect(go).not.toBeNull();
+		expect(cost?.compareDocumentPosition(go as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+	});
+
+	it("the second click is the one that writes, and it carries the guard", async () => {
+		stubFetch();
+		panel = new LayersPanel(host);
+		await panel.openHistory("playground");
+		versionRows()[1]?.click();
+		await new Promise((r) => setTimeout(r, 0));
+
+		(host.querySelector(".ly-go") as HTMLElement).click();
+		await new Promise((r) => setTimeout(r, 0));
+		const writes = sent.filter(
+			(x) => x.url === "/__lab-fs/versions/restore" && JSON.parse(String(x.init?.body)).apply === true,
+		);
+		expect(writes.length).toBe(1);
+		const headers = writes[0]?.init?.headers as Record<string, string>;
+		expect(headers["x-lab-canvas"]).toBe("1");
+	});
+
+	it("offers nothing to restore when the version is already what is on disk", async () => {
+		stubFetch({ restore: { ok: true, commit: V1, files: [], applied: false, dirty: [] } });
+		panel = new LayersPanel(host);
+		await panel.openHistory("playground");
+		versionRows()[1]?.click();
+		await new Promise((r) => setTimeout(r, 0));
+
+		expect(host.querySelector(".ly-plan")?.textContent).toContain("一模一样");
+		expect(host.querySelector(".ly-go")).toBeNull();
+	});
+
+	it("says it could not read them, rather than showing a design with no past", async () => {
+		// An empty list and an unreachable dev server look identical, and only
+		// one of them means "this design has never been committed".
+		stubFetch({ fail: true });
+		panel = new LayersPanel(host);
+		await panel.openHistory("playground");
+
+		expect(panel.state().note).toContain("读不到版本");
+		expect(versionRows().length).toBe(0);
+	});
+
+	it("says so plainly when a design has never been committed", async () => {
+		stubFetch({ versions: { ok: true, versions: [], dirty: [] } });
+		panel = new LayersPanel(host);
+		await panel.openHistory("playground");
+
+		expect(panel.state().note).toContain("还没有提交过");
+	});
+
+	it("comes back to the tree, with the branches it had open", async () => {
+		stubFetch();
+		panel = new LayersPanel(host);
+		rowFor("playground").click();
+		await panel.openHistory("playground");
+		panel.closeHistory();
+
+		expect(panel.state().history).toBeNull();
+		expect(labels()).toContain("div.playground-root");
+	});
+
+	it("a press on the canvas does not reach into the tree behind it", async () => {
+		// The panel re-reads the tree after every press, and opens it to
+		// whatever was just selected. Doing that while the history is up would
+		// rearrange the tree behind your back — you would come out of the
+		// version list into branches you never opened.
+		stubFetch();
+		panel = new LayersPanel(host);
+		await panel.openHistory("playground");
+		const openBefore = panel.state().open;
+		selected = document.querySelector("a");
+
+		window.dispatchEvent(new Event("pointerup"));
+		await new Promise((r) => setTimeout(r, 0));
+		expect(panel.state().history).toBe("playground");
+		expect(versionRows().length).toBe(2);
+		expect(panel.state().open).toBe(openBefore);
+
+		panel.closeHistory();
+		expect(labels()).toEqual(["playground", "product-list"]);
+	});
+
+	it("every screen row offers its history, and no other row does", async () => {
+		stubFetch();
+		panel = new LayersPanel(host);
+		rowFor("playground").click();
+
+		expect(rowFor("playground").querySelector(".ly-hist")).not.toBeNull();
+		// A screen's history is about the whole design; the rows under it are
+		// about one element each.
+		expect(rowFor("div.playground-root").querySelector(".ly-hist")).toBeNull();
+	});
+
+	it("opening a history is not selecting the screen", async () => {
+		stubFetch();
+		panel = new LayersPanel(host);
+		const hist = rowFor("playground").querySelector(".ly-hist") as HTMLElement;
+
+		hist.click();
+		await new Promise((r) => setTimeout(r, 0));
+		expect(panel.state().history).toBe("playground");
+		expect(selectCalls).toEqual([]);
+	});
+});
+
 describe("the plugin's own wiring", () => {
 	it("documents every method it publishes", () => {
 		const handle = plugin.mount({

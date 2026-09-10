@@ -3,6 +3,11 @@ import path from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin, ViteDevServer } from "vite";
 import { stampOidOnEvent } from "../her/src/design-canvas/store.ts";
+import {
+  listVersions,
+  restoreDesign,
+  uncommittedFiles,
+} from "../her/src/her-core/design-version.ts";
 import { buildComponentIndex } from "./src/lab/components/build-index.ts";
 import { EDITABLE_SOURCE, editClassList, splitClasses } from "../her/src/preview/jsx-class-list.ts";
 import { editText } from "../her/src/preview/jsx-text.ts";
@@ -106,6 +111,30 @@ export function labFsPlugin(projectRoot: string): Plugin {
           return;
         }
         const url = req.url.split("?")[0];
+
+        /**
+         * GET /versions?slug=<id> — this design's history, newest first.
+         *
+         * The same `design-version.ts` her tools read, on purpose. Two answers
+         * to "which versions does this have" would drift, and the one that
+         * drifts is the one you are looking at when you decide to go back.
+         *
+         * Read-only, so no write guard. It says nothing a `git log` in this
+         * checkout would not.
+         */
+        if (req.method === "GET" && url === "/versions") {
+          const slug = new URL(req.url, "http://lab").searchParams.get("slug") ?? "";
+          void (async () => {
+            try {
+              const versions = await listVersions(slug, repoRoot, { limit: 30 });
+              const dirty = await uncommittedFiles(slug, repoRoot);
+              json(res, 200, { ok: true, versions, dirty });
+            } catch (error) {
+              json(res, 400, { ok: false, error: String(error) });
+            }
+          })();
+          return;
+        }
 
         // GET /scratch-tokens.css — serve the persisted scratch set as CSS.
         // The lab fetches this on boot so that a fresh page (including a
@@ -274,6 +303,38 @@ export function labFsPlugin(projectRoot: string): Plugin {
               dest = path.join(screensDir, destName);
               fs.renameSync(src, dest);
               json(res, 200, { ok: true, dir: destName });
+              return;
+            }
+            /**
+             * POST /versions/restore — put a version's files back.
+             *
+             * `apply` is false unless asked, and the false case is the whole
+             * point: it answers "what would this change" without changing
+             * anything, which is what the panel shows before its second click.
+             *
+             * HEAD is not moved and nothing is committed — see design-version.ts
+             * for why that distinction is what makes this safe to offer at all.
+             * Same write guard as the element writes: this reaches the file
+             * system, so a page that is not the lab does not get to call it.
+             */
+            if (url === "/versions/restore") {
+              const guard = req.headers[WRITE_GUARD];
+              if ((Array.isArray(guard) ? guard[0] : guard) !== "1") {
+                json(res, 403, { ok: false, error: "missing canvas guard" });
+                return;
+              }
+              const slug = String(body.slug ?? "");
+              const commit = String(body.commit ?? "");
+              const apply = body.apply === true;
+              void (async () => {
+                try {
+                  const dirty = await uncommittedFiles(slug, repoRoot);
+                  const plan = await restoreDesign(slug, commit, repoRoot, { apply });
+                  json(res, 200, { ok: true, ...plan, dirty });
+                } catch (error) {
+                  json(res, 400, { ok: false, error: String(error) });
+                }
+              })();
               return;
             }
             if (url === "/rename") {
