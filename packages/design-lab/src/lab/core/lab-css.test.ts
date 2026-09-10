@@ -383,3 +383,36 @@ describe("a warning is not a colour", () => {
 		expect(saturation("f1f1f1")).toBe(0);
 	});
 });
+
+describe("bare mode hides the lab, not the work", () => {
+	// `[data-lab-chrome]` is already how this lab marks what belongs to IT — the
+	// hit test skips it, the pan handler leaves its presses alone — so it is the
+	// honest answer to "hide the lab" too. Notes, labels and the screens are not
+	// marked, and they are the work.
+
+	const bare = rules(css).filter((r) =>
+		r.selectors.some((sel) => sel.includes("[data-bare]")),
+	);
+
+	it("has the rule", () => {
+		expect(bare.length).toBe(1);
+		expect(bare[0]?.body).toMatch(/display:\s*none/);
+	});
+
+	it("hides what the lab marked as its own", () => {
+		expect(bare[0]?.selectors[0]).toContain("[data-lab-chrome]");
+	});
+
+	it("and leaves the toasts, or there is no way back", () => {
+		// Everything that could tell you which key returns is inside that rule.
+		// A mode you can enter by accident and cannot leave is a trap.
+		expect(bare[0]?.selectors[0]).toContain(":not(.toasts)");
+	});
+
+	it("does not reach the notes, the labels or the screens", () => {
+		const selector = bare[0]?.selectors[0] ?? "";
+		for (const theirs of ["sn-note", "lb-label", "data-screen", "layer"]) {
+			expect(selector, theirs).not.toContain(theirs);
+		}
+	});
+});

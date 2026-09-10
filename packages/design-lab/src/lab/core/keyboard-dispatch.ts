@@ -29,7 +29,8 @@ export type KeyAction =
   | { action: "nudge"; dx: number; dy: number }
   | { action: "cleanup" }
   | { action: "reset-layout" }
-  | { action: "toggle-threads" };
+  | { action: "toggle-threads" }
+  | { action: "toggle-chrome" };
 
 // ───────────────────────────── inputs ────────────────────────────────
 
@@ -91,6 +92,8 @@ export function physicalCode(key: string, code: string): string {
   if (shifted >= 0) return `Digit${shifted}`;
   if (key === "=" || key === "+") return "Equal";
   if (key === "-" || key === "_") return "Minus";
+  // Both characters on the one physical key, the way the pairs above do it.
+  if (key === "\\" || key === "|") return "Backslash";
   return "";
 }
 
@@ -140,6 +143,21 @@ export function dispatchLabKey(
   if (ctx.isTypingTarget) return null;
 
   // ── All-modes shortcuts (before the !explore gate) ──────────────
+
+  // \  →  put the lab's own furniture away, and bring it back
+  //
+  // Every panel here floats over a full-bleed canvas, so every panel is on
+  // top of somebody's design: the tree at one corner, the properties at the
+  // other, and in fill those corners hold a page's logo and its nav. Figma
+  // spends the same key on the same problem, and the reason it is a key and
+  // not a setting is that it is not a preference — it is something you want
+  // for ten seconds at a time.
+  //
+  // All modes on purpose. The occlusion is worst in fill, which is exactly
+  // where an explore-only shortcut would not reach.
+  if (code === "Backslash" && !shiftKey && !meta && !altKey) {
+    return { action: "toggle-chrome" };
+  }
 
   // Shift+1  →  fit all (in locked mode: exit first, then fit)
   if (code === "Digit1" && shiftKey && !meta) {

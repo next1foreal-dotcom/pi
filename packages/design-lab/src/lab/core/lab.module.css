@@ -787,6 +787,22 @@
   cursor: pointer;
 }
 
+/*
+ * Bare mode: the lab's own furniture, gone.
+ *
+ * `[data-lab-chrome]` is already how this lab marks what belongs to IT rather
+ * than to a design — the hit test skips it, the pan handler leaves its presses
+ * alone — so it is also the honest answer to "hide the lab". Notes, labels and
+ * the screens themselves are not marked and stay: they are the work.
+ *
+ * The toasts are the one exemption. Everything that could tell you how to come
+ * back is hidden by this rule, and a canvas with no way out of a mode you
+ * pressed by accident is a trap.
+ */
+.root[data-bare] [data-lab-chrome]:not(.toasts) {
+  display: none !important;
+}
+
 .toasts {
   position: absolute;
   top: 16px;

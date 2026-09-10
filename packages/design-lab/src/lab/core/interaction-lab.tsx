@@ -562,6 +562,18 @@ function lockInto(s: Session, id: string, fill = false): void {
   s.bump();
   if (fill) {
     const l = s.layouts[id];
+    // Pinned to the corner, and there is no arranging out of it.
+    //
+    // Two attempts went the other way tonight — shift the design past the
+    // layers panel, then centre it in the window — and both are dead code for
+    // the same measured reason: a screen in fill is ALWAYS the width of the
+    // viewport, because screens are responsive and re-lay-out to their frame.
+    // The slack a camera would need is always zero. Read at 1920 and again at
+    // 2400: the design measured 1920 and then 2400.
+    //
+    // So the panels cannot be dodged by moving the design, and the honest
+    // answer to 「别扭遮挡视线」 is the one that puts the panels away instead:
+    // `\`, which is what Figma spends the same key on.
     setCameraExact({ x: -l.x, y: -l.y, z: 1 });
   } else {
     animateCamera(

@@ -765,6 +765,17 @@ export function InteractionLab() {
         case "toggle-threads":
           setThreadsOpen((o) => !o);
           break;
+        case "toggle-chrome": {
+          const root = session.root;
+          if (!root) break;
+          const bare = root.hasAttribute("data-bare");
+          root.toggleAttribute("data-bare", !bare);
+          // Said on the way IN, while there is still something to say it with,
+          // and because the key that brings everything back is the only thing
+          // left on screen that is not a design.
+          if (!bare) pushToast("\\ 回来");
+          break;
+        }
         case "nudge": {
           const id = session.selectedId;
           if (!id) break;
@@ -1397,6 +1408,7 @@ export const HELP: { title: string; rows: [string[], string][] }[] = [
   {
     title: "Tools",
     rows: [
+      [["\\"], "Put the lab away, and bring it back"],
       [["Shift", "R"], "Rulers and guides"],
       [["Ctrl", "Shift", "R"], "Hide the rulers, stay in ruler mode"],
       [["Shift", "N"], "New sticky note"],

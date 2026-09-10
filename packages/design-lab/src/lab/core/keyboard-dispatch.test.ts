@@ -658,3 +658,50 @@ describe("physicalCode", () => {
     expect(physicalCode("", "")).toBe("");
   });
 });
+
+describe("putting the lab away", () => {
+  // Every panel floats over a full-bleed canvas, so every panel is on top of
+  // somebody's design — and in fill the two corners it uses hold a page's logo
+  // and its nav. Fei, 2026-09-10: 「别扭遮挡视线」.
+
+  const MODES = ["explore", "focus", "fill"] as const;
+
+  for (const mode of MODES) {
+    it(`\\ puts it away in ${mode}, because the occlusion is in every mode`, () => {
+      // An explore-only shortcut would miss fill, which is where it is worst.
+      expect(
+        dispatchLabKey(key({ key: "\\", code: "Backslash" }), {
+          ...EXPLORE,
+          mode,
+          ...(mode === "explore" ? {} : { focusedId: "playground" }),
+        }),
+      ).toEqual({ action: "toggle-chrome" });
+    });
+  }
+
+  it("leaves a backslash alone while something is being typed", () => {
+    expect(
+      dispatchLabKey(key({ key: "\\", code: "Backslash" }), {
+        ...EXPLORE,
+        isTypingTarget: true,
+      }),
+    ).toBeNull();
+  });
+
+  it("and is not any of the chords built on the same key", () => {
+    for (const mod of ["shiftKey", "ctrlKey", "metaKey", "altKey"] as const) {
+      expect(
+        dispatchLabKey(key({ key: "\\", code: "Backslash", [mod]: true }), EXPLORE),
+        mod,
+      ).not.toEqual({ action: "toggle-chrome" });
+    }
+  });
+
+  it("answers a keyboard that sends no code, like every driver here does", () => {
+    // `physicalCode` exists because CDP sends `key` with an empty `code`, and
+    // a bare `code` test is dead to every hands-free caller.
+    expect(dispatchLabKey(key({ key: "\\" }), EXPLORE)).toEqual({
+      action: "toggle-chrome",
+    });
+  });
+});

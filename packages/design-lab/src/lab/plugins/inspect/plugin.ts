@@ -396,6 +396,10 @@ export class Inspector {
     this.root = document.createElement("div");
     this.root.className = "li-root";
     this.root.setAttribute("data-inspect-overlay", "");
+    // Also the lab's own, which is what `\\` hides: an outline and its toolbar
+    // are two halves of one thing and should leave together. No behaviour
+    // changes — `SKIP_HOSTS` already listed both attributes.
+    this.root.dataset.labChrome = "";
     this.box = document.createElement("div");
     this.box.className = "li-box";
     this.bar = document.createElement("div");
