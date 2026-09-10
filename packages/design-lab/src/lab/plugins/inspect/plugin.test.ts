@@ -849,6 +849,33 @@ describe("the outline that follows the cursor", () => {
     }
   });
 
+  it("does not take back an outline something else asked for", async () => {
+    // The layers panel sets the outline on a row's `pointerenter`, and the
+    // `pointermove` for that same motion arrives a moment later with the row
+    // as its target. Clearing here erased it every time -- measured
+    // 2026-09-10, the badge read `a.wf-link` and the box was hidden.
+    //
+    // Over the lab's own chrome the canvas does not answer and does not
+    // withdraw its last answer. It is the better rule anyway: moving off an
+    // element to read about it in a panel is not letting go of it.
+    const { button } = await mountProbe();
+    stubRect(button, { left: 300, top: 250, width: 80, height: 24 });
+    live = createInspect(ctxFor(), { elementsAt: () => [] });
+
+    const panel = document.createElement("div");
+    panel.dataset.labChrome = "";
+    document.body.appendChild(panel);
+
+    live.hoverElement(button);
+    expect(hoverEl().hasAttribute("data-show")).toBe(true);
+    moveOver(panel);
+    expect(hoverEl().hasAttribute("data-show")).toBe(true);
+
+    // Back over empty canvas and it answers again, with nothing.
+    moveOver(shield);
+    expect(hoverEl().hasAttribute("data-show")).toBe(false);
+  });
+
   it("lets go when the pointer leaves the window", async () => {
     const { button } = await mountProbe();
     stubRect(button, { left: 300, top: 250, width: 80, height: 24 });

@@ -52,7 +52,15 @@ function ScreenFrameInner({
       <div className={styles.frame}>
         <div className={styles.scroll} data-screen-scroll={id} tabIndex={-1}>
           <ScreenProvider value={env}>
-            <div className={styles.content}>{children}</div>
+            {/*
+              The lab's own wrapper, marked so a tool can tell it apart from the
+              design. It carries the frame's size and nothing of the page; a
+              layers tree that showed it would put one row of plumbing at the
+              top of every screen before the first thing anyone drew.
+            */}
+            <div className={styles.content} data-screen-content>
+              {children}
+            </div>
           </ScreenProvider>
         </div>
         <div

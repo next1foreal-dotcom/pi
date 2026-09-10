@@ -1,0 +1,398 @@
+// @vitest-environment jsdom
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { checkApiDocs } from "../../plugin-api";
+import { labelOf, LayersPanel, listChildren, plugin, screenRoots } from "./plugin";
+
+let host: HTMLElement;
+let panel: LayersPanel | null = null;
+let selected: Element | null = null;
+let hovered: Element | null | undefined;
+let selectCalls: Element[] = [];
+
+/**
+ * The slice of lab DOM this plugin reads: screens, each with the frame's own
+ * content wrapper, and one piece of lab chrome parked inside a screen the way
+ * the notes host really is.
+ */
+function buildLab(screens: string[] = ["playground", "product-list"]): void {
+	document.body.innerHTML = "";
+	const root = document.createElement("div");
+	root.setAttribute("data-mode", "explore");
+	for (const id of screens) {
+		const group = document.createElement("div");
+		group.setAttribute("data-screen-id", id);
+		const scroll = document.createElement("div");
+		scroll.setAttribute("data-screen-scroll", id);
+		const content = document.createElement("div");
+		content.setAttribute("data-screen-content", "");
+		const page = document.createElement("div");
+		page.className = `${id}-root page`;
+		const heading = document.createElement("h1");
+		heading.className = "title";
+		const para = document.createElement("p");
+		const link = document.createElement("a");
+		para.appendChild(link);
+		page.append(heading, para);
+		content.appendChild(page);
+		scroll.appendChild(content);
+		group.appendChild(scroll);
+		root.appendChild(group);
+	}
+	host = document.createElement("div");
+	host.dataset.plugin = "layers";
+	root.appendChild(host);
+	document.body.appendChild(root);
+}
+
+/** Only the three calls the panel makes. Stubbing the door is the whole seam. */
+function stubInspect(): void {
+	(window as unknown as { lab: unknown }).lab = {
+		plugin: (id: string) =>
+			id === "inspect"
+				? {
+						selectElement: (el: Element) => {
+							selectCalls.push(el);
+							selected = el;
+							return null;
+						},
+						selectedElement: () => selected,
+						hoverElement: (el: Element | null) => {
+							hovered = el;
+							return el !== null;
+						},
+					}
+				: undefined,
+		plugins: () => ["inspect"],
+		describe: () => [],
+		help: () => ({}),
+		tokens: { preview: () => {} },
+		canvas: {
+			screens: () => [],
+			lockInto: () => false,
+			exit: () => {},
+			state: () => ({ mode: "explore", focusedId: null }),
+		},
+	};
+}
+
+function rows(): HTMLElement[] {
+	return Array.from(host.querySelectorAll<HTMLElement>(".ly-row"));
+}
+
+function labels(): string[] {
+	return rows().map((r) => r.querySelector(".ly-name")?.textContent ?? "");
+}
+
+function rowFor(label: string): HTMLElement {
+	const found = rows().find(
+		(r) => r.querySelector(".ly-name")?.textContent === label,
+	);
+	if (!found) throw new Error(`no row "${label}" in [${labels().join(", ")}]`);
+	return found;
+}
+
+function twistOf(label: string): HTMLElement {
+	return rowFor(label).querySelector(".ly-twist") as HTMLElement;
+}
+
+function enter(row: HTMLElement): void {
+	row.dispatchEvent(new MouseEvent("pointerenter", { bubbles: false }));
+}
+
+beforeEach(() => {
+	selected = null;
+	hovered = undefined;
+	selectCalls = [];
+	buildLab();
+	stubInspect();
+	try {
+		localStorage.clear();
+	} catch {
+		// jsdom always has one; this is only for the environments that do not.
+	}
+});
+
+afterEach(() => {
+	panel?.destroy();
+	panel = null;
+	(window as unknown as { lab?: unknown }).lab = undefined;
+	vi.restoreAllMocks();
+	document.body.innerHTML = "";
+});
+
+describe("what the tree shows", () => {
+	it("lists the screens, and walks nothing until one is opened", () => {
+		panel = new LayersPanel(host);
+		expect(labels()).toEqual(["playground", "product-list"]);
+		// The cost claim, stated as a test: a closed screen is one row, not a
+		// row per node in the page it is holding.
+		expect(panel.state().rows).toBe(2);
+	});
+
+	it("opens a screen onto its own first element, not the lab's wrapper", () => {
+		// `screen-frame` wraps every screen in a sized `[data-screen-content]`
+		// div that is the lab's, not the design's. Rooting at the scroller put
+		// one row of plumbing at the top of every screen, and everyone then had
+		// to click through it to reach the first thing they drew.
+		panel = new LayersPanel(host);
+		rowFor("playground").click();
+		expect(labels()).toEqual([
+			"playground",
+			"div.playground-root",
+			"product-list",
+		]);
+	});
+
+	it("goes one level at a time", () => {
+		// The twist, not the row: a click on a row is a selection. Only screen
+		// rows open on a plain click, because a screen is not selectable.
+		panel = new LayersPanel(host);
+		rowFor("playground").click();
+		twistOf("div.playground-root").click();
+		expect(labels()).toEqual([
+			"playground",
+			"div.playground-root",
+			"h1.title",
+			"p",
+			"product-list",
+		]);
+		expect(labels()).not.toContain("a");
+	});
+
+	it("never lists the lab's own chrome", () => {
+		// A row that pointed at a sticky-note host would offer to select
+		// something the canvas refuses to select. Same list the hit test uses.
+		const scroll = document.querySelector("[data-screen-scroll]") as HTMLElement;
+		const content = scroll.querySelector("[data-screen-content]") as HTMLElement;
+		const notes = document.createElement("div");
+		notes.setAttribute("data-notes-host", "");
+		const inside = document.createElement("div");
+		inside.className = "sn-note";
+		notes.appendChild(inside);
+		content.appendChild(notes);
+
+		panel = new LayersPanel(host);
+		rowFor("playground").click();
+		expect(labels()).toEqual([
+			"playground",
+			"div.playground-root",
+			"product-list",
+		]);
+	});
+
+	it("says how many children a branch is hiding", () => {
+		panel = new LayersPanel(host);
+		rowFor("playground").click();
+		const row = rowFor("div.playground-root");
+		expect(row.querySelector(".ly-of")?.textContent).toBe("2");
+	});
+});
+
+describe("the tree and the canvas point at each other", () => {
+	it("a row lights its element on the canvas, and lets go on the way out", () => {
+		panel = new LayersPanel(host);
+		rowFor("playground").click();
+		const row = rowFor("div.playground-root");
+
+		enter(row);
+		expect(hovered).toBe(document.querySelector(".playground-root"));
+		row.dispatchEvent(new MouseEvent("pointerleave", { bubbles: false }));
+		expect(hovered).toBeNull();
+	});
+
+	it("clicking a row selects that node, and marks the row", () => {
+		panel = new LayersPanel(host);
+		rowFor("playground").click();
+		rowFor("div.playground-root").click();
+
+		expect(selectCalls).toEqual([document.querySelector(".playground-root")]);
+		expect(rowFor("div.playground-root").hasAttribute("data-on")).toBe(true);
+		expect(panel.state().selected).toBe("div.playground-root");
+	});
+
+	it("a screen row opens and closes and selects nothing", () => {
+		// A screen row addresses the scroller, and the canvas refuses to select
+		// a scroller — it is the frame, not anything in the design.
+		panel = new LayersPanel(host);
+		rowFor("playground").click();
+		expect(selectCalls).toEqual([]);
+		rowFor("playground").click();
+		expect(labels()).toEqual(["playground", "product-list"]);
+		expect(selectCalls).toEqual([]);
+	});
+
+	it("opening a branch is not selecting it", () => {
+		// The twist is about the tree; the row is about the element. Letting the
+		// twist through would select something every time you looked inside.
+		panel = new LayersPanel(host);
+		rowFor("playground").click();
+		twistOf("div.playground-root").click();
+		expect(labels()).toContain("h1.title");
+		expect(selectCalls).toEqual([]);
+	});
+
+	it("reveal opens every ancestor and puts the row on screen", () => {
+		panel = new LayersPanel(host);
+		const link = document.querySelector("a") as HTMLElement;
+
+		expect(panel.reveal(link)).toBe(true);
+		expect(labels()).toEqual([
+			"playground",
+			"div.playground-root",
+			"h1.title",
+			"p",
+			"a",
+			"product-list",
+		]);
+	});
+
+	it("and says no to a node that is not on a screen", () => {
+		panel = new LayersPanel(host);
+		const loose = document.createElement("div");
+		document.body.appendChild(loose);
+		expect(panel.reveal(loose)).toBe(false);
+	});
+
+	it("selecting on the canvas opens the tree to it", async () => {
+		// The half that makes it a pair rather than two lists. A press is the
+		// only thing the panel can see, so it is what it listens for.
+		panel = new LayersPanel(host);
+		selected = document.querySelector("a");
+
+		window.dispatchEvent(new Event("pointerup"));
+		await new Promise((r) => setTimeout(r, 0));
+		expect(labels()).toContain("a");
+		expect(rowFor("a").hasAttribute("data-on")).toBe(true);
+	});
+
+	it("but does not re-open branches you closed, when the row is already there", async () => {
+		panel = new LayersPanel(host);
+		rowFor("playground").click();
+		selected = document.querySelector(".playground-root");
+
+		window.dispatchEvent(new Event("pointerup"));
+		await new Promise((r) => setTimeout(r, 0));
+		expect(labels()).toEqual([
+			"playground",
+			"div.playground-root",
+			"product-list",
+		]);
+	});
+});
+
+describe("the panel itself", () => {
+	it("claims its own press, or none of its rows would answer", () => {
+		// The lesson the element toolbar paid for: a press the canvas does not
+		// recognise starts a pan, preventDefaults the pointerdown and takes a
+		// pointer capture — and the click never happens.
+		panel = new LayersPanel(host);
+		expect(
+			host.querySelector(".ly-panel")?.hasAttribute("data-lab-chrome"),
+		).toBe(true);
+	});
+
+	it("folds away and remembers it", () => {
+		panel = new LayersPanel(host);
+		expect(panel.state().folded).toBe(false);
+		panel.setFolded(true);
+		expect(host.querySelector(".ly-panel")?.hasAttribute("data-folded")).toBe(
+			true,
+		);
+
+		panel.destroy();
+		panel = new LayersPanel(host);
+		expect(panel.state().folded).toBe(true);
+	});
+
+	it("opens anyway when storage refuses to answer", () => {
+		// A private window, blocked site data, a preview that throws on access.
+		// It is a fold state; it is not worth a broken panel.
+		vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+			throw new Error("blocked");
+		});
+		vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+			throw new Error("blocked");
+		});
+		panel = new LayersPanel(host);
+		expect(panel.state().folded).toBe(false);
+		expect(labels()).toEqual(["playground", "product-list"]);
+	});
+
+	it("says so when the canvas has no screens", () => {
+		buildLab([]);
+		panel = new LayersPanel(host);
+		expect(rows()).toEqual([]);
+		expect(host.querySelector(".ly-empty")?.textContent).toContain("屏幕");
+	});
+
+	it("takes its panel and its listener with it", () => {
+		panel = new LayersPanel(host);
+		panel.destroy();
+		expect(host.querySelector(".ly-panel")).toBeNull();
+		// A destroyed panel that still answered pointerup would keep a whole
+		// dead tree alive across a StrictMode remount.
+		window.dispatchEvent(new Event("pointerup"));
+		expect(host.querySelector(".ly-row")).toBeNull();
+		panel = null;
+	});
+});
+
+describe("the plugin's own wiring", () => {
+	it("documents every method it publishes", () => {
+		const handle = plugin.mount({
+			host,
+			getCamera: () => ({ x: 0, y: 0, z: 1 }),
+			getOrigin: () => ({ x: 0, y: 0 }),
+			getViewport: () => ({ width: 1440, height: 900 }),
+			getAppearance: () => "light",
+			getZoom: () => 1,
+			viewportCenterPage: () => ({ x: 0, y: 0 }),
+			screenAt: () => null,
+			objects: {
+				register() {},
+				unregister() {},
+				layout: () => undefined,
+				setLayout() {},
+				beginMove() {},
+				beginResize() {},
+				select() {},
+				selectedId: () => null,
+			},
+		});
+		expect(handle).not.toBeNull();
+		expect(checkApiDocs("layers", handle?.api, plugin.describe)).toEqual([]);
+		handle?.destroy?.();
+	});
+});
+
+describe("the helpers, on their own", () => {
+	it("labels a node the way the outline badge does", () => {
+		const el = document.createElement("div");
+		expect(labelOf(el)).toBe("div");
+		el.className = "lp-hero is-wide";
+		expect(labelOf(el)).toBe("div.lp-hero");
+	});
+
+	it("drops chrome from a child list", () => {
+		const parent = document.createElement("div");
+		const keep = document.createElement("span");
+		const drop = document.createElement("div");
+		drop.setAttribute("data-ruler-host", "");
+		parent.append(keep, drop);
+		expect(listChildren(parent)).toEqual([keep]);
+	});
+
+	it("falls back to the scroller for a frame with no content wrapper", () => {
+		// Older frames, and any test DOM that does not build one. The tree
+		// should still have a root rather than no screen at all.
+		const doc = document.implementation.createHTMLDocument();
+		const group = doc.createElement("div");
+		group.setAttribute("data-screen-id", "bare");
+		const scroll = doc.createElement("div");
+		scroll.setAttribute("data-screen-scroll", "bare");
+		group.appendChild(scroll);
+		doc.body.appendChild(group);
+		expect(screenRoots(doc)).toEqual([{ id: "bare", root: scroll }]);
+	});
+});

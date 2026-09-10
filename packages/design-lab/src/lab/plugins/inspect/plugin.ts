@@ -579,11 +579,19 @@ export class Inspector {
       this.clearHover();
       return;
     }
-    if (Inspector.isOurs(e.target)) {
-      // Reading the toolbar is not pointing at the page behind it.
-      this.clearHover();
-      return;
-    }
+    // Over the lab's own chrome the canvas does not answer, and does not take
+    // back the answer it already gave.
+    //
+    // Leaving it alone is the whole rule. A row in the layers panel sets this
+    // outline on `pointerenter`, and the `pointermove` for the very same
+    // motion arrives a moment later with the row as its target -- so clearing
+    // here erased the outline the panel had just asked for, every time.
+    // Measured 2026-09-10: the badge said `a.wf-link` and the box was hidden.
+    //
+    // It is also the better behaviour on its own. Moving off an element to
+    // read about it in a panel is not letting go of it; keeping the outline
+    // while you are over the panel is what a devtools inspector does.
+    if (Inspector.overChrome(e.target)) return;
     const hit = this.pickAt(e.clientX, e.clientY);
     // The selection already wears a heavier outline. Drawing the light one on
     // top of it only makes the selected thing look unselected.
@@ -598,6 +606,14 @@ export class Inspector {
   /** Our own overlay, toolbar included — never a target and never a miss. */
   private static isOurs(target: EventTarget | null): boolean {
     return target instanceof Element && target.closest("[data-inspect-overlay]") !== null;
+  }
+
+  /** Anything the lab drew for itself: our overlay, and every panel and chip. */
+  private static overChrome(target: EventTarget | null): boolean {
+    return (
+      target instanceof Element &&
+      target.closest("[data-inspect-overlay],[data-lab-chrome]") !== null
+    );
   }
 
   private clearHover = (): void => {
@@ -869,6 +885,40 @@ export class Inspector {
     };
   }
 
+  /** The node the outline is on, for a caller that needs the node and not a description of it. */
+  selectedElement(): Element | null {
+    const el = this.selected;
+    return el && el.isConnected ? el : null;
+  }
+
+  /**
+   * Put the hover outline on a node, or take it off, without a pointer.
+   *
+   * The cursor is one way to say which element is interesting and it is not
+   * the only one: a row in the layers panel means exactly the same thing, and
+   * pointing at it should light the same box on the canvas. Same outline, same
+   * badge, same rules -- lab chrome is never a target, and the selection keeps
+   * its own heavier ring rather than wearing both.
+   *
+   * The next real pointer move overrules whatever was set here, which is the
+   * behaviour you want: the mouse is on the canvas again, so the canvas
+   * answers.
+   */
+  hoverElement(el: Element | null): boolean {
+    if (this.closed) return false;
+    if (!el) {
+      this.clearHover();
+      return false;
+    }
+    if (!this.qualify(el) || el === this.selected) {
+      this.clearHover();
+      return false;
+    }
+    this.hovered = el;
+    this.paintHover();
+    return true;
+  }
+
   /** The hover outline's box in PAGE units, or null when nothing is hovered. */
   hoverRect(): Rect | null {
     const el = this.hovered;
@@ -971,6 +1021,18 @@ export const plugin: LabPlugin = {
       signature: "hoverRect(): { x, y, width, height } | null",
       summary:
         "Where the HOVER outline is, in PAGE units, or null when nothing is hovered. The hover outline is the light box that follows the cursor and carries a tag badge (`h1`, `button.cta`); it appears exactly when a click would select what is under the pointer — always in explore mode, and only while Shift is held inside a locked screen, where the app owns plain clicks. It never takes pointer events, so it costs the screens nothing. Use this to check the box really lands on the element without taking a screenshot.",
+    },
+    {
+      name: "selectedElement",
+      signature: "selectedElement(): Element | null",
+      summary:
+        "The selected NODE itself, rather than a description of it. Null when nothing is selected or the node has been detached by a hot reload. For a caller that has to compare it against the DOM — a layers tree deciding which of its rows is the selected one, say. Everything else should read `selection()`.",
+    },
+    {
+      name: "hoverElement",
+      signature: "hoverElement(el: Element | null): boolean",
+      summary:
+        "Put the hover outline on a node without a pointer, or pass null to take it off. Returns false (and clears) for anything that is not screen content, and for the selected element, which keeps its own heavier outline instead of wearing both. The next real mouse move overrules it. This is how a list somewhere else in the lab lights up the thing a row is about.",
     },
     {
       name: "clear",
