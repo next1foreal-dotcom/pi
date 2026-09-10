@@ -53,6 +53,8 @@ export type TasksConfig = {
 	messageWakeMinBatch: number;
 	/** G-373 — non-urgent cross-session wake: max age in minutes (maybeWake maxAgeMs). */
 	messageWakeMaxAgeMinutes: number;
+	/** G-448 — hop ceiling for A→B→A wake round-trips (maybeWake). */
+	messageMaxHops: number;
 	/**
 	 * G-374 — CLI tick alarm self-start daily cap (UTC). Independent of event-wake.
 	 * 0 disables self-start.
@@ -66,6 +68,9 @@ export type PublishConfig = {
 	inlineThresholdBytes: number;
 	maxAssetBytes: number;
 };
+
+/** Default hop ceiling for inter-session wakes; tune if a longer chain is needed. */
+export const MAX_MESSAGE_HOPS = 6;
 
 export const DEFAULT_TASKS_CONFIG: TasksConfig = {
 	defaultWorker: "cheap_worker",
@@ -96,6 +101,7 @@ export const DEFAULT_TASKS_CONFIG: TasksConfig = {
 	probeMaxAgeHours: 24, // probe_max_age_hours — G-356: spawn 闸窗口小时;0 = 关
 	messageWakeMinBatch: 3, // message_wake_min_batch — G-373: non-urgent wake batch; 1 = immediate
 	messageWakeMaxAgeMinutes: 30, // message_wake_max_age_minutes — G-373: non-urgent wake max age
+	messageMaxHops: MAX_MESSAGE_HOPS, // message_max_hops — G-448: 封的是 A→B→A 往返轮数
 	alarmSelfStartDailyMax: 6, // alarm_self_start_daily_max — G-374: CLI tick self-start UTC day cap; 0 = off
 };
 
@@ -130,6 +136,9 @@ export function loadRuntimeConfig(memoryRoot: string, opts?: { failLoud?: boolea
 	}
 	if (!(tasks.messageWakeMaxAgeMinutes >= 0)) {
 		tasks.messageWakeMaxAgeMinutes = DEFAULT_TASKS_CONFIG.messageWakeMaxAgeMinutes;
+	}
+	if (!Number.isInteger(tasks.messageMaxHops) || tasks.messageMaxHops < 1) {
+		tasks.messageMaxHops = DEFAULT_TASKS_CONFIG.messageMaxHops;
 	}
 	if (
 		!(typeof tasks.alarmSelfStartDailyMax === "number") ||

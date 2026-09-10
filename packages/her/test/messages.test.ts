@@ -357,6 +357,33 @@ test("same chain stops waking at MAX_MESSAGE_HOPS", async () => {
 	assert.equal(await sentLedger(root), "");
 });
 
+test("maybeWake hop-limit follows tasks.messageMaxHops instead of the default constant", async () => {
+	const root = await rootStore();
+	await writeMessage(root, {
+		from: "a",
+		to: "b",
+		at: NOW.toISOString(),
+		urgent: true,
+		origin: "chain-root",
+		hop: 2,
+		body: "second hop",
+	});
+	assert.deepEqual(await maybeWake(root, "b", tasks({ messageMaxHops: 2 }), { now: NOW }), {
+		woke: false,
+		reason: "hop-limit",
+	});
+	assert.equal(DEFAULT_TASKS_CONFIG.messageMaxHops, MAX_MESSAGE_HOPS);
+});
+
+test("messageMaxHops illegal config values fall back to MAX_MESSAGE_HOPS", async () => {
+	for (const value of ["0", "-3", "1.5"]) {
+		const root = await rootStore();
+		await mkdir(join(root, ".her"), { recursive: true });
+		await writeFile(join(root, ".her", "config.yaml"), `tasks:\n  message_max_hops: ${value}\n`, "utf8");
+		assert.equal(loadRuntimeConfig(root).tasks.messageMaxHops, MAX_MESSAGE_HOPS);
+	}
+});
+
 test("chainHop counts a chain after drainInbox then archiveInbox", async () => {
 	const root = await rootStore();
 	await writeMessage(root, {

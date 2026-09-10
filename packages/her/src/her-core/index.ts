@@ -353,6 +353,7 @@ export { applyTasteBoard, findWorldNote } from "./memory-world.ts";
 export type { DeliveryDecision, HerMessage } from "./messages.ts";
 export {
 	archiveInbox,
+	chainHop,
 	deliveryDecision,
 	drainInbox,
 	formatInbox,
@@ -548,6 +549,22 @@ export {
 	SESSION_SEARCH_MAX_SNIPPETS_PER_FILE,
 	searchSessions,
 } from "./session-roster.ts";
+export type {
+	SessionWaitInput,
+	SessionWaitReady,
+	SessionWaitRefused,
+	SessionWaitResult,
+	SessionWaitTarget,
+	SessionWaitTimeout,
+} from "./session-wait.ts";
+export {
+	SESSION_WAIT_DEFAULT_TIMEOUT_MS,
+	SESSION_WAIT_MAX_TARGETS,
+	SESSION_WAIT_POLL_MS,
+	SESSION_WAIT_REFUSAL,
+	sessionWait,
+	sessionWaitBlocked,
+} from "./session-wait.ts";
 export type { RunSkillScanOrganOptions, SkillScanCandidateRef, SkillScanOrganResult } from "./skill-scan.ts";
 export {
 	DEFAULT_SKILL_SCAN_INTERVAL_DAYS,

@@ -22,6 +22,9 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	// destructive tools, so this ships denied until Fei grants a named permit
 	// (the her_task_spawn / _stop / _continue precedent in her-trust.cedar).
 	her_session_send: { destructive: true },
+	// G-448 wait: filesystem poll only, zero writes. Cedar allow_memory_tools
+	// covers non-destructive tools; the tool itself refuses wake/heartbeat turns.
+	her_session_wait: { destructive: false },
 	// G-375 option card. Custom transcript message only; Cedar :6 total permit covers
 	// non-destructive tools, so this stays off named Cedar permits.
 	her_ask: { destructive: false },

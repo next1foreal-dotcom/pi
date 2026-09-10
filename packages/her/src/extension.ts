@@ -46,6 +46,7 @@ import {
 	archiveInbox,
 	buildRecallReceipts,
 	type ChoiceModelDomain,
+	chainHop,
 	checkMemoryExport,
 	checkpointLongTask,
 	claimNextLongTask,
@@ -101,8 +102,11 @@ import {
 	resolveSessionReadConfig,
 	resolveTargetSource,
 	type SamanthaZoneCategory,
+	SESSION_WAIT_REFUSAL,
 	type SessionMode,
 	searchSessions,
+	sessionWait,
+	sessionWaitBlocked,
 	spawnBgTask,
 	startLongTask,
 	stopBgTask,
@@ -112,7 +116,7 @@ import {
 	writeCostReport,
 	writeMessage,
 } from "./her-core/index.ts";
-import { chainHop, deliverIdleNotice, drainIdleWatches, requestIdleNotice } from "./her-core/messages.ts";
+import { deliverIdleNotice, drainIdleWatches, requestIdleNotice } from "./her-core/messages.ts";
 import {
 	clearPresence,
 	formatPresenceLine,
@@ -1428,6 +1432,48 @@ export default function her(pi: ExtensionAPI): void {
 				wake,
 				...(notifyWhenIdle ? { notifyWhenIdle: true } : {}),
 			});
+		},
+	});
+
+	pi.registerTool({
+		name: "her_session_wait",
+		label: "Her Session Wait",
+		description:
+			"Poll the filesystem until the first target has activity: a new inbox message from a session, or a background task reaching a terminal status. Returns which target moved, never message or task bodies. Refused on event-wake and heartbeat turns.",
+		parameters: Type.Object({
+			targets: Type.Array(
+				Type.Object({
+					kind: StringEnum(["session", "task"] as const),
+					id: Type.String(),
+				}),
+				{ minItems: 1, maxItems: 8, description: "1 to 8 session or task targets; first activity wins" },
+			),
+			timeout_ms: Type.Optional(
+				Type.Integer({ minimum: 0, maximum: 120_000, description: "0 = snapshot; default 120000" }),
+			),
+		}),
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			if (sessionWaitBlocked(wakeTurnActive, process.env.HER_CEDAR_PROFILE === "heartbeat")) {
+				return textResult(SESSION_WAIT_REFUSAL, {
+					phase: "G-448",
+					refused: "session_wait_block",
+					memoryDir,
+				});
+			}
+			try {
+				const result = await sessionWait({
+					root: memoryDir,
+					selfId: ctx.sessionManager.getSessionId(),
+					targets: params.targets,
+					timeoutMs: params.timeout_ms,
+					wakeTurnActive,
+					heartbeat: process.env.HER_CEDAR_PROFILE === "heartbeat",
+				});
+				return textResult(JSON.stringify(result), { phase: "G-448", ...result, memoryDir });
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				return textResult(message, { phase: "G-448", status: "error", error: message });
+			}
 		},
 	});
 
