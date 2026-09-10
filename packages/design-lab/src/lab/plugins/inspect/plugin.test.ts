@@ -155,6 +155,69 @@ function hoverEl(): HTMLElement {
   return host.querySelector(".li-hover") as HTMLElement;
 }
 
+function barEl(): HTMLElement {
+  return host.querySelector(".li-bar") as HTMLElement;
+}
+
+function verb(id: string): HTMLButtonElement {
+  return host.querySelector(`.li-verb[data-verb="${id}"]`) as HTMLButtonElement;
+}
+
+/** The names of the verbs on offer right now, in order. Hidden ones are out. */
+function offered(): string[] {
+  return Array.from(host.querySelectorAll<HTMLButtonElement>(".li-verb"))
+    .filter((b) => !b.hidden)
+    .map((b) => b.textContent ?? "");
+}
+
+/**
+ * A `window.lab` with only the pieces the toolbar reaches for.
+ *
+ * The toolbar never imports the other plugins -- `text` imports SKIP_HOSTS
+ * from the file under test, so an import back would close a cycle -- and this
+ * is the door it uses instead. Stubbing the door is stubbing the whole
+ * relationship.
+ */
+function stubBridge(over: {
+  canEdit?: boolean;
+  focusedId?: string | null;
+  onSay?: (text?: string) => void;
+  onBegin?: (el: Element) => void;
+  onLock?: (id: string) => void;
+} = {}): void {
+  const apis: Record<string, unknown> = {
+    text: {
+      canEdit: () => over.canEdit ?? true,
+      begin: (el: Element) => {
+        over.onBegin?.(el);
+        return true;
+      },
+    },
+    properties: {
+      say: (t?: string) => {
+        over.onSay?.(t);
+        return true;
+      },
+    },
+  };
+  (window as unknown as { lab: unknown }).lab = {
+    plugin: (id: string) => apis[id],
+    plugins: () => Object.keys(apis),
+    describe: () => [],
+    help: () => ({}),
+    tokens: { preview: () => {} },
+    canvas: {
+      screens: () => ["playground"],
+      lockInto: (id: string) => {
+        over.onLock?.(id);
+        return true;
+      },
+      exit: () => {},
+      state: () => ({ mode: "explore", focusedId: over.focusedId ?? null }),
+    },
+  };
+}
+
 function sheet(): string {
   return document.querySelector("style[data-lab-inspect]")?.textContent ?? "";
 }
@@ -843,5 +906,191 @@ describe("the click the hover promises", () => {
     press(shield, { clientX: 900, clientY: 700 });
     pointer("pointerup", shield, { clientX: 900, clientY: 700 });
     expect(live.selection()).toBeNull();
+  });
+});
+
+describe("the toolbar on the selected element", () => {
+  // doop's bar reads `h1 | Comment | Ask AI | Code | Edit text`, and the thing
+  // worth stealing is not the buttons -- we already had all three of these
+  // verbs -- but that they are ON the element. The comment lived behind a
+  // field in a panel, the text edit behind a double-click that only fires once
+  // you are locked into the screen, the location behind reading it off the
+  // panel and retyping it. None of that was findable.
+
+  afterEach(() => {
+    (window as unknown as { lab?: unknown }).lab = undefined;
+    vi.restoreAllMocks();
+  });
+
+  it("names the element and puts the verbs beside the name", async () => {
+    const { button } = await mountProbe();
+    stubBridge();
+    live = createInspect(ctxFor());
+    live.selectElement(button);
+
+    expect(barEl().querySelector(".li-label")?.textContent).toContain("button");
+    expect(offered()).toEqual(["说", "改文字", "复制位置"]);
+  });
+
+  it("claims its own press, or none of it works", () => {
+    // The one that cost an afternoon. A plain left press the canvas does not
+    // recognise starts a pan: `canvas-input` calls preventDefault and takes a
+    // pointer capture on the root, and preventDefault on a pointerdown kills
+    // the compatibility mouse events -- so `click` never fires. Measured: the
+    // button got `pointerdown` and nothing else, and 改文字 did nothing while
+    // looking perfectly alive. `data-lab-chrome` is how the lab is told a
+    // press is spoken for; the properties panel and the coords chip already
+    // wear it.
+    live = createInspect(ctxFor());
+    expect(barEl().hasAttribute("data-lab-chrome")).toBe(true);
+  });
+
+  it("offers 改文字 only where an edit would actually land", async () => {
+    // Two-sided. A button that flies the camera into a screen and then does
+    // nothing is worse than no button, and the only thing that can answer
+    // this is the plugin that owns the rule.
+    const { button } = await mountProbe();
+
+    stubBridge({ canEdit: true });
+    live = createInspect(ctxFor());
+    live.selectElement(button);
+    expect(offered()).toContain("改文字");
+
+    live.destroy();
+    stubBridge({ canEdit: false });
+    live = createInspect(ctxFor());
+    live.selectElement(button);
+    expect(offered()).not.toContain("改文字");
+  });
+
+  it("does not offer to copy a location it does not have", async () => {
+    const { card } = await mountProbe();
+    const orphan = document.createElement("div");
+    card.appendChild(orphan);
+    stubBridge();
+    live = createInspect(ctxFor());
+    live.selectElement(orphan);
+
+    // Made by hand inside a React tree: there is no source for it, and the
+    // panel says so. A copy button here would copy the word "null".
+    expect(live.selection()?.file).toBeNull();
+    expect(offered()).not.toContain("复制位置");
+  });
+
+  it("说 goes through the plugin that owns the comment, not around it", async () => {
+    const said: (string | undefined)[] = [];
+    const { button } = await mountProbe();
+    stubBridge({ onSay: (t) => said.push(t) });
+    live = createInspect(ctxFor());
+    live.selectElement(button);
+
+    verb("say").click();
+    expect(said).toEqual([""]);
+  });
+
+  it("改文字 locks into the screen first, because the editor refuses outside it", async () => {
+    const order: string[] = [];
+    const { button } = await mountProbe();
+    stubBridge({
+      focusedId: null,
+      onLock: (id) => order.push(`lock:${id}`),
+      onBegin: () => order.push("begin"),
+    });
+    live = createInspect(ctxFor());
+    live.selectElement(button);
+
+    verb("text").click();
+    expect(order).toEqual(["lock:playground"]);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(order).toEqual(["lock:playground", "begin"]);
+  });
+
+  it("and does not fly anywhere it already is", async () => {
+    const order: string[] = [];
+    const { button } = await mountProbe();
+    stubBridge({
+      focusedId: "playground",
+      onLock: (id) => order.push(`lock:${id}`),
+      onBegin: () => order.push("begin"),
+    });
+    live = createInspect(ctxFor());
+    live.selectElement(button);
+
+    verb("text").click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(order).toEqual(["begin"]);
+  });
+
+  it("复制位置 copies file:line:col and says that it did", async () => {
+    const written: string[] = [];
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: (t: string) => {
+          written.push(t);
+          return Promise.resolve();
+        },
+      },
+    });
+    const { button } = await mountProbe();
+    stubBridge();
+    live = createInspect(ctxFor());
+    const sel = live.selectElement(button);
+
+    verb("code").click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(written).toEqual([`${sel?.file}:${sel?.line}:${sel?.column}`]);
+    expect(verb("code").textContent).toBe("已复制");
+  });
+
+  it("and admits it when the clipboard is not allowed", async () => {
+    // Measured in this lab's own preview pane: `clipboard-write` came back
+    // denied and `writeText` threw on a real click. The fallback is the old
+    // textarea and `execCommand`, which asks no permission; when even that
+    // says no, the button says no. A button that looks alive and quietly does
+    // nothing is one you press again, and again, and never learn why.
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: () => Promise.reject(new Error("denied")) },
+    });
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: () => false,
+    });
+    const { button } = await mountProbe();
+    stubBridge();
+    live = createInspect(ctxFor());
+    live.selectElement(button);
+
+    verb("code").click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(verb("code").textContent).toBe("复制不了");
+  });
+
+  it("pressing a verb is not pressing the canvas", async () => {
+    // Falling through would hit-test the canvas, find our own chrome, qualify
+    // nothing, and clear the selection the button was about to act on.
+    const { button } = await mountProbe();
+    stubBridge();
+    live = createInspect(ctxFor(), { elementsAt: () => [] });
+    live.selectElement(button);
+
+    press(verb("say"), { clientX: 10, clientY: 10 });
+    pointer("pointerup", verb("say"), { clientX: 10, clientY: 10 });
+    expect(live.selection()?.tag).toBe("button");
+  });
+
+  it("flips below the box when there is no room above it", async () => {
+    const { button } = await mountProbe();
+    stubBridge();
+    live = createInspect(ctxFor());
+
+    stubRect(button, { left: 300, top: 400, width: 80, height: 24 });
+    live.selectElement(button);
+    expect(boxEl().hasAttribute("data-flip")).toBe(false);
+
+    stubRect(button, { left: 300, top: 4, width: 80, height: 24 });
+    live.onCameraWrite();
+    expect(boxEl().hasAttribute("data-flip")).toBe(true);
   });
 });

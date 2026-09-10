@@ -820,6 +820,12 @@ const plugin: LabPlugin = {
 	// transform, pointer-events none with auto items -- the house pattern.
 	describe: [
 		{
+			name: "say",
+			signature: "say(text?: string): boolean",
+			summary:
+				"Leave a remark on the selected element: spawns a comment note beside that element's screen, carrying its file, line, column and component, and opens it for typing. Pass `text` to write it outright, or omit it to open an empty one — the same thing the panel's 跟她说这里 line does, reachable without the panel. Returns false and does nothing when nothing is selected.",
+		},
+		{
 			name: "state",
 			signature: "state(): { showing: boolean; file: string | null; classes: string[] } | null",
 			summary:
@@ -852,6 +858,18 @@ const plugin: LabPlugin = {
 		return {
 			onCameraWrite: panel.sync,
 			api: {
+				/**
+				 * The panel is one door to this, not the only one. The element
+				 * toolbar is the other, and it is the one that is found without
+				 * being told about.
+				 */
+				say: (text = "") => {
+					const sel =
+						(window.lab?.plugin("inspect") as InspectApi | undefined)?.selection() ?? null;
+					if (!sel) return false;
+					speakFromPanel(ctx, text, sel);
+					return true;
+				},
 				state: () => {
 					const sel = (window.lab?.plugin("inspect") as InspectApi | undefined)?.selection() ?? null;
 					if (!sel) return null;

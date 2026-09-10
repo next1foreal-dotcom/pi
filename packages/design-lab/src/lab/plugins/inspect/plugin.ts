@@ -104,7 +104,12 @@ const CSS = `
 .li-root{position:absolute;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;z-index:3}
 .li-box{position:absolute;left:0;top:0;box-sizing:border-box;display:none;pointer-events:none;outline:1px solid rgba(255,255,255,0.92);box-shadow:0 0 0 2px rgba(0,0,0,0.55)}
 .li-box[data-show]{display:block}
-.li-label{position:absolute;left:0;top:0;transform:translateY(-100%);margin-top:-3px;max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:#1c1c1c;color:#f1f1f1;font:500 11px/1.5 Inter,system-ui,sans-serif;padding:2px 6px;border-radius:3px}
+.li-bar{position:absolute;left:0;top:0;transform:translateY(-100%);margin-top:-3px;display:flex;align-items:stretch;max-width:520px;background:#1c1c1c;border-radius:3px 3px 3px 0;overflow:hidden;pointer-events:auto;font:500 11px/1.5 Inter,system-ui,sans-serif}
+.li-box[data-flip] .li-bar{transform:none;margin-top:3px;border-radius:0 0 3px 3px}
+.li-label{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#f1f1f1;padding:2px 7px}
+.li-verb{flex:none;appearance:none;border:0;border-left:1px solid rgba(255,255,255,0.16);background:transparent;color:#f1f1f1;font:inherit;padding:2px 8px;cursor:pointer;white-space:nowrap}
+.li-verb:hover{background:rgba(255,255,255,0.15)}
+.li-verb:active{background:rgba(255,255,255,0.24)}
 .li-hover{position:absolute;left:0;top:0;box-sizing:border-box;display:none;pointer-events:none;outline:1px solid rgba(255,255,255,0.6);box-shadow:0 0 0 2px rgba(0,0,0,0.3)}
 .li-hover[data-show]{display:block}
 .li-tag{position:absolute;left:0;top:0;transform:translateY(-100%);white-space:nowrap;background:rgba(28,28,28,0.86);color:#f1f1f1;font:600 10px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;padding:0 5px;border-radius:3px 3px 3px 0}
@@ -124,6 +129,33 @@ const HOVER_MS = 16;
 const TAG_CLEAR_PX = 16;
 /** A press that travels further than this was a drag, not a click. */
 const CLICK_SLOP_PX = 3;
+/** Under this much room above the box the toolbar would be drawn off the canvas. */
+const BAR_CLEAR_PX = 26;
+/** How long the copy verb says it worked before going back to its name. */
+const COPIED_MS = 1200;
+
+/**
+ * The verbs, in the order they are offered.
+ *
+ * Every one of these already worked before the toolbar existed, behind a
+ * gesture nobody had been told about: the comment behind a field in a panel,
+ * the text edit behind a double-click that only fires once you are locked into
+ * the screen, the location behind reading it off the panel and retyping it.
+ * The toolbar adds no capability. It makes three of them findable, which on
+ * 2026-09-10 turned out to be the part that was missing — the same evening
+ * hover went in for the same reason.
+ *
+ * doop's bar reads `h1 | Comment | Ask AI | Code | Edit text`. Ours drops
+ * "Ask AI", because here that is what leaving a comment IS: the note goes to
+ * her with the file and line attached, and a second door to the same room
+ * would only make people wonder which one is different.
+ */
+const VERBS = [
+  { id: "say", label: "说" },
+  { id: "text", label: "改文字" },
+  { id: "code", label: "复制位置" },
+] as const;
+type VerbId = (typeof VERBS)[number]["id"];
 
 let styleRefs = 0;
 let styleEl: HTMLStyleElement | null = null;
@@ -182,6 +214,55 @@ function deepestAt(root: Element, x: number, y: number): Element | null {
   return best;
 }
 
+/**
+ * Put `text` on the clipboard, by whichever of the two ways is allowed here.
+ *
+ * The async API is the right one and the one to try first. It is also the one
+ * that can be switched off: measured 2026-09-10 in this lab's own preview
+ * pane, `clipboard-write` came back `denied` and `writeText` threw
+ * NotAllowedError on a real click, on a focused document. A verb that only
+ * works in some browsers is a verb that reads as broken in the others.
+ *
+ * So the old way is kept as the fallback: a throwaway textarea, selected, and
+ * `execCommand("copy")`, which is deprecated everywhere and implemented
+ * everywhere, and which asks no permission because it can only copy what the
+ * page already had. The caller's own selection is put back afterwards --
+ * borrowing it and not returning it would clear whatever was highlighted on
+ * the page.
+ *
+ * Returns whether it actually happened. Neither branch guesses.
+ */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard?.writeText(text);
+    return true;
+  } catch {
+    // Denied, insecure origin, or no clipboard object at all.
+  }
+  if (typeof document === "undefined") return false;
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "");
+  area.style.cssText =
+    "position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;pointer-events:none";
+  document.body.appendChild(area);
+  const selection = document.getSelection();
+  const prior = selection?.rangeCount ? selection.getRangeAt(0) : null;
+  let ok = false;
+  try {
+    area.select();
+    ok = document.execCommand("copy");
+  } catch {
+    ok = false;
+  }
+  area.remove();
+  if (prior && selection) {
+    selection.removeAllRanges();
+    selection.addRange(prior);
+  }
+  return ok;
+}
+
 function textOf(el: Element): string {
   return (el.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, TEXT_SAMPLE_MAX);
 }
@@ -205,7 +286,10 @@ export class Inspector {
   private elementsAt: InspectDeps["elementsAt"];
   private root: HTMLDivElement;
   private box: HTMLDivElement;
+  private bar: HTMLDivElement;
   private label: HTMLDivElement;
+  private verbs = new Map<VerbId, HTMLButtonElement>();
+  private copiedTimer: ReturnType<typeof setTimeout> | null = null;
   private hoverBox: HTMLDivElement;
   private hoverTag: HTMLDivElement;
   private hovered: Element | null = null;
@@ -232,9 +316,41 @@ export class Inspector {
     this.root.setAttribute("data-inspect-overlay", "");
     this.box = document.createElement("div");
     this.box.className = "li-box";
+    this.bar = document.createElement("div");
+    this.bar.className = "li-bar";
+    // The one line that makes the buttons clickable, and it is not obvious.
+    //
+    // A plain left press anywhere the canvas does not recognise starts a pan:
+    // `canvas-input` calls `preventDefault()` and takes a pointer capture on
+    // the root. preventDefault on a pointerdown suppresses the compatibility
+    // mouse events, so `mousedown`, `mouseup` and `click` never happen —
+    // measured on 2026-09-10, the button received `pointerdown` and nothing
+    // else, and 改文字 did nothing at all while looking perfectly alive.
+    //
+    // `data-lab-chrome` is how the lab is told a press is spoken for
+    // (lab-view's onPointerDown, and the wheel handler with it). The
+    // properties panel and the coords chip already wear it; this is the same
+    // house pattern and not a new one. The comment at that call site says the
+    // same thing about frames: the capture a pan takes retargets the click.
+    this.bar.dataset.labChrome = "";
     this.label = document.createElement("div");
     this.label.className = "li-label";
-    this.box.appendChild(this.label);
+    this.bar.appendChild(this.label);
+    for (const verb of VERBS) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "li-verb";
+      button.dataset.verb = verb.id;
+      button.textContent = verb.label;
+      button.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.runVerb(verb.id);
+      });
+      this.verbs.set(verb.id, button);
+      this.bar.appendChild(button);
+    }
+    this.box.appendChild(this.bar);
     this.root.appendChild(this.box);
     this.hoverBox = document.createElement("div");
     this.hoverBox.className = "li-hover";
@@ -356,6 +472,8 @@ export class Inspector {
         problem: loc.problem,
       };
       this.label.textContent = this.labelText(this.snapshot);
+      // The map arriving is what makes 复制位置 worth offering.
+      this.syncVerbs();
     });
   }
 
@@ -461,6 +579,11 @@ export class Inspector {
       this.clearHover();
       return;
     }
+    if (Inspector.isOurs(e.target)) {
+      // Reading the toolbar is not pointing at the page behind it.
+      this.clearHover();
+      return;
+    }
     const hit = this.pickAt(e.clientX, e.clientY);
     // The selection already wears a heavier outline. Drawing the light one on
     // top of it only makes the selected thing look unselected.
@@ -471,6 +594,11 @@ export class Inspector {
     if (hit !== this.hovered) this.hovered = hit;
     this.paintHover();
   };
+
+  /** Our own overlay, toolbar included — never a target and never a miss. */
+  private static isOurs(target: EventTarget | null): boolean {
+    return target instanceof Element && target.closest("[data-inspect-overlay]") !== null;
+  }
 
   private clearHover = (): void => {
     this.hovered = null;
@@ -505,6 +633,109 @@ export class Inspector {
     return first ? `${tag}.${first}` : tag;
   }
 
+  /**
+   * The other plugins are asked for by name at the moment of use, never
+   * imported.
+   *
+   * `text` imports `SKIP_HOSTS` from this file, so an import the other way
+   * would close a cycle; and the toolbar has to work when a plugin is not
+   * mounted at all rather than fail to load. This is the same door the
+   * properties panel already uses to reach `notes`.
+   */
+  private static other<T>(id: string): T | undefined {
+    return window.lab?.plugin(id) as T | undefined;
+  }
+
+  /**
+   * Offer only what would actually happen.
+   *
+   * A button that opens a text editor on a paragraph made of three spans is
+   * worse than no button: it flies the camera into the screen and then does
+   * nothing. `text.canEdit` answers the same question `begin` answers, minus
+   * the mode, so the offer and the action cannot disagree.
+   */
+  private syncVerbs(): void {
+    const el = this.selected;
+    const snap = this.snapshot;
+    const editor = Inspector.other<{ canEdit(el: Element): boolean }>("text");
+    const can: Record<VerbId, boolean> = {
+      say: snap !== null,
+      text: el !== null && editor?.canEdit(el) === true,
+      code: snap?.file !== null && snap?.line !== null,
+    };
+    for (const [id, button] of this.verbs) button.hidden = !can[id];
+  }
+
+  private runVerb(id: VerbId): void {
+    if (this.closed) return;
+    if (id === "say") {
+      Inspector.other<{ say(text?: string): boolean }>("properties")?.say("");
+      return;
+    }
+    if (id === "code") {
+      void this.copyLocation();
+      return;
+    }
+    this.editText();
+  }
+
+  /**
+   * The location, as `file:line:col`, on the clipboard.
+   *
+   * The panel has shown this string for a while and there has never been a way
+   * to get it out except retyping it off the screen. It is the form an editor's
+   * go-to-file takes and the form a message to her takes, so it is one string
+   * and not three.
+   *
+   * The button says so afterwards. A copy that leaves no trace is a copy you
+   * press twice because you are not sure the first one took.
+   */
+  private async copyLocation(): Promise<void> {
+    const snap = this.snapshot;
+    const button = this.verbs.get("code");
+    if (!snap?.file || snap.line === null || !button) return;
+    const at = `${snap.file}:${snap.line}:${snap.column ?? 0}`;
+    const ok = await copyText(at);
+    if (this.closed) return;
+    if (this.copiedTimer !== null) clearTimeout(this.copiedTimer);
+    // Both answers are said out loud. A button that looks alive and quietly
+    // does nothing is worse than one that admits it could not — you press the
+    // silent one again, and again, and never learn why.
+    button.textContent = ok ? "已复制" : "复制不了";
+    this.copiedTimer = setTimeout(() => {
+      this.copiedTimer = null;
+      if (this.closed) return;
+      button.textContent = "复制位置";
+    }, COPIED_MS);
+  }
+
+  /**
+   * Lock into the screen, then open the editor on the element.
+   *
+   * `text.begin` refuses in explore mode, and it is right to: a double-click
+   * out on the canvas is not an edit. But pressing a button that says 改文字
+   * IS, so the camera moves first and the edit follows — the two steps a
+   * person would otherwise do in order, done in order.
+   *
+   * A tick between them, because locking in re-renders the screen slot; the
+   * node is re-read from the live selection afterwards rather than trusted,
+   * and if the render replaced it, nothing happens instead of an edit landing
+   * on a detached node.
+   */
+  private editText(): void {
+    const el = this.selected;
+    const screenId = this.snapshot?.screenId;
+    if (!el || !screenId) return;
+    const canvas = window.lab?.canvas;
+    if (canvas && canvas.state().focusedId !== screenId) canvas.lockInto(screenId);
+    setTimeout(() => {
+      if (this.closed) return;
+      const live = this.selected;
+      if (!live || !live.isConnected) return;
+      Inspector.other<{ begin(el: Element): boolean }>("text")?.begin(live);
+    }, 0);
+  }
+
   private paint = (): void => {
     const el = this.selected;
     if (!el || !el.isConnected) {
@@ -513,9 +744,13 @@ export class Inspector {
     }
     const r = el.getBoundingClientRect();
     const o = this.getOrigin();
-    this.box.style.transform = `translate(${r.left - o.x}px, ${r.top - o.y}px)`;
+    const top = r.top - o.y;
+    this.box.style.transform = `translate(${r.left - o.x}px, ${top}px)`;
     this.box.style.width = `${r.width}px`;
     this.box.style.height = `${r.height}px`;
+    // Against the top of the canvas the toolbar would be drawn off it, and a
+    // toolbar you cannot reach is worse than one sitting a little low.
+    this.box.toggleAttribute("data-flip", top < BAR_CLEAR_PX);
     this.box.setAttribute("data-show", "");
   };
 
@@ -526,6 +761,10 @@ export class Inspector {
 
   private onPointerDown = (e: PointerEvent): void => {
     if (e.button !== 0) return;
+    // A press on our own toolbar is that button's press. Falling through would
+    // hit-test the canvas, find our chrome, qualify nothing, and clear the
+    // selection the button was about to act on.
+    if (Inspector.isOurs(e.target)) return;
     if (e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
       const direct = e.target instanceof Element ? this.qualify(e.target) : null;
       const hit = direct ?? this.pickAt(e.clientX, e.clientY);
@@ -581,6 +820,7 @@ export class Inspector {
     if (this.hovered === el) this.clearHover();
     this.snapshot = this.capture(el);
     this.label.textContent = this.labelText(this.snapshot);
+    this.syncVerbs();
     this.paint();
     return this.selection();
   }
@@ -670,6 +910,10 @@ export class Inspector {
     }
     this.unsubHmr?.();
     this.unsubHmr = null;
+    if (this.copiedTimer !== null) {
+      clearTimeout(this.copiedTimer);
+      this.copiedTimer = null;
+    }
     this.clearHover();
     window.removeEventListener("pointerdown", this.onPointerDown, true);
     window.removeEventListener("pointerup", this.onPointerUp, true);
@@ -708,7 +952,7 @@ export const plugin: LabPlugin = {
       name: "selectAt",
       signature: "selectAt(x: number, y: number): selection | null",
       summary:
-        "Select the deepest screen element at a PAGE-unit point — the way to drive this without a mouse. Page units, not screen pixels, so the answer does not change when the canvas zooms. Lab chrome, sticky notes, labels, rulers and the scroller itself are never hit. Returns the new selection, or null (and clears) if nothing qualifies there. By hand the same thing happens on a plain click in explore mode, or on Shift-click in any mode including a screen that is locked in and live.",
+        "Select the deepest screen element at a PAGE-unit point — the way to drive this without a mouse. Page units, not screen pixels, so the answer does not change when the canvas zooms. Lab chrome, sticky notes, labels, rulers and the scroller itself are never hit. Returns the new selection, or null (and clears) if nothing qualifies there. By hand the same thing happens on a plain click in explore mode, or on Shift-click in any mode including a screen that is locked in and live. A selected element also grows a toolbar above its outline carrying its name and location and three verbs — 说 (leave her a comment on this tag), 改文字 (lock into the screen and edit the copy in place), 复制位置 (put file:line:col on the clipboard) — and each one is hidden when it would not work.",
     },
     {
       name: "selectElement",

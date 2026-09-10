@@ -432,6 +432,42 @@ export class TextEditor {
 	// ── the editor ──────────────────────────────────────────────────────
 
 	/** Open the editor on a node. Returns false if that node is not editable. */
+	/**
+	 * Would `begin` take this node, if the canvas were locked into its screen?
+	 *
+	 * `begin` refuses in explore mode, which is the honest answer for the
+	 * gesture -- a double-click out there is not an edit. But a toolbar button
+	 * on a selected element can lock in first and then edit, and it needs to
+	 * know whether to offer that BEFORE moving the camera. Asking `begin` would
+	 * mean flying to the screen to find out the answer was no.
+	 *
+	 * So: the same rule, with the mode question already answered. Everything
+	 * else -- one static text child, a source location, an editable file -- is
+	 * decided by the same `decideEdit` the gesture uses, which is the point.
+	 * Two copies of this rule would drift, and the copy that drifts is the one
+	 * that puts a button in front of a write the server will refuse.
+	 */
+	canEdit(el: Element): boolean {
+		if (this.closed || !(el instanceof HTMLElement)) return false;
+		const place = screenContentOf(el);
+		if (!place?.screenId) return false;
+		const loc = this.deps.locate(el);
+		return (
+			decideEdit({
+				mode: "focus",
+				focusedId: place.screenId,
+				screenId: place.screenId,
+				inScreenContent: true,
+				plainText: plainTextOf(el),
+				tag: el.tagName.toLowerCase(),
+				file: loc?.file ?? null,
+				line: loc?.line ?? null,
+				column: loc?.column ?? null,
+				problem: loc?.problem ?? null,
+			}).verdict !== "refuse"
+		);
+	}
+
 	begin(el: Element, known?: EditDecision): boolean {
 		if (this.closed || !(el instanceof HTMLElement)) return false;
 		const decision = known ?? this.candidateFor(el).decision;
@@ -650,6 +686,12 @@ export const plugin: LabPlugin = {
 				"Open the editor on a node you already have, skipping the double-click. Returns false and changes nothing unless the canvas is locked into the screen that node is in AND the node's only child is a piece of static text — the same rule the gesture uses. Any edit already open is committed first.",
 		},
 		{
+			name: "canEdit",
+			signature: "canEdit(el: Element): boolean",
+			summary:
+				"Whether `begin` would take this node once the canvas is locked into its screen — the same rule `begin` uses, with the mode question already answered. Use it to decide whether to OFFER an edit before moving the camera; `begin` itself still refuses in explore mode, which is correct for the double-click. False for anything outside screen content, anything whose only child is not a piece of static text, and anything whose source cannot be placed in an editable file.",
+		},
+		{
 			name: "commit",
 			signature: "commit(): Promise<boolean>",
 			summary:
@@ -668,6 +710,7 @@ export const plugin: LabPlugin = {
 			api: {
 				state: () => editor.state(),
 				begin: (el: Element) => editor.begin(el),
+				canEdit: (el: Element) => editor.canEdit(el),
 				commit: () => editor.commit(),
 				cancel: () => {
 					editor.cancel();
