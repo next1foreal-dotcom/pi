@@ -265,7 +265,7 @@ const CSS = `
  font:12px/1.45 ui-sans-serif,system-ui,-apple-system,sans-serif;white-space:pre-wrap;
  box-shadow:0 8px 30px rgba(0,0,0,.34),0 1px 3px rgba(0,0,0,.22);z-index:8}
 .lt-note[data-show]{display:block}
-.lt-note[data-bad]{color:#f39a5e}
+.lt-note[data-bad]{font-weight:600;padding-left:8px;border-left:2px solid rgba(255,255,255,.55)}
 [data-lab-text-editing]{cursor:text;user-select:text;-webkit-user-select:text;
  outline:1px solid var(--lab-accent,#1c1c1c);outline-offset:2px;border-radius:2px}
 `;

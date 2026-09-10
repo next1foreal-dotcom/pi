@@ -305,3 +305,81 @@ describe("an overlay nobody can see is not an overlay", () => {
 		expect(tag).not.toMatch(/zIndex/);
 	});
 });
+
+describe("a warning is not a colour", () => {
+	// Three plugins had grown the same line: a note that had gone wrong, set in
+	// `#f39a5e`. I added the third myself on 2026-09-10 by copying the second,
+	// and Fei looked at the panel and said 「这是啥丑死了」 — pointing at an orange
+	// sentence that was, on almost every element, announcing the ordinary case.
+	//
+	// The lab does use colour, on purpose: Figma's guide red, its selection
+	// blue, the sticky-note palette. Those are objects on a canvas and their
+	// hue carries meaning. A warning is not one of those. It is text that has
+	// to be louder than the text beside it, and in a neutral panel loud is
+	// weight, opacity and a rule down the left — not a hue borrowed from
+	// nowhere and matched to nothing.
+	//
+	// So the gate is narrow on purpose. Scoped to every rule whose selector
+	// says it is about something being wrong, and silent about everything else:
+	// a wider one flagged 31 deliberate choices, which is how mechanical guards
+	// die.
+
+	/** Below this a hex is grey enough to be part of the neutral ramp. */
+	const SATURATION_MAX = 24;
+	/** Selectors that mean "this went wrong" — the ones that kept growing hues. */
+	const TROUBLE = /\[data-bad\]|-warn|-cost|-error|-danger/;
+
+	const sources = [
+		"plugins/properties/plugin.ts",
+		"plugins/properties/knobs.ts",
+		"plugins/text/plugin.ts",
+		"plugins/layers/plugin.ts",
+		"plugins/inspect/plugin.ts",
+		"core/lab.module.css",
+	] as const;
+
+	function saturation(hex: string): number {
+		const [r, g, b] = [0, 2, 4].map((i) => Number.parseInt(hex.slice(i, i + 2), 16));
+		return Math.max(r, g, b) - Math.min(r, g, b);
+	}
+
+	function troubleRules(): { where: string; selector: string; body: string }[] {
+		const out: { where: string; selector: string; body: string }[] = [];
+		for (const rel of sources) {
+			const text = readFileSync(new URL(`../${rel}`, import.meta.url), "utf8");
+			for (const rule of rules(text)) {
+				for (const selector of rule.selectors) {
+					if (TROUBLE.test(selector)) out.push({ where: rel, selector, body: rule.body });
+				}
+			}
+		}
+		return out;
+	}
+
+	it("finds the rules it is meant to be watching", () => {
+		// A gate that matched nothing would pass forever. These exist; the point
+		// is what they are allowed to contain.
+		expect(troubleRules().length).toBeGreaterThanOrEqual(3);
+	});
+
+	it("says so with weight, never with a hue", () => {
+		const guilty: string[] = [];
+		for (const rule of troubleRules()) {
+			for (const [, hex] of rule.body.matchAll(/#([0-9a-fA-F]{6})\b/g)) {
+				if (saturation(hex as string) > SATURATION_MAX) {
+					guilty.push(`${rule.where} ${rule.selector}: #${hex}`);
+				}
+			}
+		}
+		expect(guilty).toEqual([]);
+	});
+
+	it("and the saturation test can tell the difference", () => {
+		// Two-sided: one that called everything neutral would pass the test above
+		// without looking, which is how the first three got in.
+		expect(saturation("f39a5e")).toBeGreaterThan(SATURATION_MAX);
+		expect(saturation("f24822")).toBeGreaterThan(SATURATION_MAX);
+		expect(saturation("1c1c1c")).toBe(0);
+		expect(saturation("f1f1f1")).toBe(0);
+	});
+});

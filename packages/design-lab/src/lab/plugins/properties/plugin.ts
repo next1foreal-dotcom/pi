@@ -234,28 +234,32 @@ export async function pollForElement(
 const STYLE_ID = "lab-properties-style";
 const CSS = `
 .pp-panel{position:fixed;right:12px;top:12px;width:280px;max-height:calc(100vh - 24px);overflow:auto;
+ backdrop-filter:blur(14px) saturate(1.08);-webkit-backdrop-filter:blur(14px) saturate(1.08);
  display:none;flex-direction:column;gap:8px;padding:10px 11px;border-radius:8px;pointer-events:auto;
  background:var(--lab-pill,rgba(28,28,28,.92));color:var(--lab-chrome,#f1f1f1);
  font:12px/1.45 ui-sans-serif,system-ui,-apple-system,sans-serif;
  box-shadow:0 8px 30px rgba(0,0,0,.34),0 1px 3px rgba(0,0,0,.22);z-index:7}
 .pp-panel[data-show]{display:flex}
 .pp-tag{font:600 13px/1.2 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-.pp-where{font:11px/1.35 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;opacity:.62;word-break:break-all}
+.pp-where{font:11px/1.35 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;opacity:.55;
+ overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pp-section{font:600 10px/1.2 ui-sans-serif,system-ui;letter-spacing:.06em;text-transform:uppercase;opacity:.5;margin-top:2px}
 .pp-chips{display:flex;flex-wrap:wrap;gap:4px}
 .pp-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 4px 2px 6px;border-radius:4px;
  background:rgba(255,255,255,.09);font:11px/1.3 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 .pp-chip button{all:unset;cursor:pointer;opacity:.5;padding:0 2px;line-height:1}
 .pp-chip button:hover{opacity:1}
-.pp-add{all:unset;box-sizing:border-box;width:100%;padding:4px 6px;border-radius:4px;
- background:rgba(255,255,255,.07);font:11px/1.3 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-.pp-add::placeholder{opacity:.4}
-.pp-say{all:unset;box-sizing:border-box;width:100%;padding:5px 6px;border-radius:4px;
- background:rgba(255,255,255,.07);font:11px/1.35 ui-sans-serif,system-ui,-apple-system,sans-serif}
-.pp-say::placeholder{opacity:.4}
+.pp-add,.pp-say{all:unset;box-sizing:border-box;width:100%;padding:3px 1px;
+ border-bottom:1px solid rgba(255,255,255,.13)}
+.pp-add{font:11px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.pp-say{font:11px/1.4 ui-sans-serif,-apple-system,system-ui,sans-serif}
+.pp-add:focus,.pp-say:focus{border-bottom-color:rgba(255,255,255,.42)}
+.pp-add::placeholder,.pp-say::placeholder{opacity:.32}
 .pp-say[hidden]{display:none}
-.pp-note{font:11px/1.4 ui-sans-serif,system-ui;opacity:.66}
-.pp-note[data-bad]{opacity:1;color:#f39a5e}
+.pp-note{font:11px/1.4 ui-sans-serif,system-ui;opacity:.62}
+.pp-note:empty{display:none}
+.pp-note[data-bad]{opacity:1;font-weight:600;padding-left:7px;
+ border-left:2px solid rgba(255,255,255,.55)}
 .pp-empty{opacity:.5;font-style:italic}
 `;
 
@@ -579,8 +583,16 @@ export class Properties {
 		if (!sel || !state.show) return;
 
 		this.tagEl.textContent = sel.component ? `<${sel.tag}> · ${sel.component}` : `<${sel.tag}>`;
-		this.whereEl.textContent =
+		// The last two segments, because that is the part anyone reads: nobody
+		// scans `packages/design-lab/src/screens/` to learn which file this is.
+		// It used to be the whole path with `word-break: break-all`, which broke
+		// it mid-word — `.../main-landing/p` then `age.tsx:73:6` — and made the
+		// least useful line on the panel one of the tallest. The full path is on
+		// hover, and 复制位置 on the element toolbar puts it on the clipboard.
+		const where =
 			sel.file && sel.line !== null ? `${sel.file}:${sel.line}:${sel.column}` : (sel.problem ?? "");
+		this.whereEl.textContent = shortWhere(where);
+		this.whereEl.title = where;
 
 		this.chips.textContent = "";
 		const names = classesOf(sel.className);
@@ -757,8 +769,14 @@ export class Properties {
 	}
 }
 
-export /** Page-space gap between a screen's right edge and a note about it. */
-const SAY_GAP = 24;
+/** `main-landing/page.tsx:73:6` out of the repo-relative path. */
+export function shortWhere(where: string): string {
+	const parts = where.split("/");
+	return parts.length <= 2 ? where : parts.slice(-2).join("/");
+}
+
+/** Page-space gap between a screen's right edge and a note about it. */
+export const SAY_GAP = 24;
 
 type NotesApi = {
 	spawn(init: {

@@ -381,7 +381,9 @@ const CSS = `
  border-top:1px solid rgba(255,255,255,.12);padding-top:8px}
 .pk-root[data-show]{display:flex}
 .pk-lead{font:11px/1.35 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;opacity:.62}
-.pk-warn{font:11px/1.4 ui-sans-serif,system-ui;color:#f39a5e}
+.pk-warn{font:11px/1.4 ui-sans-serif,system-ui;opacity:.62}
+.pk-warn:empty{display:none}
+.pk-lead:empty{display:none}
 .pk-section{font:600 10px/1.2 ui-sans-serif,system-ui;letter-spacing:.06em;text-transform:uppercase;opacity:.5;margin-top:4px}
 .pk-row{display:flex;align-items:center;gap:8px;min-height:20px}
 .pk-name{flex:0 0 68px;font:11px/1.3 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;opacity:.82;
@@ -506,9 +508,11 @@ export class Knobs {
 		const entry = index.components.find((c) => c.name === name) ?? null;
 		const knobs = knobsOf(entry);
 		if (!entry) return this.hide(mine);
-		if (knobs.length === 0) {
-			return this.paint(mine, name, null, [], `${name} · 没有声明 @editor 的 prop`);
-		}
+		// Nothing to turn is not news. Almost no component declares `@editor`,
+		// so a panel that announced it was announcing the ordinary case on every
+		// selection — and it was doing it in the loudest thing on the panel.
+		// Absence says it better: no section, no sentence.
+		if (knobs.length === 0) return this.hide(mine);
 
 		const pick = pickInstance(entry.instances, target.screenId);
 		if (pick.kind === "none") {
@@ -602,9 +606,12 @@ export class Knobs {
 		if (this.closed || mine !== this.generation) return;
 		this.state = { showing: true, component, instance, rows, warning };
 		this.root.setAttribute("data-show", "");
+		// Only when it adds something. Without an instance this said the
+		// component's name and nothing else — which the panel's own header has
+		// already said, two lines up, in a bigger font.
 		this.lead.textContent = instance
 			? `${component} · ${instance.file.split("/").pop()}:${instance.line}`
-			: component;
+			: "";
 		this.warn.textContent = warning ?? "";
 		this.render(rows, instance, component);
 	}

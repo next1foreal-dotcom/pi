@@ -40,6 +40,7 @@ import { SKIP_HOSTS } from "../inspect/plugin";
 
 const CSS = `
 .ly-panel{position:fixed;left:12px;top:12px;width:236px;max-height:calc(100vh - 24px);
+ backdrop-filter:blur(14px) saturate(1.08);-webkit-backdrop-filter:blur(14px) saturate(1.08);
  display:none;flex-direction:column;gap:6px;padding:9px 10px;border-radius:8px;pointer-events:auto;
  background:var(--lab-pill,rgba(28,28,28,.92));color:var(--lab-chrome,#f1f1f1);
  font:12px/1.45 ui-sans-serif,system-ui,-apple-system,sans-serif;
@@ -73,7 +74,7 @@ const CSS = `
 .ly-what{font:11px/1.4 ui-sans-serif,system-ui;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ly-named{font-weight:600;opacity:1}
 .ly-plan{padding:3px 6px 5px;font:10px/1.5 ui-sans-serif,system-ui;opacity:.8}
-.ly-cost{color:#f39a5e}
+.ly-cost{opacity:1;font-weight:600;padding-left:6px;border-left:2px solid rgba(255,255,255,.55)}
 .ly-go{all:unset;margin-top:4px;display:inline-block;padding:2px 8px;border-radius:4px;cursor:pointer;background:rgba(255,255,255,.14);font:11px/1.5 ui-sans-serif,system-ui}
 .ly-go:hover{background:rgba(255,255,255,.24)}
 `;
