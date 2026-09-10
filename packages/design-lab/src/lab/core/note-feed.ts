@@ -29,6 +29,8 @@ export type NoteAnchor = {
 };
 
 export type NoteThreadState = {
+	/** Sticky paper, or a remark aimed at one tag. Absent on anything written before the split. */
+	kind?: "sticky" | "comment";
 	replies: NoteReply[];
 	resolved: boolean;
 	x: number;
@@ -206,6 +208,7 @@ export function projectNoteCanvas(text: string): NoteFeedProjection {
 			y?: unknown;
 			screenId?: unknown;
 			source?: unknown;
+			kind?: unknown;
 			anchor?: unknown;
 		};
 		if (typeof e.t !== "string" || !EVENT_TYPES.has(e.t)) continue;
@@ -220,6 +223,9 @@ export function projectNoteCanvas(text: string): NoteFeedProjection {
 				th.text = typeof e.text === "string" ? e.text : "";
 				th.screenId = typeof e.screenId === "string" ? e.screenId : null;
 				if (isSource(e.source)) th.source = e.source;
+				// Absent on every note written before the sticky/comment split, and
+				// those were all paper.
+				th.kind = e.kind === "comment" ? "comment" : "sticky";
 				th.anchor = isAnchor(e.anchor) ? { ...e.anchor } : undefined;
 				break;
 			}

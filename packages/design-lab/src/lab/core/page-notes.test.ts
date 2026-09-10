@@ -2,6 +2,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+	COMMENT_W,
+	COMMENT_H,
 	NOTE_DEFAULT,
 	NOTE_MIN,
 	noteSpawnTopLeft,
@@ -1576,3 +1578,47 @@ describe("notes pin to a screen, not to the page", () => {
 });
 
 
+
+/**
+ * The split. A sticky is a thought parked on the canvas and a fat yellow square
+ * is right for it; a comment is a remark about one tag and that square held four
+ * characters of 「换个字体」 with the rest yellow paper. Both sides asserted,
+ * because "make everything a comment" would pass every comment test.
+ */
+describe("stickies and comments are two things", () => {
+  it("gives a comment a body sized for a remark, and leaves the sticky alone", () => {
+    mount();
+    const notes = live as StickyNotes;
+    const comment = notes.spawn({ x: 0, y: 0, kind: "comment", text: "换个字体" });
+    const sticky = notes.spawn({ x: 400, y: 0, text: "一个想法" });
+
+    expect([comment.w, comment.h]).toEqual([COMMENT_W, COMMENT_H]);
+    expect(comment.kind).toBe("comment");
+    // Neutral: the one rule this palette has ever had is no mustard on chrome.
+    expect(comment.color).toBe("white");
+
+    expect([sticky.w, sticky.h]).toEqual([NOTE_DEFAULT, NOTE_DEFAULT]);
+    expect(sticky.kind).toBe("sticky");
+    expect(sticky.color).not.toBe("white");
+  });
+
+  it("still lets an explicit size win", () => {
+    mount();
+    const notes = live as StickyNotes;
+    const sized = notes.spawn({ x: 0, y: 0, kind: "comment", w: 320, h: 200 });
+    expect([sized.w, sized.h]).toEqual([320, 200]);
+  });
+
+  it("says which it is on the element, so css can tell them apart", () => {
+    mount();
+    const notes = live as StickyNotes;
+    const comment = notes.spawn({ x: 0, y: 0, kind: "comment" });
+    const sticky = notes.spawn({ x: 400, y: 0 });
+    const kinds = [...document.querySelectorAll(".sn-note")].map(
+      (el) => (el as HTMLElement).dataset.kind,
+    );
+    expect(kinds).toContain("comment");
+    expect(kinds).toContain("sticky");
+    expect(comment.kind).not.toBe(sticky.kind);
+  });
+});

@@ -50,6 +50,22 @@ export interface StickyNote {
 	color: NoteColor;
 	fontSize: NoteFontSize;
 	font: NoteFont;
+	/**
+	 * Which of the two things this is.
+	 *
+	 * They started as one. A note was a thought parked on the canvas: free to sit
+	 * anywhere, related to nothing, and a fat yellow square was exactly right for
+	 * that. Then it grew a feed, an author stamp, a git oid, replies, resolve and
+	 * a nag list -- none of which a sticky note has ever needed -- and on
+	 * 2026-09-09 it grew a way to be written straight at one element from the
+	 * properties panel. At that point it was a comment on `screen.tsx:63` wearing
+	 * a sticky note's face, and Fei said it felt off before anyone could explain
+	 * why. Figma, lunagraph and Claude Design all keep these apart; so do we now.
+	 *
+	 * `source` cannot be the discriminator: `resolveSourceAt` hands one to every
+	 * note dropped over a screen, so almost all of them have one.
+	 */
+	kind: NoteKind;
 	/** true = short strip, false = tall square note. */
 	compact: boolean;
 	/** Width in page units. Always explicit; default 240. */
@@ -107,6 +123,16 @@ export interface StickyNotesOptions {
 }
 
 /** Default note edge in page units. */
+/** A thought parked on the canvas, or a remark aimed at one element. */
+export type NoteKind = "sticky" | "comment";
+
+/**
+ * A comment is one or two lines about one tag. 240x240 held 4 characters of
+ * 「换个字体」 and the rest was yellow paper.
+ */
+export const COMMENT_W = 264;
+export const COMMENT_H = 112;
+
 export const NOTE_DEFAULT = 240;
 const NOTE_COMPACT_RATIO = 0.43;
 /** Resize floor in page units. */
@@ -241,6 +267,23 @@ function buildCss(fonts: { woff2: string; woff: string }): string {
 .sn-note:active{cursor:grabbing}
 .sn-text:focus{cursor:text}
 .sn-source{flex:none;padding:2px 8px 0;font:500 9px/1.2 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;opacity:.55}
+
+/* A comment is not paper. It is a remark about one tag, so it is the colour of
+ * the chrome around it, and the one thing it must say out loud is WHERE.
+ *
+ * The source line already existed on every note at 9px and 55% opacity, which
+ * at any canvas zoom anyone actually works at is invisible -- Fei's 「换个字体」
+ * carried screen.tsx:175 the whole time and nothing on screen said so. On a
+ * comment it is the header, not a footnote.
+ *
+ * No saturated yellow: the palette here is neutral, and a mustard card is the
+ * one rule about colour this product has always had. Stickies keep it, because
+ * on a sticky it is right. */
+.sn-note[data-kind="comment"]{background:#fbfbfa;color:#1c1c1c;
+ box-shadow:0 1px 2px rgba(0,0,0,.10),0 6px 18px rgba(0,0,0,.10);border-radius:6px}
+.sn-note[data-kind="comment"] .sn-source{order:-1;padding:7px 9px 3px;
+ font:500 11px/1.25 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;opacity:.62}
+.sn-note[data-kind="comment"] .sn-bar{background:transparent}
 .sn-source:empty{display:none}
 .sn-note[data-color="black"] .sn-bar{background:rgba(255,255,255,.08)}
 .sn-close{width:8px;height:8px;flex:none;border:none;padding:0;background:rgba(0,0,0,.22);cursor:pointer}
@@ -485,6 +528,7 @@ export class StickyNotes {
 					this.screenAt?.({ x: n.x, y: n.y }) ??
 					null,
 				source: n.source,
+				kind: n.kind,
 				hasBody: true,
 			});
 		}
@@ -548,8 +592,11 @@ export class StickyNotes {
 		const step = (this.notes.length % 6) * 24;
 		const x = init.x ?? step;
 		const y = init.y ?? step;
-		const w = sizeOrDefault(init.w);
-		const h = sizeOrDefault(init.h);
+		const kind: NoteKind = init.kind ?? "sticky";
+		// A comment is sized for a remark, not for a page of thinking. Explicit
+		// w/h still win, so nothing that passes its own size changes shape.
+		const w = init.w === undefined && kind === "comment" ? COMMENT_W : sizeOrDefault(init.w);
+		const h = init.h === undefined && kind === "comment" ? COMMENT_H : sizeOrDefault(init.h);
 		// A fresh note is centred on the point he pinned (see noteSpawnTopLeft),
 		// so its middle -- not its top-left corner -- is what he pointed at.
 		const source = init.source ?? this.resolveSourceAt(x + w / 2, y + h / 2);
@@ -558,9 +605,10 @@ export class StickyNotes {
 			fid: newFeedId("n"),
 			x,
 			y,
-			color: init.color ?? this.defaultColor,
+			color: init.color ?? (kind === "comment" ? "white" : this.defaultColor),
 			fontSize: init.fontSize ?? "medium",
 			font: init.font ?? "inter",
+			kind,
 			compact: init.compact ?? false,
 			w,
 			h,
@@ -750,6 +798,7 @@ export class StickyNotes {
 		el.className = "sn-note";
 		el.dataset.color = note.color;
 		el.dataset.font = note.font;
+		el.dataset.kind = note.kind;
 		el.toggleAttribute("data-compact", note.compact);
 		el.style.setProperty("--sn-fs", `${FONT_SIZES[note.fontSize]}px`);
 		el.style.zIndex = String(++this.zTop);
@@ -1681,6 +1730,7 @@ export class StickyNotes {
 						c: n.color,
 						f: n.fontSize,
 						ff: n.font,
+						kd: n.kind,
 						k: n.compact,
 						w: n.w,
 						hh: n.h,
@@ -1741,6 +1791,7 @@ export class StickyNotes {
 					an?: unknown;
 					rg?: unknown;
 					src?: unknown;
+					kd?: unknown;
 				}[];
 			};
 			if (data.v !== 1 || !Array.isArray(data.notes)) return;
@@ -1757,6 +1808,7 @@ export class StickyNotes {
 					color: n.c in COLORS ? n.c : this.defaultColor,
 					fontSize: n.f in FONT_SIZES ? n.f : "medium",
 					font: isFont(n.ff) ? n.ff : "inter",
+					kind: n.kd === "comment" ? "comment" : "sticky",
 					compact: Boolean(n.k),
 					w: sizeOrDefault(n.w),
 					h: sizeOrDefault(n.hh),
@@ -1795,6 +1847,9 @@ export class StickyNotes {
 			x: note.x,
 			y: note.y,
 			text: note.text,
+			// Only when it is a comment: the feed already holds thousands of note
+			// events written before the split, and "sticky" is what absent means.
+			...(note.kind === "comment" ? { kind: "comment" } : {}),
 			...(note.source ? { source: note.source } : {}),
 			...(note.anchor ? { anchor: { ...note.anchor } } : {}),
 			...(note.region ? { region: { ...note.region } } : {}),
@@ -1951,9 +2006,10 @@ export class StickyNotes {
 			fid,
 			x: st.x,
 			y: st.y,
-			color: this.defaultColor,
+			color: st.kind === "comment" ? "white" : this.defaultColor,
 			fontSize: "medium",
 			font: "inter",
+			kind: st.kind === "comment" ? "comment" : "sticky",
 			compact: false,
 			w: NOTE_DEFAULT,
 			h: NOTE_DEFAULT,

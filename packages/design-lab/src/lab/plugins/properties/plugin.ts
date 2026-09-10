@@ -765,6 +765,7 @@ type NotesApi = {
 		x: number;
 		y: number;
 		text?: string;
+		kind?: "sticky" | "comment";
 		source?: { file: string; line: number; col: number; component: string | null };
 	}): void;
 };
@@ -792,6 +793,9 @@ function speakFromPanel(ctx: LabPluginContext, text: string, sel: Selection): vo
 	notes.spawn({
 		...at,
 		text,
+		// Not a sticky. A sticky is a thought parked on the canvas; this is a
+		// remark aimed at one tag, and it gets the body that says so.
+		kind: "comment",
 		...(sel.file && sel.line !== null
 			? {
 					source: {
