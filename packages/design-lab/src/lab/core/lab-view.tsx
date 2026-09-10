@@ -573,6 +573,40 @@ export function InteractionLab() {
     };
 
     // ── Keyboard: all lab shortcuts (capture phase, keydown only) ──────
+    /**
+     * Escape lets go of the element too.
+     *
+     * It could not, before: `deselect` dropped the SCREEN and `exit-one`
+     * changed the mode, and the element selection outlived both — so backing
+     * out of a screen left its outline, its toolbar and the properties panel
+     * standing over a canvas you had just left. Fei, 2026-09-10: 「esc 退出来
+     * 的时候就不该选中了吧」.
+     *
+     * Every mode, no ladder to remember. Escape is "let go", and the element
+     * is the innermost thing being held; a chord that dropped it only at
+     * certain depths would be a rule to memorise instead of a reflex.
+     *
+     * Asked for by name at the moment of use, the way the toolbar asks for its
+     * verbs — the lab core does not import a plugin, and a plugin that is not
+     * mounted is simply not there.
+     */
+    const dropElementSelection = (): void => {
+      const api = session.pluginApis.get("inspect") as { clear?: () => void } | undefined;
+      api?.clear?.();
+      // And then tell the panels, because nothing else will.
+      //
+      // Both of them re-read on a press and on a camera write, which is the
+      // right bargain for a selection that only ever changed from a click.
+      // Escape is neither: measured 2026-09-10, the properties panel sat there
+      // afterwards still describing an `<h1>` that nothing was selecting, and
+      // `state()` already said null. The panel was right; it had just never
+      // been asked.
+      for (const id of ["properties", "layers"] as const) {
+        const panel = session.pluginApis.get(id) as { refresh?: () => void } | undefined;
+        panel?.refresh?.();
+      }
+    };
+
     const onKeyDown = (e: KeyboardEvent) => {
       if (pick.handleKey(e)) {
         session.bump();
@@ -618,13 +652,17 @@ export function InteractionLab() {
       switch (act.action) {
         case "deselect":
           selectObject(session, null);
+          dropElementSelection();
           break;
         case "exit-one":
           if (session.mode !== "explore" && session.focusedId) {
             const fn = session.escapers.get(session.focusedId);
+            // The screen ate it — a dialog inside the app closed, or a menu.
+            // Nothing here happened, so nothing here lets go.
             if (fn?.()) return;
           }
           exitOne(session);
+          dropElementSelection();
           break;
         case "fit-all":
           if (session.mode !== "explore") {

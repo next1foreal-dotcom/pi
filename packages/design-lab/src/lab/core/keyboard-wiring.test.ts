@@ -295,4 +295,94 @@ describe("keyboard wiring (full chain, jsdom + StrictMode)", () => {
 
     await backToExplore();
   });
+
+  /**
+   * Escape lets go of the element, not only of the screen.
+   *
+   * Before this, `deselect` dropped the SCREEN and `exit-one` changed the
+   * mode, and the element selection outlived both — so backing out of a
+   * screen left its outline, its toolbar and the properties panel standing
+   * over a canvas you had just left. 「esc 退出来的时候就不该选中了吧」.
+   *
+   * Driven end to end rather than through `dispatchLabKey`, because the pure
+   * dispatcher cannot see whether anything is wired to the answer it returns.
+   */
+  function inspectApi(): {
+    selectElement(el: Element): unknown;
+    selection(): unknown;
+  } {
+    const api = window.lab?.plugin("inspect") as {
+      selectElement(el: Element): unknown;
+      selection(): unknown;
+    };
+    return api;
+  }
+
+  function someScreenElement(): Element | null {
+    const scroll = container.querySelector("[data-screen-scroll]");
+    return scroll?.querySelector("*") ?? null;
+  }
+
+  it("Escape lets go of the element, in explore", async () => {
+    await backToExplore();
+    const el = someScreenElement();
+    expect(el, "the fixture screens rendered something to select").not.toBeNull();
+    inspectApi().selectElement(el as Element);
+    expect(inspectApi().selection()).not.toBeNull();
+
+    await act(() => {
+      dispatchKey("Escape");
+    });
+    expect(inspectApi().selection()).toBeNull();
+  });
+
+  it("and tells the panels, which have no other way to find out", async () => {
+    // Both re-read on a press and on a camera write, which is the right
+    // bargain for a selection that only ever changed from a click. Escape is
+    // neither: measured 2026-09-10, the properties panel sat there afterwards
+    // still describing an `<h1>` that nothing was selecting, while its own
+    // `state()` already said null. The panel was right; it had never been
+    // asked.
+    //
+    // Asserted on the call and not on the panel's DOM, because the properties
+    // panel needs a resolvable source location to show at all and jsdom has
+    // none — a `data-show` assertion here passes whether the wiring exists or
+    // not, which is exactly the kind of green that means nothing.
+    await backToExplore();
+    const props = window.lab?.plugin("properties") as { refresh: () => void };
+    const tree = window.lab?.plugin("layers") as { refresh: () => void };
+    const onProps = vi.spyOn(props, "refresh");
+    const onTree = vi.spyOn(tree, "refresh");
+
+    await act(() => {
+      dispatchKey("Escape");
+    });
+    expect(onProps).toHaveBeenCalled();
+    expect(onTree).toHaveBeenCalled();
+    onProps.mockRestore();
+    onTree.mockRestore();
+  });
+
+  it("and on the way out of a screen", async () => {
+    await backToExplore();
+    await act(() => {
+      dispatchKey("Tab");
+    });
+    await act(() => {
+      dispatchKey("Enter");
+    });
+    const rootEl = container.querySelector("[data-mode]");
+    expect(rootEl?.getAttribute("data-mode")).toBe("focus");
+
+    const el = someScreenElement();
+    inspectApi().selectElement(el as Element);
+    expect(inspectApi().selection()).not.toBeNull();
+
+    await act(() => {
+      dispatchKey("Escape");
+    });
+    expect(rootEl?.getAttribute("data-mode")).toBe("explore");
+    expect(inspectApi().selection()).toBeNull();
+    await backToExplore();
+  });
 });
