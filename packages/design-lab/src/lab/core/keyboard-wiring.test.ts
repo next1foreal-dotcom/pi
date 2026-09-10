@@ -363,6 +363,49 @@ describe("keyboard wiring (full chain, jsdom + StrictMode)", () => {
     onTree.mockRestore();
   });
 
+  it("Delete does not reach past a held element to its screen", async () => {
+    // The hazard: selecting an element moves the canvas's own selection to
+    // that element's SCREEN, and `delete-screen` reads exactly that. Measured
+    // before the guard — with an h1 selected, `selectedId` was the screen, and
+    // Delete would have moved its whole folder to `.lab-trash`.
+    //
+    // Asserted on the action never reaching the lab's delete, because actually
+    // letting it through in a test would delete a real fixture directory.
+    await backToExplore();
+    await act(() => {
+      dispatchKey("Tab");
+    });
+    const el = someScreenElement();
+    inspectApi().selectElement(el as Element);
+    expect(inspectApi().selection()).not.toBeNull();
+    dispatchSpy.mockClear();
+
+    const deleted: string[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = ((url: string, init?: RequestInit) => {
+      if (String(url).includes("/__lab-fs/delete")) deleted.push(String(url));
+      return Promise.resolve({ json: () => Promise.resolve({ ok: false }) } as Response);
+    }) as typeof fetch;
+
+    await act(() => {
+      dispatchKey("Delete");
+    });
+    globalThis.fetch = realFetch;
+    const reached = dispatchSpy.mock.results.some(
+      (r: { type: string; value?: { action?: string } }) =>
+        r.type === "return" && r.value?.action === "delete-screen",
+    );
+    // The dispatcher still answers "delete-screen" — it knows nothing about
+    // elements. The lab is what refuses.
+    expect(reached).toBe(true);
+    // And refusing means the request is never made. Asserted on the call and
+    // not on the DOM: `deleteScreen` talks to the dev server, which is absent
+    // here, so a "the screen is still on the page" check passes whether the
+    // guard exists or not.
+    expect(deleted).toEqual([]);
+    await backToExplore();
+  });
+
   it("and on the way out of a screen", async () => {
     await backToExplore();
     await act(() => {

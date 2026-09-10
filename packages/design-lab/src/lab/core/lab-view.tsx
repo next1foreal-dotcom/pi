@@ -590,6 +590,14 @@ export function InteractionLab() {
      * verbs — the lab core does not import a plugin, and a plugin that is not
      * mounted is simply not there.
      */
+    /** Whether the inspector is holding an element right now. */
+    const heldElement = (): boolean => {
+      const api = session.pluginApis.get("inspect") as
+        | { selection?: () => unknown }
+        | undefined;
+      return api?.selection?.() != null;
+    };
+
     const dropElementSelection = (): void => {
       const api = session.pluginApis.get("inspect") as { clear?: () => void } | undefined;
       api?.clear?.();
@@ -730,6 +738,21 @@ export function InteractionLab() {
           }
           break;
         case "delete-screen":
+          // Not while an element is held.
+          //
+          // A hazard I built two commits ago and did not see: selecting an
+          // element now moves the canvas's own selection to that element's
+          // SCREEN, so the screen is always selected while you are working
+          // inside it — and `delete-screen` reads exactly that. Measured
+          // 2026-09-10: with an h1 selected, `selectedId` was `main-landing`,
+          // and Delete would have moved the whole folder to `.lab-trash`.
+          //
+          // The rule the rest of the lab already follows: Delete acts on the
+          // thing you are looking at. A note takes it when a note is selected,
+          // a label when a label is; an element is no different, and until
+          // there is somewhere for an element to go it takes it and does
+          // nothing rather than reaching past it to the screen.
+          if (heldElement()) break;
           if (session.selectedId && screenById(session.selectedId)) {
             void deleteScreen(session, session.selectedId);
           }
