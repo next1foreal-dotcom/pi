@@ -77,11 +77,35 @@ const CSS = `
 .ly-cost{opacity:1;font-weight:600;padding-left:6px;border-left:2px solid rgba(255,255,255,.55)}
 .ly-go{all:unset;margin-top:4px;display:inline-block;padding:2px 8px;border-radius:4px;cursor:pointer;background:rgba(255,255,255,.14);font:11px/1.5 ui-sans-serif,system-ui}
 .ly-go:hover{background:rgba(255,255,255,.24)}
+.ly-head2{font:600 10px/1.2 ui-sans-serif,system-ui;letter-spacing:.06em;text-transform:uppercase;opacity:.5;margin:6px 0 2px}
+.ly-brief{font:11px/1.45 ui-sans-serif,system-ui;opacity:.72;margin-bottom:4px}
+.ly-stage{display:flex;align-items:baseline;gap:6px;font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.ly-stage b{font-weight:600}
+.ly-step{opacity:.42;font:10px/1.5 ui-sans-serif,system-ui}
+.ly-gates{display:flex;flex-wrap:wrap;gap:4px;margin-top:3px}
+.ly-gate{display:inline-flex;gap:4px;padding:1px 5px;border-radius:4px;background:rgba(255,255,255,.08);
+ font:10px/1.5 ui-sans-serif,system-ui;opacity:.72}
+.ly-gate[data-ok]{opacity:1;font-weight:600}
+.ly-gate[data-back]{opacity:1;font-weight:600;border-left:2px solid rgba(255,255,255,.55)}
 `;
 
 /** How deep a row can indent before the indent stops growing and the text wins. */
 const INDENT_MAX = 9;
 const INDENT_PX = 9;
+/** The gate names, in the language the panel speaks. */
+const GATE_NAMES: Record<string, string> = {
+	moodboard: "情绪板",
+	wireframe: "线框",
+	final: "终审",
+};
+/** And their verdicts. `informed` is a light gate: recorded, never blocking. */
+const GATE_STATUS: Record<string, string> = {
+	approved: "过",
+	returned: "打回",
+	pending: "待判",
+	informed: "已知会",
+};
+
 /** Remembered per browser, and only ever a convenience. */
 const FOLD_KEY = "lab.layers.folded";
 
@@ -114,6 +138,14 @@ export interface LabVersion {
 	at: string;
 	name: string | null;
 	files: string[];
+}
+
+/** The workshop ledger for one design, as `design-project.ts` keeps it. */
+export interface LabProject {
+	brief: string;
+	stage: string;
+	gates: Record<string, { status: string; at: string; evidence?: string }>;
+	iterations: { summary: string; at: string; commit?: string }[];
 }
 
 interface RestorePlan {
@@ -202,6 +234,8 @@ export class LayersPanel {
 	/** Null while showing the tree; a slug while showing that design's history. */
 	private history: string | null = null;
 	private versions: LabVersion[] = [];
+	private project: LabProject | null = null;
+	private stages: string[] = [];
 	private dirty: string[] = [];
 	private picked: string | null = null;
 	private plan: RestorePlan | null = null;
@@ -459,8 +493,36 @@ export class LayersPanel {
 		this.plan = null;
 		this.versions = [];
 		this.dirty = [];
+		this.project = null;
+		this.stages = [];
 		this.note = "读取中…";
 		this.render();
+		// Side by side, because they are two halves of one answer: the ledger
+		// says where the work is, the versions say what it looked like getting
+		// there. Failing to read one must not lose the other, so the project is
+		// its own try — most screens have no manifest and 204 is normal.
+		try {
+			const reply = await fetch(`/__lab-fs/project?slug=${encodeURIComponent(slug)}`);
+			// Not load-bearing, and worth saying so: a 204 has no body, `.json()`
+			// would reject, and the catch below would swallow it to the same
+			// answer. What the check buys is not throwing on the common path —
+			// most screens have no workshop, and an exception raised and eaten on
+			// every one of them is a cost that only looks free.
+			if (reply.status !== 204) {
+				const body = (await reply.json()) as {
+					ok?: boolean;
+					manifest?: LabProject;
+					stages?: string[];
+				};
+				if (this.closed || this.history !== slug) return;
+				if (body.ok && body.manifest) {
+					this.project = body.manifest;
+					this.stages = body.stages ?? [];
+				}
+			}
+		} catch {
+			// No dev server. The versions call below says so once; twice is noise.
+		}
 		try {
 			const reply = await fetch(`/__lab-fs/versions?slug=${encodeURIComponent(slug)}`);
 			const body = (await reply.json()) as {
@@ -535,6 +597,73 @@ export class LayersPanel {
 		this.render();
 	}
 
+	/**
+	 * The workshop ledger, in three lines.
+	 *
+	 * `design_project_*` has kept this since G-375 — the stage the work is at,
+	 * the verdicts on the hard gates, the rounds logged — and none of it has
+	 * ever been visible from the canvas. Fei asked twice: 「项目管理和设计的版本
+	 * 管理是不是没搞?」 and then 「项目管理呢?」 after the versions landed and
+	 * this did not.
+	 *
+	 * Read-only. Moving a stage or recording a verdict is a decision with
+	 * evidence attached, and the tools that do it refuse to guess — that is
+	 * the whole point of the gates. Showing where the work stands is a
+	 * different thing from moving it.
+	 */
+	private renderProject(): void {
+		const project = this.project;
+		if (!project) return;
+		const head = document.createElement("div");
+		head.className = "ly-head2";
+		head.textContent = "PROJECT";
+		this.list.appendChild(head);
+
+		if (project.brief) {
+			const brief = document.createElement("div");
+			brief.className = "ly-brief";
+			brief.textContent = project.brief;
+			brief.title = project.brief;
+			this.list.appendChild(brief);
+		}
+
+		const stage = document.createElement("div");
+		stage.className = "ly-stage";
+		const name = document.createElement("b");
+		name.textContent = project.stage;
+		stage.appendChild(name);
+		const at = this.stages.indexOf(project.stage);
+		if (at >= 0) {
+			const step = document.createElement("span");
+			step.className = "ly-step";
+			step.textContent = `${at + 1} / ${this.stages.length}`;
+			stage.appendChild(step);
+		}
+		const rounds = project.iterations?.length ?? 0;
+		if (rounds > 0) {
+			const count = document.createElement("span");
+			count.className = "ly-step";
+			count.textContent = `${rounds} 轮`;
+			stage.appendChild(count);
+		}
+		this.list.appendChild(stage);
+
+		const gates = document.createElement("div");
+		gates.className = "ly-gates";
+		for (const [gate, record] of Object.entries(project.gates ?? {})) {
+			const chip = document.createElement("span");
+			chip.className = "ly-gate";
+			chip.textContent = `${GATE_NAMES[gate] ?? gate} ${GATE_STATUS[record.status] ?? record.status}`;
+			// Approved and returned are the two that carry a verdict someone
+			// gave; the other two are the ledger waiting, and read quietly.
+			if (record.status === "approved") chip.setAttribute("data-ok", "");
+			if (record.status === "returned") chip.setAttribute("data-back", "");
+			if (record.evidence) chip.title = record.evidence;
+			gates.appendChild(chip);
+		}
+		if (gates.childElementCount > 0) this.list.appendChild(gates);
+	}
+
 	private renderHistory(slug: string): void {
 		this.rows.clear();
 		this.list.replaceChildren();
@@ -545,6 +674,14 @@ export class LayersPanel {
 		back.textContent = `\u2190 ${slug}`;
 		back.addEventListener("click", () => this.closeHistory());
 		this.list.appendChild(back);
+
+		this.renderProject();
+		if (this.versions.length > 0) {
+			const head = document.createElement("div");
+			head.className = "ly-head2";
+			head.textContent = "VERSIONS";
+			this.list.appendChild(head);
+		}
 
 		for (const version of this.versions) {
 			const row = document.createElement("button");
@@ -619,6 +756,7 @@ export class LayersPanel {
 		selected: string | null;
 		history: string | null;
 		versions: number;
+		project: { stage: string; rounds: number } | null;
 		note: string;
 	} {
 		const selected = this.inspect()?.selectedElement() ?? null;
@@ -629,6 +767,9 @@ export class LayersPanel {
 			selected: selected ? labelOf(selected) : null,
 			history: this.history,
 			versions: this.versions.length,
+			project: this.project
+				? { stage: this.project.stage, rounds: this.project.iterations?.length ?? 0 }
+				: null,
 			note: this.note,
 		};
 	}
@@ -674,15 +815,15 @@ export const plugin: LabPlugin = {
 		{
 			name: "state",
 			signature:
-				"state(): { folded, rows, open, selected, history, versions, note }",
+				"state(): { folded, rows, open, selected, history, versions, project, note }",
 			summary:
-				"What the panel is showing. `rows` counts the rows currently rendered, which is one per screen plus the children of everything opened — not the size of the page. `selected` is the label of the row marked as selected (`div.lp-hero`, or a bare tag when it has no class), or null when the selection is elsewhere or empty. `history` is the slug whose versions are on screen instead of the tree, or null for the tree; `versions` is how many were read; `note` is the one line the panel is saying about itself, empty when it has nothing to say.",
+				"What the panel is showing. `rows` counts the rows currently rendered, which is one per screen plus the children of everything opened — not the size of the page. `selected` is the label of the row marked as selected (`div.lp-hero`, or a bare tag when it has no class), or null when the selection is elsewhere or empty. `history` is the slug whose versions are on screen instead of the tree, or null for the tree; `versions` is how many were read; `project` is that design's workshop ledger — its stage and how many rounds have been logged — or null for a screen nobody opened a workshop for, which is most of them; `note` is the one line the panel is saying about itself, empty when it has nothing to say.",
 		},
 		{
 			name: "openHistory",
 			signature: "openHistory(slug: string): Promise<void>",
 			summary:
-				"Swap the panel from the element tree to one design's version history, and read it. A version is a commit that touched that design — the same history `design_version_history` reports, from the same code. Clicking a row asks what restoring it would change; a second click on the button that appears does it. Nothing is committed and HEAD never moves.",
+				"Swap the panel from the element tree to one design's history, and read it: the workshop ledger it belongs to (stage, gate verdicts, rounds logged) and then every version of it. A version is a commit that touched that design — the same history `design_version_history` reports, from the same code. Clicking a row asks what restoring it would change; a second click on the button that appears does it. Nothing is committed and HEAD never moves.",
 		},
 		{
 			name: "closeHistory",

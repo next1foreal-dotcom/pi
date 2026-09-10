@@ -417,11 +417,28 @@ describe("a design's versions, in the panel", () => {
 	let sent: { url: string; init?: RequestInit }[] = [];
 
 	/** Answers the two endpoints, and remembers exactly what was asked. */
-	function stubFetch(over: { versions?: unknown; restore?: unknown; fail?: boolean } = {}): void {
+	function stubFetch(
+		over: { versions?: unknown; restore?: unknown; project?: unknown; fail?: boolean } = {},
+	): void {
 		sent = [];
 		(globalThis as { fetch: unknown }).fetch = (url: string, init?: RequestInit) => {
 			sent.push({ url, ...(init ? { init } : {}) });
 			if (over.fail) return Promise.reject(new Error("no dev server"));
+			// A screen with no workshop answers 204, which is most of them.
+			//
+			// Modelled the way a real 204 behaves: no body, so `.json()` REJECTS.
+			// The first version of this stub resolved an empty object instead,
+			// and the status guard it was meant to be testing turned out to be
+			// untested — inverting the guard kept every test green.
+			if (url.startsWith("/__lab-fs/project?")) {
+				return Promise.resolve({
+					status: over.project ? 200 : 204,
+					json: () =>
+						over.project
+							? Promise.resolve(over.project)
+							: Promise.reject(new SyntaxError("Unexpected end of JSON input")),
+				} as Response);
+			}
 			const body = url.startsWith("/__lab-fs/versions?")
 				? (over.versions ?? { ok: true, versions: VERSIONS, dirty: ["screen.tsx"] })
 				: (over.restore ?? {
@@ -431,7 +448,7 @@ describe("a design's versions, in the panel", () => {
 						applied: false,
 						dirty: ["a.tsx"],
 					});
-			return Promise.resolve({ json: () => Promise.resolve(body) } as Response);
+			return Promise.resolve({ status: 200, json: () => Promise.resolve(body) } as Response);
 		};
 	}
 
@@ -454,7 +471,54 @@ describe("a design's versions, in the panel", () => {
 		expect(host.querySelector(".ly-back")?.textContent).toContain("playground");
 		// The tree is gone while the history is up — one panel, two things to say.
 		expect(host.querySelectorAll(".ly-row").length).toBe(0);
-		expect(sent[0]?.url).toBe("/__lab-fs/versions?slug=playground");
+		expect(sent.map((x) => x.url)).toContain("/__lab-fs/versions?slug=playground");
+	});
+
+	it("shows the workshop ledger above the versions", async () => {
+		// `design_project_*` has kept this since G-375 and none of it was ever
+		// visible from the canvas. Fei asked twice.
+		stubFetch({
+			project: {
+				ok: true,
+				stages: ["idea", "wireframe", "draft", "final"],
+				manifest: {
+					brief: "a landing page",
+					stage: "draft",
+					gates: {
+						wireframe: { status: "approved", at: "x", evidence: "Fei said so" },
+						final: { status: "pending", at: "x" },
+					},
+					iterations: [{ summary: "one", at: "x" }, { summary: "two", at: "x" }],
+				},
+			},
+		});
+		panel = new LayersPanel(host);
+		await panel.openHistory("playground");
+
+		expect(panel.state().project).toEqual({ stage: "draft", rounds: 2 });
+		const text = host.querySelector(".ly-list")?.textContent ?? "";
+		expect(text).toContain("draft");
+		expect(text).toContain("3 / 4");
+		expect(text).toContain("2 轮");
+		// A verdict someone gave reads louder than the ledger waiting.
+		const approved = host.querySelector(".ly-gate[data-ok]");
+		expect(approved?.textContent).toContain("线框");
+		expect(approved?.getAttribute("title")).toBe("Fei said so");
+		expect(host.querySelector(".ly-gate[data-back]")).toBeNull();
+	});
+
+	it("and says nothing at all for a screen with no workshop", async () => {
+		// Most screens have none. A 204 is not an error and not an empty
+		// section — it is a screen somebody drew without opening a workshop.
+		stubFetch();
+		panel = new LayersPanel(host);
+		await panel.openHistory("playground");
+
+		expect(panel.state().project).toBeNull();
+		expect(host.querySelector(".ly-gate")).toBeNull();
+		expect(host.querySelector(".ly-list")?.textContent ?? "").not.toContain("PROJECT");
+		// The versions are still there — one read failing must not lose the other.
+		expect(versionRows().length).toBe(2);
 	});
 
 	it("a name someone chose wins the line over a commit subject", async () => {

@@ -3,6 +3,7 @@ import path from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin, ViteDevServer } from "vite";
 import { stampOidOnEvent } from "../her/src/design-canvas/store.ts";
+import { DESIGN_STAGES, getProject } from "../her/src/her-core/design-project.ts";
 import {
   listVersions,
   restoreDesign,
@@ -111,6 +112,34 @@ export function labFsPlugin(projectRoot: string): Plugin {
           return;
         }
         const url = req.url.split("?")[0];
+
+        /**
+         * GET /project?slug=<id> — the design workshop ledger for this screen.
+         *
+         * The same `design-project.ts` her tools write, read straight off disk
+         * rather than copied anywhere: which stage the work is at, which gates
+         * have a verdict, and how many rounds have been logged. Most screens
+         * have no manifest at all, and 204 is the honest answer for those —
+         * a screen without a project is not an error, it is a screen someone
+         * drew without opening a workshop for it.
+         */
+        if (req.method === "GET" && url === "/project") {
+          const slug = new URL(req.url, "http://lab").searchParams.get("slug") ?? "";
+          void (async () => {
+            try {
+              const manifest = await getProject(slug);
+              if (!manifest) {
+                res.statusCode = 204;
+                res.end();
+                return;
+              }
+              json(res, 200, { ok: true, manifest, stages: DESIGN_STAGES });
+            } catch (error) {
+              json(res, 400, { ok: false, error: String(error) });
+            }
+          })();
+          return;
+        }
 
         /**
          * GET /versions?slug=<id> — this design's history, newest first.
