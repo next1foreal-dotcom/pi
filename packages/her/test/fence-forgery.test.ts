@@ -43,6 +43,7 @@ test("inbox messages cannot forge their way out of the fence", () => {
 		at: "2026-08-11T16:00:00.000Z",
 		urgent: false,
 		origin: "peer-1",
+		hop: 0,
 		body: ATTACK(INBOX_MESSAGE_END),
 		path: "x.md",
 	};

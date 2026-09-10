@@ -112,7 +112,7 @@ import {
 	writeCostReport,
 	writeMessage,
 } from "./her-core/index.ts";
-import { deliverIdleNotice, drainIdleWatches, requestIdleNotice } from "./her-core/messages.ts";
+import { chainHop, deliverIdleNotice, drainIdleWatches, requestIdleNotice } from "./her-core/messages.ts";
 import {
 	clearPresence,
 	formatPresenceLine,
@@ -1355,6 +1355,12 @@ export default function her(pi: ExtensionAPI): void {
 			body: Type.Optional(Type.String({ description: "Message body; the recipient treats it as untrusted data" })),
 			urgent: Type.Optional(Type.Boolean({ description: "Request immediate gated wake instead of batching" })),
 			notify_when_idle: Type.Optional(Type.Boolean()),
+			reply_to: Type.Optional(
+				Type.String({
+					description:
+						"Chain id shown as chain: on an inbox message. Pass when replying; omit to start a new topic.",
+				}),
+			),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			const notifyWhenIdle = params.notify_when_idle === true;
@@ -1372,12 +1378,24 @@ export default function her(pi: ExtensionAPI): void {
 			let stored: { path: string } | undefined;
 			let wake: Awaited<ReturnType<typeof maybeWake>> = { woke: false, reason: "not-attempted" };
 			if (body.trim()) {
+				const replyTo = typeof params.reply_to === "string" ? params.reply_to.trim() : "";
+				const replyToSafe = /^[A-Za-z0-9._-]+$/.test(replyTo);
+				let origin: string;
+				let hop: number;
+				if (replyTo && replyToSafe) {
+					origin = replyTo;
+					hop = await chainHop(memoryDir, from, origin);
+				} else {
+					origin = globalThis.crypto.randomUUID();
+					hop = 0;
+				}
 				stored = await writeMessage(memoryDir, {
 					from,
 					to: params.to,
 					at: new Date().toISOString(),
 					urgent: params.urgent ?? false,
-					origin: from,
+					origin,
+					hop,
 					body,
 				});
 				try {

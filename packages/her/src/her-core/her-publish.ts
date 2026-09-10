@@ -97,16 +97,16 @@ export async function herPublish(
 	if (archived && previousSessionId && currentSessionId && previousSessionId !== currentSessionId) {
 		try {
 			const send = input.sendMessage ?? writeMessage;
-			await send(
-				memoryRoot,
-				buildPublishWakeMessage({
+			await send(memoryRoot, {
+				...buildPublishWakeMessage({
 					slug,
 					archivedN: archived.entry.n,
 					label,
 					fromSessionId: currentSessionId,
 					toSessionId: previousSessionId,
 				}),
-			);
+				hop: 0,
+			});
 		} catch (err) {
 			console.warn(`[her-publish] wake previous publisher failed: ${err}`);
 		}
