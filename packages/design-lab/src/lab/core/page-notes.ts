@@ -529,6 +529,18 @@ export class StickyNotes {
 		// frame tick never hears about it. Capture, because scroll does not bubble.
 		window.addEventListener("scroll", this.syncRegions, true);
 		document.addEventListener("visibilitychange", this.onVisibility);
+		// Four seconds, plus a pull the moment this mounts and another the moment
+		// the tab comes back (`onVisibility`). A hidden page is not polled,
+		// because nobody is looking at it.
+		//
+		// That last clause is measurable as a bug and is not one. A headless or
+		// collapsed browser pane reports `document.hidden === true` for its whole
+		// life, so replies appear only when something else happens to wake the
+		// page — 2026-09-10 that read as "the canvas takes 18 seconds to sync",
+		// then as 42, and it went into a commit message as a debt before the
+		// pane, rather than the code, turned out to be the thing being measured.
+		// The endpoint answers in 5ms. Measure this from a visible window or do
+		// not measure it.
 		this.pollTimer = setInterval(() => {
 			if (!document.hidden) void this.pullThreads();
 		}, 4000);
