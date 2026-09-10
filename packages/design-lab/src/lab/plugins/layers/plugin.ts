@@ -182,6 +182,20 @@ export class LayersPanel {
 	private list: HTMLDivElement;
 	private fold: HTMLSpanElement;
 	private open = new Set<Element>();
+	/**
+	 * The subset of `open` that a reveal opened, rather than a person.
+	 *
+	 * Without this the tree only ever grows. Every canvas click opens the whole
+	 * ancestor chain of whatever was clicked and nothing ever closes, so a few
+	 * minutes of pointing leaves a panel of branches you did not ask for
+	 * standing over the canvas — measured 2026-09-10: 29 rows, of which about
+	 * twenty were a log list left open from an earlier selection that had
+	 * nothing to do with the one being shown.
+	 *
+	 * A branch you opened by hand is a decision and stays. A branch a reveal
+	 * opened is scaffolding for one selection and comes down with it.
+	 */
+	private autoOpen = new Set<Element>();
 	private rows = new Map<Element, HTMLElement>();
 	private closed = false;
 	private folded = false;
@@ -243,11 +257,17 @@ export class LayersPanel {
 			this.render();
 			// Selecting on the canvas opens the tree to it. That is the whole
 			// point of having both: point at a thing and the list says where it
-			// lives; pick from the list and the canvas outlines it. Only when
-			// the row is not already on screen, so a press does not fight
-			// whatever branches were deliberately closed.
+			// lives; pick from the list and the canvas outlines it.
+			//
+			// Every selection, not only the ones that need opening. This used to
+			// skip a row that was already on screen, to avoid fighting branches
+			// someone had closed on purpose — but that is what `autoOpen` is
+			// for now, and skipping meant the tidy-up never ran in the case that
+			// needed it most: measured on the real canvas, selecting a section
+			// that happened to be visible left three levels of an unrelated log
+			// list standing, twenty rows of it.
 			const selected = this.inspect()?.selectedElement() ?? null;
-			if (selected && !this.rows.has(selected)) this.reveal(selected);
+			if (selected) this.reveal(selected);
 		}, 0);
 	};
 
@@ -279,13 +299,16 @@ export class LayersPanel {
 		if (this.closed) return false;
 		const scroll = el.closest("[data-screen-scroll]");
 		if (!scroll) return false;
+		// Down comes the last reveal's scaffolding, before this one's goes up.
+		for (const node of this.autoOpen) this.open.delete(node);
+		this.autoOpen.clear();
 		// Open up to the tree's own root, which is the content wrapper when the
 		// frame has one -- opening past it would mark nodes that have no row.
 		const root = scroll.querySelector("[data-screen-content]") ?? scroll;
-		this.open.add(root);
+		this.markOpen(root);
 		let node: Element | null = el.parentElement;
 		while (node && node !== root && root.contains(node)) {
-			this.open.add(node);
+			this.markOpen(node);
 			node = node.parentElement;
 		}
 		if (this.folded) this.setFolded(false);
@@ -293,6 +316,26 @@ export class LayersPanel {
 		// jsdom has no scroller, so this is a seam and not a direct call.
 		this.rows.get(el)?.scrollIntoView?.({ block: "nearest" });
 		return true;
+	}
+
+	/** Open a branch as scaffolding: the next reveal takes it back down. */
+	private markOpen(el: Element): void {
+		if (!this.open.has(el)) this.autoOpen.add(el);
+		this.open.add(el);
+	}
+
+	/**
+	 * Open or close a branch because someone said to.
+	 *
+	 * Either way it stops being scaffolding: opening it by hand is a decision
+	 * the next reveal has no business undoing, and closing it by hand is one
+	 * too.
+	 */
+	private toggleOpen(el: Element): void {
+		this.autoOpen.delete(el);
+		if (this.open.has(el)) this.open.delete(el);
+		else this.open.add(el);
+		this.render();
 	}
 
 	private render(): void {
@@ -348,9 +391,7 @@ export class LayersPanel {
 			// this reach the row would select something every time you opened a
 			// branch to look inside it.
 			e.stopPropagation();
-			if (this.open.has(el)) this.open.delete(el);
-			else this.open.add(el);
-			this.render();
+			this.toggleOpen(el);
 		});
 
 		const name = document.createElement("span");
@@ -385,11 +426,7 @@ export class LayersPanel {
 				this.render();
 			});
 		} else {
-			row.addEventListener("click", () => {
-				if (this.open.has(el)) this.open.delete(el);
-				else this.open.add(el);
-				this.render();
-			});
+			row.addEventListener("click", () => this.toggleOpen(el));
 			// Its versions live behind this, not in the tree. A screen's history
 			// is about the whole design; the rows under it are about one element
 			// each, and mixing the two would make both harder to read.
@@ -599,6 +636,7 @@ export class LayersPanel {
 	destroy(): void {
 		if (this.closed) return;
 		this.closed = true;
+		this.autoOpen.clear();
 		window.removeEventListener("pointerup", this.onUp, true);
 		this.panel.remove();
 		this.open.clear();

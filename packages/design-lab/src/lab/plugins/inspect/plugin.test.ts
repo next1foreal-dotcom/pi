@@ -41,6 +41,9 @@ let origin: Point;
 let live: Inspector | null = null;
 let reactRoot: Root | null = null;
 
+let screenPicks: (string | null)[] = [];
+let currentScreen: string | null = null;
+
 function stubObjects(): LabObjects {
   return {
     register() {},
@@ -49,8 +52,11 @@ function stubObjects(): LabObjects {
     setLayout() {},
     beginMove() {},
     beginResize() {},
-    select() {},
-    selectedId: () => null,
+    select(id) {
+      screenPicks.push(id);
+      currentScreen = id;
+    },
+    selectedId: () => currentScreen,
   };
 }
 
@@ -233,6 +239,8 @@ function setMode(mode: string): void {
 beforeEach(() => {
   camera = { x: 0, y: 0, z: 1 };
   origin = { x: 0, y: 0 };
+  screenPicks = [];
+  currentScreen = null;
   buildLab();
 });
 
@@ -1237,5 +1245,47 @@ describe("where the toolbar goes", () => {
     const at = placeBar(box(300, 300), BAR, [panel], VIEW);
     expect(at.x).toBeLessThanOrEqual(600);
     expect(at.x + BAR.width).toBeGreaterThanOrEqual(300);
+  });
+});
+
+describe("one selection, not two", () => {
+  // A size badge reading `1440 x 2327` over one screen because it was the last
+  // one pressed, and an outline with a toolbar over an element in a different
+  // one. Two selections, two places, two different things. Fei, 2026-09-10:
+  // 「好怪」.
+  //
+  // They are not two questions. Picking a heading is saying which screen you
+  // are working on as much as which element, and Figma answers the same way:
+  // selecting a layer inside a frame does not leave another frame selected.
+
+  it("selecting an element moves the canvas to that element's screen", async () => {
+    const { button } = await mountProbe();
+    live = createInspect(ctxFor());
+
+    live.selectElement(button);
+    expect(screenPicks).toEqual(["playground"]);
+  });
+
+  it("and does not bump the canvas for a screen it is already on", async () => {
+    // `select` re-renders the lab. Doing that on every re-selection of the
+    // same screen is rent paid for nothing.
+    const { button, card } = await mountProbe();
+    live = createInspect(ctxFor());
+
+    live.selectElement(button);
+    live.selectElement(card);
+    live.selectElement(button);
+    expect(screenPicks).toEqual(["playground"]);
+  });
+
+  it("says nothing to the canvas about a node with no screen", async () => {
+    const { card } = await mountProbe();
+    live = createInspect(ctxFor());
+    const loose = document.createElement("div");
+    card.appendChild(loose);
+    // Inside a screen but made by hand: it has a screen id, so this is really
+    // the guard for a snapshot that could not name one.
+    live.selectElement(loose);
+    expect(screenPicks.filter((id) => id === null)).toEqual([]);
   });
 });

@@ -21,7 +21,7 @@
  *    when the screen has been activated by double-click, and in tests.
  */
 
-import type { LabPlugin, LabPluginContext } from "../../plugin-api";
+import type { LabObjects, LabPlugin, LabPluginContext } from "../../plugin-api";
 import type { Camera, Point, Rect } from "../../core/types";
 import { subscribeScreenHotUpdate } from "../../spotlight/hmr";
 import {
@@ -359,6 +359,8 @@ export class Inspector {
   private getCamera: () => Camera;
   /** The canvas's own size. The toolbar has to stay inside it. */
   private getViewport: () => { width: number; height: number };
+  /** The canvas's object selection, so it can be kept from disagreeing with ours. */
+  private objects: LabObjects | null;
   private elementsAt: InspectDeps["elementsAt"];
   private root: HTMLDivElement;
   private box: HTMLDivElement;
@@ -381,8 +383,10 @@ export class Inspector {
     getOrigin: () => Point;
     getCamera: () => Camera;
     getViewport?: () => { width: number; height: number };
+    objects?: LabObjects;
     elementsAt?: InspectDeps["elementsAt"];
   }) {
+    this.objects = opts.objects ?? null;
     this.getOrigin = opts.getOrigin;
     this.getCamera = opts.getCamera;
     this.getViewport =
@@ -970,6 +974,7 @@ export class Inspector {
     // under it draws two rings around one element, which reads as neither.
     if (this.hovered === el) this.clearHover();
     this.snapshot = this.capture(el);
+    this.followScreen(this.snapshot.screenId);
     this.label.textContent = this.labelText(this.snapshot);
     this.syncVerbs();
     this.paint();
@@ -1018,6 +1023,29 @@ export class Inspector {
       width: r.width / cam.z,
       height: r.height / cam.z,
     };
+  }
+
+  /**
+   * Move the canvas's own selection to the screen this element is in.
+   *
+   * Two selections used to be lit at once, in two places, about two different
+   * things: a size badge reading `1440 × 2327` over one screen because it was
+   * the last one pressed, and an outline with a toolbar over an element in
+   * another. Measured 2026-09-10, and Fei's word for it was 「好怪」.
+   *
+   * They are not two questions. Picking a heading in the layers tree is saying
+   * which screen you are working on as much as which element, and the badge
+   * and the ▶ on a screen's label should be about the screen you are in.
+   * Figma answers the same way: selecting a layer inside a frame does not
+   * leave some other frame selected.
+   *
+   * Only when it differs, because `selectObject` bumps React and there is no
+   * reason to do that for every re-selection of the same screen.
+   */
+  private followScreen(screenId: string | null): void {
+    if (!screenId || !this.objects) return;
+    if (this.objects.selectedId() === screenId) return;
+    this.objects.select(screenId);
   }
 
   /** The node the outline is on, for a caller that needs the node and not a description of it. */
@@ -1118,6 +1146,7 @@ export function createInspect(
     getOrigin: ctx.getOrigin,
     getCamera: ctx.getCamera,
     getViewport: ctx.getViewport,
+    objects: ctx.objects,
     ...(deps?.elementsAt ? { elementsAt: deps.elementsAt } : {}),
   });
 }

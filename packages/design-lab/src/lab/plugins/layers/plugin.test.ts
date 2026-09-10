@@ -247,6 +247,57 @@ describe("the tree and the canvas point at each other", () => {
 		]);
 	});
 
+	it("takes down the last reveal's scaffolding before putting up its own", async () => {
+		// Without this the tree only grows. Every canvas click opens a whole
+		// ancestor chain and nothing ever closes; measured on the real canvas,
+		// 29 rows of which about twenty were a log list left open from an
+		// earlier selection that had nothing to do with the one on screen.
+		panel = new LayersPanel(host);
+		const link = document.querySelector("a") as HTMLElement;
+		const heading = document.querySelector("h1") as HTMLElement;
+
+		panel.reveal(link);
+		expect(labels()).toContain("a");
+		panel.reveal(heading);
+
+		// The heading's own path is open; the link's branch is not still open
+		// underneath it.
+		expect(labels()).toContain("h1.title");
+		expect(labels()).not.toContain("a");
+	});
+
+	it("but never takes down a branch someone opened by hand", async () => {
+		// Opening a branch is a decision. A reveal is scaffolding for one
+		// selection; it has no business undoing the other kind.
+		//
+		// Asserted on the branch's CONTENTS, not on its row: a row survives
+		// either way, because its parent gets reopened on the new path. The
+		// first version of this test checked the row and passed with the rule
+		// inverted — a green that meant nothing.
+		panel = new LayersPanel(host);
+		rowFor("playground").click();
+		twistOf("div.playground-root").click();
+		twistOf("p").click();
+		expect(labels()).toContain("a");
+
+		panel.reveal(document.querySelector("h1") as HTMLElement);
+		expect(labels()).toContain("h1.title");
+		expect(labels(), "the hand-opened paragraph is still open").toContain("a");
+	});
+
+	it("and a hand on a branch a reveal opened makes it a decision", async () => {
+		panel = new LayersPanel(host);
+		const link = document.querySelector("a") as HTMLElement;
+		panel.reveal(link);
+		// Close and reopen the paragraph by hand: now it is his, not the
+		// reveal's, and the next reveal leaves it alone.
+		twistOf("p").click();
+		twistOf("p").click();
+
+		panel.reveal(document.querySelector("h1") as HTMLElement);
+		expect(labels()).toContain("a");
+	});
+
 	it("and says no to a node that is not on a screen", () => {
 		panel = new LayersPanel(host);
 		const loose = document.createElement("div");
