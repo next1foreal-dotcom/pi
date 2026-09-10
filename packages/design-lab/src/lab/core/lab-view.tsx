@@ -1364,6 +1364,20 @@ export const HELP: { title: string; rows: [string[], string][] }[] = [
     ],
   },
   {
+    // The group that was missing, and the reason none of this was findable.
+    // Selecting an element has worked since the inspect plugin shipped and the
+    // only way to learn the chord was to be told it — on 2026-09-10, days in,
+    // he asked what the notes were even for. A sheet that does not name a
+    // gesture is a gesture that does not exist.
+    title: "Elements",
+    rows: [
+      [["Hover"], "Outline whatever is under the cursor"],
+      [["Click"], "Select it — its name, its file and line, and the verbs"],
+      [["Shift", "click"], "Select even inside a screen you are locked into"],
+      [["Double-click"], "Edit that piece of copy, in place"],
+    ],
+  },
+  {
     title: "Files on disk",
     rows: [
       [["Ctrl", "D"], "Duplicate — copies the folder"],
