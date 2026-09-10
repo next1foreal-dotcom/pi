@@ -164,3 +164,58 @@ node -e "const s=require(require('os').homedir()+'/.pi/agent/settings.json');con
 - **step 8 边界(Fable 划)**:真 loora = `D:\@APPProject\brilliant-local`,**非 git 仓、无回退锚点、在她写集之外** → 本轮只读它的 token 系统,产出 `to-code.md`(映射表/token 债/偏离/交接清单),**不落地**;落地是 Fei 单独一次决定。
 - **预检口径变更**:分类器换成网关那条路之后,**deepseek ping 不再构成证据**。新四项 = automode.json 的 `autoMode.classifierModel` 是谁 · 网关 `/api/oauth/status?provider=xai` state=connected · 令牌 ≥45 分钟(分类器与她的脑共用这条路,一死两头断) · 无 `-p` 进程 + 写集 mtime。
 - **接手注意**:samantha 主克隆 07:33:40 起立着 G-419 合并(MERGE_HEAD `35891654c`),**合并期间 git 拒绝 partial commit**,step6c 的 5 个产物因此未入库,外部快照在 `scratchpad/step6c-rescue/`;合并落地后按 pathspec 补提。**别在别人 MERGE_HEAD 立着时 `git add`**——我犯了一次,已用 `git restore --staged` 只退回自己那几条。
+
+## 十三、9/10 元素层三件套(Fable 会话 a6cb6b91)——hover / 工具栏 / 图层树,全部按 doop 的机制重做
+
+起点是 Fei 的一句话:「hover 上去就出框,还有工具栏,这些我们都要学习一下啊」,加上「doop 的 layer 我们可能也需要哦」。四个提交,全部已推 `her/phase-0-pi-hygiene`:
+
+| 提交 | 是什么 |
+|---|---|
+| `f3b5367c6` | hover 描边 + 标签,以及**平点即选** |
+| `0ed1e0455` | 选中元素上的工具栏:`说 / 改文字 / 复制位置` |
+| `4147e8084` | LAYERS 图层树,与画布**双向互指** |
+| `2e7ff0f32` | 快捷键面板补上 ELEMENTS 一栏 |
+
+### 三条以前一直是坏的(不是新功能,是从来没人看得见)
+
+1. **两个覆盖层从写下那天起就画在屏幕底下**。`[data-plugin-layer]` 是 `z-index: auto`,不构成 stacking context,于是每个插件的根都直接跟 lab 自己的梯子比:没写 z-index 就落进 auto 桶,**在 z-index:1 的 screens 之下**。实测:选中一个 h1,框中心的元素栈是 shield / scroll / frame / group / li-box,截图上那个 h1 什么都没画。`.li-root` → 3,`.lc-root`(组件描边,同病)→ 2。lab-css.test.ts 三面设闸,包括最阴的那面——给 plugin layer 加个 z-index 会让这些数字**悄悄变成 layer-local 而一个字符都不用改**。
+2. **墨色画在墨色上**。原来是 `outline:1px solid #1c1c1c` + 6% 墨底,在白页上是描边,在深色页上什么都不是——而画布上深浅屏幕并排放着,配色又是黑白灰、没有别家那支强调色可用。现在两层:白发丝 + 外面一圈暗环,深底靠发丝、浅底靠暗环,底色不用猜。两种底都截了图。
+3. **`data-lab-chrome` 是工具栏能被点动的唯一原因**。画布不认识的平按会起手拖动:`canvas-input` 调 `preventDefault` 并在 root 上抓 pointer capture,而 pointerdown 上的 preventDefault **会掐掉兼容鼠标事件,于是 `click` 根本不发生**。实测:按钮只收到 `pointerdown`,`改文字` 看着活的、按了没反应。属性面板和 coords 芯片早就戴着这个属性——是既有家法,不是新发明。lab-view 那个调用点的注释对 frame 说的是同一句话:pan 抢走的 capture 会把 click 重定向。
+
+### 交互的判据(一句话,后面所有分支都从它推)
+
+**「点下去会选中它的时候,才画那个框。」** explore 模式一直画,因为每块屏幕都盖着 shield、平点本来就到不了下面的 app;锁进屏幕之后只在按住 Shift 时画,因为那时 app 是活的,抢它的点击会让这里变成一个更糟的试东西的地方。这正是 doop 的那笔交易和它的理由——它的 frame 上盖着 `{(!editing || panMode) && <div className="absolute inset-0" />}`,click-to-select 之所以免费全靠那层 shield。
+
+命中节流 16ms 用的是 onlook 的数,不是 doop 的 40:doop 要 postMessage 往沙箱 iframe 里走一个来回,我们是在同一个 document 里走节点。
+
+平点拆成 down 和 up 两半:拖动的起手跟点击一模一样,在 down 上决定要么抢走拖动、要么每次平移都误触发。走超过 3px 就当拖动,**选中原样不动**——平移画布不是忘掉你在看什么的理由。
+
+### 图层树比 doop 的简单,因为地基不同
+
+doop 的 frame 是沙箱 iframe 里的 HTML,树要从它发出去的文档重建,每行还得挂一条 css path 两边对齐。我们的屏幕就是这个 document 里的 React 组件:**一行就是那个节点**,从行选中和在画布上点选是同一个调用同一个参数。所以这个插件**完全不存选中状态**——它问 `inspect`,谁拿着那个节点就标谁。
+
+- 没打开的分支不走:一块合上的屏幕是一行,不是它装着的那一页的每个节点一行。
+- 屏幕直接展开到自己的第一个元素:`screen-frame` 那个带尺寸的包装现在标了 `data-screen-content`,树因此分得清 lab 的管道和设计本身,不然每块屏幕头上都顶着一行没用的东西。
+- 两个新缝:`inspect.selectedElement()` 给节点本身、`inspect.hoverElement()` 不用指针也能点亮。
+
+### 路上修掉的一个真缺陷
+
+行的 `pointerenter` 点亮描边,**同一次移动的 `pointermove` 随后带着这一行作为 target 到达**,于是移动处理器把面板刚要来的那个框清掉了——徽章上写着 `a.wf-link`,框是隐藏的。现在:在 lab 自己的 chrome 上方,画布不作答,**也不收回它上一次的答案**。这本来也是更好的规矩:离开元素去面板里读它,不等于放开它。
+
+### 两个量具坑(都进了 memory,这里只记指纹)
+
+- **`computer{action:"hover"}` 在没有缓存 screenshot 时不报错、静默变 no-op**。页面上零个 pointermove。`left_click` 在同样状态下会明说要先截图,hover 不说。补一张截图,同一条 hover 立刻送出两个 `isTrusted:true` 的移动事件。
+- **坐标系数不是 dpr**(推翻 9/6 那条记录):是 `innerWidth / 截图宽`,截图上限 800。9/6 那次 dpr 恰好等于系数,是巧合;9/10 实测 dpr=1 而系数在 1.276 / 1.0 / 1.099 之间随 pane 尺寸变。**pane 会在两次工具调用之间自己改尺寸**,而 design-lab 的 ResizeObserver 会因此重算相机——量和点必须放进同一个 `browser_batch`。
+
+### 验收口径
+
+828 个 design-lab 测试,`tsc --noEmit` 0。**每一道新闸都先看过红**,一次只掰一处,红在预期的那一条上,复原转绿。浏览器里用真鼠标走过:平点选中 `h1 page.tsx:84`;真移动在深色 landing 上描出 `span.lp-btn`、在白色 playground 上描出 `button.pg-btn`(而且那块屏幕还是 inert 的,这是 `8cb4d4e5d` 那个几何命中在出力);`说` 生成了带 `screen.tsx:51:13` 与 `PlaygroundScreen` 的白色评论便签(验完删掉了);`改文字` 锁进 playground 并在那一行打开编辑器;`复制位置` 落在剪贴板上的字节从 copy 事件上读回来核对过。
+
+**注意 `复制位置` 走的是老路**:本机预览面板里 `clipboard-write` 权限是 denied、`writeText` 在真点击上抛 NotAllowedError,所以后面留了 textarea + `execCommand` 的兜底——验证时真正跑的是兜底那条。两条都拒绝时按钮显示「复制不了」,不装作复制了。
+
+### 没做的 / 留给下一轮
+
+- `改文字` 在多文本节点上会正确地不出现(`<button>Count {n}</button>` 是两个文本节点、landing 的 h1 中间有 `<br>`)。这是保守的正确,不是缺陷;真要改这类文案得能重写整段 JSX,是另一件事。
+- 图层树按 DOM 走,行上还没显示渲染它的组件名(`_debugStack` 里有,`inspect` 选中时才解析)。加一列组件名是便宜的下一步。
+- 元素工具栏与右上属性面板会在屏幕右上角互相压住。doop 用左树右属性把中间让出来,我们现在也是,但工具栏是跟着元素飞的,压住时只能挪画布。
+
