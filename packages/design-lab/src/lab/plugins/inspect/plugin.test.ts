@@ -10,7 +10,7 @@ import { checkApiDocs } from "../../plugin-api";
 import type { LabObjects, LabPluginContext } from "../../plugin-api";
 import type { Camera, Point } from "../../core/types";
 import { resetSourceMaps } from "../../sourcemap/cache";
-import { createInspect, Inspector, plugin } from "./plugin";
+import { createInspect, Inspector, placeBar, plugin } from "./plugin";
 import { LAB_PACKAGE_DIR, locateElement, normalizeSpec } from "./source-location";
 import { ProbeCard } from "./probe-fixture";
 
@@ -72,8 +72,9 @@ function ctxFor(): LabPluginContext {
 function buildLab(): void {
   document.body.innerHTML = "";
   const root = document.createElement("div");
-  // The real lab stamps the mode on this element, and the plugin reads it: a
-  // plain click only selects where the shield already owns the press.
+  // The real lab stamps the mode on this element and the plugin reads it. The
+  // canvas starts in explore, which is where screens are the objects; the
+  // element layer lives in fill, and the tests that want it say so.
   root.setAttribute("data-mode", "explore");
   const layer = document.createElement("div");
   layer.setAttribute("data-lab-layer", "");
@@ -730,6 +731,10 @@ describe("the outline that follows the cursor", () => {
   beforeEach(() => {
     clock = 1_000_000;
     vi.spyOn(Date, "now").mockImplementation(() => clock);
+    // Fill is the ▶ on a screen's label: one design at 1:1, nothing else
+    // competing for the pointer. It is where the outline follows the cursor
+    // on its own; everywhere else it wants Shift, and that is asserted below.
+    setMode("fill");
   });
 
   afterEach(() => {
@@ -767,25 +772,30 @@ describe("the outline that follows the cursor", () => {
     expect(tag).not.toContain("pointer-events:auto");
   });
 
-  it("says nothing inside a locked screen, where the click is the app's", async () => {
-    const { button } = await mountProbe();
-    stubRect(button, { left: 300, top: 250, width: 80, height: 24 });
-    live = createInspect(ctxFor(), { elementsAt: () => [shield, button] });
-    setMode("focus");
+    for (const mode of ["explore", "focus"] as const) {
+    it(`says nothing in ${mode}, where a plain click is not ours`, async () => {
+      // explore: the objects are screens, and `startMove` selects the one you
+      // press — two selections answering one press is two tools fighting.
+      // focus: the app is live and the click is the app's.
+      const { button } = await mountProbe();
+      stubRect(button, { left: 300, top: 250, width: 80, height: 24 });
+      live = createInspect(ctxFor(), { elementsAt: () => [shield, button] });
+      setMode(mode);
 
-    moveOver(shield);
-    expect(hoverEl().hasAttribute("data-show")).toBe(false);
-  });
+      moveOver(shield);
+      expect(hoverEl().hasAttribute("data-show")).toBe(false);
+    });
 
-  it("unless you are holding the key that would take it", async () => {
-    const { button } = await mountProbe();
-    stubRect(button, { left: 300, top: 250, width: 80, height: 24 });
-    live = createInspect(ctxFor(), { elementsAt: () => [shield, button] });
-    setMode("focus");
+    it(`unless you are holding the key that would take it, in ${mode}`, async () => {
+      const { button } = await mountProbe();
+      stubRect(button, { left: 300, top: 250, width: 80, height: 24 });
+      live = createInspect(ctxFor(), { elementsAt: () => [shield, button] });
+      setMode(mode);
 
-    moveOver(shield, { shiftKey: true });
-    expect(hoverEl().hasAttribute("data-show")).toBe(true);
-  });
+      moveOver(shield, { shiftKey: true });
+      expect(hoverEl().hasAttribute("data-show")).toBe(true);
+    });
+  }
 
   it("gets out of the way while a screen is being dragged", async () => {
     const { button } = await mountProbe();
@@ -889,49 +899,79 @@ describe("the outline that follows the cursor", () => {
 });
 
 describe("the click the hover promises", () => {
-  it("a plain click selects, in explore, where the shield already owns it", async () => {
+  it("a plain click selects, in fill, where one design owns the window", async () => {
     const { button } = await mountProbe();
     live = createInspect(ctxFor(), { elementsAt: () => [shield, button] });
+    setMode("fill");
 
     press(shield, { clientX: 340, clientY: 262 });
-    pointer("pointerup", shield, { clientX: 340, clientY: 262 });
     expect(live.selection()?.tag).toBe("button");
   });
 
-  it("but not inside a locked screen, where the app is live", async () => {
-    // Taking a click here would make the lab a worse place to try the thing
-    // you are building. Shift-click is still there and still works.
+  it("and swallows it, so the live app does not get it too", async () => {
+    // The screen's content is `pointer-events: auto` in fill the same as in
+    // focus. A click that selected the heading AND submitted the form under it
+    // would teach you to distrust the outline.
     const { button } = await mountProbe();
     live = createInspect(ctxFor(), { elementsAt: () => [shield, button] });
-    setMode("focus");
+    setMode("fill");
 
-    press(button, { clientX: 340, clientY: 262 });
-    pointer("pointerup", button, { clientX: 340, clientY: 262 });
-    expect(live.selection()).toBeNull();
-
-    press(button, { clientX: 340, clientY: 262, shiftKey: true });
-    expect(live.selection()?.tag).toBe("button");
+    const Ctor =
+      (globalThis as { PointerEvent?: typeof MouseEvent }).PointerEvent ?? MouseEvent;
+    const event = new Ctor("pointerdown", {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      clientX: 340,
+      clientY: 262,
+    });
+    shield.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
   });
 
-  it("a press that travels is a drag, and a drag keeps the selection", async () => {
-    // Panning the canvas is not a reason to forget what you were looking at.
-    const { button, card } = await mountProbe();
-    live = createInspect(ctxFor(), { elementsAt: () => [shield, card] });
-    live.selectElement(button);
+  for (const mode of ["explore", "focus"] as const) {
+    it(`but a plain press is left alone in ${mode}`, async () => {
+      // explore: that press is a screen being selected or dragged. focus: it
+      // is the app's. Either way we neither take it nor answer it — and the
+      // selection stays, because panning the canvas or grabbing a screen is
+      // not a reason to empty the properties panel.
+      const { button } = await mountProbe();
+      live = createInspect(ctxFor(), { elementsAt: () => [shield, button] });
+      live.selectElement(button);
+      setMode(mode);
 
-    press(shield, { clientX: 340, clientY: 262 });
-    pointer("pointerup", shield, { clientX: 460, clientY: 300 });
-    expect(live.selection()?.className).toContain("probe-button");
-  });
+      const before = live.selection()?.className;
+      press(shield, { clientX: 340, clientY: 262 });
+      expect(live.selection()?.className).toBe(before);
+    });
 
-  it("and a plain click on empty canvas lets go", async () => {
+    it(`and Shift-click still takes it in ${mode}`, async () => {
+      const { button } = await mountProbe();
+      live = createInspect(ctxFor(), { elementsAt: () => [shield, button] });
+      setMode(mode);
+
+      press(shield, { clientX: 340, clientY: 262, shiftKey: true });
+      expect(live.selection()?.tag).toBe("button");
+    });
+  }
+
+  it("Shift-click on bare canvas is how you let go", async () => {
     const { button } = await mountProbe();
     live = createInspect(ctxFor(), { elementsAt: () => [] });
     live.selectElement(button);
     expect(live.selection()).not.toBeNull();
 
+    press(shield, { clientX: 900, clientY: 700, shiftKey: true });
+    expect(live.selection()).toBeNull();
+  });
+
+  it("and a click on bare canvas lets go in fill too", async () => {
+    const { button } = await mountProbe();
+    live = createInspect(ctxFor(), { elementsAt: () => [] });
+    live.selectElement(button);
+    setMode("fill");
+
     press(shield, { clientX: 900, clientY: 700 });
-    pointer("pointerup", shield, { clientX: 900, clientY: 700 });
     expect(live.selection()).toBeNull();
   });
 });
@@ -1101,23 +1141,101 @@ describe("the toolbar on the selected element", () => {
     stubBridge();
     live = createInspect(ctxFor(), { elementsAt: () => [] });
     live.selectElement(button);
+    setMode("fill");
 
     press(verb("say"), { clientX: 10, clientY: 10 });
-    pointer("pointerup", verb("say"), { clientX: 10, clientY: 10 });
     expect(live.selection()?.tag).toBe("button");
   });
 
-  it("flips below the box when there is no room above it", async () => {
+  it("leaves the bar where it is when it has no size to place", async () => {
+    // jsdom lays nothing out, so the bar measures 0x0 and there is nothing to
+    // decide. Saying so here keeps the next person from reading the missing
+    // DOM assertions below as an oversight — the geometry is a pure function
+    // and is tested as one.
     const { button } = await mountProbe();
     stubBridge();
     live = createInspect(ctxFor());
-
-    stubRect(button, { left: 300, top: 400, width: 80, height: 24 });
-    live.selectElement(button);
-    expect(boxEl().hasAttribute("data-flip")).toBe(false);
-
     stubRect(button, { left: 300, top: 4, width: 80, height: 24 });
-    live.onCameraWrite();
-    expect(boxEl().hasAttribute("data-flip")).toBe(true);
+    live.selectElement(button);
+    expect(barEl().style.transform).toBe("");
+  });
+});
+
+describe("where the toolbar goes", () => {
+  // Its natural place is above the outline's top-left. The window takes that
+  // away at the edges, and the lab's own panels take it away in the corners —
+  // the layers tree top-left, the properties panel top-right, both painting
+  // above this overlay on purpose. In fill mode, which is where elements are
+  // worked on now, a design fills the window and those corners are exactly
+  // where headings and navs live.
+
+  const BAR = { width: 200, height: 20 };
+  const VIEW = { width: 1000, height: 800 };
+  const box = (left: number, top: number, w = 300, h = 60) => ({
+    left,
+    top,
+    right: left + w,
+    bottom: top + h,
+  });
+
+  it("sits above the box, at its left edge, when nothing is in the way", () => {
+    const at = placeBar(box(400, 300), BAR, [], VIEW);
+    expect(at).toEqual({ x: 400, y: 300 - BAR.height - 3, flip: false });
+  });
+
+  it("drops below the box when the window has no room above", () => {
+    const at = placeBar(box(400, 2), BAR, [], VIEW);
+    expect(at.flip).toBe(true);
+    expect(at.y).toBe(2 + 60 + 3);
+  });
+
+  it("slides along the top of the box to get out from behind a panel", () => {
+    // Cheapest move: same edge, still above the thing it names.
+    const panel = { left: 0, top: 0, right: 250, bottom: 500 };
+    const at = placeBar(box(200, 300), BAR, [panel], VIEW);
+    expect(at.flip).toBe(false);
+    expect(at.x).toBe(250);
+  });
+
+  it("and stops short of a panel on the right", () => {
+    const panel = { left: 700, top: 0, right: 1000, bottom: 500 };
+    const at = placeBar(box(600, 300), BAR, [panel], VIEW);
+    expect(at.x + BAR.width).toBeLessThanOrEqual(700);
+    expect(at.flip).toBe(false);
+  });
+
+  it("drops below when sliding cannot clear it", () => {
+    // A narrow box under a wide panel: every x that stays over the box is
+    // still behind the panel, so the only way out is downwards.
+    const panel = { left: 0, top: 0, right: 600, bottom: 340 };
+    const at = placeBar(box(400, 300, 80), BAR, [panel], VIEW);
+    expect(at.flip).toBe(true);
+    expect(at.y).toBeGreaterThanOrEqual(360);
+  });
+
+  it("ignores a panel that is nowhere near it", () => {
+    const panel = { left: 0, top: 0, right: 250, bottom: 100 };
+    const at = placeBar(box(400, 300), BAR, [panel], VIEW);
+    expect(at).toEqual({ x: 400, y: 277, flip: false });
+  });
+
+  it("stays inside the window when there is nowhere clean at all", () => {
+    // Boxed in on both sides and top and bottom. Half under a panel still
+    // reads better than drawn off the canvas.
+    const panels = [
+      { left: 0, top: 0, right: 1000, bottom: 800 },
+    ];
+    const at = placeBar(box(900, 300), BAR, panels, VIEW);
+    expect(at.x).toBeGreaterThanOrEqual(0);
+    expect(at.x + BAR.width).toBeLessThanOrEqual(VIEW.width);
+  });
+
+  it("never leaves the box behind while dodging", () => {
+    // A bar parked next to a panel but nowhere near the element it names is
+    // worse than one that overlaps: it points at the wrong thing.
+    const panel = { left: 0, top: 0, right: 250, bottom: 500 };
+    const at = placeBar(box(300, 300), BAR, [panel], VIEW);
+    expect(at.x).toBeLessThanOrEqual(600);
+    expect(at.x + BAR.width).toBeGreaterThanOrEqual(300);
   });
 });

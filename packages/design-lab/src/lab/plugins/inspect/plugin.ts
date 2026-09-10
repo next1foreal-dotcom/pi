@@ -104,8 +104,8 @@ const CSS = `
 .li-root{position:absolute;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;z-index:3}
 .li-box{position:absolute;left:0;top:0;box-sizing:border-box;display:none;pointer-events:none;outline:1px solid rgba(255,255,255,0.92);box-shadow:0 0 0 2px rgba(0,0,0,0.55)}
 .li-box[data-show]{display:block}
-.li-bar{position:absolute;left:0;top:0;transform:translateY(-100%);margin-top:-3px;display:flex;align-items:stretch;max-width:520px;background:#1c1c1c;border-radius:3px 3px 3px 0;overflow:hidden;pointer-events:auto;font:500 11px/1.5 Inter,system-ui,sans-serif}
-.li-box[data-flip] .li-bar{transform:none;margin-top:3px;border-radius:0 0 3px 3px}
+.li-bar{position:absolute;left:0;top:0;display:flex;align-items:stretch;max-width:520px;background:#1c1c1c;border-radius:3px 3px 3px 0;overflow:hidden;pointer-events:auto;font:500 11px/1.5 Inter,system-ui,sans-serif}
+.li-box[data-flip] .li-bar{border-radius:0 0 3px 3px}
 .li-label{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#f1f1f1;padding:2px 7px}
 .li-verb{flex:none;appearance:none;border:0;border-left:1px solid rgba(255,255,255,0.16);background:transparent;color:#f1f1f1;font:inherit;padding:2px 8px;cursor:pointer;white-space:nowrap}
 .li-verb:hover{background:rgba(255,255,255,0.15)}
@@ -127,10 +127,14 @@ const CSS = `
 const HOVER_MS = 16;
 /** Under this much room above the box the tag would be drawn off the canvas. */
 const TAG_CLEAR_PX = 16;
-/** A press that travels further than this was a drag, not a click. */
-const CLICK_SLOP_PX = 3;
-/** Under this much room above the box the toolbar would be drawn off the canvas. */
-const BAR_CLEAR_PX = 26;
+/**
+ * The chrome the toolbar has to get out from behind.
+ *
+ * Both of these are `position: fixed` at a corner with a z-index above this
+ * overlay, which is right — a panel you are reading should not be covered by a
+ * label. It does mean the label has to move instead.
+ */
+const PANEL_SELECTOR = ".ly-panel[data-show]:not([data-folded]),.pp-panel[data-show],.lt-note";
 /** How long the copy verb says it worked before going back to its name. */
 const COPIED_MS = 1200;
 
@@ -263,6 +267,76 @@ async function copyText(text: string): Promise<boolean> {
   return ok;
 }
 
+/** Air between the outline and the label, so they read as two things. */
+const BAR_GAP_PX = 3;
+
+export type Box = { left: number; top: number; right: number; bottom: number };
+
+/**
+ * Where to put the toolbar so it can actually be read.
+ *
+ * Its natural place is the top-left corner of the outline, sitting above it.
+ * Two things take that away: the edges of the window, and the lab's own panels
+ * — the layers tree pinned top-left and the properties panel pinned top-right,
+ * both of which paint above this overlay on purpose. In fill mode, which is
+ * where elements are worked on now, a design fills the window and those two
+ * corners are exactly where headings and navs live.
+ *
+ * Three moves, in order, each one giving up as little as possible:
+ *
+ *  1. Slide it along the top of the box until it clears a panel horizontally.
+ *     Cheapest — it stays attached to the same edge and stays above the thing
+ *     it names.
+ *  2. If sliding cannot clear it (the box is narrower than the gap it needs),
+ *     drop it below the box, where the panels usually are not.
+ *  3. Clamp into the window last, so a bar on a box at the very edge is
+ *     trimmed by the window rather than drawn outside it.
+ *
+ * Nothing is done about a box entirely behind a panel: you cannot see the
+ * element either, so there is nothing to label.
+ */
+export function placeBar(
+  box: Box,
+  bar: { width: number; height: number },
+  panels: Box[],
+  view: { width: number; height: number },
+): { x: number; y: number; flip: boolean } {
+  const hits = (x: number, y: number): boolean => {
+    const rect = { left: x, top: y, right: x + bar.width, bottom: y + bar.height };
+    return panels.some(
+      (p) =>
+        rect.left < p.right &&
+        rect.right > p.left &&
+        rect.top < p.bottom &&
+        rect.bottom > p.top,
+    );
+  };
+  const above = box.top - bar.height - BAR_GAP_PX;
+  const below = box.bottom + BAR_GAP_PX;
+  for (const [y, flip] of [
+    [above, false],
+    [below, true],
+  ] as const) {
+    if (y < 0 || y + bar.height > view.height) continue;
+    const tries = [box.left];
+    for (const p of panels) {
+      // Just past its right edge, and just short of its left edge. Both are
+      // only offered while they keep the bar somewhere over the box.
+      tries.push(p.right, p.left - bar.width);
+    }
+    for (const x of tries) {
+      if (x < 0 || x + bar.width > view.width) continue;
+      if (x + bar.width < box.left || x > box.right) continue;
+      if (!hits(x, y)) return { x, y, flip };
+    }
+  }
+  // Nowhere clean. Keep it above and inside the window; a bar half under a
+  // panel still reads better than one drawn off the canvas.
+  const x = Math.max(0, Math.min(box.left, view.width - bar.width));
+  const flip = above < 0;
+  return { x, y: flip ? below : above, flip };
+}
+
 function textOf(el: Element): string {
   return (el.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, TEXT_SAMPLE_MAX);
 }
@@ -283,6 +357,8 @@ export type InspectDeps = {
 export class Inspector {
   private getOrigin: () => Point;
   private getCamera: () => Camera;
+  /** The canvas's own size. The toolbar has to stay inside it. */
+  private getViewport: () => { width: number; height: number };
   private elementsAt: InspectDeps["elementsAt"];
   private root: HTMLDivElement;
   private box: HTMLDivElement;
@@ -294,7 +370,6 @@ export class Inspector {
   private hoverTag: HTMLDivElement;
   private hovered: Element | null = null;
   private lastHover = 0;
-  private press: Point | null = null;
   private selected: Element | null = null;
   private snapshot: InspectSelection | null = null;
   private closed = false;
@@ -305,10 +380,17 @@ export class Inspector {
     host: HTMLElement;
     getOrigin: () => Point;
     getCamera: () => Camera;
+    getViewport?: () => { width: number; height: number };
     elementsAt?: InspectDeps["elementsAt"];
   }) {
     this.getOrigin = opts.getOrigin;
     this.getCamera = opts.getCamera;
+    this.getViewport =
+      opts.getViewport ??
+      (() => ({
+        width: typeof window === "undefined" ? 0 : window.innerWidth,
+        height: typeof window === "undefined" ? 0 : window.innerHeight,
+      }));
     this.elementsAt = opts.elementsAt ?? documentElementsAt;
     acquireStyles();
     this.root = document.createElement("div");
@@ -360,7 +442,6 @@ export class Inspector {
     this.root.appendChild(this.hoverBox);
     opts.host.appendChild(this.root);
     window.addEventListener("pointerdown", this.onPointerDown, true);
-    window.addEventListener("pointerup", this.onPointerUp, true);
     window.addEventListener("pointermove", this.onPointerMove, true);
     window.addEventListener("pointerleave", this.clearHover, true);
     window.addEventListener("scroll", this.onScroll, true);
@@ -526,24 +607,35 @@ export class Inspector {
   /**
    * Whether a plain click, right now, would select what is under the cursor.
    *
-   * In explore mode it would: every screen wears a `.shield` that already takes
-   * the press (that is what makes screens draggable), so the app underneath
-   * never sees a plain click and nothing is taken from it. This is the same
-   * bargain doop strikes and for the same reason -- its frames are covered by
-   * `{(!editing || panMode) && <div className="absolute inset-0" />}`, and
-   * click-to-select is free only because that shield is there.
+   * Fill mode, and only fill mode. That is the ▶ on a screen's label: camera
+   * pinned to z=1, rulers and grid gone, one design filling the window at the
+   * size it will really be. Nothing else on the canvas is competing for the
+   * pointer there, and it is the one place where an element is big enough to
+   * aim at.
    *
-   * Locked into a screen the shield is gone and the app is live: a click is the
-   * app's click, a keystroke is the app's keystroke, and taking either would
-   * make the lab a worse place to try the thing you are building. There
-   * Shift-click stays the chord.
+   * It was explore at first, on the reasoning that a screen's `.shield` takes
+   * the press anyway so the app loses nothing. True, and beside the point: in
+   * explore the objects are SCREENS. `startMove` selects the screen you press,
+   * which is what puts the ▶ and the size badge on its label -- so a plain
+   * press was selecting a screen and an element at once, and at the zoom you
+   * actually explore at (14% here) the element under the cursor is two pixels
+   * of something. Fei, 2026-09-10: 「现在我不太好选好像」. Two selections
+   * answering one press is not a feature with a rough edge, it is two tools
+   * fighting.
+   *
+   * Focus mode (double-click in) keeps its clicks for the app, because that is
+   * what focus is for: the counter counts, the field types. Fill is for
+   * looking, focus is for using, and Esc steps from one to the other.
+   *
+   * Shift-click still selects in every mode, live app included. That is the
+   * chord for the times you want an element and are not in fill.
    *
    * The point tool owns the pointer outright while it is armed.
    */
   private plainClickSelects(): boolean {
     const root = this.canvasRoot();
     if (!root || root.hasAttribute("data-pick")) return false;
-    return root.getAttribute("data-mode") === "explore";
+    return root.getAttribute("data-mode") === "fill";
   }
 
   /**
@@ -760,15 +852,61 @@ export class Inspector {
     }
     const r = el.getBoundingClientRect();
     const o = this.getOrigin();
+    const left = r.left - o.x;
     const top = r.top - o.y;
-    this.box.style.transform = `translate(${r.left - o.x}px, ${top}px)`;
+    this.box.style.transform = `translate(${left}px, ${top}px)`;
     this.box.style.width = `${r.width}px`;
     this.box.style.height = `${r.height}px`;
-    // Against the top of the canvas the toolbar would be drawn off it, and a
-    // toolbar you cannot reach is worse than one sitting a little low.
-    this.box.toggleAttribute("data-flip", top < BAR_CLEAR_PX);
     this.box.setAttribute("data-show", "");
+    this.placeToolbar(left, top, r.width, r.height);
   };
+
+  /**
+   * Put the toolbar somewhere it can be read, and offset it from the box.
+   *
+   * The bar is a child of the box, so `placeBar` works in the overlay's own
+   * coordinates and the answer comes back as a translate relative to the box's
+   * top-left. Measured after the box is shown, because a hidden element has no
+   * width and the bar's width is what the whole decision turns on.
+   */
+  private placeToolbar(left: number, top: number, width: number, height: number): void {
+    const view = this.getViewport();
+    const bar = this.bar.getBoundingClientRect();
+    if (bar.width === 0) return;
+    const spot = placeBar(
+      { left, top, right: left + width, bottom: top + height },
+      { width: bar.width, height: bar.height },
+      this.panelBoxes(),
+      view,
+    );
+    this.box.toggleAttribute("data-flip", spot.flip);
+    this.bar.style.transform = `translate(${spot.x - left}px, ${spot.y - top}px)`;
+  }
+
+  /**
+   * The lab's panels, in overlay coordinates.
+   *
+   * Read from the document rather than wired in: a panel is any chrome that
+   * paints above this overlay, the set of them changes as plugins come and go,
+   * and none of them is this plugin's business beyond "do not hide behind it".
+   * A folded or hidden panel has no box and is skipped by the size test.
+   */
+  private panelBoxes(): Box[] {
+    if (typeof document === "undefined") return [];
+    const o = this.getOrigin();
+    const out: Box[] = [];
+    document.querySelectorAll(PANEL_SELECTOR).forEach((el) => {
+      const r = el.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0) return;
+      out.push({
+        left: r.left - o.x,
+        top: r.top - o.y,
+        right: r.right - o.x,
+        bottom: r.bottom - o.y,
+      });
+    });
+    return out;
+  }
 
   private onScroll = (): void => {
     if (this.selected) this.paint();
@@ -784,46 +922,39 @@ export class Inspector {
     if (e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
       const direct = e.target instanceof Element ? this.qualify(e.target) : null;
       const hit = direct ?? this.pickAt(e.clientX, e.clientY);
-      if (!hit) return;
-      // Shift-click is ours outright, in every mode, live app included.
+      if (!hit) {
+        // Shift-click on bare canvas is how you let go without leaving the
+        // mode you are in. Not swallowed: the canvas may want it too.
+        this.clear();
+        return;
+      }
+      // On something: ours outright, in every mode, live app included.
       e.preventDefault();
       e.stopPropagation();
-      this.press = null;
       this.selectElement(hit);
       return;
     }
-    // A plain press is the canvas's -- panning, dragging a screen, using a live
-    // app. We touch nothing here and decide on the way up, because down is too
-    // early to know which of those it was.
-    this.press = this.plainClickSelects() ? { x: e.clientX, y: e.clientY } : null;
-    if (!this.press && this.selected) this.clear();
-  };
-
-  /**
-   * The other half of the plain click, and the reason it is split in two.
-   *
-   * A drag starts with exactly the same press as a click, so selecting on the
-   * way down would either steal the drag or fire on every pan. Deciding here
-   * costs nothing and leaves both gestures whole: travel further than the slop
-   * and it was a drag, so the selection is left exactly as it was -- panning
-   * the canvas is not a reason to forget what you were looking at.
-   *
-   * No `preventDefault` on this path. The press already reached the shield and
-   * the drag has already happened or not; we are only reading the result.
-   */
-  private onPointerUp = (e: PointerEvent): void => {
-    const from = this.press;
-    this.press = null;
-    if (!from || e.button !== 0 || this.closed) return;
-    if (
-      Math.abs(e.clientX - from.x) > CLICK_SLOP_PX ||
-      Math.abs(e.clientY - from.y) > CLICK_SLOP_PX
-    )
+    if (this.plainClickSelects()) {
+      // Fill mode: this press is ours outright, and swallowing it is the point.
+      // The screen's content is `pointer-events: auto` in fill the same as in
+      // focus, so a click that both selected the heading AND submitted the form
+      // under it would be the worst of both -- you would learn to distrust the
+      // outline. Nothing here is draggable (the canvas does not pan while
+      // locked, and `startMove` returns early outside explore), so there is no
+      // gesture left to protect by waiting for the release.
+      const direct = e.target instanceof Element ? this.qualify(e.target) : null;
+      const hit = direct ?? this.pickAt(e.clientX, e.clientY);
+      e.preventDefault();
+      e.stopPropagation();
+      if (hit) this.selectElement(hit);
+      else this.clear();
       return;
-    if (!this.plainClickSelects()) return;
-    const hit = this.pickAt(e.clientX, e.clientY);
-    if (hit) this.selectElement(hit);
-    else this.clear();
+    }
+    // Every other press is the canvas's -- panning, dragging a screen, using a
+    // live app -- and we touch nothing at all, the selection included. Dropping
+    // it here is what the first version did, and it meant that panning the
+    // canvas, or pressing a screen to drag it, silently emptied the properties
+    // panel. Shift-click on bare canvas is the way to let go on purpose.
   };
 
   /** Select a node directly. Returns the same payload as `selection()`. */
@@ -966,7 +1097,6 @@ export class Inspector {
     }
     this.clearHover();
     window.removeEventListener("pointerdown", this.onPointerDown, true);
-    window.removeEventListener("pointerup", this.onPointerUp, true);
     window.removeEventListener("pointermove", this.onPointerMove, true);
     window.removeEventListener("pointerleave", this.clearHover, true);
     window.removeEventListener("scroll", this.onScroll, true);
@@ -983,6 +1113,7 @@ export function createInspect(
     host: ctx.host,
     getOrigin: ctx.getOrigin,
     getCamera: ctx.getCamera,
+    getViewport: ctx.getViewport,
     ...(deps?.elementsAt ? { elementsAt: deps.elementsAt } : {}),
   });
 }
@@ -1002,7 +1133,7 @@ export const plugin: LabPlugin = {
       name: "selectAt",
       signature: "selectAt(x: number, y: number): selection | null",
       summary:
-        "Select the deepest screen element at a PAGE-unit point — the way to drive this without a mouse. Page units, not screen pixels, so the answer does not change when the canvas zooms. Lab chrome, sticky notes, labels, rulers and the scroller itself are never hit. Returns the new selection, or null (and clears) if nothing qualifies there. By hand the same thing happens on a plain click in explore mode, or on Shift-click in any mode including a screen that is locked in and live. A selected element also grows a toolbar above its outline carrying its name and location and three verbs — 说 (leave her a comment on this tag), 改文字 (lock into the screen and edit the copy in place), 复制位置 (put file:line:col on the clipboard) — and each one is hidden when it would not work.",
+        "Select the deepest screen element at a PAGE-unit point — the way to drive this without a mouse. Page units, not screen pixels, so the answer does not change when the canvas zooms. Lab chrome, sticky notes, labels, rulers and the scroller itself are never hit. Returns the new selection, or null (and clears) if nothing qualifies there. By hand the same thing happens on a plain click in FILL mode — the ▶ on a screen's label, where one design fills the window at 1:1 — or on Shift-click in any mode, including a screen that is locked in and live. A selected element also grows a toolbar above its outline carrying its name and location and three verbs — 说 (leave her a comment on this tag), 改文字 (lock into the screen and edit the copy in place), 复制位置 (put file:line:col on the clipboard) — and each one is hidden when it would not work.",
     },
     {
       name: "selectElement",
@@ -1020,7 +1151,7 @@ export const plugin: LabPlugin = {
       name: "hoverRect",
       signature: "hoverRect(): { x, y, width, height } | null",
       summary:
-        "Where the HOVER outline is, in PAGE units, or null when nothing is hovered. The hover outline is the light box that follows the cursor and carries a tag badge (`h1`, `button.cta`); it appears exactly when a click would select what is under the pointer — always in explore mode, and only while Shift is held inside a locked screen, where the app owns plain clicks. It never takes pointer events, so it costs the screens nothing. Use this to check the box really lands on the element without taking a screenshot.",
+        "Where the HOVER outline is, in PAGE units, or null when nothing is hovered. The hover outline is the light box that follows the cursor and carries a tag badge (`h1`, `button.cta`); it appears exactly when a click would select what is under the pointer — always in fill mode, and only while Shift is held anywhere else, where plain clicks belong to the canvas or to the live app. It never takes pointer events, so it costs the screens nothing. Use this to check the box really lands on the element without taking a screenshot.",
     },
     {
       name: "selectedElement",

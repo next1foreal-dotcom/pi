@@ -1369,11 +1369,16 @@ export const HELP: { title: string; rows: [string[], string][] }[] = [
     // only way to learn the chord was to be told it — on 2026-09-10, days in,
     // he asked what the notes were even for. A sheet that does not name a
     // gesture is a gesture that does not exist.
+    //
+    // The ▶ row leads because the mode is the whole rule now. Out on the
+    // canvas the objects are screens and a plain press belongs to them; in
+    // full size there is one design and nothing else wants the pointer.
     title: "Elements",
     rows: [
+      [["▶"], "Full size — and the one mode where a plain click picks elements"],
       [["Hover"], "Outline whatever is under the cursor"],
       [["Click"], "Select it — its name, its file and line, and the verbs"],
-      [["Shift", "click"], "Select even inside a screen you are locked into"],
+      [["Shift", "click"], "Select from any mode, live app included"],
       [["Double-click"], "Edit that piece of copy, in place"],
     ],
   },
