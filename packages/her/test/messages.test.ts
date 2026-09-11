@@ -13,8 +13,10 @@ import {
 	drainIdleWatches,
 	drainInbox,
 	formatInbox,
+	formatInboxWakeNotice,
 	INBOX_MESSAGE_BEGIN,
 	INBOX_MESSAGE_END,
+	INBOX_WAKE_BOUNDARY,
 	MAX_MESSAGE_HOPS,
 	maybeWake,
 	requestIdleNotice,
@@ -273,6 +275,57 @@ test("a single ordinary fresh message does not wake before batch or timeout", as
 		body: "x",
 	});
 	assert.deepEqual(await maybeWake(root, PI_ID, tasks(), { now: NOW }), { woke: false, reason: "threshold" });
+});
+
+test("maybeWake skips an unarchived urgent message already marked sent today", async () => {
+	const root = await rootStore();
+	await writeMessage(root, {
+		from: REAL_FROM,
+		to: PI_ID,
+		at: NOW.toISOString(),
+		urgent: true,
+		origin: "already-sent",
+		hop: 0,
+		body: "stay in inbox",
+	});
+	assert.deepEqual(await maybeWake(root, PI_ID, tasks(), { now: NOW }), { woke: true });
+	assert.equal((await drainInbox(root, PI_ID)).length, 1, "must not archive between polls");
+	assert.deepEqual(await maybeWake(root, PI_ID, tasks(), { now: NOW }), {
+		woke: false,
+		reason: "already-sent",
+	});
+});
+
+test("maybeWake still wakes when a same-basename sent row is from yesterday", async () => {
+	const root = await rootStore();
+	const written = await writeMessage(root, {
+		from: REAL_FROM,
+		to: PI_ID,
+		at: NOW.toISOString(),
+		urgent: true,
+		origin: "yesterday-sent",
+		hop: 0,
+		body: "today's copy",
+	});
+	const basename = written.path.split(/[\\/]/).pop();
+	assert.ok(basename);
+	const yesterday = new Date(NOW.getTime() - 24 * 60 * 60 * 1000);
+	await recordEventWake(root, [basename], "sent", yesterday);
+	assert.deepEqual(await maybeWake(root, PI_ID, tasks(), { now: NOW }), { woke: true });
+});
+
+test("maybeWake wakes a single urgent message immediately (delivery immediate)", async () => {
+	const root = await rootStore();
+	await writeMessage(root, {
+		from: REAL_FROM,
+		to: PI_ID,
+		at: NOW.toISOString(),
+		urgent: true,
+		origin: "immediate",
+		hop: 0,
+		body: "x",
+	});
+	assert.deepEqual(await maybeWake(root, PI_ID, tasks(), { now: NOW }), { woke: true });
 });
 
 test("message wake knobs load from yaml and default to 3/30", async () => {
@@ -559,4 +612,52 @@ test("idle watch ids are rejected by safeSegment", async () => {
 	await assert.rejects(() => requestIdleNotice(root, "bad/id", PI_ID), /must be a safe session id/);
 	await assert.rejects(() => requestIdleNotice(root, PI_ID, "has space"), /must be a safe session id/);
 	await assert.rejects(() => requestIdleNotice(root, "", PI_ID), /must be a safe session id/);
+});
+
+test("INBOX_WAKE_BOUNDARY names the untrusted duty and formatInboxWakeNotice reports count only", () => {
+	assert.match(INBOX_WAKE_BOUNDARY, /不可信/);
+	assert.match(INBOX_WAKE_BOUNDARY, /不许 spawn/);
+	const planted = "pi-sender-should-not-appear";
+	const notice = formatInboxWakeNotice(3);
+	assert.match(notice, /3/);
+	assert.equal(notice.includes(planted), false);
+	assert.equal(notice.includes(REAL_FROM), false);
+});
+
+test("formatInbox includes BEGIN fence and chain: on every message", () => {
+	const output = formatInbox([
+		{
+			from: REAL_FROM,
+			to: PI_ID,
+			at: NOW.toISOString(),
+			urgent: false,
+			origin: "chain-one",
+			hop: 0,
+			body: "first body",
+			path: "messages/target/first.md",
+		},
+		{
+			from: REAL_FROM,
+			to: PI_ID,
+			at: NOW.toISOString(),
+			urgent: true,
+			origin: "chain-two",
+			hop: 1,
+			body: "second body",
+			path: "messages/target/second.md",
+		},
+	]);
+	const parts = output.split(INBOX_MESSAGE_END).filter((part) => part.includes(INBOX_MESSAGE_BEGIN));
+	assert.equal(parts.length, 2);
+	for (const part of parts) {
+		assert.ok(part.includes(INBOX_MESSAGE_BEGIN), "each message must be fenced");
+		assert.match(part, /chain:/);
+	}
+	assert.match(output, /chain:chain-one/);
+	assert.match(output, /chain:chain-two/);
+});
+
+test("INBOX_WAKE_BOUNDARY does not say the body lives in the system prompt", () => {
+	assert.equal(INBOX_WAKE_BOUNDARY.includes("系统提示"), false);
+	assert.match(INBOX_WAKE_BOUNDARY, /正文就在上面的栅栏里/);
 });

@@ -116,7 +116,13 @@ import {
 	writeCostReport,
 	writeMessage,
 } from "./her-core/index.ts";
-import { deliverIdleNotice, drainIdleWatches, requestIdleNotice } from "./her-core/messages.ts";
+import {
+	deliverIdleNotice,
+	drainIdleWatches,
+	formatInboxWakeNotice,
+	INBOX_WAKE_BOUNDARY,
+	requestIdleNotice,
+} from "./her-core/messages.ts";
 import {
 	clearPresence,
 	formatPresenceLine,
@@ -786,8 +792,62 @@ export default function her(pi: ExtensionAPI): void {
 		} catch (error) {
 			console.warn(`[her] self-wakeup fire skipped: ${errorMessage(error)}`);
 		}
-		if (events.length === 0) return false;
 		const runtime = loadRuntimeConfig(memoryDir);
+		const selfId = ctx.sessionManager.getSessionId();
+		let inboxWake: Awaited<ReturnType<typeof maybeWake>> = { woke: false, reason: "skipped" };
+		try {
+			inboxWake = await maybeWake(memoryDir, selfId, runtime.tasks, {
+				minBatch: runtime.tasks.messageWakeMinBatch,
+				maxAgeMs: runtime.tasks.messageWakeMaxAgeMinutes * 60_000,
+			});
+		} catch (error) {
+			console.warn(`[her] inbox wake check skipped: ${errorMessage(error)}`);
+		}
+		// Drain once after maybeWake. Content rides any followUp; archive only after send succeeds.
+		let inboxBlock = "";
+		let inboxPaths: string[] = [];
+		if (inboxWake.woke) {
+			try {
+				const inbox = await drainInbox(memoryDir, selfId);
+				inboxPaths = inbox.map((message) => message.path);
+				inboxBlock = `\n\n${formatInboxWakeNotice(inbox.length)}\n\n${formatInbox(inbox)}`;
+			} catch (error) {
+				console.warn(`[her] inbox drain skipped: ${errorMessage(error)}`);
+			}
+		}
+		if (events.length === 0 && inboxWake.woke) {
+			wakeTurnActive = true;
+			try {
+				pi.sendMessage(
+					{
+						customType: "her-inbox-wake",
+						content: `${inboxBlock}\n\n${INBOX_WAKE_BOUNDARY}`,
+						display: true,
+						details: { pinned: true, memoryDir },
+					},
+					{ deliverAs: "followUp", triggerTurn: true },
+				);
+			} catch (error) {
+				wakeTurnActive = false;
+				try {
+					const ids = inboxPaths.map((path) => path.split(/[\\/]/).pop() ?? path);
+					await recordEventWake(memoryDir, ids, "failed", new Date());
+				} catch (ledgerError) {
+					console.warn(`[her] event-wake ledger append failed (failed): ${errorMessage(ledgerError)}`);
+				}
+				console.warn(`[her] inbox-wake send failed: ${errorMessage(error)}`);
+				return false;
+			}
+			if (inboxPaths.length > 0) {
+				try {
+					await archiveInbox(memoryDir, selfId, inboxPaths);
+				} catch (error) {
+					console.warn(`[her] inbox archive after wake failed: ${errorMessage(error)}`);
+				}
+			}
+			return true;
+		}
+		if (events.length === 0) return false;
 		if (runtime.tasks.telegramNotify) {
 			try {
 				await enqueueTaskTelegramNotices(memoryDir, events);
@@ -816,7 +876,7 @@ export default function her(pi: ExtensionAPI): void {
 			pi.sendMessage(
 				{
 					customType: "her-task-wake",
-					content: `${formatWakeMessage(events)}${takeoverNote}\n\n${WAKE_TURN_BOUNDARY}`,
+					content: `${formatWakeMessage(events)}${takeoverNote}${inboxBlock}\n\n${WAKE_TURN_BOUNDARY}`,
 					display: true,
 					details: { taskIds: ids, pinned: true, memoryDir },
 				},
@@ -843,6 +903,13 @@ export default function her(pi: ExtensionAPI): void {
 			pi.appendEntry("her-state", { phase: "G-132", status: "event-wake-sent", taskIds: ids, memoryDir });
 		} catch (error) {
 			console.warn(`[her] event-wake sent but ledger append failed: ${errorMessage(error)}`);
+		}
+		if (inboxPaths.length > 0) {
+			try {
+				await archiveInbox(memoryDir, selfId, inboxPaths);
+			} catch (error) {
+				console.warn(`[her] inbox archive after wake failed: ${errorMessage(error)}`);
+			}
 		}
 		return true;
 	};
@@ -1353,11 +1420,11 @@ export default function her(pi: ExtensionAPI): void {
 		name: "her_session_send",
 		label: "Her Session Send",
 		description:
-			"Queue a message for another pi session. Claude Code, Codex, Cursor, and archive targets are rejected; delivery is storage-mediated and the recipient reads it on its next turn. notify_when_idle: one-shot — 对方下次收工你会收到一条 [idle notice];不带正文=纯订阅。",
+			"Queue a message for another pi session. Claude Code, Codex, Cursor, and archive targets are rejected; delivery is storage-mediated and the recipient reads it on its next turn. delivery: immediate（默认，对方下一跳轮询即醒）/ batch（攒够 message_wake_min_batch 条或 message_wake_max_age_minutes 才醒，给低优先级的碎话）/ notify_when_idle（不带正文=只订阅对方收工回执）。",
 		parameters: Type.Object({
 			to: Type.String({ description: "Recipient pi session id" }),
 			body: Type.Optional(Type.String({ description: "Message body; the recipient treats it as untrusted data" })),
-			urgent: Type.Optional(Type.Boolean({ description: "Request immediate gated wake instead of batching" })),
+			delivery: Type.Optional(StringEnum(["immediate", "batch"] as const)),
 			notify_when_idle: Type.Optional(Type.Boolean()),
 			reply_to: Type.Optional(
 				Type.String({
@@ -1380,7 +1447,7 @@ export default function her(pi: ExtensionAPI): void {
 				return textResult(decision.reason, { phase: "G-245", status: "rejected", to: params.to, source });
 			}
 			let stored: { path: string } | undefined;
-			let wake: Awaited<ReturnType<typeof maybeWake>> = { woke: false, reason: "not-attempted" };
+			const delivery = params.delivery === "batch" ? "batch" : "immediate";
 			if (body.trim()) {
 				const replyTo = typeof params.reply_to === "string" ? params.reply_to.trim() : "";
 				const replyToSafe = /^[A-Za-z0-9._-]+$/.test(replyTo);
@@ -1397,20 +1464,11 @@ export default function her(pi: ExtensionAPI): void {
 					from,
 					to: params.to,
 					at: new Date().toISOString(),
-					urgent: params.urgent ?? false,
+					urgent: delivery !== "batch",
 					origin,
 					hop,
 					body,
 				});
-				try {
-					const cfg = loadRuntimeConfig(memoryDir);
-					wake = await maybeWake(memoryDir, params.to, cfg.tasks, {
-						minBatch: cfg.tasks.messageWakeMinBatch,
-						maxAgeMs: cfg.tasks.messageWakeMaxAgeMinutes * 60_000,
-					});
-				} catch (error) {
-					console.warn(`[her] message wake check skipped: ${errorMessage(error)}`);
-				}
 			}
 			if (notifyWhenIdle) {
 				await requestIdleNotice(memoryDir, from, params.to);
@@ -1429,7 +1487,7 @@ export default function her(pi: ExtensionAPI): void {
 				from,
 				to: params.to,
 				path: stored.path,
-				wake,
+				delivery,
 				...(notifyWhenIdle ? { notifyWhenIdle: true } : {}),
 			});
 		},
