@@ -1319,20 +1319,60 @@ test("a subagent child process carries none of her nags out in its result", asyn
 	// verbatim comes back with her reminders stapled to it. Twelve subagents
 	// auditing a repo would each hand back findings wearing the same text, and a
 	// schema validator cannot see that.
+	//
+	// The variable matters. pi-subagents stamps children with PI_SUBAGENT_DEPTH;
+	// PI_SUBAGENT_PARENT_DEPTH is only a constant name in its source and is never
+	// set on the run path. Guarding on that one alone made this hook a no-op while
+	// this test stayed green — because the test set the variable itself. A live
+	// two-child fan-out is what caught it.
 	const root = tempRoot();
-	const previousDepth = process.env.PI_SUBAGENT_PARENT_DEPTH;
+	const previousDepth = process.env.PI_SUBAGENT_DEPTH;
+	const previousParentDepth = process.env.PI_SUBAGENT_PARENT_DEPTH;
 	try {
+		delete process.env.PI_SUBAGENT_PARENT_DEPTH;
 		appendEvent(fromFei("n1", "too tight"), root);
+
+		for (const depth of ["1", "2"]) {
+			_resetReviewNudgeState();
+			process.env.PI_SUBAGENT_DEPTH = depth;
+			const { pi, fire } = fakePiWithHook();
+			installCanvasNagHook(pi, root);
+			assert.equal(
+				fire("read", [{ type: "text", text: "NONCE-abc123" }]),
+				undefined,
+				`at PI_SUBAGENT_DEPTH=${depth} the hook must not decorate at all`,
+			);
+		}
+
+		// The other half of the gate: the parent process must still be nagged. A
+		// guard that silences everyone is as broken as one that silences nobody,
+		// and only this direction would notice.
+		for (const parentDepth of [undefined, "0"]) {
+			_resetReviewNudgeState();
+			if (parentDepth === undefined) delete process.env.PI_SUBAGENT_DEPTH;
+			else process.env.PI_SUBAGENT_DEPTH = parentDepth;
+			const { pi, fire } = fakePiWithHook();
+			installCanvasNagHook(pi, root);
+			assert.notEqual(
+				fire("read", [{ type: "text", text: "NONCE-abc123" }]),
+				undefined,
+				`PI_SUBAGENT_DEPTH=${String(parentDepth)} is the parent — it must still be nagged`,
+			);
+		}
+
+		// Belt and braces: if pi-subagents ever does set the parent-depth name, a
+		// child stops being decorated without waiting for another release.
 		_resetReviewNudgeState();
+		delete process.env.PI_SUBAGENT_DEPTH;
 		process.env.PI_SUBAGENT_PARENT_DEPTH = "1";
 		const { pi, fire } = fakePiWithHook();
 		installCanvasNagHook(pi, root);
-
-		const out = fire("read", [{ type: "text", text: "NONCE-abc123" }]);
-		assert.equal(out, undefined, "inside a subagent the hook must not decorate at all");
+		assert.equal(fire("read", [{ type: "text", text: "NONCE-abc123" }]), undefined);
 	} finally {
-		if (previousDepth === undefined) delete process.env.PI_SUBAGENT_PARENT_DEPTH;
-		else process.env.PI_SUBAGENT_PARENT_DEPTH = previousDepth;
+		if (previousDepth === undefined) delete process.env.PI_SUBAGENT_DEPTH;
+		else process.env.PI_SUBAGENT_DEPTH = previousDepth;
+		if (previousParentDepth === undefined) delete process.env.PI_SUBAGENT_PARENT_DEPTH;
+		else process.env.PI_SUBAGENT_PARENT_DEPTH = previousParentDepth;
 		rmSync(root, { recursive: true, force: true });
 	}
 });

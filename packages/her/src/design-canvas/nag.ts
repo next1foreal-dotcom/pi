@@ -514,6 +514,27 @@ export function withCanvasNag(pi: ExtensionAPI, repoRoot?: string): ExtensionAPI
  * Failure here must never take a tool result down: a nag that throws would cost
  * her the result she was waiting for.
  */
+/**
+ * Am I running as somebody's subagent?
+ *
+ * pi-subagents stamps every child with `PI_SUBAGENT_DEPTH`, incremented from the
+ * parent's value (its `getSubagentDepthEnv`). `PI_SUBAGENT_PARENT_DEPTH` exists
+ * only as a constant name in its pi-args.ts and is not set on the run path, so
+ * the first version of this guard — keyed on that name alone — never fired.
+ *
+ * A unit test could not see that: setting the variable itself proves the branch
+ * works, never that anything sets it. A live two-child fan-out could, and did —
+ * 263 bytes of output for a 49-byte nonce, with her style-guide reminder stapled
+ * on, in both children.
+ */
+export function isSubagentProcess(): boolean {
+	const depth = Number(process.env.PI_SUBAGENT_DEPTH ?? "");
+	if (Number.isFinite(depth) && depth >= 1) return true;
+	// Kept as a second signal rather than removed: if pi-subagents starts setting
+	// it, a child stops being decorated one release earlier.
+	return Boolean(process.env.PI_SUBAGENT_PARENT_DEPTH);
+}
+
 export function installCanvasNagHook(pi: ExtensionAPI, repoRoot?: string): void {
 	if (typeof (pi as { on?: unknown }).on !== "function") return;
 	pi.on("tool_result", (event: ToolResultEvent) => {
@@ -523,9 +544,8 @@ export function installCanvasNagHook(pi: ExtensionAPI, repoRoot?: string): void 
 			// decorates the child's tool results too, and a child asked to return
 			// something verbatim returns it with her reminders stapled on. A
 			// fan-out of auditors would each hand back findings wearing the same
-			// text, and a schema validator cannot see that. pi-subagents stamps
-			// its children with this depth variable.
-			if (process.env.PI_SUBAGENT_PARENT_DEPTH) return undefined;
+			// text, and a schema validator cannot see that.
+			if (isSubagentProcess()) return undefined;
 			const toolName = event.toolName;
 			if (toolName && wrappedToolNames.has(toolName)) return undefined;
 			if (toolName && VISUAL_OBSERVER_TOOLS.has(toolName)) {
