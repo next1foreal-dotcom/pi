@@ -30,8 +30,12 @@ import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.ts";
 
-const MAX_PARALLEL_TASKS = 8;
-const MAX_CONCURRENCY = 4;
+// A fan-out of 12 verifiers in one turn is the shape the N1 Line audit runs in,
+// and at concurrency 4 that is not a fan-out — it is a queue of three batches
+// wearing one. Both ceilings move together: raising the task cap alone would
+// still trickle them through four workers.
+const MAX_PARALLEL_TASKS = 16;
+const MAX_CONCURRENCY = 12;
 const COLLAPSED_ITEM_COUNT = 10;
 const PER_TASK_OUTPUT_CAP = 50 * 1024;
 
@@ -672,7 +676,13 @@ export default function (pi: ExtensionAPI) {
 					const status = isFailedResult(r)
 						? `failed${r.stopReason && r.stopReason !== "end" ? ` (${r.stopReason})` : ""}`
 						: "completed";
-					return `### [${r.agent}] ${status}\n\n${output}`;
+					// Usage was collected per task but only ever rendered into the TUI,
+					// so a headless run could see which subagents ran and not what any
+					// of them cost. Put it in the text the parent model gets back, where
+					// a run ledger can pick it up.
+					const usageLine = r.usage ? formatUsageStats(r.usage, r.model) : "";
+					const usageSuffix = usageLine ? `\n\n\`${usageLine}\`` : "";
+					return `### [${r.agent}] ${status}\n\n${output}${usageSuffix}`;
 				});
 				return {
 					content: [
