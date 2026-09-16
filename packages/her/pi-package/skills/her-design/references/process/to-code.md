@@ -6,6 +6,10 @@ keywords: [to-code, handoff, export, tokens, mapping, project, specification, de
 
 # To code — the project is the specification, the design is the reference
 
+## A file he can hold is not a landing
+
+`design_lab_export` writes the screens as files he can open, send, or print — PNG per screen, or one PDF of pages — into `design/exports/`. Naming no screen exports the whole canvas, in canvas order. That is the outlet. It is not this step's mapping work, and it is not writing into a product repo. Landing into a codebase only happens when he says so.
+
 When a design lands in a codebase, authority flips. Until now the draft ruled. From here the target project rules: its tokens, its components, its naming, its conventions are the specification. The draft says *what* to build; the project says *how*.
 
 ## Read the project before writing anything

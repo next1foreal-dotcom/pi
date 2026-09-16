@@ -16,7 +16,7 @@ The constitution applied over time: lock structure while disagreement is cheap; 
 | 5 | First draft | the chosen direction rendered | enter only with the wireframe gate approved |
 | 6 | Iterations | each round removes before it adds; log what changed with `design_project_set_stage(stage: iterations, note)` — one call per round, the tool stamps the clock | — |
 | 7 | Final design | self-review report first, then the owner's eye | **HARD gate: final approval** |
-| 8 | To code | faithful export + handoff checklist; the system wins, the design bends (process/to-code) | — |
+| 8 | To code | files he can hold (`design_lab_export`) then the mapping checklist (process/to-code); the system wins, the design bends | — |
 
 ## Why the wireframe gate carries the constitution
 

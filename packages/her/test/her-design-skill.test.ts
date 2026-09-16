@@ -124,3 +124,35 @@ test("every reference named in the routing table is a real file", async () => {
 		await mustBeFile(join(skillRoot, "references", `${ref}.md`));
 	}
 });
+
+/**
+ * G-413: a tool with no reflex is a tool she will not reach for. design_lab_export
+ * shipped 2026-09-09 as the PNG/PDF outlet, then sat unnamed in her.md and the
+ * skill table — she kept being told the cell was empty. still is looking; export
+ * is a file he can hold. Naming both, and saying they are not the same job, is
+ * the landing. Landing into a codebase is still his call; the outlet is not.
+ */
+test("her.md names design_lab_export, and it is not the same job as still", async () => {
+	const prompt = await readFile(herMdPath, "utf8");
+	assert.match(prompt, /design_lab_still/, "the looking tool must stay");
+	assert.match(prompt, /design_lab_export/, "the file outlet must be named or she will not call it");
+	assert.match(
+		prompt,
+		/design_lab_export[\s\S]{0,500}(open|send|print)/i,
+		"export is a file he can open, send, or print — not another photograph for her",
+	);
+	assert.match(
+		prompt,
+		/design_lab_export[\s\S]{0,800}(not landing|not .*codebase|process\/to-code)/i,
+		"the outlet must not be confused with landing into a repo",
+	);
+});
+
+test("the skill table and to-code both name the export outlet", async () => {
+	const skill = await readFile(join(skillRoot, "SKILL.md"), "utf8");
+	assert.match(skill, /design_lab_export/, "a tool the table does not name is a tool she never loads");
+
+	const toCode = await readFile(join(skillRoot, "references", "process", "to-code.md"), "utf8");
+	assert.match(toCode, /design_lab_export/);
+	assert.match(toCode, /design\/exports/, "she has to know where the files land, or she will invent a path");
+});

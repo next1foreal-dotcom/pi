@@ -51,12 +51,14 @@ over-read, never under-read.
 | Judging a render before calling it done | review/rubric · review/refine-order · design/details — and `design_lab_still` first: judge the frame, not your memory of writing it |
 | Verifying a live screen / responsive sweep | review/rendered-page-verify |
 | Judging a render on a brain that cannot see images | review/no-vision-verify · process/visual-review — what you may still check, and what you must then say instead of claiming you looked |
-| Landing a design into code — export, handoff | process/to-code |
+| Hand him the screens as files (PNG / PDF) | process/to-code — the outlet is `design_lab_export`; this is not landing into a repo |
+| Landing a design into a codebase — mapping, handoff | process/to-code |
 | Ending a design session | process/filing — file decisions, patterns, tool notes, debt before you stop |
 
 Some files carry passages written for the loora vector canvas (flagged at the top of the
 file). The judgment transfers; the tool calls do not — your canvas is the design lab:
 `design_lab_open`, drafts as screen files under `packages/design-lab/src/screens/`.
+A file he can hold is `design_lab_export` (PNG / PDF into `design/exports/`), not a still.
 
 ## This skill is yours
 
