@@ -518,6 +518,14 @@ export function installCanvasNagHook(pi: ExtensionAPI, repoRoot?: string): void 
 	if (typeof (pi as { on?: unknown }).on !== "function") return;
 	pi.on("tool_result", (event: ToolResultEvent) => {
 		try {
+			// Every nag here is addressed to her. A subagent is a separate pi
+			// process that loads this same extension, so without this the hook
+			// decorates the child's tool results too, and a child asked to return
+			// something verbatim returns it with her reminders stapled on. A
+			// fan-out of auditors would each hand back findings wearing the same
+			// text, and a schema validator cannot see that. pi-subagents stamps
+			// its children with this depth variable.
+			if (process.env.PI_SUBAGENT_PARENT_DEPTH) return undefined;
 			const toolName = event.toolName;
 			if (toolName && wrappedToolNames.has(toolName)) return undefined;
 			if (toolName && VISUAL_OBSERVER_TOOLS.has(toolName)) {

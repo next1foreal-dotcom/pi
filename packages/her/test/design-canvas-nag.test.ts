@@ -1310,3 +1310,29 @@ test("nothing to say leaves the result untouched, and a throwing nag never eats 
 		rmSync(root, { recursive: true, force: true });
 	}
 });
+
+test("a subagent child process carries none of her nags out in its result", async () => {
+	// The nags are addressed to her: unanswered notes, the oldest proposal, the
+	// style guide, the review nudge. A subagent is a separate pi process that
+	// loads this same extension, so without a guard the hook decorates the
+	// child's own tool results — and whatever the child was asked to return
+	// verbatim comes back with her reminders stapled to it. Twelve subagents
+	// auditing a repo would each hand back findings wearing the same text, and a
+	// schema validator cannot see that.
+	const root = tempRoot();
+	const previousDepth = process.env.PI_SUBAGENT_PARENT_DEPTH;
+	try {
+		appendEvent(fromFei("n1", "too tight"), root);
+		_resetReviewNudgeState();
+		process.env.PI_SUBAGENT_PARENT_DEPTH = "1";
+		const { pi, fire } = fakePiWithHook();
+		installCanvasNagHook(pi, root);
+
+		const out = fire("read", [{ type: "text", text: "NONCE-abc123" }]);
+		assert.equal(out, undefined, "inside a subagent the hook must not decorate at all");
+	} finally {
+		if (previousDepth === undefined) delete process.env.PI_SUBAGENT_PARENT_DEPTH;
+		else process.env.PI_SUBAGENT_PARENT_DEPTH = previousDepth;
+		rmSync(root, { recursive: true, force: true });
+	}
+});
