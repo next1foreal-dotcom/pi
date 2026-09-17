@@ -13,6 +13,12 @@ import { buildComponentIndex } from "./src/lab/components/build-index.ts";
 import { EDITABLE_SOURCE, editClassList, splitClasses } from "../her/src/preview/jsx-class-list.ts";
 import { editText } from "../her/src/preview/jsx-text.ts";
 import { editProp, parsePropWrite } from "../her/src/preview/jsx-attr.ts";
+import { DESIGN_LAB_PORT } from "../her/src/preview/design-lab-open.ts";
+import {
+  runLabExport,
+  type RunLabExportInput,
+  type RunLabExportOutput,
+} from "../her/src/preview/lab-export.ts";
 
 type Positions = Record<string, { x: number; y: number }>;
 
@@ -87,7 +93,11 @@ const EVENT_TYPES = new Set([
   "reopen",
 ]);
 
-export function labFsPlugin(projectRoot: string): Plugin {
+export type LabFsPluginDeps = {
+  runExport?: (input: RunLabExportInput) => Promise<RunLabExportOutput>;
+};
+
+export function labFsPlugin(projectRoot: string, deps: LabFsPluginDeps = {}): Plugin {
   const screensDir = path.resolve(projectRoot, "src/screens");
   const trashDir = path.resolve(projectRoot, ".lab-trash");
   // packages/design-lab -> the samantha repo root
@@ -275,6 +285,34 @@ export function labFsPlugin(projectRoot: string): Plugin {
               string,
               unknown
             >;
+            if (url === "/export") {
+              // Same write as design_lab_export. The canvas is how he asks
+              // for the file; her tool is how she asks. One folder, one crop.
+              const guard = req.headers[WRITE_GUARD];
+              if ((Array.isArray(guard) ? guard[0] : guard) !== "1") {
+                json(res, 403, { ok: false, error: "missing canvas guard" });
+                return;
+              }
+              const format = body.format === "pdf" ? "pdf" : "png";
+              const screenIds = Array.isArray(body.screenIds)
+                ? body.screenIds.filter((id): id is string => typeof id === "string")
+                : [];
+              const name = typeof body.name === "string" ? body.name : undefined;
+              const run = deps.runExport ?? runLabExport;
+              const out = await run({
+                repoRoot,
+                screenIds,
+                format,
+                name,
+                port: DESIGN_LAB_PORT,
+              });
+              json(res, out.ok ? 200 : 400, {
+                ok: out.ok,
+                error: out.ok ? undefined : out.text,
+                ...out.details,
+              });
+              return;
+            }
             if (url === "/duplicate") {
               const dir = String(body.dir ?? "");
               const src = path.join(screensDir, dir);

@@ -3,13 +3,15 @@ export type FsResult = {
   error?: string;
   dir?: string;
   token?: string;
+  files?: string[];
+  format?: string;
 };
 
-async function post(path: string, body: unknown): Promise<FsResult> {
+async function post(path: string, body: unknown, extraHeaders: Record<string, string> = {}): Promise<FsResult> {
   try {
     const res = await fetch(`/__lab-fs${path}`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...extraHeaders },
       body: JSON.stringify(body),
     });
     return (await res.json()) as FsResult;
@@ -40,6 +42,8 @@ export const labFs = {
   rename: (dir: string, name: string) => post("/rename", { dir, name }),
   setPositions: (positions: Record<string, { x: number; y: number }>) =>
     post("/set-positions", { positions }),
+  export: (body: { screenIds?: string[]; format?: "png" | "pdf"; name?: string }) =>
+    post("/export", body, { "x-lab-canvas": "1" }),
   /** Fetch the persisted scratch-set CSS (if any). Silent on failure. */
   scratchCss: () => getText("/scratch-tokens.css"),
 };

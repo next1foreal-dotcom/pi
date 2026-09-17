@@ -154,6 +154,90 @@ async function exportWithPlaywright(request: ExportRequest): Promise<ExportResul
 	});
 }
 
+export interface RunLabExportInput {
+	repoRoot: string;
+	screenIds?: readonly string[];
+	format?: ExportFormat;
+	name?: string;
+	port?: number;
+	capture?: LabExportDeps["capture"];
+	now?: () => Date;
+}
+
+export interface RunLabExportOutput {
+	ok: boolean;
+	text: string;
+	details: Record<string, unknown>;
+}
+
+/**
+ * The write both outlets share: her tool, and the canvas Ctrl+E route.
+ * Capture is injectable so a test never has to start Chromium.
+ */
+export async function runLabExport(input: RunLabExportInput): Promise<RunLabExportOutput> {
+	const format: ExportFormat = input.format === "pdf" ? "pdf" : "png";
+	const port = typeof input.port === "number" ? input.port : DESIGN_LAB_PORT;
+	const requested = [...(input.screenIds ?? [])];
+	const now = input.now ?? (() => new Date());
+	const capture = input.capture ?? exportWithPlaywright;
+	const name = input.name?.trim() || `canvas-${now().toISOString().slice(0, 10)}`;
+
+	let result: ExportResult;
+	try {
+		result = await capture({ screenIds: requested, format, port });
+	} catch (error) {
+		const text = `Could not export: ${errorText(error)}`;
+		return { ok: false, text, details: { ok: false, error: text } };
+	}
+
+	const { missing } = chooseScreens(result.screenIds, requested);
+	if (result.shots.length === 0) {
+		const text = `Nothing exported. The canvas has ${result.screenIds.length === 0 ? "no screens" : `these screens: ${result.screenIds.join(", ")}`}.`;
+		return { ok: false, text, details: { ok: false, screenIds: result.screenIds, missing, error: text } };
+	}
+
+	const dir = join(input.repoRoot, EXPORT_DIR);
+	await mkdir(dir, { recursive: true });
+	const written: string[] = [];
+	if (format === "pdf") {
+		if (!result.pdf) {
+			const text = "The screens were captured but no pdf came back.";
+			return { ok: false, text, details: { ok: false, error: text } };
+		}
+		const file = exportFileName("pdf", "", name);
+		await writeFile(join(dir, file), result.pdf);
+		written.push(file);
+	} else {
+		for (const shot of result.shots) {
+			const file = exportFileName("png", shot.screenId, name);
+			await writeFile(join(dir, file), shot.bytes);
+			written.push(file);
+		}
+	}
+
+	const order = result.shots.map((shot) => shot.screenId);
+	const lines = [
+		`Wrote ${written.length} file${written.length === 1 ? "" : "s"} to ${EXPORT_DIR}:`,
+		...written.map((file) => `- ${file}`),
+	];
+	if (format === "pdf") lines.push(`Pages, in order: ${order.join(", ")}.`);
+	if (missing.length > 0) {
+		lines.push(`Not on the canvas, so not exported: ${missing.join(", ")}.`);
+	}
+	return {
+		ok: true,
+		text: lines.join("\n"),
+		details: {
+			ok: true,
+			format,
+			files: written,
+			screens: order,
+			missing,
+			dir: EXPORT_DIR,
+		},
+	};
+}
+
 export function registerLabExportTools(pi: ExtensionAPI, deps: LabExportDeps = {}): void {
 	const repoRoot = deps.repoRoot ?? SAMANTHA_REPO_ROOT;
 	const capture = deps.capture ?? exportWithPlaywright;
@@ -189,61 +273,16 @@ export function registerLabExportTools(pi: ExtensionAPI, deps: LabExportDeps = {
 			_toolCallId,
 			params: { screenIds?: string[]; format?: ExportFormat; name?: string; port?: number },
 		) {
-			const format: ExportFormat = params.format === "pdf" ? "pdf" : "png";
-			const port = typeof params.port === "number" ? params.port : DESIGN_LAB_PORT;
-			const requested = params.screenIds ?? [];
-			const name = params.name?.trim() || `canvas-${now().toISOString().slice(0, 10)}`;
-
-			let result: ExportResult;
-			try {
-				result = await capture({ screenIds: requested, format, port });
-			} catch (error) {
-				return textResult(`Could not export: ${errorText(error)}`, { ok: false });
-			}
-
-			const { missing } = chooseScreens(result.screenIds, requested);
-			if (result.shots.length === 0) {
-				return textResult(
-					`Nothing exported. The canvas has ${result.screenIds.length === 0 ? "no screens" : `these screens: ${result.screenIds.join(", ")}`}.`,
-					{ ok: false, screenIds: result.screenIds, missing },
-				);
-			}
-
-			const dir = join(repoRoot, EXPORT_DIR);
-			await mkdir(dir, { recursive: true });
-			const written: string[] = [];
-			if (format === "pdf") {
-				if (!result.pdf) {
-					return textResult("The screens were captured but no pdf came back.", { ok: false });
-				}
-				const file = exportFileName("pdf", "", name);
-				await writeFile(join(dir, file), result.pdf);
-				written.push(file);
-			} else {
-				for (const shot of result.shots) {
-					const file = exportFileName("png", shot.screenId, name);
-					await writeFile(join(dir, file), shot.bytes);
-					written.push(file);
-				}
-			}
-
-			const order = result.shots.map((shot) => shot.screenId);
-			const lines = [
-				`Wrote ${written.length} file${written.length === 1 ? "" : "s"} to ${EXPORT_DIR}:`,
-				...written.map((file) => `- ${file}`),
-			];
-			if (format === "pdf") lines.push(`Pages, in order: ${order.join(", ")}.`);
-			if (missing.length > 0) {
-				lines.push(`Not on the canvas, so not exported: ${missing.join(", ")}.`);
-			}
-			return textResult(lines.join("\n"), {
-				ok: true,
-				format,
-				files: written,
-				screens: order,
-				missing,
-				dir: EXPORT_DIR,
+			const out = await runLabExport({
+				repoRoot,
+				screenIds: params.screenIds,
+				format: params.format,
+				name: params.name,
+				port: params.port,
+				capture,
+				now,
 			});
+			return textResult(out.text, out.details);
 		},
 	});
 }

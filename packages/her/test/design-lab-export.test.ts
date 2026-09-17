@@ -13,6 +13,7 @@ import {
 	type LabExportDeps,
 	pdfHtml,
 	registerLabExportTools,
+	runLabExport,
 } from "../src/preview/lab-export.ts";
 
 function harness(deps: LabExportDeps): Map<string, ToolDefinition> {
@@ -189,6 +190,18 @@ test("the lab's own port is the default, and a given port wins", async (t) => {
 	const { DESIGN_LAB_PORT } = await import("../src/preview/design-lab-open.ts");
 	assert.equal(seen[0]?.port, DESIGN_LAB_PORT);
 	assert.equal(seen[1]?.port, 5390);
+});
+
+test("runLabExport is the same write the tool uses, so the canvas can share it", async (t) => {
+	const root = await tempRoot(t);
+	const out = await runLabExport({
+		repoRoot: root,
+		capture: fakeCapture(),
+		screenIds: ["loora-landing"],
+	});
+	assert.equal(out.ok, true);
+	assert.deepEqual(out.details.files, ["loora-landing.png"]);
+	assert.equal(await readFile(join(root, EXPORT_DIR, "loora-landing.png"), "utf8"), "png:loora-landing");
 });
 
 test("a screen id cannot break out of the attribute selector it is put in", () => {

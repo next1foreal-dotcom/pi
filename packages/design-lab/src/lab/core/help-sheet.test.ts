@@ -27,6 +27,7 @@ const KEYS: Record<string, { key: string; code: string }> = {
 	"2": { key: "2", code: "Digit2" },
 	C: { key: "c", code: "KeyC" },
 	D: { key: "d", code: "KeyD" },
+	E: { key: "e", code: "KeyE" },
 	F: { key: "f", code: "KeyF" },
 	Y: { key: "y", code: "KeyY" },
 	Z: { key: "z", code: "KeyZ" },

@@ -30,7 +30,8 @@ export type KeyAction =
   | { action: "cleanup" }
   | { action: "reset-layout" }
   | { action: "toggle-threads" }
-  | { action: "toggle-chrome" };
+  | { action: "toggle-chrome" }
+  | { action: "export"; format: "png" | "pdf" };
 
 // ───────────────────────────── inputs ────────────────────────────────
 
@@ -95,6 +96,21 @@ export function physicalCode(key: string, code: string): string {
   // Both characters on the one physical key, the way the pairs above do it.
   if (key === "\\" || key === "|") return "Backslash";
   return "";
+}
+
+/**
+ * Which screens the canvas export is about.
+ *
+ * The dispatcher only decides png vs pdf. A locked-in screen is the one he
+ * is looking at; a selection is the next best guess; naming none means the
+ * whole canvas, which is the same contract as `design_lab_export`.
+ */
+export function exportScreenIds(
+  focusedId: string | null,
+  selectedId: string | null,
+): string[] {
+  const id = focusedId ?? selectedId;
+  return id ? [id] : [];
 }
 
 // ───────────────────────────── dispatch ──────────────────────────────
@@ -184,6 +200,15 @@ export function dispatchLabKey(
   }
   if (code === "KeyY" && ctrlKey && !metaKey) {
     return { action: "redo" };
+  }
+
+  // Ctrl/⌘ E  →  export PNG. Shift held  →  PDF.
+  //
+  // All modes on purpose. A settled screen is looked at in fill, and that
+  // is the moment he wants the file. Explore-only would make him Escape
+  // first — the same trap undo used to have.
+  if (code === "KeyE" && meta && !altKey) {
+    return { action: "export", format: shiftKey ? "pdf" : "png" };
   }
 
   // Shift+F  →  toggle fill mode

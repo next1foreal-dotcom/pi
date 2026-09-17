@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   dispatchLabKey,
+  exportScreenIds,
   physicalCode,
   type KeyInput,
   type DispatchContext,
@@ -703,5 +704,64 @@ describe("putting the lab away", () => {
     expect(dispatchLabKey(key({ key: "\\" }), EXPLORE)).toEqual({
       action: "toggle-chrome",
     });
+  });
+});
+
+// ─── Ctrl+E export ────────────────────────────────────────────────────
+//
+// G-462: the file outlet already exists as design_lab_export, but only she
+// can reach it. He is looking at the canvas. The chord has to work in fill,
+// because that is where a settled screen is looked at. Naming no screen
+// still means the whole canvas — that is the tool's contract, and the
+// dispatcher only decides png vs pdf; which ids go out is exportScreenIds.
+
+describe("Ctrl/⌘E → export", () => {
+  const chord = (extra: Partial<KeyInput> = {}) =>
+    key({ key: "e", code: "KeyE", ctrlKey: true, ...extra });
+
+  it("Ctrl+E → png, in every mode a design is looked at", () => {
+    for (const ctx of [EXPLORE, FOCUS, FILL]) {
+      expect(dispatchLabKey(chord(), ctx)).toEqual({
+        action: "export",
+        format: "png",
+      });
+    }
+  });
+
+  it("⌘E is the same chord — the Mac spelling of Ctrl", () => {
+    expect(
+      dispatchLabKey(key({ key: "e", code: "KeyE", metaKey: true }), FILL),
+    ).toEqual({ action: "export", format: "png" });
+  });
+
+  it("Ctrl+Shift+E → pdf", () => {
+    expect(dispatchLabKey(chord({ shiftKey: true }), FILL)).toEqual({
+      action: "export",
+      format: "pdf",
+    });
+  });
+
+  it("leaves E alone on a typing target", () => {
+    expect(dispatchLabKey(chord(), ON_INPUT)).toBeNull();
+  });
+
+  it("bare E is not an export", () => {
+    expect(dispatchLabKey(key({ key: "e", code: "KeyE" }), EXPLORE)).toBeNull();
+  });
+});
+
+describe("exportScreenIds — the screen he is on, or the whole canvas", () => {
+  it("a locked-in screen wins over a selection", () => {
+    expect(exportScreenIds("loora-landing", "playground")).toEqual([
+      "loora-landing",
+    ]);
+  });
+
+  it("a selection is enough when nothing is locked in", () => {
+    expect(exportScreenIds(null, "playground")).toEqual(["playground"]);
+  });
+
+  it("naming no screen means the whole canvas", () => {
+    expect(exportScreenIds(null, null)).toEqual([]);
   });
 });
