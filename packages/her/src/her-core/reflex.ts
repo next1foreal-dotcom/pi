@@ -280,7 +280,7 @@ async function evaluateTypeSafeReflex(
 			method: "POST",
 			headers: {
 				accept: "application/json",
-				authorization: "Bearer " + apiKey,
+				authorization: `Bearer ${apiKey}`,
 				"content-type": "application/json",
 			},
 			body: JSON.stringify({
@@ -290,7 +290,7 @@ async function evaluateTypeSafeReflex(
 			}),
 			signal: controller.signal,
 		});
-		if (!response.ok) throw new Error("TypeSafe System One request failed: HTTP " + response.status);
+		if (!response.ok) throw new Error(`TypeSafe System One request failed: HTTP ${response.status}`);
 		const payload = (await response.json()) as TypeSafeSystemOneResponse;
 		return parseTypeSafeResponse(payload, config.model);
 	} finally {
@@ -345,9 +345,9 @@ function parseTypeSafeResponse(
 function readNoul(answers: Record<string, unknown>, name: ReflexSignalName): number {
 	const answer = answers[name];
 	if (!isRecord(answer) || answer.type !== "noul" || typeof answer.noul !== "number" || !Number.isFinite(answer.noul)) {
-		throw new Error("TypeSafe System One response missing noul answer: " + name);
+		throw new Error(`TypeSafe System One response missing noul answer: ${name}`);
 	}
-	if (answer.noul < 0 || answer.noul > 1) throw new Error("TypeSafe System One answer out of range: " + name);
+	if (answer.noul < 0 || answer.noul > 1) throw new Error(`TypeSafe System One answer out of range: ${name}`);
 	return answer.noul;
 }
 
@@ -363,15 +363,15 @@ function parseUsage(value: unknown): ReflexUsage | undefined {
 
 async function logObservation(paths: StorePaths, observation: ReflexObservation): Promise<ReflexObservation> {
 	try {
-		await appendText(join(paths.herDir, "reflex-log.jsonl"), JSON.stringify(observation) + "\n");
+		await appendText(join(paths.herDir, "reflex-log.jsonl"), `${JSON.stringify(observation)}\n`);
 	} catch (error) {
-		console.warn("[her] reflex shadow log skipped: " + errorMessage(error));
+		console.warn(`[her] reflex shadow log skipped: ${errorMessage(error)}`);
 	}
 	return observation;
 }
 
 function systemOneUrl(baseUrl: string): string {
-	return baseUrl.replace(/\/+$/, "") + "/v1/systemone";
+	return `${baseUrl.replace(/\/+$/, "")}/v1/systemone`;
 }
 
 function parseBoolean(value: string, fallback: boolean): boolean {
