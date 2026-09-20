@@ -697,6 +697,7 @@ export {
 	sendTelegramMessage,
 	trimTelegramText,
 } from "./telegram.ts";
+export * from "./reflex.ts";
 export * from "./trigger-log.ts";
 export {
 	claimWarmWorktree,
