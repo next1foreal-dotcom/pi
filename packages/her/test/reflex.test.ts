@@ -78,11 +78,11 @@ test("reflex shadow sends minimized redacted state and logs probabilities withou
 			source: "mirror",
 			sessionId: "session-private",
 			currentDecision: "surfaced",
-			query: "Current turn " + secret,
+			query: `Current turn ${secret}`,
 			candidate: {
 				noteId: "semantic/important-private-note",
 				kind: "semantic",
-				text: "Candidate memory " + secret,
+				text: `Candidate memory ${secret}`,
 			},
 		},
 		{
