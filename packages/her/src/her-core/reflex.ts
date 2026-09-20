@@ -116,11 +116,13 @@ const PROTECTED_NOTE = /^samantha\/(?:wants|journal)(?:\/|$)/;
 const REFLEX_QUESTIONS = {
 	goal_relevance: {
 		type: "noul",
-		instructions: "Would this state materially affect one of the user's active goals if such a goal is evidenced in the state?",
+		instructions:
+			"Would this state materially affect one of the user's active goals if such a goal is evidenced in the state?",
 	},
 	novelty: {
 		type: "noul",
-		instructions: "Does the candidate add materially new information relative to the current turn rather than merely repeat it?",
+		instructions:
+			"Does the candidate add materially new information relative to the current turn rather than merely repeat it?",
 	},
 	urgency: {
 		type: "noul",
@@ -128,7 +130,8 @@ const REFLEX_QUESTIONS = {
 	},
 	contradiction: {
 		type: "noul",
-		instructions: "Does the candidate materially conflict with the current turn or imply that the current direction may be wrong?",
+		instructions:
+			"Does the candidate materially conflict with the current turn or imply that the current direction may be wrong?",
 	},
 	personal_significance: {
 		type: "noul",
@@ -144,7 +147,8 @@ const REFLEX_QUESTIONS = {
 	},
 	interrupt_user: {
 		type: "noul",
-		instructions: "Is this state important and time-sensitive enough that interrupting the user without being asked could be justified?",
+		instructions:
+			"Is this state important and time-sensitive enough that interrupting the user without being asked could be justified?",
 	},
 } as const;
 
@@ -226,18 +230,31 @@ export async function observeReflexShadow(
 	};
 
 	if (!config.enabled) return base;
-	if (!config.shadow) return logObservation(paths, { ...base, status: "active-mode-blocked", reason: "v0-shadow-only" });
+	if (!config.shadow)
+		return logObservation(paths, { ...base, status: "active-mode-blocked", reason: "v0-shadow-only" });
 	if (input.candidate?.noteId && PROTECTED_NOTE.test(input.candidate.noteId)) {
-		return logObservation(paths, { ...base, status: "protected-zone", reason: "protected-memory-never-leaves-local-store" });
+		return logObservation(paths, {
+			...base,
+			status: "protected-zone",
+			reason: "protected-memory-never-leaves-local-store",
+		});
 	}
 	if (!config.allowExternalState) {
 		return logObservation(paths, { ...base, status: "privacy-gated", reason: "allow_external_state=false" });
 	}
 	if (config.provider !== "typesafe") {
-		return logObservation(paths, { ...base, status: "unsupported-provider", reason: config.provider || "missing-provider" });
+		return logObservation(paths, {
+			...base,
+			status: "unsupported-provider",
+			reason: config.provider || "missing-provider",
+		});
 	}
 	if (!config.baseUrl || !config.model || !config.apiKeyEnv) {
-		return logObservation(paths, { ...base, status: "unconfigured", reason: "reflex-base-url-model-or-api-key-env-missing" });
+		return logObservation(paths, {
+			...base,
+			status: "unconfigured",
+			reason: "reflex-base-url-model-or-api-key-env-missing",
+		});
 	}
 
 	const env = options.env ?? process.env;
@@ -344,7 +361,12 @@ function parseTypeSafeResponse(
 
 function readNoul(answers: Record<string, unknown>, name: ReflexSignalName): number {
 	const answer = answers[name];
-	if (!isRecord(answer) || answer.type !== "noul" || typeof answer.noul !== "number" || !Number.isFinite(answer.noul)) {
+	if (
+		!isRecord(answer) ||
+		answer.type !== "noul" ||
+		typeof answer.noul !== "number" ||
+		!Number.isFinite(answer.noul)
+	) {
 		throw new Error(`TypeSafe System One response missing noul answer: ${name}`);
 	}
 	if (answer.noul < 0 || answer.noul > 1) throw new Error(`TypeSafe System One answer out of range: ${name}`);
@@ -354,7 +376,8 @@ function readNoul(answers: Record<string, unknown>, name: ReflexSignalName): num
 function parseUsage(value: unknown): ReflexUsage | undefined {
 	if (!isRecord(value)) return undefined;
 	const usage: ReflexUsage = {};
-	if (typeof value.input_tokens === "number" && Number.isFinite(value.input_tokens)) usage.input_tokens = value.input_tokens;
+	if (typeof value.input_tokens === "number" && Number.isFinite(value.input_tokens))
+		usage.input_tokens = value.input_tokens;
 	if (typeof value.output_tokens === "number" && Number.isFinite(value.output_tokens)) {
 		usage.output_tokens = value.output_tokens;
 	}
