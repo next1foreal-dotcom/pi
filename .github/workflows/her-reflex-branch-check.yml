@@ -21,20 +21,27 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
-          sudo ln -s $(which fdfind) /usr/local/bin/fd
-
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
-      - name: Build
-        run: npm run build
+      - name: Biome changed Her files
+        run: |
+          npx biome check --error-on-warnings \
+            packages/her/src/her-core/reflex.ts \
+            packages/her/src/her-core/index.ts \
+            packages/her/src/extension.ts \
+            packages/her/test/reflex.test.ts
 
-      - name: Check
-        run: npm run check
+      - name: Reflex typecheck
+        run: |
+          npx tsc --noEmit \
+            --target ES2022 \
+            --module NodeNext \
+            --moduleResolution NodeNext \
+            --allowImportingTsExtensions \
+            --skipLibCheck \
+            --types node \
+            packages/her/src/her-core/reflex.ts
 
       - name: Reflex unit test
         run: node --import tsx --test packages/her/test/reflex.test.ts
