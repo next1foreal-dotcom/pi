@@ -18,7 +18,6 @@ import { registerDesignCanvasTools, withCanvasNag } from "./design-canvas/tools.
 import { registerDesignProjectTools } from "./design-project/tools.ts";
 import { registerDesignVersionTools } from "./design-versions/index.ts";
 import { CuaCliDriver } from "./hands/driver.ts";
-import { observeReflexShadow } from "./her-core/reflex.ts";
 import { resolveHandsConfig } from "./hands/policy.ts";
 import { registerHandsTools } from "./hands/tools.ts";
 import { registerHerActTools } from "./her-actions/tools.ts";
@@ -132,6 +131,7 @@ import {
 	recordPresence,
 } from "./her-core/presence.ts";
 import { createReadGuard, extractPath, type ReadGuard } from "./her-core/read-before-edit.ts";
+import { observeReflexShadow } from "./her-core/reflex.ts";
 import { type ReviewEvidenceItem, verifyEvidence } from "./her-core/review-evidence.ts";
 import { cancelWakeup, fireDueWakeups, listWakeups, scheduleWakeup } from "./her-core/self-wakeup.ts";
 import { applyHerStatus, herStatusParameters } from "./her-core/status.ts";
