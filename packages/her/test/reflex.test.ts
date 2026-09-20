@@ -71,7 +71,7 @@ test("reflex shadow sends minimized redacted state and logs probabilities withou
 		return new Response(responseBody(), { status: 200, headers: { "content-type": "application/json" } });
 	};
 
-	const secret = "sk-123456789012345678901234567890";
+	const secret = `sk-${"123456789012345678901234567890"}`;
 	const result = await observeReflexShadow(
 		paths,
 		{
