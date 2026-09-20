@@ -18,6 +18,7 @@ import { registerDesignCanvasTools, withCanvasNag } from "./design-canvas/tools.
 import { registerDesignProjectTools } from "./design-project/tools.ts";
 import { registerDesignVersionTools } from "./design-versions/index.ts";
 import { CuaCliDriver } from "./hands/driver.ts";
+import { observeReflexShadow } from "./her-core/reflex.ts";
 import { resolveHandsConfig } from "./hands/policy.ts";
 import { registerHandsTools } from "./hands/tools.ts";
 import { registerHerActTools } from "./her-actions/tools.ts";
@@ -1144,6 +1145,17 @@ export default function her(pi: ExtensionAPI): void {
 				status: "mirror-sent",
 				noteId: hit.id,
 				memoryDir,
+			});
+			// Her Reflex V0 is observational only. Mirror has already been delivered;
+			// the shadow evaluator cannot gate, retract, or delay the current decision.
+			void observeReflexShadow(mem.paths, {
+				source: "mirror",
+				sessionId,
+				currentDecision: "surfaced",
+				query: safeJson({ message: event.message, toolResults: event.toolResults }),
+				candidate: { noteId: hit.id, kind: hit.kind, text: hit.text },
+			}).catch((error) => {
+				console.warn(`[her] reflex shadow skipped: ${errorMessage(error)}`);
 			});
 		} finally {
 			try {
