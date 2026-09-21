@@ -40,6 +40,7 @@ import {
 	shouldEventWake,
 	WAKE_TURN_BOUNDARY,
 } from "./her-core/event-wake.ts";
+import { type PendingCorrection, readPendingCorrections, runDreamScan } from "./her-core/evidence-scan.ts";
 import {
 	type AgentToolCallInput,
 	type AgentToolWrappedResult,
@@ -145,7 +146,6 @@ import { governedTools, resolveGovernedTool } from "./lib/governed-tools.ts";
 import {
 	appendContextManifestRecord,
 	buildContextManifest,
-	CONTEXT_INJECTION_SOURCES,
 	estimateInjectionTokens,
 	type InjectionBlockInput,
 	injectLoggedContent,
@@ -358,11 +358,20 @@ function composeHerMemorySections(
 	soul: string,
 	self: string,
 	choiceModel: string,
+	corrections: PendingCorrection[],
 ): Array<{ source: string; content: string }> {
-	const sections = [
-		{ source: "pi-package/prompts/her.md", content: readHerPrompt() },
-		{ source: "narrative/CONTEXT.md", content: `## Her CONTEXT.md\n\n${context.trim()}` },
-	];
+	const sections = [{ source: "pi-package/prompts/her.md", content: readHerPrompt() }];
+	for (const correction of corrections) {
+		sections.push({
+			source: `proposals/${correction.id}.md`,
+			content: [
+				`## Pending explicit correction (${correction.id})`,
+				"Treat the exact user correction below as newer than conflicting memory. Keep it pending for durable review.",
+				correction.body,
+			].join("\n\n"),
+		});
+	}
+	sections.push({ source: "narrative/CONTEXT.md", content: `## Her CONTEXT.md\n\n${context.trim()}` });
 	if (facts.trim()) sections.push({ source: "narrative/FACTS.md", content: `## Her FACTS.md\n\n${facts.trim()}` });
 	if (soul.trim()) sections.push({ source: "narrative/SOUL.md", content: `## Her SOUL.md\n\n${soul.trim()}` });
 	if (self.trim()) sections.push({ source: "narrative/SAMANTHA.md", content: `## Her SAMANTHA.md\n\n${self.trim()}` });
@@ -581,12 +590,17 @@ function renderGoalContinuation(task: LongTaskRecord): string {
 	].join("\n");
 }
 
-function turnToRaw(event: { turnIndex: number; message: unknown; toolResults: unknown }, session: SessionMeta): string {
+function turnToRaw(
+	event: { turnIndex: number; message: unknown; toolResults: unknown },
+	session: SessionMeta,
+	userPrompt?: string,
+): string {
 	return `# Pi Turn ${event.turnIndex}
 
 ${safeJson({
 	session,
 	turnIndex: event.turnIndex,
+	userPrompt,
 	message: event.message,
 	toolResults: event.toolResults,
 })}
@@ -710,6 +724,7 @@ export default function her(pi: ExtensionAPI): void {
 	let syncTimer: ReturnType<typeof setTimeout> | undefined;
 	const readGuards = new Map<string, ReadGuard>();
 	const capturedThisTurn = new Set<string>();
+	const activePromptBySession = new Map<string, string>();
 	registerProviderPool(pi);
 	const toolDisclosure = registerToolDisclosure(pi);
 
@@ -982,6 +997,7 @@ export default function her(pi: ExtensionAPI): void {
 
 	pi.on("session_shutdown", (_event, ctx) => {
 		readGuards.delete(sessionIdOf(ctx));
+		activePromptBySession.delete(sessionIdOf(ctx));
 		clearConditionalRules(sessionIdOf(ctx));
 		try {
 			void clearPresence(memoryDir, ctx.sessionManager.getSessionId()).catch((error) => {
@@ -999,7 +1015,8 @@ export default function her(pi: ExtensionAPI): void {
 
 	pi.on("before_agent_start", async (event, ctx) => {
 		const sessionId = ctx.sessionManager.getSessionId();
-		capturedThisTurn.delete(sessionIdOf(ctx));
+		capturedThisTurn.delete(sessionId);
+		activePromptBySession.set(sessionId, event.prompt);
 		try {
 			await recordPresence(memoryDir, {
 				sessionId,
@@ -1009,6 +1026,12 @@ export default function her(pi: ExtensionAPI): void {
 			});
 		} catch (error) {
 			console.warn(`[her] presence record skipped: ${errorMessage(error)}`);
+		}
+		let corrections: PendingCorrection[] = [];
+		try {
+			corrections = await readPendingCorrections(memoryDir);
+		} catch (error) {
+			console.warn(`[her] pending correction read skipped: ${errorMessage(error)}`);
 		}
 		const { context, facts, soul, self, choiceModel } = await mem.getContext();
 		const conditionalRules = await loadConditionalRules({
@@ -1020,7 +1043,7 @@ export default function her(pi: ExtensionAPI): void {
 			return [];
 		});
 		const narrativeSections = [
-			...composeHerMemorySections(context, facts, soul, self, choiceModel),
+			...composeHerMemorySections(context, facts, soul, self, choiceModel, corrections),
 			...conditionalRules,
 		];
 		const herBlock = narrativeSections.map((section) => section.content).join("\n\n");
@@ -1029,7 +1052,7 @@ export default function her(pi: ExtensionAPI): void {
 			session: sessionId,
 			kind: "context",
 			content: herBlock,
-			sources: [...CONTEXT_INJECTION_SOURCES],
+			sources: narrativeSections.map((section) => section.source),
 			log: false,
 		});
 		const turnBlocks: InjectionBlockInput[] = [
@@ -1037,7 +1060,7 @@ export default function her(pi: ExtensionAPI): void {
 				kind: "context",
 				content: herBlock,
 				emittedContent: injectedHer,
-				sources: [...CONTEXT_INJECTION_SOURCES],
+				sources: narrativeSections.map((section) => section.source),
 			},
 		];
 		let inboxPaths: string[] = [];
@@ -1177,10 +1200,11 @@ export default function her(pi: ExtensionAPI): void {
 			leafId: ctx.sessionManager.getLeafId(),
 			cwd: ctx.cwd,
 		};
-		const noteId = await mem.capture(turnToRaw(event, session), {
+		const noteId = await mem.capture(turnToRaw(event, session, activePromptBySession.get(sessionId)), {
 			sessionId: `${sessionId}-turn-${event.turnIndex}`,
 			project: ctx.cwd,
 		});
+		activePromptBySession.delete(sessionId);
 		pi.appendEntry("her-state", {
 			phase: "2",
 			status: "captured",
@@ -1188,6 +1212,19 @@ export default function her(pi: ExtensionAPI): void {
 			noteId,
 			memoryDir,
 		});
+		try {
+			const scan = await runDreamScan(memoryDir, { limit: 1 });
+			if (scan.written > 0) {
+				pi.appendEntry("her-state", {
+					phase: "2",
+					status: "correction-proposed",
+					proposals: scan.writtenPaths,
+					memoryDir,
+				});
+			}
+		} catch (error) {
+			console.warn(`[her] correction scan skipped: ${errorMessage(error)}`);
+		}
 		try {
 			// G-132 — this turn_end ends any prior wake turn; clear the flag before the
 			// gate may re-set it. Event-wake runs before the goal chain: a finished task

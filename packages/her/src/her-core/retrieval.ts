@@ -1,4 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
+import { parseFrontmatter } from "./store.ts";
 
 const wordPattern = /[a-z0-9]+/g;
 const cjkPattern = /[\u4e00-\u9fff]/g;
@@ -75,12 +76,17 @@ export function entitySearch(query: string, docs: CorpusDoc[], k = 8): Note[] {
 	if (queryTerms.size === 0) return [];
 	return docs
 		.map((doc) => {
-			const docTerms = entityTerms(`${doc.id} ${doc.path} ${headingText(doc.text)}`);
-			let hits = 0;
+			const docTerms = entityTerms(`${doc.id} ${doc.path} ${headingText(doc.text)} ${aliasText(doc.text)}`);
+			let score = 0;
 			for (const term of queryTerms) {
-				if (docTerms.has(term)) hits++;
+				if (docTerms.has(term)) {
+					score += 1;
+					continue;
+				}
+				// ponytail: scan only bounded entity/alias terms; add an index if corpus profiling makes this hot.
+				if (term.length >= 4 && [...docTerms].some((candidate) => withinOneEdit(term, candidate))) score += 0.6;
 			}
-			return { ...doc, score: hits / queryTerms.size };
+			return { ...doc, score: score / queryTerms.size };
 		})
 		.filter((doc) => doc.score > 0)
 		.sort((a, b) => b.score - a.score || a.id.localeCompare(b.id))
@@ -147,4 +153,36 @@ function headingText(markdown: string): string {
 		.split(/\r?\n/)
 		.filter((line) => /^#{1,3}\s+/.test(line))
 		.join("\n");
+}
+
+function aliasText(markdown: string): string {
+	const aliases = parseFrontmatter(markdown).data.aliases;
+	if (Array.isArray(aliases)) return aliases.filter((item): item is string => typeof item === "string").join(" ");
+	return typeof aliases === "string" ? aliases : "";
+}
+
+function withinOneEdit(left: string, right: string): boolean {
+	if (Math.abs(left.length - right.length) > 1) return false;
+	if (left.length === right.length) {
+		let differences = 0;
+		for (let index = 0; index < left.length; index++) {
+			if (left[index] !== right[index] && ++differences > 1) return false;
+		}
+		return differences === 1;
+	}
+	const [shorter, longer] = left.length < right.length ? [left, right] : [right, left];
+	let shortIndex = 0;
+	let longIndex = 0;
+	let skipped = false;
+	while (shortIndex < shorter.length && longIndex < longer.length) {
+		if (shorter[shortIndex] === longer[longIndex]) {
+			shortIndex++;
+			longIndex++;
+			continue;
+		}
+		if (skipped) return false;
+		skipped = true;
+		longIndex++;
+	}
+	return true;
 }

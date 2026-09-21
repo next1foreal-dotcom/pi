@@ -277,7 +277,7 @@ test("extension injects Her context and captures completed turns", async () => {
 		const injected = (await beforeAgentStart(
 			{
 				type: "before_agent_start",
-				prompt: "hello",
+				prompt: "不对，请使用 pnpm。",
 				systemPrompt: "base prompt",
 				systemPromptOptions: {},
 			},
@@ -296,7 +296,7 @@ test("extension injects Her context and captures completed turns", async () => {
 		const injectionAudit = (await readText(join(store, "audit", "context-injections.jsonl"))) ?? "";
 		assert.match(injectionAudit, /"version":"context-manifest-v1"/);
 		assert.match(injectionAudit, /"promptChanged":false/);
-		assert.doesNotMatch(injectionAudit, /hello/);
+		assert.doesNotMatch(injectionAudit, /不对|pnpm/);
 
 		const turnEnd = fake.handlers.get("turn_end")?.[0];
 		assert.ok(turnEnd);
@@ -317,6 +317,24 @@ test("extension injects Her context and captures completed turns", async () => {
 		assert.match(raw, /Pi Turn 2/);
 		assert.match(raw, /Captured by Her/);
 		assert.match(raw, /session-1/);
+		assert.match(raw, /不对，请使用 pnpm/);
+		const dreamFiles = (await readdir(join(store, "proposals"))).filter((name) => name.startsWith("dream-"));
+		assert.equal(dreamFiles.length, 1);
+		assert.equal(
+			fake.entries.some((entry) => entry.customType === "her-state" && entryStatus(entry) === "correction-proposed"),
+			true,
+		);
+		const nextTurn = (await beforeAgentStart(
+			{
+				type: "before_agent_start",
+				prompt: "continue",
+				systemPrompt: "base prompt",
+				systemPromptOptions: {},
+			},
+			ctx,
+		)) as { systemPrompt?: string };
+		assert.match(nextTurn.systemPrompt ?? "", /Pending explicit correction/);
+		assert.match(nextTurn.systemPrompt ?? "", /不对，请使用 pnpm/);
 		assert.deepEqual(
 			fake.entries.find((entry) => entry.customType === "her-state" && entryStatus(entry) === "captured"),
 			{
