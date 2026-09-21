@@ -2,6 +2,8 @@
  * G-120/G-122/G-125 — spawn / stop / list harness background tasks (+ gates / worktree).
  */
 
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readdir, stat } from "node:fs/promises";
 import { hostname as osHostname } from "node:os";
 import { basename, join, resolve } from "node:path";
@@ -41,6 +43,12 @@ import {
 	taskContextSnapshotTokens,
 	writeTaskContextSnapshot,
 } from "./task-context-snapshot.ts";
+import {
+	appendTaskEvidenceSnapshot,
+	loadOrCreateTaskEvidenceSnapshot,
+	shareTaskEvidenceSnapshot,
+	type TaskEvidenceSnapshot,
+} from "./task-evidence-snapshot.ts";
 import { launchTask, stopTask } from "./task-executor.ts";
 import { evaluateTaskRoute } from "./task-route.ts";
 import { claimWarmWorktree, clampWarmWorktreePoolSize, ensureWarmWorktreePool } from "./warm-worktree-pool.ts";
@@ -111,6 +119,8 @@ export type SpawnBgTaskInput = {
 	 * `ops/channel-probe-latest.json`. Production always uses SAMANTHA_REPO_ROOT.
 	 */
 	probeRepoRoot?: string;
+	/** Explicit rerun escape hatch for an otherwise identical subgoal. */
+	allowDuplicate?: boolean;
 };
 
 type SpawnMode = "worker" | "command";
@@ -270,6 +280,45 @@ function resolveCodeRoot(explicit?: string): string {
  * into every id, so the count is a `readdir` away and needs no second ledger;
  * the prefix is derived from `newTaskId` itself so the two can never drift.
  */
+function currentRevision(codeRoot: string): string {
+	const result = spawnSync("git", ["-C", codeRoot, "rev-parse", "HEAD"], {
+		encoding: "utf8",
+		timeout: 5_000,
+		windowsHide: true,
+	});
+	return result.status === 0 && result.stdout.trim() ? result.stdout.trim() : "unversioned";
+}
+
+function subgoalKey(input: {
+	objective: string;
+	worker: string;
+	parentTask?: string | null;
+	codeRoot: string;
+	revision: string;
+}): string {
+	return createHash("sha256")
+		.update(
+			JSON.stringify({
+				objective: input.objective.trim().toLocaleLowerCase().replace(/\s+/g, " "),
+				worker: input.worker,
+				parentTask: input.parentTask ?? null,
+				codeRoot: resolve(input.codeRoot).toLocaleLowerCase(),
+				revision: input.revision,
+			}),
+			"utf8",
+		)
+		.digest("hex")
+		.slice(0, 24);
+}
+
+async function assertUniqueSubgoal(memoryRoot: string, key: string): Promise<void> {
+	const duplicate = (await listBgTasks(memoryRoot)).find(
+		(task) =>
+			task.subgoalKey === key &&
+			(task.status === "pending" || task.status === "running" || task.status === "completed"),
+	);
+	if (duplicate) throw new Error(`duplicate subgoal already exists: ${duplicate.id} (${duplicate.status})`);
+}
 async function countTasksStartedToday(memoryRoot: string, now = new Date()): Promise<number> {
 	const prefix = newTaskId(now).replace(/[^-]*$/, "");
 	const names = await readdir(tasksDir(memoryRoot)).catch(() => [] as string[]);
@@ -329,6 +378,17 @@ export async function spawnBgTask(
 		command = input.command ?? [];
 	}
 
+	const identityRoot = resolve(input.reuseWorktree ?? resolveCodeRoot(input.codeRoot));
+	const identityRevision = input.reuseWorktreeBaseSha ?? currentRevision(identityRoot);
+	const identityKey = subgoalKey({
+		objective: input.objective,
+		worker: mode === "worker" ? (workerName ?? "") : (input.worker ?? cfg.tasks.defaultWorker),
+		parentTask: input.parentTask,
+		codeRoot: identityRoot,
+		revision: identityRevision,
+	});
+	if (!input.allowDuplicate) await assertUniqueSubgoal(memoryRoot, identityKey);
+
 	const record = createPendingRecord({
 		objective: input.objective,
 		worker: mode === "worker" ? (workerName ?? "") : (input.worker ?? cfg.tasks.defaultWorker),
@@ -341,6 +401,8 @@ export async function spawnBgTask(
 		...(input.ownerSessionId ? { ownerSessionId: input.ownerSessionId } : {}),
 		...(input.blockedBy?.length ? { blockedBy: input.blockedBy } : {}),
 	});
+	record.subgoalKey = identityKey;
+	record.subgoalRevision = identityRevision;
 	let taskSnapshot: TaskContextSnapshot | undefined;
 	if (mode === "worker" && workerProfile && workerName) {
 		const candidates = [parentRecord, ...dependencyRecords].filter(
@@ -384,6 +446,18 @@ export async function spawnBgTask(
 		record.routeDecision = route;
 		assertBriefWithinCap(appendTaskContextSnapshot(input.brief ?? "", taskSnapshot), cfg.tasks.briefCapBytes);
 	}
+	let evidenceSnapshot: TaskEvidenceSnapshot | undefined;
+	if (
+		mode === "worker" &&
+		parentRecord?.status === "completed" &&
+		typeof parentRecord.worktree === "string" &&
+		parentRecord.worktree
+	) {
+		evidenceSnapshot = await loadOrCreateTaskEvidenceSnapshot(memoryRoot, parentRecord);
+		record.evidenceSnapshotId = evidenceSnapshot.id;
+		record.evidenceSnapshotDigest = evidenceSnapshot.digest;
+		record.evidenceSourceTaskId = evidenceSnapshot.sourceTaskId;
+	}
 	if (record.blockedBy?.includes(record.id)) {
 		throw new Error(`blockedBy cannot reference the task itself: ${record.id}`);
 	}
@@ -414,6 +488,7 @@ export async function spawnBgTask(
 		}
 	}
 	if (taskSnapshot) await writeTaskContextSnapshot(memoryRoot, record.id, taskSnapshot);
+	if (evidenceSnapshot) await shareTaskEvidenceSnapshot(memoryRoot, record.id, evidenceSnapshot);
 
 	if (!input.skipGates && !dependencyPending) {
 		const runningCount = (await listBgTasks(memoryRoot, { status: "running" })).length;
@@ -582,7 +657,8 @@ export async function spawnBgTask(
 		const withSnapshot = taskSnapshot
 			? appendTaskContextSnapshot(input.brief ?? "", taskSnapshot)
 			: (input.brief ?? "");
-		const workerBrief = appendEvidenceVerifiedBrief(withSnapshot, gatePlan);
+		const withEvidence = evidenceSnapshot ? appendTaskEvidenceSnapshot(withSnapshot, evidenceSnapshot) : withSnapshot;
+		const workerBrief = appendEvidenceVerifiedBrief(withEvidence, gatePlan);
 		assertBriefWithinCap(workerBrief, cfg.tasks.briefCapBytes);
 		await writeText(briefPath, redactSecrets(workerBrief));
 	}

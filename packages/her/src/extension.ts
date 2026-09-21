@@ -14,6 +14,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { summarizeForCompaction } from "./compaction.ts";
+import { clearConditionalRules, loadConditionalRules } from "./conditional-rules.ts";
 import { registerDesignCanvasTools, withCanvasNag } from "./design-canvas/tools.ts";
 import { registerDesignProjectTools } from "./design-project/tools.ts";
 import { registerDesignVersionTools } from "./design-versions/index.ts";
@@ -981,6 +982,7 @@ export default function her(pi: ExtensionAPI): void {
 
 	pi.on("session_shutdown", (_event, ctx) => {
 		readGuards.delete(sessionIdOf(ctx));
+		clearConditionalRules(sessionIdOf(ctx));
 		try {
 			void clearPresence(memoryDir, ctx.sessionManager.getSessionId()).catch((error) => {
 				console.warn(`[her] presence clear skipped: ${errorMessage(error)}`);
@@ -1009,7 +1011,18 @@ export default function her(pi: ExtensionAPI): void {
 			console.warn(`[her] presence record skipped: ${errorMessage(error)}`);
 		}
 		const { context, facts, soul, self, choiceModel } = await mem.getContext();
-		const narrativeSections = composeHerMemorySections(context, facts, soul, self, choiceModel);
+		const conditionalRules = await loadConditionalRules({
+			cwd: ctx.cwd,
+			prompt: event.prompt,
+			sessionId,
+		}).catch((error) => {
+			console.warn(`[her] conditional rule loading skipped: ${errorMessage(error)}`);
+			return [];
+		});
+		const narrativeSections = [
+			...composeHerMemorySections(context, facts, soul, self, choiceModel),
+			...conditionalRules,
+		];
 		const herBlock = narrativeSections.map((section) => section.content).join("\n\n");
 		const injectedHer = injectLoggedContent({
 			memoryDir,
@@ -1296,7 +1309,7 @@ export default function her(pi: ExtensionAPI): void {
 
 	pi.on("session_before_compact", async (event, ctx) => {
 		const { context, facts, soul, self, choiceModel } = await mem.getContext();
-		const { summary, source, reconstruction, errors } = await summarizeForCompaction({
+		const { summary, source, reconstruction, integrity, errors } = await summarizeForCompaction({
 			grounding: { context, facts, soul, self, choiceModel },
 			preparation: event.preparation,
 			ctx,
@@ -1313,6 +1326,7 @@ export default function her(pi: ExtensionAPI): void {
 			summarySource: source,
 			...(fallbackError ? { fallbackError } : {}),
 			reconstruction,
+			integrity,
 		});
 		return {
 			compaction: {
@@ -1324,6 +1338,7 @@ export default function her(pi: ExtensionAPI): void {
 					summarySource: source,
 					preserved: ["CONTEXT.md", "FACTS.md", "SOUL.md", "SAMANTHA.md", "CHOICE-MODEL.md"],
 					reconstruction,
+					integrity,
 					...(fallbackError ? { fallbackError } : {}),
 				},
 			},
@@ -2747,6 +2762,9 @@ export default function her(pi: ExtensionAPI): void {
 			),
 			timeoutMinutes: Type.Optional(Type.Integer({ minimum: 1 })),
 			parentTask: Type.Optional(Type.String()),
+			allowDuplicate: Type.Optional(
+				Type.Boolean({ description: "Explicitly rerun an identical subgoal on the same code revision." }),
+			),
 			blockedBy: Type.Optional(Type.Array(Type.String(), { maxItems: 8 })),
 			worktree: Type.Optional(Type.Boolean()),
 			isolation: Type.Optional(
@@ -2794,6 +2812,7 @@ export default function her(pi: ExtensionAPI): void {
 				...(params.privacy ? { privacy: params.privacy } : {}),
 				...(params.timeoutMinutes ? { timeoutMinutes: params.timeoutMinutes } : {}),
 				...(params.parentTask ? { parentTask: params.parentTask } : {}),
+				...(params.allowDuplicate ? { allowDuplicate: true } : {}),
 				...(params.blockedBy ? { blockedBy: params.blockedBy } : {}),
 				...(params.worktree ? { worktree: true } : {}),
 				// G-198 — schema keeps this a plain string (no Type.Union precedent in this file);
