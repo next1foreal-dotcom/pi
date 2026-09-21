@@ -44,8 +44,8 @@ async function run(tool: ToolDefinition | undefined, params: Record<string, unkn
 	return { text: result.content[0]?.text ?? "", details: result.details ?? {} };
 }
 
-test("governedTools lists her_act as non-destructive", () => {
-	assert.equal(governedTools.her_act?.destructive, false);
+test("governedTools lists her_act as destructive", () => {
+	assert.equal(governedTools.her_act?.destructive, true);
 });
 
 test("her_act returns server-channel result without polling UI receipt", async () => {
