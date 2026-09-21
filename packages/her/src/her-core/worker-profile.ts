@@ -38,6 +38,8 @@ const BASE_ENV_ALLOW = [
 
 export type WorkerProfile = {
 	argv: string[];
+	/** Trust boundary for task context. Missing is external and cannot receive private/protected snapshots. */
+	privacyBoundary?: "external" | "local";
 	/** Built-in profile identity and execution root; config profiles omit both fields. */
 	name?: string;
 	cwd?: string;
@@ -51,7 +53,7 @@ export type WorkerProfile = {
 	priceUsd?: number;
 };
 
-type RawProfile = { argv?: unknown; envAllow?: unknown; priceUsd?: unknown };
+type RawProfile = { argv?: unknown; envAllow?: unknown; priceUsd?: unknown; privacyBoundary?: unknown };
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SAMANTHA_REPO_ROOT = resolve(HERE, "../../../..");
@@ -122,6 +124,7 @@ export function parseWorkers(text: string): Record<string, WorkerProfile> {
 		if (fieldMatch[1] === "argv") current.argv = parseArrayValue(raw);
 		else if (fieldMatch[1] === "env_allow") current.envAllow = parseArrayValue(raw);
 		else if (fieldMatch[1] === "price_usd") current.priceUsd = raw;
+		else if (fieldMatch[1] === "privacy_boundary") current.privacyBoundary = raw.replace(/^["']|["']$/g, "");
 	}
 	flush();
 	return workers;
@@ -151,8 +154,12 @@ function validateProfile(name: string, raw: RawProfile): WorkerProfile {
 	) {
 		throw new Error(`workers.${name}.env_allow must be an array of strings`);
 	}
+	if (raw.privacyBoundary !== undefined && raw.privacyBoundary !== "external" && raw.privacyBoundary !== "local") {
+		throw new Error(`workers.${name}.privacy_boundary must be "external" or "local"`);
+	}
 	return {
 		argv: [...raw.argv],
+		...(raw.privacyBoundary ? { privacyBoundary: raw.privacyBoundary as "external" | "local" } : {}),
 		...(raw.envAllow ? { envAllow: [...raw.envAllow] } : {}),
 		...(raw.priceUsd !== undefined ? { priceUsd: parsePrice(name, raw.priceUsd) } : {}),
 	};

@@ -300,7 +300,9 @@ test("C2 grok continue reuses parent worktree and injects --continue via prompt-
 		);
 		const briefPath = join(tasksDir(root), `${result.id}.brief`);
 		assert.equal(child.record.command[child.record.command.indexOf("--prompt-file") + 1], briefPath);
-		assert.equal(await readFile(briefPath, "utf8"), "keep going");
+		const brief = await readFile(briefPath, "utf8");
+		assert.match(brief, /READ-ONLY TASK CONTEXT SNAPSHOT/);
+		assert.equal(brief.split("keep going").length - 1, 1);
 		const log = await readFile(join(tasksDir(root), `${result.id}.log`), "utf8");
 		const cwdLine = log.split("\n").find((line) => line.startsWith("CWD="));
 		assert.ok(cwdLine, `expected CWD= in log, got ${JSON.stringify(log)}`);

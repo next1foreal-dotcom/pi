@@ -2736,6 +2736,12 @@ export default function her(pi: ExtensionAPI): void {
 			command: Type.Optional(Type.Array(Type.String(), { minItems: 1 })),
 			brief: Type.Optional(Type.String()),
 			worker: Type.Optional(Type.String()),
+			privacy: Type.Optional(
+				StringEnum(["public", "private", "protected"] as const, {
+					description:
+						"Task-context privacy. Defaults to public; private/protected require worker privacy_boundary: local.",
+				}),
+			),
 			timeoutMinutes: Type.Optional(Type.Integer({ minimum: 1 })),
 			parentTask: Type.Optional(Type.String()),
 			blockedBy: Type.Optional(Type.Array(Type.String(), { maxItems: 8 })),
@@ -2782,6 +2788,7 @@ export default function her(pi: ExtensionAPI): void {
 				...(params.command ? { command: params.command } : {}),
 				...(params.brief !== undefined ? { brief: params.brief } : {}),
 				...(params.worker ? { worker: params.worker } : {}),
+				...(params.privacy ? { privacy: params.privacy } : {}),
 				...(params.timeoutMinutes ? { timeoutMinutes: params.timeoutMinutes } : {}),
 				...(params.parentTask ? { parentTask: params.parentTask } : {}),
 				...(params.blockedBy ? { blockedBy: params.blockedBy } : {}),
@@ -2817,6 +2824,8 @@ export default function her(pi: ExtensionAPI): void {
 				updated: t.updated,
 				...(t.exitCode !== undefined ? { exitCode: t.exitCode } : {}),
 				...(t.failureReason ? { failureReason: t.failureReason } : {}),
+				...(t.contextSnapshotId ? { contextSnapshotId: t.contextSnapshotId } : {}),
+				...(t.routeDecision ? { routeDecision: t.routeDecision } : {}),
 			}));
 			return textResult(JSON.stringify({ tasks: rows, count: rows.length }), {
 				phase: "G-120",
