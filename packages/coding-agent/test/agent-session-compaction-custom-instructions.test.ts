@@ -14,13 +14,12 @@ type SessionWithAutoCompaction = {
 };
 
 function summarizerPrompt(context: Context): string {
-	const first = context.messages[0];
-	assert.ok(first, "summarizer should receive a user message");
-	assert.equal(first.role, "user");
-	if (typeof first.content === "string") {
-		return first.content;
+	const userMessage = context.messages.find((message) => message.role === "user");
+	assert.ok(userMessage, "summarizer should receive a user message");
+	if (typeof userMessage.content === "string") {
+		return userMessage.content;
 	}
-	const textBlock = first.content.find((block) => block.type === "text");
+	const textBlock = userMessage.content.find((block) => block.type === "text");
 	assert.ok(textBlock && textBlock.type === "text", "summarizer user message should have text");
 	return textBlock.text;
 }
