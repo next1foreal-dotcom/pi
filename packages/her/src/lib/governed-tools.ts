@@ -10,6 +10,8 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	ls: { destructive: false },
 	// G-425 session name / headline / waiting. Tool-call args only; no side effects.
 	her_status: { destructive: false },
+	her_capabilities: { destructive: false },
+	her_tools_load: { destructive: false },
 	list_her_events: { destructive: false },
 	her_recall: { destructive: false },
 	todo_write: { destructive: false },

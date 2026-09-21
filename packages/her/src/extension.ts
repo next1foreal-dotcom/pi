@@ -1296,12 +1296,13 @@ export default function her(pi: ExtensionAPI): void {
 
 	pi.on("session_before_compact", async (event, ctx) => {
 		const { context, facts, soul, self, choiceModel } = await mem.getContext();
-		const { summary, source, errors } = await summarizeForCompaction({
+		const { summary, source, reconstruction, errors } = await summarizeForCompaction({
 			grounding: { context, facts, soul, self, choiceModel },
 			preparation: event.preparation,
 			ctx,
 			envModel: summaryModel,
 			signal: event.signal,
+			mode: resolveContextConfig(loadConfig(resolve(memoryDir, ".her", "config.yaml"))).mode,
 		});
 		const fallbackError = errors?.join("; ");
 		pi.appendEntry("her-state", {
@@ -1311,6 +1312,7 @@ export default function her(pi: ExtensionAPI): void {
 			fromExtension: true,
 			summarySource: source,
 			...(fallbackError ? { fallbackError } : {}),
+			reconstruction,
 		});
 		return {
 			compaction: {
@@ -1321,6 +1323,7 @@ export default function her(pi: ExtensionAPI): void {
 					source: "her-extension",
 					summarySource: source,
 					preserved: ["CONTEXT.md", "FACTS.md", "SOUL.md", "SAMANTHA.md", "CHOICE-MODEL.md"],
+					reconstruction,
 					...(fallbackError ? { fallbackError } : {}),
 				},
 			},

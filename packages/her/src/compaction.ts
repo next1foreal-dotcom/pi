@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { contentText } from "@earendil-works/pi-ai";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -20,6 +21,19 @@ export interface CompactionPreparationLike {
 	messagesToSummarize?: unknown[];
 	turnPrefixMessages?: unknown[];
 }
+
+export type TaskHistoryAudit = {
+	version: "task-history-v1";
+	applied: boolean;
+	taskDigest: string;
+	selected: Array<{ index: number; score: number; reasons: string[] }>;
+	omitted: number;
+};
+
+export type TaskHistoryReconstruction = {
+	text: string;
+	audit: TaskHistoryAudit;
+};
 
 /**
  * Character budgets for the transcript excerpts we hand to a summarization model.
@@ -49,8 +63,18 @@ export async function summarizeForCompaction(input: {
 	ctx?: ExtensionContext;
 	envModel?: ModelLike;
 	signal?: AbortSignal;
-}): Promise<{ summary: string; source: string; errors?: string[] }> {
-	const prompt = renderCompactionPrompt({ ...input.grounding, preparation: input.preparation });
+	mode?: "shadow" | "enforce";
+}): Promise<{ summary: string; source: string; reconstruction: TaskHistoryAudit; errors?: string[] }> {
+	const taskHistory = reconstructTaskHistory(input.preparation.messagesToSummarize, {
+		budget: COMPACTION_TRANSCRIPT_BUDGET,
+		perMessage: PROMPT_EXCERPT_CHARS,
+		applied: input.mode === "enforce",
+	});
+	const prompt = renderCompactionPrompt({
+		...input.grounding,
+		preparation: input.preparation,
+		...(taskHistory.audit.applied ? { taskHistory } : {}),
+	});
 	const candidates: Array<{ source: string; model: ModelLike }> = [];
 	const sessionModel = input.ctx ? sessionSummaryModel(input.ctx, input.signal) : undefined;
 	if (sessionModel) candidates.push({ source: "session-model", model: sessionModel });
@@ -62,7 +86,12 @@ export async function summarizeForCompaction(input: {
 			const summary = await candidate.model.complete(prompt);
 			if (summary.trim()) {
 				bumpCompactionEpoch();
-				return { summary, source: candidate.source, ...(errors.length ? { errors } : {}) };
+				return {
+					summary,
+					source: candidate.source,
+					reconstruction: taskHistory.audit,
+					...(errors.length ? { errors } : {}),
+				};
 			}
 			errors.push(`${candidate.source}: empty summary`);
 		} catch (error) {
@@ -71,13 +100,20 @@ export async function summarizeForCompaction(input: {
 	}
 
 	bumpCompactionEpoch();
+	const fallbackHistory = reconstructTaskHistory(input.preparation.messagesToSummarize, {
+		budget: FALLBACK_TRANSCRIPT_BUDGET,
+		perMessage: FALLBACK_EXCERPT_CHARS,
+		applied: input.mode === "enforce",
+	});
 	return {
 		summary: fallbackCompactionSummary({
 			...input.grounding,
 			preparation: input.preparation,
 			errors,
+			...(fallbackHistory.audit.applied ? { taskHistory: fallbackHistory } : {}),
 		}),
 		source: "structured-fallback",
+		reconstruction: fallbackHistory.audit,
 		...(errors.length ? { errors } : {}),
 	};
 }
@@ -114,7 +150,9 @@ export function sessionSummaryModel(ctx: ExtensionContext, signal?: AbortSignal)
 	};
 }
 
-export function renderCompactionPrompt(input: HerGrounding & { preparation: CompactionPreparationLike }): string {
+export function renderCompactionPrompt(
+	input: HerGrounding & { preparation: CompactionPreparationLike; taskHistory?: TaskHistoryReconstruction },
+): string {
 	return [
 		"Create a compact continuation summary for Samantha. Preserve machine-truth grounding and do not invent facts.",
 		ANTI_NESTING_CLAUSE,
@@ -131,10 +169,11 @@ export function renderCompactionPrompt(input: HerGrounding & { preparation: Comp
 			: "## Previous compaction summary\n(none)",
 		"",
 		"## Messages to summarize",
-		describeMessages(input.preparation.messagesToSummarize, {
-			budget: COMPACTION_TRANSCRIPT_BUDGET,
-			perMessage: PROMPT_EXCERPT_CHARS,
-		}),
+		input.taskHistory?.text ??
+			describeMessages(input.preparation.messagesToSummarize, {
+				budget: COMPACTION_TRANSCRIPT_BUDGET,
+				perMessage: PROMPT_EXCERPT_CHARS,
+			}),
 		"",
 		"## Turn prefix messages",
 		describeMessages(input.preparation.turnPrefixMessages, {
@@ -147,7 +186,11 @@ export function renderCompactionPrompt(input: HerGrounding & { preparation: Comp
 }
 
 export function fallbackCompactionSummary(
-	input: HerGrounding & { preparation: CompactionPreparationLike; errors?: string[] },
+	input: HerGrounding & {
+		preparation: CompactionPreparationLike;
+		errors?: string[];
+		taskHistory?: TaskHistoryReconstruction;
+	},
 ): string {
 	const prefix = input.preparation.turnPrefixMessages ?? [];
 	return [
@@ -167,10 +210,11 @@ export function fallbackCompactionSummary(
 			: "## Previous Summary\n(none)",
 		"",
 		"## Conversation Outline (structured degradation)",
-		describeMessages(input.preparation.messagesToSummarize, {
-			budget: FALLBACK_TRANSCRIPT_BUDGET,
-			perMessage: FALLBACK_EXCERPT_CHARS,
-		}),
+		input.taskHistory?.text ??
+			describeMessages(input.preparation.messagesToSummarize, {
+				budget: FALLBACK_TRANSCRIPT_BUDGET,
+				perMessage: FALLBACK_EXCERPT_CHARS,
+			}),
 		prefix.length
 			? `\n## Split-Turn Prefix\n${describeMessages(prefix, { budget: FALLBACK_PREFIX_BUDGET, perMessage: FALLBACK_EXCERPT_CHARS })}`
 			: "",
@@ -178,6 +222,103 @@ export function fallbackCompactionSummary(
 	]
 		.filter(Boolean)
 		.join("\n");
+}
+
+export function reconstructTaskHistory(
+	messages: unknown[] | undefined,
+	options: { budget: number; perMessage: number; applied?: boolean },
+): TaskHistoryReconstruction {
+	const list = messages ?? [];
+	const taskText = latestUserText(list);
+	const taskTerms = terms(taskText);
+	const scored = list.map((message, index) =>
+		scoreHistoryMessage(message, index, list.length, taskTerms, options.perMessage),
+	);
+	const ranked = [...scored].sort((a, b) => b.score - a.score || b.index - a.index);
+	const selected: typeof scored = [];
+	let used = 0;
+	for (const candidate of ranked) {
+		if (selected.length > 0 && used + candidate.line.length + 1 > options.budget) continue;
+		selected.push(candidate);
+		used += candidate.line.length + 1;
+	}
+	selected.sort((a, b) => a.index - b.index);
+	const omitted = Math.max(0, list.length - selected.length);
+	const text =
+		list.length === 0
+			? "(none)"
+			: [
+					omitted > 0 ? `(${omitted} lower-weight message(s) omitted by task-history rebuild)` : "",
+					...selected.map((row) => row.line),
+				]
+					.filter(Boolean)
+					.join("\n");
+	return {
+		text,
+		audit: {
+			version: "task-history-v1",
+			applied: options.applied === true,
+			taskDigest: createHash("sha256").update(taskText, "utf8").digest("hex").slice(0, 16),
+			selected: selected.map(({ index, score, reasons }) => ({ index, score, reasons })),
+			omitted,
+		},
+	};
+}
+
+function scoreHistoryMessage(
+	message: unknown,
+	index: number,
+	count: number,
+	taskTerms: Set<string>,
+	perMessage: number,
+): { index: number; line: string; score: number; reasons: string[] } {
+	const record = asRecord(message);
+	const role = typeof record?.role === "string" ? record.role : "unknown";
+	const searchable = [
+		collectText(record?.content),
+		typeof record?.toolName === "string" ? record.toolName : "",
+		...toolCallNames(record?.content),
+	].join(" ");
+	const overlap = [...terms(searchable)].filter((term) => taskTerms.has(term)).length;
+	const distance = count - 1 - index;
+	const reasons: string[] = [];
+	let score = overlap * 100;
+	if (overlap > 0) reasons.push("task-overlap");
+	if (role === "user") {
+		score += 20;
+		reasons.push("user-anchor");
+	}
+	if (distance < 8) {
+		score += 16 - distance * 2;
+		reasons.push("recent");
+	}
+	if (role === "toolResult" || toolCallNames(record?.content).length > 0) {
+		score += 5;
+		reasons.push("tool-receipt");
+	}
+	if (index === count - 1) {
+		score += 25;
+		reasons.push("latest");
+	}
+	return { index, line: describeMessage(message, index, perMessage), score, reasons };
+}
+
+function latestUserText(messages: unknown[]): string {
+	for (let index = messages.length - 1; index >= 0; index--) {
+		const record = asRecord(messages[index]);
+		if (record?.role === "user") return collectText(record.content);
+	}
+	return "";
+}
+
+function terms(text: string): Set<string> {
+	const normalized = text.toLocaleLowerCase();
+	const out = new Set(normalized.match(/[a-z0-9_][a-z0-9_-]+/g) ?? []);
+	for (const sequence of normalized.match(/[\p{Script=Han}]+/gu) ?? []) {
+		if (sequence.length === 1) out.add(sequence);
+		for (let index = 0; index < sequence.length - 1; index++) out.add(sequence.slice(index, index + 2));
+	}
+	return out;
 }
 
 /**
