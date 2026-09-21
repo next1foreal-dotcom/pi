@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
+	applyCompactionIntegrity,
 	COMPACTION_TRANSCRIPT_BUDGET,
 	describeMessages,
 	fallbackCompactionSummary,
@@ -117,6 +118,25 @@ test("task-history rebuild deterministically prefers relevant history and keeps 
 	assert.doesNotMatch(JSON.stringify(first.audit), /Continue the cache affinity fix/);
 });
 
+test("compaction integrity audits in shadow mode and restores missing anchors in enforce mode", () => {
+	const messages = [
+		userMessage("Implement the context integrity gate."),
+		userMessage("Do not change the selected provider."),
+		assistantMessage("Next step: run the focused compaction test."),
+		{ role: "toolResult", content: [{ type: "text", text: "Tests passed: 4/4." }] },
+	];
+	const shadow = applyCompactionIntegrity("Short summary.", messages, "shadow");
+	assert.equal(shadow.summary, "Short summary.");
+	assert.equal(shadow.audit.applied, false);
+	assert.ok(shadow.audit.missing.length >= 3);
+	assert.doesNotMatch(JSON.stringify(shadow.audit), /selected provider|Tests passed/);
+
+	const enforced = applyCompactionIntegrity("Short summary.", messages, "enforce");
+	assert.match(enforced.summary, /Compaction Integrity Anchors/);
+	assert.match(enforced.summary, /Do not change the selected provider/);
+	assert.match(enforced.summary, /Tests passed: 4\/4/);
+	assert.equal(enforced.audit.applied, true);
+});
 test("summary config recognizes DEEPSEEK_API_KEY and HER_LLM_API_KEY", async () => {
 	for (const key of ["DEEPSEEK_API_KEY", "HER_LLM_API_KEY"]) {
 		const model = createSummaryModel({ [key]: "test-key" } as NodeJS.ProcessEnv);

@@ -56,6 +56,86 @@ const COMPACTION_SYSTEM_PROMPT =
 const DEGRADED_NOTICE =
 	"Model summarization was unavailable; the section below is a structured degradation, not a model summary.";
 
+export type CompactionIntegrityAudit = {
+	version: "compaction-integrity-v1";
+	applied: boolean;
+	anchors: number;
+	missing: Array<{ kind: string; messageIndex: number; digest: string }>;
+};
+
+type CompactionAnchor = { kind: string; messageIndex: number; text: string };
+
+const integrityPatterns: Array<[string, RegExp]> = [
+	["constraint", /\b(?:must|must not|only|preserve|never|cannot)\b|必须|不要|只能|保留|不能|不得/i],
+	["decision", /\b(?:decided|decision|approved|confirmed|adopted)\b|决定|确认|拍板|采用/i],
+	["todo", /\b(?:todo|remaining|next step|unfinished)\b|待办|还需|下一步|未完成/i],
+];
+
+function compactionAnchors(messages: unknown[] | undefined): CompactionAnchor[] {
+	const list = messages ?? [];
+	const anchors: CompactionAnchor[] = [];
+	for (let index = list.length - 1; index >= 0; index--) {
+		const record = asRecord(list[index]);
+		if (record?.role !== "user") continue;
+		const text = excerpt(record.content, 240);
+		if (text) {
+			anchors.push({ kind: "objective", messageIndex: index, text });
+			break;
+		}
+	}
+	for (const [kind, pattern] of integrityPatterns) {
+		for (let index = list.length - 1; index >= 0; index--) {
+			const record = asRecord(list[index]);
+			if (record?.role !== "user" && record?.role !== "assistant") continue;
+			const text = excerpt(record.content, 240);
+			if (text && pattern.test(text)) {
+				anchors.push({ kind, messageIndex: index, text });
+				break;
+			}
+		}
+	}
+	for (let index = list.length - 1; index >= 0; index--) {
+		const record = asRecord(list[index]);
+		if (record?.role !== "toolResult") continue;
+		const text = excerpt(record.content, 240);
+		if (text && /\b(?:pass(?:ed)?|fail(?:ed)?|verified|tests?)\b|通过|失败|验证|验收/i.test(text)) {
+			anchors.push({ kind: "evidence", messageIndex: index, text });
+			break;
+		}
+	}
+	return anchors.filter((anchor, index, all) => all.findIndex((item) => item.text === anchor.text) === index);
+}
+
+function summaryContains(summary: string, anchor: string): boolean {
+	const normalize = (value: string) => value.toLocaleLowerCase().replace(/\s+/g, " ").trim();
+	const needle = normalize(anchor).slice(0, 80);
+	return needle.length > 0 && normalize(summary).includes(needle);
+}
+
+export function applyCompactionIntegrity(
+	summary: string,
+	messages: unknown[] | undefined,
+	mode: "shadow" | "enforce" = "shadow",
+): { summary: string; audit: CompactionIntegrityAudit } {
+	const anchors = compactionAnchors(messages);
+	const missingAnchors = anchors.filter((anchor) => !summaryContains(summary, anchor.text));
+	const missing = missingAnchors.map(({ kind, messageIndex, text }) => ({
+		kind,
+		messageIndex,
+		digest: createHash("sha256").update(text, "utf8").digest("hex").slice(0, 16),
+	}));
+	const applied = mode === "enforce";
+	if (!applied || missingAnchors.length === 0) {
+		return { summary, audit: { version: "compaction-integrity-v1", applied, anchors: anchors.length, missing } };
+	}
+	const lines = [
+		...new Map(missingAnchors.map((anchor) => [anchor.text, `- **${anchor.kind}**: ${anchor.text}`])).values(),
+	];
+	return {
+		summary: `${summary.trimEnd()}\n\n## Compaction Integrity Anchors\n${lines.join("\n")}`,
+		audit: { version: "compaction-integrity-v1", applied, anchors: anchors.length, missing },
+	};
+}
 /** Summarize with the session's own model, the env-configured model, or a structured fallback. */
 export async function summarizeForCompaction(input: {
 	grounding: HerGrounding;
@@ -64,7 +144,13 @@ export async function summarizeForCompaction(input: {
 	envModel?: ModelLike;
 	signal?: AbortSignal;
 	mode?: "shadow" | "enforce";
-}): Promise<{ summary: string; source: string; reconstruction: TaskHistoryAudit; errors?: string[] }> {
+}): Promise<{
+	summary: string;
+	source: string;
+	reconstruction: TaskHistoryAudit;
+	integrity: CompactionIntegrityAudit;
+	errors?: string[];
+}> {
 	const taskHistory = reconstructTaskHistory(input.preparation.messagesToSummarize, {
 		budget: COMPACTION_TRANSCRIPT_BUDGET,
 		perMessage: PROMPT_EXCERPT_CHARS,
@@ -85,11 +171,13 @@ export async function summarizeForCompaction(input: {
 		try {
 			const summary = await candidate.model.complete(prompt);
 			if (summary.trim()) {
+				const integrity = applyCompactionIntegrity(summary, input.preparation.messagesToSummarize, input.mode);
 				bumpCompactionEpoch();
 				return {
-					summary,
+					summary: integrity.summary,
 					source: candidate.source,
 					reconstruction: taskHistory.audit,
+					integrity: integrity.audit,
 					...(errors.length ? { errors } : {}),
 				};
 			}
@@ -105,15 +193,21 @@ export async function summarizeForCompaction(input: {
 		perMessage: FALLBACK_EXCERPT_CHARS,
 		applied: input.mode === "enforce",
 	});
-	return {
-		summary: fallbackCompactionSummary({
+	const fallback = applyCompactionIntegrity(
+		fallbackCompactionSummary({
 			...input.grounding,
 			preparation: input.preparation,
 			errors,
 			...(fallbackHistory.audit.applied ? { taskHistory: fallbackHistory } : {}),
 		}),
+		input.preparation.messagesToSummarize,
+		input.mode,
+	);
+	return {
+		summary: fallback.summary,
 		source: "structured-fallback",
 		reconstruction: fallbackHistory.audit,
+		integrity: fallback.audit,
 		...(errors.length ? { errors } : {}),
 	};
 }
