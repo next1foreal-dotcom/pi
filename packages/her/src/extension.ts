@@ -164,6 +164,7 @@ import { registerRelayProviderTools } from "./providers-relay/tools.ts";
 import { registerShowWidgetTools } from "./show-widget/tools.ts";
 import { createSummaryModel } from "./summary-model.ts";
 import { registerTodoWriteTools } from "./todo-write/tools.ts";
+import { registerToolDisclosure } from "./tool-disclosure.ts";
 import { registerFileToolkit } from "./tools/index.ts";
 import { registerUiActionTools } from "./ui-action/tools.ts";
 
@@ -709,6 +710,7 @@ export default function her(pi: ExtensionAPI): void {
 	const readGuards = new Map<string, ReadGuard>();
 	const capturedThisTurn = new Set<string>();
 	registerProviderPool(pi);
+	const toolDisclosure = registerToolDisclosure(pi);
 
 	const sessionIdOf = (ctx: ExtensionContext): string => {
 		try {
@@ -940,6 +942,10 @@ export default function her(pi: ExtensionAPI): void {
 	pi.on("session_start", async (_event, ctx) => {
 		lastEventWakeCtx = ctx;
 		readGuardFor(ctx);
+		const disclosure = toolDisclosure.apply(
+			resolveContextConfig(loadConfig(resolve(memoryDir, ".her", "config.yaml"))).mode,
+		);
+		pi.appendEntry("her-state", { phase: "context-tools", status: "tool-disclosure", ...disclosure });
 		try {
 			await recordPresence(memoryDir, {
 				sessionId: ctx.sessionManager.getSessionId(),
