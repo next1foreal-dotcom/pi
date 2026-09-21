@@ -100,6 +100,7 @@ import {
 	recordHerProposal,
 	recordHerProposalFeedback,
 	redactSecrets,
+	resolveContextConfig,
 	resolveSessionReadConfig,
 	resolveTargetSource,
 	type SamanthaZoneCategory,
@@ -144,8 +145,10 @@ import {
 	appendContextManifestRecord,
 	buildContextManifest,
 	CONTEXT_INJECTION_SOURCES,
+	estimateInjectionTokens,
 	type InjectionBlockInput,
 	injectLoggedContent,
+	selectTurnContext,
 } from "./lib/injection-ledger.ts";
 import { registerMcpTools } from "./mcp/tools.ts";
 import { registerAssetShotTools } from "./preview/asset-shot.ts";
@@ -347,19 +350,27 @@ function getMemoryDir(): string {
 	return process.env.HER_MEMORY_DIR ?? resolve(process.cwd(), "..", "her-memory");
 }
 
-function composeHerMemoryBlock(
+function composeHerMemorySections(
 	context: string,
 	facts: string,
 	soul: string,
 	self: string,
 	choiceModel: string,
-): string {
-	const sections = [readHerPrompt(), `## Her CONTEXT.md\n\n${context.trim()}`];
-	if (facts.trim()) sections.push(`## Her FACTS.md\n\n${facts.trim()}`);
-	if (soul.trim()) sections.push(`## Her SOUL.md\n\n${soul.trim()}`);
-	if (self.trim()) sections.push(`## Her SAMANTHA.md\n\n${self.trim()}`);
-	if (choiceModel.trim()) sections.push(`## Her CHOICE-MODEL.md\n\n${choiceModel.trim()}`);
-	return sections.join("\n\n");
+): Array<{ source: string; content: string }> {
+	const sections = [
+		{ source: "pi-package/prompts/her.md", content: readHerPrompt() },
+		{ source: "narrative/CONTEXT.md", content: `## Her CONTEXT.md\n\n${context.trim()}` },
+	];
+	if (facts.trim()) sections.push({ source: "narrative/FACTS.md", content: `## Her FACTS.md\n\n${facts.trim()}` });
+	if (soul.trim()) sections.push({ source: "narrative/SOUL.md", content: `## Her SOUL.md\n\n${soul.trim()}` });
+	if (self.trim()) sections.push({ source: "narrative/SAMANTHA.md", content: `## Her SAMANTHA.md\n\n${self.trim()}` });
+	if (choiceModel.trim()) {
+		sections.push({
+			source: "narrative/CHOICE-MODEL.md",
+			content: `## Her CHOICE-MODEL.md\n\n${choiceModel.trim()}`,
+		});
+	}
+	return sections;
 }
 
 function composeSystemPrompt(base: string, herBlock: string): string {
@@ -992,15 +1003,17 @@ export default function her(pi: ExtensionAPI): void {
 			console.warn(`[her] presence record skipped: ${errorMessage(error)}`);
 		}
 		const { context, facts, soul, self, choiceModel } = await mem.getContext();
-		const herBlock = composeHerMemoryBlock(context, facts, soul, self, choiceModel);
+		const narrativeSections = composeHerMemorySections(context, facts, soul, self, choiceModel);
+		const herBlock = narrativeSections.map((section) => section.content).join("\n\n");
 		const injectedHer = injectLoggedContent({
 			memoryDir,
 			session: sessionId,
 			kind: "context",
 			content: herBlock,
 			sources: [...CONTEXT_INJECTION_SOURCES],
+			log: false,
 		});
-		const actualBlocks: InjectionBlockInput[] = [
+		const turnBlocks: InjectionBlockInput[] = [
 			{
 				kind: "context",
 				content: herBlock,
@@ -1008,7 +1021,7 @@ export default function her(pi: ExtensionAPI): void {
 				sources: [...CONTEXT_INJECTION_SOURCES],
 			},
 		];
-		let systemPrompt = composeSystemPrompt(event.systemPrompt, injectedHer);
+		let inboxPaths: string[] = [];
 		// G-120…123: reconcile → wake inject → Telegram outbox → TUI board.
 		try {
 			// G-185/S1b — same ownership filter as the idle poller: a turn starting in this
@@ -1028,14 +1041,14 @@ export default function her(pi: ExtensionAPI): void {
 					content: wakeContent,
 					sources: ["tasks/wake"],
 					dedupe: false,
+					log: false,
 				});
-				actualBlocks.push({
+				turnBlocks.push({
 					kind: "wake",
 					content: wakeContent,
 					emittedContent: injectedWake,
 					sources: ["tasks/wake"],
 				});
-				systemPrompt = `${systemPrompt}\n\n${injectedWake}`;
 			}
 			const runtime = loadRuntimeConfig(memoryDir);
 			if (runtime.tasks.telegramNotify && wakeEvents.length > 0) {
@@ -1058,37 +1071,73 @@ export default function her(pi: ExtensionAPI): void {
 					content: inboxContent,
 					sources: ["messages/inbox"],
 					dedupe: false,
+					log: false,
 				});
-				actualBlocks.push({
+				turnBlocks.push({
 					kind: "inbox",
 					content: inboxContent,
 					emittedContent: injectedInbox,
 					sources: ["messages/inbox"],
 				});
-				systemPrompt = `${systemPrompt}\n\n${injectedInbox}`;
-				await archiveInbox(
-					memoryDir,
-					sessionId,
-					inbox.map((message) => message.path),
-				);
+				inboxPaths = inbox.map((message) => message.path);
 			}
 		} catch (error) {
 			console.warn(`[her] inbox drain skipped: ${errorMessage(error)}`);
 		}
+
+		const contextConfig = resolveContextConfig(loadConfig(resolve(memoryDir, ".her", "config.yaml")));
+		const selection = selectTurnContext({
+			mode: contextConfig.mode,
+			budgetTokens: contextConfig.turnBudgetTokens,
+			blocks: turnBlocks,
+			narrativeSections,
+		});
+		let priorId = "unavailable";
+		let proposed: Awaited<ReturnType<typeof assemblePrior>>["manifest"] = [];
 		try {
-			const prior = await assemblePrior({ mode: "full", storeRoot: memoryDir, task: event.prompt });
+			const proposedEphemeral = selection.proposedBlocks
+				.filter((block) => block.kind === "wake" || block.kind === "inbox")
+				.map((block) => block.emittedContent ?? block.content)
+				.filter(Boolean)
+				.join("\n\n");
+			const prior = await assemblePrior({
+				budget: Math.max(0, contextConfig.turnBudgetTokens - estimateInjectionTokens(proposedEphemeral)),
+				mode: "full",
+				storeRoot: memoryDir,
+				task: event.prompt,
+			});
+			priorId = prior.priorId;
+			proposed = prior.manifest;
+		} catch (error) {
+			console.warn(`[her] context prior selection skipped: ${errorMessage(error)}`);
+		}
+		try {
 			appendContextManifestRecord({
 				memoryDir,
 				session: sessionId,
+				blocks: selection.blocks,
 				manifest: buildContextManifest({
 					task: event.prompt,
-					priorId: prior.priorId,
-					actual: actualBlocks,
-					proposed: prior.manifest,
+					priorId,
+					mode: contextConfig.mode,
+					promptChanged: selection.promptChanged,
+					budget: selection.budget,
+					actual: selection.blocks,
+					turn: selection.decisions,
+					proposed,
 				}),
 			});
 		} catch (error) {
-			console.warn(`[her] context manifest shadow skipped: ${errorMessage(error)}`);
+			console.warn(`[her] context manifest append skipped: ${errorMessage(error)}`);
+		}
+		const systemPrompt = composeSystemPrompt(event.systemPrompt, selection.text);
+		const emittedInbox = selection.blocks.find((block) => block.kind === "inbox")?.emittedContent;
+		if (inboxPaths.length > 0 && emittedInbox) {
+			try {
+				await archiveInbox(memoryDir, sessionId, inboxPaths);
+			} catch (error) {
+				console.warn(`[her] inbox archive skipped: ${errorMessage(error)}`);
+			}
 		}
 		return {
 			systemPrompt,

@@ -127,8 +127,8 @@ export {
 	EXTERNAL_CLI_SET,
 	SAMANTHA_REPO_ROOT,
 } from "./channel-probe-gate.ts";
-export type { HerConfig } from "./config.ts";
-export { DEFAULT_CONFIG, loadConfig, renderConfig } from "./config.ts";
+export type { ContextConfig, HerConfig } from "./config.ts";
+export { DEFAULT_CONFIG, DEFAULT_CONTEXT_CONFIG, loadConfig, renderConfig, resolveContextConfig } from "./config.ts";
 export type {
 	AuditCost,
 	CostBreakdown,

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { appendFile, mkdir, readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { estimateInjectionTokens } from "../lib/injection-ledger.ts";
 import { Memory } from "./memory.ts";
 import { StorePaths } from "./paths.ts";
 import { memoryPrivacyForRecall } from "./privacy.ts";
@@ -104,7 +105,7 @@ interface SourceBlock {
 
 const DEFAULT_TOTAL_BUDGET = 3300;
 const LAYER_BUDGETS: Partial<Record<PriorLayer, number>> = { L3: 900, L4: 400, L5: 700 };
-const TRIM_ORDER: PriorLayer[] = ["L5", "L4", "L3"];
+const TRIM_ORDER: PriorLayer[] = ["L5", "L4", "L3", "S", "L2", "L1"];
 
 export async function assemblePrior(opts: AssemblePriorOptions): Promise<PriorResult> {
 	if (opts.mode === "off") return { text: "", priorId: "off", blocks: [], manifest: [] };
@@ -119,11 +120,7 @@ export async function assemblePrior(opts: AssemblePriorOptions): Promise<PriorRe
 	};
 }
 
-export function estimatePriorTokens(text: string): number {
-	const trimmed = text.trim();
-	// ponytail: chars/4 is the spec-approved cheap estimate; swap in a tokenizer only if budget drift becomes measurable.
-	return trimmed ? Math.ceil(trimmed.length / 4) : 0;
-}
+export const estimatePriorTokens = estimateInjectionTokens;
 
 function isSamanthaTarget(path: string): boolean {
 	const normalized = path

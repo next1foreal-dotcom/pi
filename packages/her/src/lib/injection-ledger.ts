@@ -13,6 +13,7 @@ export const CONTEXT_INJECTION_SOURCES = [
 ] as const;
 
 export type InjectionKind = "context" | "recall" | "mirror" | "world" | (string & {});
+export type TurnContextMode = "shadow" | "enforce";
 
 export interface InjectionBlock {
 	kind: InjectionKind;
@@ -21,7 +22,7 @@ export interface InjectionBlock {
 	bytes: number;
 	emittedDigest: string;
 	emittedBytes: number;
-	emission: "full" | "unchanged-marker";
+	emission: "full" | "unchanged-marker" | "truncated" | "omitted";
 }
 
 export interface ContextManifestCandidate {
@@ -35,13 +36,32 @@ export interface ContextManifestCandidate {
 	reason: "within-budget" | "layer-budget" | "total-budget";
 }
 
+export interface TurnContextDecision {
+	kind: InjectionKind;
+	source: string;
+	digest: string;
+	availableTokens: number;
+	selectedTokens: number;
+	decision: "full" | "truncated" | "omitted";
+	reason: "within-budget" | "ephemeral-first" | "narrative-tail" | "unchanged-marker";
+}
+
+export interface TurnContextBudget {
+	limitTokens: number;
+	availableTokens: number;
+	selectedTokens: number;
+	omittedBlocks: number;
+}
+
 export interface ContextManifest {
-	version: "context-manifest-v0";
-	mode: "shadow";
-	promptChanged: false;
+	version: "context-manifest-v1";
+	mode: TurnContextMode;
+	promptChanged: boolean;
 	taskDigest: string;
 	priorId: string;
+	budget: TurnContextBudget;
 	actual: InjectionBlock[];
+	turn: TurnContextDecision[];
 	proposed: ContextManifestCandidate[];
 }
 
@@ -59,11 +79,31 @@ export interface InjectionBlockInput {
 	sources?: string[];
 }
 
+export interface TurnNarrativeSection {
+	source: string;
+	content: string;
+}
+
+export interface TurnContextSelection {
+	text: string;
+	blocks: InjectionBlockInput[];
+	proposedBlocks: InjectionBlockInput[];
+	decisions: TurnContextDecision[];
+	budget: TurnContextBudget;
+	promptChanged: boolean;
+}
+
 /** sessionId -> kind -> last original content digest */
 const previousDigests = new Map<string, Map<string, string>>();
 
 export function contentDigest(text: string): string {
 	return createHash("sha256").update(text, "utf8").digest("hex").slice(0, 16);
+}
+
+export function estimateInjectionTokens(text: string): number {
+	const trimmed = text.trim();
+	// ponytail: chars/4 is the existing prior estimate; use a tokenizer only if measured drift warrants it.
+	return trimmed ? Math.ceil(trimmed.length / 4) : 0;
 }
 
 export function isInjectDedupeEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -110,13 +150,21 @@ function ledgerErrorMessage(error: unknown): string {
 function toBlock(input: InjectionBlockInput): InjectionBlock {
 	const sources = input.sources?.map(redactAuditPath).filter(Boolean);
 	const emittedContent = input.emittedContent ?? input.content;
+	const emission =
+		emittedContent === input.content
+			? "full"
+			: emittedContent === ""
+				? "omitted"
+				: emittedContent === unchangedInjectionMarker(input.kind, contentDigest(input.content))
+					? "unchanged-marker"
+					: "truncated";
 	const block: InjectionBlock = {
 		kind: input.kind,
 		digest: contentDigest(input.content),
 		bytes: Buffer.byteLength(input.content, "utf8"),
 		emittedDigest: contentDigest(emittedContent),
 		emittedBytes: Buffer.byteLength(emittedContent, "utf8"),
-		emission: emittedContent === input.content ? "full" : "unchanged-marker",
+		emission,
 	};
 	if (sources && sources.length > 0) block.sources = sources;
 	return block;
@@ -143,19 +191,155 @@ export function appendInjectionRecord(opts: {
 	return record;
 }
 
+export function selectTurnContext(opts: {
+	mode: TurnContextMode;
+	budgetTokens: number;
+	blocks: InjectionBlockInput[];
+	narrativeSections?: TurnNarrativeSection[];
+}): TurnContextSelection {
+	const limitTokens = Math.max(1, Math.floor(opts.budgetTokens));
+	const available = opts.blocks.map((block) => ({ ...block, emittedContent: block.emittedContent ?? block.content }));
+	const proposed = available.map((block) => ({ ...block }));
+
+	for (const kind of ["inbox", "wake"] as const) {
+		if (estimateInjectionTokens(renderTurnBlocks(proposed)) <= limitTokens) break;
+		for (const block of proposed) {
+			if (block.kind === kind) block.emittedContent = "";
+		}
+	}
+
+	if (estimateInjectionTokens(renderTurnBlocks(proposed)) > limitTokens) {
+		const context = proposed.find((block) => block.kind === "context");
+		if (context) context.emittedContent = longestContextPrefix(proposed, context, limitTokens);
+	}
+
+	const proposedText = renderTurnBlocks(proposed);
+	const availableText = renderTurnBlocks(available);
+	const emitted = opts.mode === "enforce" ? proposed : available;
+	const decisions = buildTurnDecisions(available, proposed, opts.narrativeSections ?? []);
+	const budget = {
+		limitTokens,
+		availableTokens: estimateInjectionTokens(availableText),
+		selectedTokens: estimateInjectionTokens(proposedText),
+		omittedBlocks: decisions.filter((decision) => decision.decision === "omitted").length,
+	};
+	return {
+		text: renderTurnBlocks(emitted),
+		blocks: emitted,
+		proposedBlocks: proposed,
+		decisions,
+		budget,
+		promptChanged: opts.mode === "enforce" && proposedText !== availableText,
+	};
+}
+
+function longestContextPrefix(
+	blocks: InjectionBlockInput[],
+	context: InjectionBlockInput,
+	limitTokens: number,
+): string {
+	const original = context.emittedContent ?? context.content;
+	let low = 0;
+	let high = original.length;
+	while (low < high) {
+		const mid = Math.ceil((low + high) / 2);
+		context.emittedContent = original.slice(0, mid).trimEnd();
+		if (estimateInjectionTokens(renderTurnBlocks(blocks)) <= limitTokens) low = mid;
+		else high = mid - 1;
+	}
+	return original.slice(0, low).trimEnd();
+}
+
+function buildTurnDecisions(
+	available: InjectionBlockInput[],
+	proposed: InjectionBlockInput[],
+	narrativeSections: TurnNarrativeSection[],
+): TurnContextDecision[] {
+	const decisions: TurnContextDecision[] = [];
+	const availableContext = available.find((block) => block.kind === "context");
+	const proposedContext = proposed.find((block) => block.kind === "context");
+	if (availableContext && proposedContext && narrativeSections.length > 0) {
+		const original = availableContext.content;
+		const beforeBudget = availableContext.emittedContent ?? original;
+		const afterBudget = proposedContext.emittedContent ?? original;
+		let offset = 0;
+		for (const section of narrativeSections) {
+			const selectedChars =
+				beforeBudget === original ? Math.max(0, Math.min(section.content.length, afterBudget.length - offset)) : 0;
+			const selectedText = section.content.slice(0, selectedChars);
+			const availableTokens = estimateInjectionTokens(section.content);
+			const selectedTokens = estimateInjectionTokens(selectedText);
+			decisions.push({
+				kind: "context",
+				source: redactAuditPath(section.source),
+				digest: contentDigest(section.content),
+				availableTokens,
+				selectedTokens,
+				decision: selectedTokens === availableTokens ? "full" : selectedTokens === 0 ? "omitted" : "truncated",
+				reason:
+					beforeBudget !== original
+						? "unchanged-marker"
+						: selectedTokens === availableTokens
+							? "within-budget"
+							: "narrative-tail",
+			});
+			offset += section.content.length + 2;
+		}
+	}
+
+	for (const block of available) {
+		if (block.kind === "context" && narrativeSections.length > 0) continue;
+		const chosen = proposed.find((candidate) => candidate.kind === block.kind);
+		const beforeBudget = block.emittedContent ?? block.content;
+		const afterBudget = chosen?.emittedContent ?? "";
+		const availableTokens = estimateInjectionTokens(beforeBudget);
+		const selectedTokens = estimateInjectionTokens(afterBudget);
+		decisions.push({
+			kind: block.kind,
+			source: redactAuditPath(block.sources?.[0] ?? block.kind),
+			digest: contentDigest(block.content),
+			availableTokens,
+			selectedTokens,
+			decision: selectedTokens === availableTokens ? "full" : selectedTokens === 0 ? "omitted" : "truncated",
+			reason:
+				beforeBudget !== block.content
+					? "unchanged-marker"
+					: selectedTokens === availableTokens
+						? "within-budget"
+						: block.kind === "wake" || block.kind === "inbox"
+							? "ephemeral-first"
+							: "narrative-tail",
+		});
+	}
+	return decisions;
+}
+
+function renderTurnBlocks(blocks: InjectionBlockInput[]): string {
+	return blocks
+		.map((block) => block.emittedContent ?? block.content)
+		.filter(Boolean)
+		.join("\n\n");
+}
+
 export function buildContextManifest(opts: {
 	task: string;
 	priorId: string;
+	mode: TurnContextMode;
+	promptChanged: boolean;
+	budget: TurnContextBudget;
 	actual: InjectionBlockInput[];
+	turn: TurnContextDecision[];
 	proposed: ContextManifestCandidate[];
 }): ContextManifest {
 	return {
-		version: "context-manifest-v0",
-		mode: "shadow",
-		promptChanged: false,
+		version: "context-manifest-v1",
+		mode: opts.mode,
+		promptChanged: opts.promptChanged,
 		taskDigest: contentDigest(opts.task),
 		priorId: opts.priorId,
+		budget: opts.budget,
 		actual: opts.actual.map(toBlock),
+		turn: opts.turn,
 		proposed: opts.proposed.map((candidate) => ({ ...candidate, source: redactAuditPath(candidate.source) })),
 	};
 }
@@ -163,6 +347,7 @@ export function buildContextManifest(opts: {
 export function appendContextManifestRecord(opts: {
 	memoryDir: string;
 	session?: string;
+	blocks?: InjectionBlockInput[];
 	manifest: ContextManifest;
 	ts?: string;
 }): InjectionRecord {
@@ -181,6 +366,7 @@ export function injectLoggedContent(opts: {
 	sources?: string[];
 	extraBlocks?: InjectionBlockInput[];
 	dedupe?: boolean;
+	log?: boolean;
 }): string {
 	const digest = contentDigest(opts.content);
 	let text = opts.content;
@@ -203,17 +389,19 @@ export function injectLoggedContent(opts: {
 		text = opts.content;
 	}
 
-	try {
-		appendInjectionRecord({
-			memoryDir: opts.memoryDir,
-			session: opts.session,
-			blocks: [
-				{ kind: opts.kind, content: opts.content, emittedContent: text, sources: opts.sources },
-				...(opts.extraBlocks ?? []),
-			],
-		});
-	} catch (error) {
-		console.warn(`[her] injection ledger append failed: ${ledgerErrorMessage(error)}`);
+	if (opts.log !== false) {
+		try {
+			appendInjectionRecord({
+				memoryDir: opts.memoryDir,
+				session: opts.session,
+				blocks: [
+					{ kind: opts.kind, content: opts.content, emittedContent: text, sources: opts.sources },
+					...(opts.extraBlocks ?? []),
+				],
+			});
+		} catch (error) {
+			console.warn(`[her] injection ledger append failed: ${ledgerErrorMessage(error)}`);
+		}
 	}
 
 	return text;

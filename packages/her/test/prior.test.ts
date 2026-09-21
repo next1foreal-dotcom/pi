@@ -227,3 +227,15 @@ test("getContext keeps the default shape and adds prior only when requested", as
 	assert.equal(herZone.prior?.blocks.map((block) => block.layer).join(","), "S");
 	assert.doesNotMatch(herZone.prior?.text ?? "", /Fei owns his memory/);
 });
+
+test("assemblePrior keeps the hard total cap after optional layers are exhausted", async () => {
+	const store = await tempStore();
+	await clearDefaultChoiceFiles(store);
+	await writeText(join(store, "narrative", "FACTS.md"), "F".repeat(80));
+	await writeText(join(store, "narrative", "CONTEXT.md"), "C".repeat(80));
+
+	const prior = await assemblePrior({ budget: 5, mode: "full", storeRoot: store });
+
+	assert.ok(prior.blocks.reduce((sum, block) => sum + block.tokens, 0) <= 5);
+	assert.ok(prior.manifest.some((block) => block.reason === "total-budget"));
+});
