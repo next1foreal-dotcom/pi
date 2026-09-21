@@ -155,7 +155,9 @@ async function writeSnapshot(memoryRoot: string, taskId: string, snapshot: TaskE
 		flag: "wx",
 		mode: 0o444,
 	});
-	await chmodAsync(path, 0o444).catch(() => {});
+	await chmodAsync(path, 0o444).catch(() => {
+		/* Windows may not expose POSIX mode bits; digest verification remains authoritative. */
+	});
 }
 
 export async function loadOrCreateTaskEvidenceSnapshot(
