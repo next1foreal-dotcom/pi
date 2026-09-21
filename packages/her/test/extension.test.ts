@@ -596,6 +596,7 @@ test("extension returns a full compaction that preserves Her pinned context with
 	await writeText(join(store, "narrative", "FACTS.md"), "Fei is the human owner.\n");
 	await writeText(join(store, "narrative", "SOUL.md"), "# SOUL\n\nSamantha stays warm and exact.\n");
 	await writeText(join(store, "narrative", "CHOICE-MODEL.md"), "# CHOICE MODEL\n\nPrefer reversible moves.\n");
+	await writeText(join(store, ".her", "config.yaml"), "context:\n  mode: enforce\n  turn_budget_tokens: 8192\n");
 
 	// Keep the summarization lanes cold so this test never reaches a live provider.
 	const offline = {
@@ -631,7 +632,12 @@ test("extension returns a full compaction that preserves Her pinned context with
 				ctx,
 			)) as {
 				customInstructions?: string;
-				compaction?: { summary: string; firstKeptEntryId: string; tokensBefore: number };
+				compaction?: {
+					summary: string;
+					firstKeptEntryId: string;
+					tokensBefore: number;
+					details?: { reconstruction?: { version?: string; applied?: boolean; selected?: unknown[] } };
+				};
 			};
 
 			assert.equal(result.customInstructions, undefined);
@@ -643,6 +649,9 @@ test("extension returns a full compaction that preserves Her pinned context with
 			assert.match(result.compaction?.summary ?? "", /Prefer reversible moves/);
 			assert.match(result.compaction?.summary ?? "", /#1 user \| Remember this Her task\./);
 			assert.doesNotMatch(result.compaction?.summary ?? "", /"role":/);
+			assert.equal(result.compaction?.details?.reconstruction?.version, "task-history-v1");
+			assert.equal(result.compaction?.details?.reconstruction?.applied, true);
+			assert.equal(result.compaction?.details?.reconstruction?.selected?.length, 1);
 			assert.equal(
 				fake.entries.some((entry) => entry.customType === "her-state" && entryStatus(entry) === "compact-guard"),
 				true,
