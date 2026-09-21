@@ -5,6 +5,7 @@ import {
 	COMPACTION_TRANSCRIPT_BUDGET,
 	describeMessages,
 	fallbackCompactionSummary,
+	reconstructTaskHistory,
 	renderCompactionPrompt,
 	sessionSummaryModel,
 	summarizeForCompaction,
@@ -95,6 +96,25 @@ test("describeMessages keeps every message when it fits the budget", () => {
 
 	assert.equal(text, "#1 user | one\n#2 assistant | calls: bash | two");
 	assert.equal(describeMessages([], { budget: 10_000, perMessage: 200 }), "(none)");
+});
+
+test("task-history rebuild deterministically prefers relevant history and keeps an auditable digest", () => {
+	const messages = [
+		userMessage("Fix the cache affinity decision in router.ts"),
+		assistantMessage("unrelated visual polish"),
+		userMessage("talk about lunch"),
+		assistantMessage("router cache affinity evidence is in the task receipt"),
+		userMessage("Continue the cache affinity fix"),
+	];
+	const first = reconstructTaskHistory(messages, { budget: 210, perMessage: 200, applied: true });
+	const second = reconstructTaskHistory(messages, { budget: 210, perMessage: 200, applied: true });
+	assert.deepEqual(first, second);
+	assert.match(first.text, /router cache affinity evidence/);
+	assert.doesNotMatch(first.text, /unrelated visual polish/);
+	assert.equal(first.audit.applied, true);
+	assert.equal(first.audit.taskDigest.length, 16);
+	assert.ok(first.audit.omitted > 0);
+	assert.doesNotMatch(JSON.stringify(first.audit), /Continue the cache affinity fix/);
 });
 
 test("summary config recognizes DEEPSEEK_API_KEY and HER_LLM_API_KEY", async () => {

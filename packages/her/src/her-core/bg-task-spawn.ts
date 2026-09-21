@@ -32,7 +32,17 @@ import { assertFreshExternalCliProbe, SAMANTHA_REPO_ROOT } from "./channel-probe
 import { enforceDailyCostCap } from "./cost-ledger.ts";
 import { discardPartialTaskWorktree, ensureTaskWorktree } from "./long-task-worktree.ts";
 import { redactSecrets, writeJson, writeText } from "./store.ts";
+import {
+	appendTaskContextSnapshot,
+	createTaskContextSnapshot,
+	readTaskContextSnapshot,
+	type TaskContextSnapshot,
+	type TaskPrivacy,
+	taskContextSnapshotTokens,
+	writeTaskContextSnapshot,
+} from "./task-context-snapshot.ts";
 import { launchTask, stopTask } from "./task-executor.ts";
+import { evaluateTaskRoute } from "./task-route.ts";
 import { claimWarmWorktree, clampWarmWorktreePoolSize, ensureWarmWorktreePool } from "./warm-worktree-pool.ts";
 import {
 	buildCodexResumeCommand,
@@ -57,6 +67,8 @@ export type SpawnBgTaskInput = {
 	/** Worker/profile mode (G-129): `worker` names a config profile; brief flows to it via stdin. */
 	brief?: string;
 	worker?: string;
+	/** Context trust level. Private/protected task context may only cross a local worker boundary. */
+	privacy?: TaskPrivacy;
 	parentTask?: string | null;
 	timeoutMinutes?: number;
 	heartbeatMs?: number;
@@ -289,6 +301,10 @@ export async function spawnBgTask(
 	const mode = resolveSpawnMode(input);
 	const useWorktree = resolveIsolation(input);
 	const dependencyRecords = await validateBlockedBy(memoryRoot, input.blockedBy);
+	const parentRecord = input.parentTask
+		? (dependencyRecords.find((record) => record.id === input.parentTask) ??
+			(await loadBgTask(memoryRoot, input.parentTask))?.record)
+		: undefined;
 	const dependencyPending = Boolean(
 		input.blockedBy?.length && dependencyRecords.some((task) => task.status !== "completed"),
 	);
@@ -325,6 +341,49 @@ export async function spawnBgTask(
 		...(input.ownerSessionId ? { ownerSessionId: input.ownerSessionId } : {}),
 		...(input.blockedBy?.length ? { blockedBy: input.blockedBy } : {}),
 	});
+	let taskSnapshot: TaskContextSnapshot | undefined;
+	if (mode === "worker" && workerProfile && workerName) {
+		const candidates = [parentRecord, ...dependencyRecords].filter(
+			(record): record is BgTaskRecord => record !== undefined,
+		);
+		const related = candidates.filter(
+			(record): record is BgTaskRecord & { contextSnapshotId: string } =>
+				typeof record.contextSnapshotId === "string",
+		);
+		const snapshotIds = new Set(related.map((candidate) => candidate.contextSnapshotId));
+		if (snapshotIds.size > 1 || (related.length > 0 && related.length !== candidates.length)) {
+			throw new Error("related tasks do not share one task context snapshot");
+		}
+		taskSnapshot = related[0]
+			? await readTaskContextSnapshot(memoryRoot, related[0])
+			: createTaskContextSnapshot({
+					objective: input.objective,
+					brief: redactSecrets(input.brief ?? ""),
+					privacy: input.privacy,
+				});
+		if (!taskSnapshot) throw new Error("related task context snapshot is missing");
+		if (input.privacy && input.privacy !== taskSnapshot.privacy) {
+			throw new Error(`task privacy ${input.privacy} conflicts with inherited snapshot ${taskSnapshot.privacy}`);
+		}
+		const route = evaluateTaskRoute({
+			worker: workerName,
+			model: resolveWorkerModel(workerProfile.argv),
+			privacy: taskSnapshot.privacy,
+			privacyBoundary: workerProfile.privacyBoundary,
+			contextSnapshotTokens: taskContextSnapshotTokens(taskSnapshot),
+			parentWorker: parentRecord?.worker ?? related[0]?.worker,
+			reuseWorktree: Boolean(input.reuseWorktree),
+		});
+		if (!route.allowed) {
+			throw new Error(
+				`task context privacy ${route.privacy} cannot cross worker ${route.worker} boundary ${route.privacyBoundary}`,
+			);
+		}
+		record.contextSnapshotId = taskSnapshot.id;
+		record.contextSnapshotDigest = taskSnapshot.digest;
+		record.routeDecision = route;
+		assertBriefWithinCap(appendTaskContextSnapshot(input.brief ?? "", taskSnapshot), cfg.tasks.briefCapBytes);
+	}
 	if (record.blockedBy?.includes(record.id)) {
 		throw new Error(`blockedBy cannot reference the task itself: ${record.id}`);
 	}
@@ -354,6 +413,7 @@ export async function spawnBgTask(
 			record.command = [...command];
 		}
 	}
+	if (taskSnapshot) await writeTaskContextSnapshot(memoryRoot, record.id, taskSnapshot);
 
 	if (!input.skipGates && !dependencyPending) {
 		const runningCount = (await listBgTasks(memoryRoot, { status: "running" })).length;
@@ -519,7 +579,10 @@ export async function spawnBgTask(
 	let briefPath: string | undefined;
 	if (mode === "worker") {
 		briefPath = join(tasksDir(memoryRoot), `${record.id}.brief`);
-		const workerBrief = appendEvidenceVerifiedBrief(input.brief ?? "", gatePlan);
+		const withSnapshot = taskSnapshot
+			? appendTaskContextSnapshot(input.brief ?? "", taskSnapshot)
+			: (input.brief ?? "");
+		const workerBrief = appendEvidenceVerifiedBrief(withSnapshot, gatePlan);
 		assertBriefWithinCap(workerBrief, cfg.tasks.briefCapBytes);
 		await writeText(briefPath, redactSecrets(workerBrief));
 	}

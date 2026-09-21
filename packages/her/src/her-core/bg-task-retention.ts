@@ -20,6 +20,7 @@ const SENTINELS = [
 	"done",
 	"done.tmp",
 	"brief",
+	"context.json",
 	"result.md",
 	"gates.json",
 	"acceptance.json",

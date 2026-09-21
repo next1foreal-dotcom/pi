@@ -4,13 +4,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
+	appendContextManifestRecord,
 	appendInjectionRecord,
 	applyBlockDedupe,
+	buildContextManifest,
 	contentDigest,
+	estimateInjectionTokens,
 	injectionLedgerPath,
 	injectLoggedContent,
 	isInjectDedupeEnabled,
 	resetInjectionDedupeState,
+	selectTurnContext,
 	unchangedInjectionMarker,
 } from "../src/lib/injection-ledger.ts";
 
@@ -227,6 +231,17 @@ test("injectLoggedContent: HER_INJECT_DEDUPE=1 replaces repeats per session and 
 			injectLoggedContent({ memoryDir: root, session: "s1", kind: "context", content: "changed block" }),
 			"changed block",
 		);
+		const entries = (await readFile(injectionLedgerPath(root), "utf8"))
+			.trim()
+			.split("\n")
+			.map(
+				(line) => JSON.parse(line) as { blocks: Array<{ bytes: number; emittedBytes: number; emission: string }> },
+			);
+		assert.equal(entries[1]?.blocks[0]?.emission, "unchanged-marker");
+		assert.equal(
+			entries[1]?.blocks[0]?.emittedBytes,
+			Buffer.byteLength(unchangedInjectionMarker("context", digest), "utf8"),
+		);
 	} finally {
 		if (previous === undefined) delete process.env.HER_INJECT_DEDUPE;
 		else process.env.HER_INJECT_DEDUPE = previous;
@@ -249,4 +264,89 @@ test("injectLoggedContent warns and still returns content when the ledger cannot
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}
+});
+
+test("context manifest records only hashes and selection metadata", async () => {
+	const root = await tempStore();
+	try {
+		const manifest = buildContextManifest({
+			task: "private user prompt",
+			priorId: "abc123",
+			mode: "shadow",
+			promptChanged: false,
+			budget: { limitTokens: 8192, availableTokens: 4, selectedTokens: 4, omittedBlocks: 0 },
+			actual: [{ kind: "context", content: "private memory", sources: ["narrative/CONTEXT.md"] }],
+			turn: [],
+			proposed: [
+				{
+					layer: "L2",
+					source: "narrative/CONTEXT.md",
+					digest: contentDigest("private memory"),
+					availableTokens: 4,
+					selectedTokens: 4,
+					privacy: "private",
+					decision: "full",
+					reason: "within-budget",
+				},
+			],
+		});
+		appendContextManifestRecord({ memoryDir: root, session: "s1", manifest });
+		const raw = await readFile(injectionLedgerPath(root), "utf8");
+		assert.doesNotMatch(raw, /private user prompt|private memory/);
+		const record = JSON.parse(raw) as { manifest: typeof manifest };
+		assert.equal(record.manifest.mode, "shadow");
+		assert.equal(record.manifest.promptChanged, false);
+		assert.match(record.manifest.taskDigest, /^[a-f0-9]{16}$/);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("selectTurnContext preserves current bytes when the turn fits", () => {
+	const blocks = [
+		{ kind: "context", content: "context" },
+		{ kind: "wake", content: "wake" },
+		{ kind: "inbox", content: "inbox" },
+	];
+	const selected = selectTurnContext({ mode: "enforce", budgetTokens: 100, blocks });
+
+	assert.equal(selected.text, "context\n\nwake\n\ninbox");
+	assert.equal(selected.promptChanged, false);
+	assert.equal(selected.budget.omittedBlocks, 0);
+	assert.ok(selected.decisions.every((decision) => decision.reason === "within-budget"));
+});
+
+test("selectTurnContext shadows and enforces inbox/wake before the narrative tail", () => {
+	const first = "A".repeat(40);
+	const tail = "B".repeat(40);
+	const context = `${first}\n\n${tail}`;
+	const blocks = [
+		{ kind: "context", content: context, sources: ["narrative/CONTEXT.md", "narrative/SOUL.md"] },
+		{ kind: "wake", content: "W".repeat(8), sources: ["tasks/wake"] },
+		{ kind: "inbox", content: "I".repeat(8), sources: ["messages/inbox"] },
+	];
+	const narrativeSections = [
+		{ source: "narrative/CONTEXT.md", content: first },
+		{ source: "narrative/SOUL.md", content: tail },
+	];
+	const inboxFirst = selectTurnContext({ mode: "enforce", budgetTokens: 23, blocks, narrativeSections });
+	const shadow = selectTurnContext({ mode: "shadow", budgetTokens: 10, blocks, narrativeSections });
+	const enforced = selectTurnContext({ mode: "enforce", budgetTokens: 10, blocks, narrativeSections });
+
+	assert.equal(inboxFirst.text, `${context}\n\n${"W".repeat(8)}`);
+	assert.equal(inboxFirst.decisions.find((decision) => decision.kind === "wake")?.decision, "full");
+	assert.equal(inboxFirst.decisions.find((decision) => decision.kind === "inbox")?.decision, "omitted");
+	assert.equal(shadow.text, `${context}\n\n${"W".repeat(8)}\n\n${"I".repeat(8)}`);
+	assert.equal(shadow.promptChanged, false);
+	assert.equal(shadow.budget.selectedTokens, 10);
+	assert.equal(enforced.text, first);
+	assert.equal(enforced.promptChanged, true);
+	assert.ok(estimateInjectionTokens(enforced.text) <= 10);
+	assert.equal(enforced.decisions.find((decision) => decision.kind === "inbox")?.reason, "ephemeral-first");
+	assert.equal(enforced.decisions.find((decision) => decision.kind === "wake")?.decision, "omitted");
+	assert.equal(
+		enforced.decisions.find((decision) => decision.source === "narrative/SOUL.md")?.reason,
+		"narrative-tail",
+	);
+	assert.equal(enforced.budget.omittedBlocks, 3);
 });

@@ -1408,7 +1408,10 @@ test("CLI recalls active and archived memory as JSON", async () => {
 		"utf8",
 	);
 
-	let result = await runCli(["recall", "--query", "Samantha UI chat", "--k", "2", "--json"], store);
+	let result = await runCli(
+		["recall", "--query", "Samantha UI chat", "--k", "2", "--privacy", "private", "--json"],
+		store,
+	);
 	let payload = JSON.parse(result.stdout);
 	assert.equal(payload.memoryDir, store);
 	assert.equal(payload.result[0].kind, "semantic");
@@ -1495,7 +1498,7 @@ test("CLI recall can use configured embedding search for semantic hits", async (
 
 	await withLocalEmbeddings(async (embeddingEnv, inputs) => {
 		const result = await runCli(
-			["recall", "--query", "unspoken association", "--k", "1", "--json"],
+			["recall", "--query", "unspoken association", "--k", "1", "--privacy", "private", "--json"],
 			store,
 			embeddingEnv,
 		);

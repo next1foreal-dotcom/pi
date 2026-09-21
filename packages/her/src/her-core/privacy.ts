@@ -63,6 +63,17 @@ export function validateMemoryPrivacy(value: string): MemoryPrivacy {
 	throw new Error(`invalid memory privacy: ${value}`);
 }
 
+export function memoryPrivacyForRecall(text: string): MemoryPrivacy {
+	const value = parseFrontmatter(text).data.privacy;
+	return typeof value === "string" && memoryPrivacyLevels.includes(value as MemoryPrivacy)
+		? (value as MemoryPrivacy)
+		: "private";
+}
+
+export function allowsRecallPrivacy(text: string, maximum: MemoryPrivacy = "shared"): boolean {
+	return memoryPrivacyLevels.indexOf(memoryPrivacyForRecall(text)) <= memoryPrivacyLevels.indexOf(maximum);
+}
+
 export function validateMemoryProvenance(value: string): MemoryProvenance {
 	if (memoryProvenanceValues.includes(value as MemoryProvenance)) return value as MemoryProvenance;
 	throw new Error(`invalid memory provenance: ${value}`);

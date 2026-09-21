@@ -9,6 +9,7 @@ import type { Provider } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, ProviderConfig, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import her, { governedTools, withUi } from "../src/extension.ts";
 import { initStore, Memory, readJson, readText, startLongTask, writeText } from "../src/her-core/index.ts";
+import { estimateInjectionTokens } from "../src/lib/injection-ledger.ts";
 
 type Handler = (event: unknown, ctx: ExtensionContext) => Promise<unknown> | unknown;
 const execFileAsync = promisify(execFile);
@@ -292,6 +293,10 @@ test("extension injects Her context and captures completed turns", async () => {
 		assert.match(injected.systemPrompt ?? "", /Lead with verified state/);
 		assert.equal(injected.message?.customType, "her-context");
 		assert.equal(injected.message?.details?.pinned, true);
+		const injectionAudit = (await readText(join(store, "audit", "context-injections.jsonl"))) ?? "";
+		assert.match(injectionAudit, /"version":"context-manifest-v1"/);
+		assert.match(injectionAudit, /"promptChanged":false/);
+		assert.doesNotMatch(injectionAudit, /hello/);
 
 		const turnEnd = fake.handlers.get("turn_end")?.[0];
 		assert.ok(turnEnd);
@@ -331,6 +336,53 @@ test("extension injects Her context and captures completed turns", async () => {
 	});
 });
 
+test("extension enforces the configured turn budget and records the omitted narrative tail", async () => {
+	const store = await tempStore();
+	const ctx = createContext(store);
+	await writeText(join(store, ".her", "config.yaml"), "context:\n  mode: enforce\n  turn_budget_tokens: 16\n");
+	await writeText(join(store, "narrative", "CONTEXT.md"), `# CONTEXT\n\n${"C".repeat(500)}\n`);
+	await writeText(join(store, "narrative", "FACTS.md"), `${"F".repeat(500)}\n`);
+	await writeText(join(store, "narrative", "SOUL.md"), `${"S".repeat(500)}\n`);
+
+	await withMemoryDir(store, async () => {
+		const fake = createFakePi();
+		her(fake.pi);
+		const beforeAgentStart = fake.handlers.get("before_agent_start")?.[0];
+		assert.ok(beforeAgentStart);
+		const injected = (await beforeAgentStart(
+			{
+				type: "before_agent_start",
+				prompt: "private over-budget task",
+				systemPrompt: "base prompt",
+				systemPromptOptions: {},
+			},
+			ctx,
+		)) as { systemPrompt?: string };
+
+		const herOwned = (injected.systemPrompt ?? "").slice("base prompt\n\n".length);
+		assert.ok(estimateInjectionTokens(herOwned) <= 16);
+		const raw = (await readText(join(store, "audit", "context-injections.jsonl"))) ?? "";
+		assert.doesNotMatch(raw, /private over-budget task|C{20}|F{20}|S{20}/);
+		const record = JSON.parse(raw.trim()) as {
+			manifest: {
+				version: string;
+				mode: string;
+				promptChanged: boolean;
+				budget: { selectedTokens: number; omittedBlocks: number };
+				turn: Array<{ source: string; decision: string }>;
+			};
+		};
+		assert.equal(record.manifest.version, "context-manifest-v1");
+		assert.equal(record.manifest.mode, "enforce");
+		assert.equal(record.manifest.promptChanged, true);
+		assert.ok(record.manifest.budget.selectedTokens <= 16);
+		assert.ok(record.manifest.budget.omittedBlocks > 0);
+		assert.equal(
+			record.manifest.turn.find((decision) => decision.source === "narrative/SOUL.md")?.decision,
+			"omitted",
+		);
+	});
+});
 test("extension mirror does not compete with an active pi-codex-goal follow-up", async () => {
 	const store = await tempStore();
 	await writeText(join(store, "semantic", "goal.md"), "# Goal\n\nGoal continuation owns the next follow-up.\n");
@@ -544,6 +596,7 @@ test("extension returns a full compaction that preserves Her pinned context with
 	await writeText(join(store, "narrative", "FACTS.md"), "Fei is the human owner.\n");
 	await writeText(join(store, "narrative", "SOUL.md"), "# SOUL\n\nSamantha stays warm and exact.\n");
 	await writeText(join(store, "narrative", "CHOICE-MODEL.md"), "# CHOICE MODEL\n\nPrefer reversible moves.\n");
+	await writeText(join(store, ".her", "config.yaml"), "context:\n  mode: enforce\n  turn_budget_tokens: 8192\n");
 
 	// Keep the summarization lanes cold so this test never reaches a live provider.
 	const offline = {
@@ -579,7 +632,12 @@ test("extension returns a full compaction that preserves Her pinned context with
 				ctx,
 			)) as {
 				customInstructions?: string;
-				compaction?: { summary: string; firstKeptEntryId: string; tokensBefore: number };
+				compaction?: {
+					summary: string;
+					firstKeptEntryId: string;
+					tokensBefore: number;
+					details?: { reconstruction?: { version?: string; applied?: boolean; selected?: unknown[] } };
+				};
 			};
 
 			assert.equal(result.customInstructions, undefined);
@@ -591,6 +649,9 @@ test("extension returns a full compaction that preserves Her pinned context with
 			assert.match(result.compaction?.summary ?? "", /Prefer reversible moves/);
 			assert.match(result.compaction?.summary ?? "", /#1 user \| Remember this Her task\./);
 			assert.doesNotMatch(result.compaction?.summary ?? "", /"role":/);
+			assert.equal(result.compaction?.details?.reconstruction?.version, "task-history-v1");
+			assert.equal(result.compaction?.details?.reconstruction?.applied, true);
+			assert.equal(result.compaction?.details?.reconstruction?.selected?.length, 1);
 			assert.equal(
 				fake.entries.some((entry) => entry.customType === "her-state" && entryStatus(entry) === "compact-guard"),
 				true,
@@ -1378,7 +1439,7 @@ test("extension memory tools write, recall, judge, and update status", async () 
 		);
 		assert.match(firstText(remembered), /Remembered/);
 
-		const recalled = await executeTool(recall, { query: "exact verification", k: 3 }, ctx);
+		const recalled = await executeTool(recall, { query: "exact verification", k: 3, privacy: "private" }, ctx);
 		assert.match(firstText(recalled), /exact verification/);
 
 		const ideaResult = await executeTool(

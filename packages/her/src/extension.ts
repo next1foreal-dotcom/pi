@@ -44,6 +44,7 @@ import {
 	type AgentToolWrappedResult,
 	applyMemoryRetraction,
 	archiveInbox,
+	assemblePrior,
 	buildRecallReceipts,
 	type ChoiceModelDomain,
 	chainHop,
@@ -99,6 +100,7 @@ import {
 	recordHerProposal,
 	recordHerProposalFeedback,
 	redactSecrets,
+	resolveContextConfig,
 	resolveSessionReadConfig,
 	resolveTargetSource,
 	type SamanthaZoneCategory,
@@ -139,7 +141,15 @@ import { appendAuditLog } from "./lib/audit.ts";
 import { installHerStatusAutoModeBypass } from "./lib/automode-bypass.ts";
 import { evaluate, policyEnvelope, resolveToolCallAnchor } from "./lib/cedar.ts";
 import { governedTools, resolveGovernedTool } from "./lib/governed-tools.ts";
-import { CONTEXT_INJECTION_SOURCES, injectLoggedContent } from "./lib/injection-ledger.ts";
+import {
+	appendContextManifestRecord,
+	buildContextManifest,
+	CONTEXT_INJECTION_SOURCES,
+	estimateInjectionTokens,
+	type InjectionBlockInput,
+	injectLoggedContent,
+	selectTurnContext,
+} from "./lib/injection-ledger.ts";
 import { registerMcpTools } from "./mcp/tools.ts";
 import { registerAssetShotTools } from "./preview/asset-shot.ts";
 import { registerDesignSystemTools } from "./preview/design-system.ts";
@@ -154,6 +164,7 @@ import { registerRelayProviderTools } from "./providers-relay/tools.ts";
 import { registerShowWidgetTools } from "./show-widget/tools.ts";
 import { createSummaryModel } from "./summary-model.ts";
 import { registerTodoWriteTools } from "./todo-write/tools.ts";
+import { registerToolDisclosure } from "./tool-disclosure.ts";
 import { registerFileToolkit } from "./tools/index.ts";
 import { registerUiActionTools } from "./ui-action/tools.ts";
 
@@ -340,19 +351,27 @@ function getMemoryDir(): string {
 	return process.env.HER_MEMORY_DIR ?? resolve(process.cwd(), "..", "her-memory");
 }
 
-function composeHerMemoryBlock(
+function composeHerMemorySections(
 	context: string,
 	facts: string,
 	soul: string,
 	self: string,
 	choiceModel: string,
-): string {
-	const sections = [readHerPrompt(), `## Her CONTEXT.md\n\n${context.trim()}`];
-	if (facts.trim()) sections.push(`## Her FACTS.md\n\n${facts.trim()}`);
-	if (soul.trim()) sections.push(`## Her SOUL.md\n\n${soul.trim()}`);
-	if (self.trim()) sections.push(`## Her SAMANTHA.md\n\n${self.trim()}`);
-	if (choiceModel.trim()) sections.push(`## Her CHOICE-MODEL.md\n\n${choiceModel.trim()}`);
-	return sections.join("\n\n");
+): Array<{ source: string; content: string }> {
+	const sections = [
+		{ source: "pi-package/prompts/her.md", content: readHerPrompt() },
+		{ source: "narrative/CONTEXT.md", content: `## Her CONTEXT.md\n\n${context.trim()}` },
+	];
+	if (facts.trim()) sections.push({ source: "narrative/FACTS.md", content: `## Her FACTS.md\n\n${facts.trim()}` });
+	if (soul.trim()) sections.push({ source: "narrative/SOUL.md", content: `## Her SOUL.md\n\n${soul.trim()}` });
+	if (self.trim()) sections.push({ source: "narrative/SAMANTHA.md", content: `## Her SAMANTHA.md\n\n${self.trim()}` });
+	if (choiceModel.trim()) {
+		sections.push({
+			source: "narrative/CHOICE-MODEL.md",
+			content: `## Her CHOICE-MODEL.md\n\n${choiceModel.trim()}`,
+		});
+	}
+	return sections;
 }
 
 function composeSystemPrompt(base: string, herBlock: string): string {
@@ -691,6 +710,7 @@ export default function her(pi: ExtensionAPI): void {
 	const readGuards = new Map<string, ReadGuard>();
 	const capturedThisTurn = new Set<string>();
 	registerProviderPool(pi);
+	const toolDisclosure = registerToolDisclosure(pi);
 
 	const sessionIdOf = (ctx: ExtensionContext): string => {
 		try {
@@ -922,6 +942,10 @@ export default function her(pi: ExtensionAPI): void {
 	pi.on("session_start", async (_event, ctx) => {
 		lastEventWakeCtx = ctx;
 		readGuardFor(ctx);
+		const disclosure = toolDisclosure.apply(
+			resolveContextConfig(loadConfig(resolve(memoryDir, ".her", "config.yaml"))).mode,
+		);
+		pi.appendEntry("her-state", { phase: "context-tools", status: "tool-disclosure", ...disclosure });
 		try {
 			await recordPresence(memoryDir, {
 				sessionId: ctx.sessionManager.getSessionId(),
@@ -972,10 +996,11 @@ export default function her(pi: ExtensionAPI): void {
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
+		const sessionId = ctx.sessionManager.getSessionId();
 		capturedThisTurn.delete(sessionIdOf(ctx));
 		try {
 			await recordPresence(memoryDir, {
-				sessionId: ctx.sessionManager.getSessionId(),
+				sessionId,
 				pid: process.pid,
 				mode: ctx.mode,
 				state: "busy",
@@ -984,27 +1009,52 @@ export default function her(pi: ExtensionAPI): void {
 			console.warn(`[her] presence record skipped: ${errorMessage(error)}`);
 		}
 		const { context, facts, soul, self, choiceModel } = await mem.getContext();
-		const herBlock = composeHerMemoryBlock(context, facts, soul, self, choiceModel);
+		const narrativeSections = composeHerMemorySections(context, facts, soul, self, choiceModel);
+		const herBlock = narrativeSections.map((section) => section.content).join("\n\n");
 		const injectedHer = injectLoggedContent({
 			memoryDir,
-			session: ctx.sessionManager.getSessionId(),
+			session: sessionId,
 			kind: "context",
 			content: herBlock,
 			sources: [...CONTEXT_INJECTION_SOURCES],
+			log: false,
 		});
-		let systemPrompt = composeSystemPrompt(event.systemPrompt, injectedHer);
+		const turnBlocks: InjectionBlockInput[] = [
+			{
+				kind: "context",
+				content: herBlock,
+				emittedContent: injectedHer,
+				sources: [...CONTEXT_INJECTION_SOURCES],
+			},
+		];
+		let inboxPaths: string[] = [];
 		// G-120…123: reconcile → wake inject → Telegram outbox → TUI board.
 		try {
 			// G-185/S1b — same ownership filter as the idle poller: a turn starting in this
 			// session must not consume (or inject) another session's task events either.
 			const wakeEvents = await reconcileBgTasks(memoryDir, {
-				sessionId: ctx.sessionManager.getSessionId(),
+				sessionId,
 				deliverable: canDeliverWake(ctx.mode),
 			});
 			const wakeBlock = formatWakeMessage(wakeEvents);
 			if (wakeBlock) {
 				const takeoverNote = formatOwnerTakeoverNote(wakeEvents.filter((e) => e.takenOver).map((e) => e.taskId));
-				systemPrompt = `${systemPrompt}\n\n${wakeBlock}${takeoverNote}`;
+				const wakeContent = `${wakeBlock}${takeoverNote}`;
+				const injectedWake = injectLoggedContent({
+					memoryDir,
+					session: sessionId,
+					kind: "wake",
+					content: wakeContent,
+					sources: ["tasks/wake"],
+					dedupe: false,
+					log: false,
+				});
+				turnBlocks.push({
+					kind: "wake",
+					content: wakeContent,
+					emittedContent: injectedWake,
+					sources: ["tasks/wake"],
+				});
 			}
 			const runtime = loadRuntimeConfig(memoryDir);
 			if (runtime.tasks.telegramNotify && wakeEvents.length > 0) {
@@ -1017,18 +1067,83 @@ export default function her(pi: ExtensionAPI): void {
 			console.warn(`[her] bg-task reconcile skipped: ${detail}`);
 		}
 		try {
-			const selfId = ctx.sessionManager.getSessionId();
-			const inbox = await drainInbox(memoryDir, selfId);
+			const inbox = await drainInbox(memoryDir, sessionId);
 			if (inbox.length > 0) {
-				systemPrompt = `${systemPrompt}\n\n${formatInbox(inbox)}`;
-				await archiveInbox(
+				const inboxContent = formatInbox(inbox);
+				const injectedInbox = injectLoggedContent({
 					memoryDir,
-					selfId,
-					inbox.map((message) => message.path),
-				);
+					session: sessionId,
+					kind: "inbox",
+					content: inboxContent,
+					sources: ["messages/inbox"],
+					dedupe: false,
+					log: false,
+				});
+				turnBlocks.push({
+					kind: "inbox",
+					content: inboxContent,
+					emittedContent: injectedInbox,
+					sources: ["messages/inbox"],
+				});
+				inboxPaths = inbox.map((message) => message.path);
 			}
 		} catch (error) {
 			console.warn(`[her] inbox drain skipped: ${errorMessage(error)}`);
+		}
+
+		const contextConfig = resolveContextConfig(loadConfig(resolve(memoryDir, ".her", "config.yaml")));
+		const selection = selectTurnContext({
+			mode: contextConfig.mode,
+			budgetTokens: contextConfig.turnBudgetTokens,
+			blocks: turnBlocks,
+			narrativeSections,
+		});
+		let priorId = "unavailable";
+		let proposed: Awaited<ReturnType<typeof assemblePrior>>["manifest"] = [];
+		try {
+			const proposedEphemeral = selection.proposedBlocks
+				.filter((block) => block.kind === "wake" || block.kind === "inbox")
+				.map((block) => block.emittedContent ?? block.content)
+				.filter(Boolean)
+				.join("\n\n");
+			const prior = await assemblePrior({
+				budget: Math.max(0, contextConfig.turnBudgetTokens - estimateInjectionTokens(proposedEphemeral)),
+				mode: "full",
+				storeRoot: memoryDir,
+				task: event.prompt,
+			});
+			priorId = prior.priorId;
+			proposed = prior.manifest;
+		} catch (error) {
+			console.warn(`[her] context prior selection skipped: ${errorMessage(error)}`);
+		}
+		try {
+			appendContextManifestRecord({
+				memoryDir,
+				session: sessionId,
+				blocks: selection.blocks,
+				manifest: buildContextManifest({
+					task: event.prompt,
+					priorId,
+					mode: contextConfig.mode,
+					promptChanged: selection.promptChanged,
+					budget: selection.budget,
+					actual: selection.blocks,
+					turn: selection.decisions,
+					proposed,
+				}),
+			});
+		} catch (error) {
+			console.warn(`[her] context manifest append skipped: ${errorMessage(error)}`);
+		}
+		const systemPrompt = composeSystemPrompt(event.systemPrompt, selection.text);
+		const emittedInbox = selection.blocks.find((block) => block.kind === "inbox")?.emittedContent;
+		if (inboxPaths.length > 0 && emittedInbox) {
+			try {
+				await archiveInbox(memoryDir, sessionId, inboxPaths);
+			} catch (error) {
+				console.warn(`[her] inbox archive skipped: ${errorMessage(error)}`);
+			}
 		}
 		return {
 			systemPrompt,
@@ -1040,7 +1155,6 @@ export default function her(pi: ExtensionAPI): void {
 			},
 		};
 	});
-
 	pi.on("turn_end", async (event, ctx) => {
 		const sessionId = ctx.sessionManager.getSessionId();
 		capturedThisTurn.delete(sessionId);
@@ -1182,12 +1296,13 @@ export default function her(pi: ExtensionAPI): void {
 
 	pi.on("session_before_compact", async (event, ctx) => {
 		const { context, facts, soul, self, choiceModel } = await mem.getContext();
-		const { summary, source, errors } = await summarizeForCompaction({
+		const { summary, source, reconstruction, errors } = await summarizeForCompaction({
 			grounding: { context, facts, soul, self, choiceModel },
 			preparation: event.preparation,
 			ctx,
 			envModel: summaryModel,
 			signal: event.signal,
+			mode: resolveContextConfig(loadConfig(resolve(memoryDir, ".her", "config.yaml"))).mode,
 		});
 		const fallbackError = errors?.join("; ");
 		pi.appendEntry("her-state", {
@@ -1197,6 +1312,7 @@ export default function her(pi: ExtensionAPI): void {
 			fromExtension: true,
 			summarySource: source,
 			...(fallbackError ? { fallbackError } : {}),
+			reconstruction,
 		});
 		return {
 			compaction: {
@@ -1207,6 +1323,7 @@ export default function her(pi: ExtensionAPI): void {
 					source: "her-extension",
 					summarySource: source,
 					preserved: ["CONTEXT.md", "FACTS.md", "SOUL.md", "SAMANTHA.md", "CHOICE-MODEL.md"],
+					reconstruction,
 					...(fallbackError ? { fallbackError } : {}),
 				},
 			},
@@ -1326,13 +1443,22 @@ export default function her(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "her_recall",
 		label: "Her Recall",
-		description: "Search Samantha's owned memory.",
+		description:
+			"Search Samantha's owned memory. Defaults to public/shared; private and intimate require an explicit privacy level.",
 		parameters: Type.Object({
 			query: Type.String({ description: "Memory search query" }),
 			k: Type.Optional(Type.Number({ description: "Maximum number of notes to return" })),
+			privacy: Type.Optional(
+				Type.Union([
+					Type.Literal("public"),
+					Type.Literal("shared"),
+					Type.Literal("private"),
+					Type.Literal("intimate"),
+				]),
+			),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			const notes = await mem.recall(params.query, { k: params.k });
+			const notes = await mem.recall(params.query, { k: params.k, privacy: params.privacy });
 			const receipts = buildRecallReceipts(notes);
 			const rendered = renderRecall(notes);
 			const worldNotes = notes.filter((note) => note.kind === "world");
@@ -2613,6 +2739,12 @@ export default function her(pi: ExtensionAPI): void {
 			command: Type.Optional(Type.Array(Type.String(), { minItems: 1 })),
 			brief: Type.Optional(Type.String()),
 			worker: Type.Optional(Type.String()),
+			privacy: Type.Optional(
+				StringEnum(["public", "private", "protected"] as const, {
+					description:
+						"Task-context privacy. Defaults to public; private/protected require worker privacy_boundary: local.",
+				}),
+			),
 			timeoutMinutes: Type.Optional(Type.Integer({ minimum: 1 })),
 			parentTask: Type.Optional(Type.String()),
 			blockedBy: Type.Optional(Type.Array(Type.String(), { maxItems: 8 })),
@@ -2659,6 +2791,7 @@ export default function her(pi: ExtensionAPI): void {
 				...(params.command ? { command: params.command } : {}),
 				...(params.brief !== undefined ? { brief: params.brief } : {}),
 				...(params.worker ? { worker: params.worker } : {}),
+				...(params.privacy ? { privacy: params.privacy } : {}),
 				...(params.timeoutMinutes ? { timeoutMinutes: params.timeoutMinutes } : {}),
 				...(params.parentTask ? { parentTask: params.parentTask } : {}),
 				...(params.blockedBy ? { blockedBy: params.blockedBy } : {}),
@@ -2694,6 +2827,8 @@ export default function her(pi: ExtensionAPI): void {
 				updated: t.updated,
 				...(t.exitCode !== undefined ? { exitCode: t.exitCode } : {}),
 				...(t.failureReason ? { failureReason: t.failureReason } : {}),
+				...(t.contextSnapshotId ? { contextSnapshotId: t.contextSnapshotId } : {}),
+				...(t.routeDecision ? { routeDecision: t.routeDecision } : {}),
 			}));
 			return textResult(JSON.stringify({ tasks: rows, count: rows.length }), {
 				phase: "G-120",

@@ -57,10 +57,16 @@ async function writeEchoStdinFixture(dir: string, name = "echo-stdin.mjs"): Prom
 	return path;
 }
 
-function workersYaml(name: string, argv: string[], envAllow?: string[]): string {
+function workersYaml(
+	name: string,
+	argv: string[],
+	envAllow?: string[],
+	privacyBoundary?: "external" | "local",
+): string {
 	const argvLit = `[${argv.map((a) => `"${a}"`).join(", ")}]`;
 	const lines = ["workers:", `  ${name}:`, `    argv: ${argvLit}`];
 	if (envAllow) lines.push(`    env_allow: [${envAllow.map((e) => `"${e}"`).join(", ")}]`);
+	if (privacyBoundary) lines.push(`    privacy_boundary: ${privacyBoundary}`);
 	return lines.join("\n");
 }
 
@@ -86,7 +92,7 @@ async function waitForDone(root: string, id: string, ms = 15_000): Promise<void>
 	throw new Error(`timeout waiting for ${id}.done`);
 }
 
-test("AC1: worker mode spawns config-defined CLI, brief flows via stdin verbatim", async () => {
+test("AC1: worker mode spawns config-defined CLI with one frozen task-context snapshot", async () => {
 	const root = await memoryRoot();
 	const fixture = await writeEchoStdinFixture(root);
 	await writeConfig(root, workersYaml("fake", [process.execPath, fixture]));
@@ -107,10 +113,71 @@ test("AC1: worker mode spawns config-defined CLI, brief flows via stdin verbatim
 	assert.equal(done.exitCode, 0);
 
 	const log = await readFile(join(tasksDir(root), `${result.id}.log`), "utf8");
-	assert.equal(log, brief);
+	assert.match(log, /READ-ONLY TASK CONTEXT SNAPSHOT ctx-/);
+	assert.equal(log.split(brief).length - 1, 1);
 
 	const loaded = await loadBgTask(root, result.id);
 	assert.equal(loaded?.record.mode, "worker");
+	assert.match(String(loaded?.record.contextSnapshotId), /^ctx-/);
+	assert.equal(
+		(loaded?.record.routeDecision as { contextReloadTokens?: number })?.contextReloadTokens !== undefined,
+		true,
+	);
+	const snapshot = JSON.parse(await readFile(join(tasksDir(root), `${result.id}.context.json`), "utf8"));
+	assert.equal(snapshot.id, loaded?.record.contextSnapshotId);
+});
+
+test("task route refuses private context at an external boundary and shares one snapshot with a reviewer", async () => {
+	const root = await memoryRoot();
+	const fixture = await writeEchoStdinFixture(root);
+	await writeConfig(root, workersYaml("external", [process.execPath, fixture]));
+	await assert.rejects(
+		() =>
+			spawnBgTask(root, {
+				objective: "private route",
+				worker: "external",
+				brief: "private material",
+				privacy: "private",
+				skipGates: true,
+			}),
+		/privacy private cannot cross worker external boundary external/,
+	);
+	assert.deepEqual(await readdirSafe(tasksDir(root)), []);
+
+	await writeConfig(root, workersYaml("local", [process.execPath, fixture], undefined, "local"));
+	const first = await spawnBgTask(root, {
+		objective: "local implementation",
+		worker: "local",
+		brief: "frozen shared context",
+		privacy: "private",
+		skipGates: true,
+		heartbeatMs: 1000,
+	});
+	assert.equal(first.status, "running");
+	if (first.status !== "running") return;
+	const review = await spawnBgTask(root, {
+		objective: "review the implementation",
+		worker: "local",
+		brief: "review only",
+		parentTask: first.id,
+		privacy: "private",
+		skipGates: true,
+		heartbeatMs: 1000,
+	});
+	assert.equal(review.status, "running");
+	if (review.status !== "running") return;
+
+	const firstRecord = await loadBgTask(root, first.id);
+	const reviewRecord = await loadBgTask(root, review.id);
+	assert.equal(reviewRecord?.record.contextSnapshotId, firstRecord?.record.contextSnapshotId);
+	assert.equal(reviewRecord?.record.contextSnapshotDigest, firstRecord?.record.contextSnapshotDigest);
+	assert.equal((reviewRecord?.record.routeDecision as { cacheAffinity?: string })?.cacheAffinity, "warm");
+	assert.equal(
+		await readFile(join(tasksDir(root), `${review.id}.context.json`), "utf8"),
+		await readFile(join(tasksDir(root), `${first.id}.context.json`), "utf8"),
+	);
+	await waitForDone(root, first.id);
+	await waitForDone(root, review.id);
 });
 
 test("AC2: unknown worker profile throws with available-keys list, zero file residual", async () => {
@@ -242,7 +309,8 @@ test(
 		const done = JSON.parse(await readFile(join(tasksDir(root), `${result.id}.done`), "utf8"));
 		assert.equal(done.exitCode, 0);
 		const log = await readFile(join(tasksDir(root), `${result.id}.log`), "utf8");
-		assert.equal(log, brief);
+		assert.match(log, /READ-ONLY TASK CONTEXT SNAPSHOT/);
+		assert.equal(log.split(brief).length - 1, 1);
 	},
 );
 
@@ -269,6 +337,7 @@ test("AC8: .brief purges alongside .pid/.log once retention_days has elapsed; su
 	await writeFile(join(dir, `${oldRecord.id}.log`), "log\n", "utf8");
 	await writeFile(join(dir, `${oldRecord.id}.pid`), '{"runnerPid":1}\n', "utf8");
 	await writeFile(join(dir, `${oldRecord.id}.brief`), "old brief\n", "utf8");
+	await writeFile(join(dir, `${oldRecord.id}.context.json`), "{}\n", "utf8");
 
 	const freshRecord: BgTaskRecord = {
 		...oldRecord,
@@ -280,6 +349,7 @@ test("AC8: .brief purges alongside .pid/.log once retention_days has elapsed; su
 	};
 	await saveBgTask(root, freshRecord, "# fresh\n");
 	await writeFile(join(dir, `${freshRecord.id}.brief`), "fresh brief\n", "utf8");
+	await writeFile(join(dir, `${freshRecord.id}.context.json`), "{}\n", "utf8");
 
 	const purged = await purgeExpiredTaskArtifacts(root, {
 		now: new Date("2026-07-26T00:00:00.000Z"),
@@ -287,8 +357,10 @@ test("AC8: .brief purges alongside .pid/.log once retention_days has elapsed; su
 	});
 	assert.equal(purged.length, 1);
 	assert.ok(purged[0]?.removed.includes(`${oldRecord.id}.brief`));
+	assert.ok(purged[0]?.removed.includes(`${oldRecord.id}.context.json`));
 	await assert.rejects(() => readFile(join(dir, `${oldRecord.id}.brief`)));
 	assert.equal(await readFile(join(dir, `${freshRecord.id}.brief`), "utf8"), "fresh brief\n");
+	assert.equal(await readFile(join(dir, `${freshRecord.id}.context.json`), "utf8"), "{}\n");
 });
 
 test("AC10: worker env is the minimal allowlist — no HER_LLM_API_KEY unless env_allow names it", async () => {
@@ -385,7 +457,8 @@ test("AC11: mode:worker auto-retry rebuilds the worker invocation and the child 
 
 	await waitForDone(root, retryId);
 	const log = await readFile(join(dir, `${retryId}.log`), "utf8");
-	assert.equal(log, brief);
+	assert.equal(log.split(brief).length - 1, 1);
+	assert.equal(log.split("READ-ONLY TASK CONTEXT SNAPSHOT").length - 1, 1);
 });
 
 test("AC12: reconcile posts a cost-ledger entry = budgetReserved once per task; a second reconcile does not duplicate it", async () => {
@@ -574,7 +647,8 @@ test(
 			const done = JSON.parse(await readFile(join(tasksDir(root), `${worker.id}.done`), "utf8"));
 			assert.equal(done.exitCode, 0);
 			const log = await readFile(join(tasksDir(root), `${worker.id}.log`), "utf8");
-			assert.equal(log, "hello from worker mode");
+			assert.match(log, /READ-ONLY TASK CONTEXT SNAPSHOT/);
+			assert.equal(log.split("hello from worker mode").length - 1, 1);
 		} finally {
 			process.env.PATH = prevPath;
 		}

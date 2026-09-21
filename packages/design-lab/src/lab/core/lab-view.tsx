@@ -43,7 +43,7 @@ import {
   type PluginApiDoc,
   publishPluginApis,
 } from "../plugin-api";
-import { dispatchLabKey } from "./keyboard-dispatch";
+import { dispatchLabKey, exportScreenIds } from "./keyboard-dispatch";
 import { StickyNotes } from "./page-notes";
 import { threadRows, unresolvedCount } from "./open-threads";
 import type { NoteThreadState } from "./note-feed";
@@ -99,6 +99,34 @@ import {
  *  attachRoot.  Allows integration tests to verify the listener is wired.
  *  Resets on cleanup (StrictMode or unmount). */
 export let __keyboardListenerActive = false;
+
+function runCanvasExport(
+  session: Session,
+  format: "png" | "pdf",
+  busy: { current: boolean },
+): void {
+  if (busy.current) {
+    pushToast("already exporting");
+    return;
+  }
+  busy.current = true;
+  const screenIds = exportScreenIds(session.focusedId, session.selectedId);
+  pushToast(format === "pdf" ? "Exporting PDF…" : "Exporting PNG…");
+  void labFs
+    .export({ screenIds, format })
+    .then((r) => {
+      if (!r.ok) {
+        pushToast(r.error ?? "export failed");
+        return;
+      }
+      const files = r.files ?? [];
+      if (files.length === 1) pushToast(`Wrote ${files[0]}`);
+      else pushToast(`Wrote ${files.length} files`);
+    })
+    .finally(() => {
+      busy.current = false;
+    });
+}
 
 export function InteractionLab() {
   const zoom = useSyncExternalStore(subscribeCoarse, getCoarseZoom, getCoarseZoom);
@@ -169,6 +197,7 @@ export function InteractionLab() {
   const theme = luminance(canvasColor) < 0.5 ? "dark" : "light";
   const helpOpenRef = useRef(false);
   helpOpenRef.current = helpOpen;
+  const exportBusyRef = useRef(false);
 
   /**
    * A tool button IS its shortcut — it fires the same key the sheet documents,
@@ -837,6 +866,9 @@ export function InteractionLab() {
           if (!bare) pushToast("\\ 回来");
           break;
         }
+        case "export":
+          runCanvasExport(session, act.format, exportBusyRef);
+          break;
         case "nudge": {
           const id = session.selectedId;
           if (!id) break;
@@ -859,6 +891,10 @@ export function InteractionLab() {
             NUDGE_COMMIT_MS,
           );
           break;
+        }
+        default: {
+          const _never: never = act;
+          void _never;
         }
       }
     };
@@ -1216,6 +1252,17 @@ export function InteractionLab() {
           </button>
           <button
             type="button"
+            className={styles.tool}
+            title="Export PNG — Ctrl E · PDF — Ctrl Shift E"
+            aria-label="Export"
+            onClick={(e) =>
+              pressShortcut("KeyE", "e", { ctrlKey: true, shiftKey: e.shiftKey })
+            }
+          >
+            <IconExport />
+          </button>
+          <button
+            type="button"
             className={styles.zoomBtn}
             title="Shortcuts"
             aria-label="Shortcuts"
@@ -1398,6 +1445,25 @@ const IconPoint = () => (
   </svg>
 );
 
+const IconExport = () => (
+  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+    <path
+      d="M7 1.8v7.2M4.2 4.4L7 1.8l2.8 2.6"
+      stroke="currentColor"
+      strokeWidth="1.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <path
+      d="M2.2 9.4v2.4h9.6V9.4"
+      stroke="currentColor"
+      strokeWidth="1.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </svg>
+);
+
 /**
  * Every shortcut the lab actually listens for, grouped as it is used.
  * Exported so help-sheet.test.ts can hold it against the real dispatcher —
@@ -1464,6 +1530,8 @@ export const HELP: { title: string; rows: [string[], string][] }[] = [
       [["Double-click name"], "Rename — rewrites the manifest"],
       [["Ctrl", "C"], "Tidy into one row, and save it"],
       [["Ctrl", "Shift", "⌫"], "Back to the manifest layout"],
+      [["Ctrl", "E"], "Export as PNG"],
+      [["Ctrl", "Shift", "E"], "Export as PDF"],
     ],
   },
   {

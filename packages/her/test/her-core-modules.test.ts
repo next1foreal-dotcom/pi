@@ -315,6 +315,13 @@ test("config loads shallow YAML overrides over defaults", async () => {
 	assert.equal(config.hands.desktopDriverBinary, "C:/Tools/cua-driver.exe");
 });
 
+test("context budget config defaults to shadow and validates overrides", async () => {
+	const root = await mkdtemp(join(tmpdir(), "her-context-config-"));
+	const configPath = join(root, "config.yaml");
+	await writeFile(configPath, "context:\n  mode: enforce\n  turn_budget_tokens: 2048\n", "utf8");
+	const config = loadConfig(configPath);
+	assert.deepEqual(config.context, { mode: "enforce", turnBudgetTokens: 2048 });
+});
 test("renderConfig round-trips hands defaults", async () => {
 	const root = await mkdtemp(join(tmpdir(), "her-config-render-"));
 	const configPath = join(root, "config.yaml");

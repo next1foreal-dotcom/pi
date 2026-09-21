@@ -117,7 +117,12 @@ import { completionMetaOf, type OpBracketContext, withOpBracket } from "./op-bra
 import { ORGAN_MODEL_TIMEOUT_MS, type OrganModelTimeoutName, withModelTimeout } from "./organ-timeouts.ts";
 import { StorePaths } from "./paths.ts";
 import type { PriorMode, PriorResult } from "./prior.ts";
-import { classifyCapturePrivacy, validateMemoryProvenance } from "./privacy.ts";
+import {
+	allowsRecallPrivacy,
+	classifyCapturePrivacy,
+	type MemoryPrivacy,
+	validateMemoryProvenance,
+} from "./privacy.ts";
 import {
 	choiceModelPrompt,
 	consolidatePrompt,
@@ -718,8 +723,12 @@ export class Memory {
 		return `${base}${tasteRules ? `\n\n${tasteRules}` : ""}\n\n# CHOICE-MODEL Directory Rules\n\n${rules}\n`;
 	}
 
-	async recall(query: string, opts: { k?: number; recordAccess?: boolean } = {}): Promise<Note[]> {
-		const hits = await rrfSearch(query, await buildCorpus(this.paths), {
+	async recall(
+		query: string,
+		opts: { k?: number; recordAccess?: boolean; privacy?: MemoryPrivacy } = {},
+	): Promise<Note[]> {
+		const corpus = (await buildCorpus(this.paths)).filter((doc) => allowsRecallPrivacy(doc.text, opts.privacy));
+		const hits = await rrfSearch(query, corpus, {
 			k: opts.k ?? 8,
 			semanticSearch: this.semanticSearch,
 		});

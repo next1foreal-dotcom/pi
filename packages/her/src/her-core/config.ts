@@ -1,5 +1,10 @@
 import { readFileSync } from "node:fs";
 
+export type ContextConfig = {
+	mode: "shadow" | "enforce";
+	turnBudgetTokens: number;
+};
+
 export interface HerConfig {
 	llm: {
 		baseUrl: string;
@@ -20,6 +25,7 @@ export interface HerConfig {
 		missedFireSynthesize?: string;
 		personaIntervalDays?: number;
 	};
+	context?: ContextConfig;
 	hands: {
 		enabled: boolean;
 		desktopEnabled: boolean;
@@ -31,6 +37,11 @@ export interface HerConfig {
 		desktopDriverBinary: string;
 	};
 }
+
+export const DEFAULT_CONTEXT_CONFIG: ContextConfig = {
+	mode: "shadow",
+	turnBudgetTokens: 8192,
+};
 
 export const DEFAULT_CONFIG: HerConfig = {
 	llm: {
@@ -50,6 +61,7 @@ export const DEFAULT_CONFIG: HerConfig = {
 		missedFireSynthesize: "once",
 		personaIntervalDays: 7,
 	},
+	context: DEFAULT_CONTEXT_CONFIG,
 	hands: {
 		enabled: false,
 		desktopEnabled: false,
@@ -75,7 +87,19 @@ export function loadConfig(path: string): HerConfig {
 	return mergeConfig(DEFAULT_CONFIG, parseConfigYaml(text));
 }
 
+export function resolveContextConfig(config: HerConfig): ContextConfig {
+	const raw = config.context;
+	return {
+		mode: raw?.mode === "enforce" ? "enforce" : "shadow",
+		turnBudgetTokens:
+			typeof raw?.turnBudgetTokens === "number" && Number.isFinite(raw.turnBudgetTokens) && raw.turnBudgetTokens >= 1
+				? Math.floor(raw.turnBudgetTokens)
+				: DEFAULT_CONTEXT_CONFIG.turnBudgetTokens,
+	};
+}
+
 export function renderConfig(config: HerConfig = DEFAULT_CONFIG): string {
+	const context = resolveContextConfig(config);
 	return [
 		"llm:",
 		`  base_url: ${config.llm.baseUrl}`,
@@ -92,6 +116,9 @@ export function renderConfig(config: HerConfig = DEFAULT_CONFIG): string {
 		`  missed_fire_choice_model: ${config.cadence.missedFireChoiceModel ?? "once"}`,
 		`  missed_fire_synthesize: ${config.cadence.missedFireSynthesize ?? "once"}`,
 		`  persona_interval_days: ${config.cadence.personaIntervalDays ?? 7}`,
+		"context:",
+		`  mode: ${context.mode}`,
+		`  turn_budget_tokens: ${context.turnBudgetTokens}`,
 		"hands:",
 		`  enabled: ${config.hands.enabled}`,
 		`  desktop_enabled: ${config.hands.desktopEnabled}`,
@@ -106,9 +133,11 @@ export function renderConfig(config: HerConfig = DEFAULT_CONFIG): string {
 }
 
 function mergeConfig(base: HerConfig, overrides: Partial<HerConfig>): HerConfig {
+	const context: ContextConfig = { ...DEFAULT_CONTEXT_CONFIG, ...base.context, ...overrides.context };
 	return {
 		llm: { ...base.llm, ...(overrides.llm ?? {}) },
 		cadence: { ...base.cadence, ...(overrides.cadence ?? {}) },
+		context: resolveContextConfig({ ...base, context }),
 		hands: { ...base.hands, ...(overrides.hands ?? {}) },
 	};
 }

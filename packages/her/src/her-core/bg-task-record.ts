@@ -42,6 +42,8 @@ export type BgTaskRecord = {
 	ownerSessionId?: string;
 	/** C2 — Codex CLI session/conversation id captured from its JSON event stream. */
 	codexSessionId?: string;
+	contextSnapshotId?: string;
+	contextSnapshotDigest?: string;
 	[key: string]: unknown;
 };
 

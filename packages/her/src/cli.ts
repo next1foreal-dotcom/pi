@@ -642,7 +642,7 @@ export async function runHerCli(
 	if (command.kind === "recall") {
 		const result = command.archive
 			? await memory.recallArchive(command.query, { k: command.k })
-			: await memory.recall(command.query, { k: command.k });
+			: await memory.recall(command.query, { k: command.k, privacy: command.privacy });
 		const receipts = buildRecallReceipts(result);
 		const payload = { ...(await buildStatusPayload(memoryDir, memory)), result, receipts };
 		writePayload(io.stdout, payload, command.json, renderRecall);

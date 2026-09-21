@@ -483,7 +483,7 @@ test("readJson tolerates UTF-8 BOM in existing memory files", async () => {
 test("recall searches markdown corpus", async () => {
 	const store = await tempStore();
 	await writeText(join(store, "semantic", "own-memory.md"), "# Own memory\n\nBorrow the harness, own memory.\n");
-	const hits = await new Memory(store).recall("harness memory");
+	const hits = await new Memory(store).recall("harness memory", { privacy: "private" });
 	assert.equal(hits[0]?.id, "semantic/own-memory");
 	const state = await readJson<{ access?: Record<string, { count?: number }> }>(join(store, ".her", "state.json"), {});
 	assert.equal(state.access?.["semantic/own-memory"]?.count, 1);
@@ -495,7 +495,7 @@ test("recall waits for the shared store lock before access accounting", async ()
 	const lock = join(store, ".her", "lock");
 	await writeText(lock, JSON.stringify({ at: Date.now() / 1000, host: "python", owner: "python-owner", pid: 999999 }));
 	let settled = false;
-	const pending = new Memory(store).recall("access accounting", { k: 1 }).finally(() => {
+	const pending = new Memory(store).recall("access accounting", { k: 1, privacy: "private" }).finally(() => {
 		settled = true;
 	});
 
@@ -512,7 +512,7 @@ test("recall waits for the shared store lock before access accounting", async ()
 test("agent-eval: memory changes the next action decision", async () => {
 	const store = await tempStore();
 	const decide = async (memory: Memory, task: string): Promise<string> => {
-		const hits = await memory.recall(task, { k: 3 });
+		const hits = await memory.recall(task, { k: 3, privacy: "private" });
 		return hits.some((hit) => /verify before reporting|machine truth/i.test(hit.text))
 			? "run-verification-first"
 			: "answer-from-current-context";
@@ -538,7 +538,7 @@ test("recall fuses lexical and injected semantic rankings with RRF", async () =>
 	const semanticSearch: SearchBackend = async (_query, docs) =>
 		docs.filter((doc) => doc.id === "world/conceptual").map((doc) => ({ ...doc, score: 0.9 }));
 
-	const hits = await new Memory(store, { semanticSearch }).recall("literal-anchor", { k: 2 });
+	const hits = await new Memory(store, { semanticSearch }).recall("literal-anchor", { k: 2, privacy: "private" });
 
 	assert.deepEqual(hits.map((hit) => hit.id).sort(), ["semantic/literal", "world/conceptual"]);
 	const state = await readJson<{ access?: Record<string, { count?: number }> }>(join(store, ".her", "state.json"), {});
@@ -554,10 +554,10 @@ test("recall uses FTS and entity/path signals before fusing rankings", async () 
 		"# Private Room\n\nA room note without the query words.\n",
 	);
 
-	const ftsHits = await new Memory(store).recall("quiet-proof", { k: 3 });
+	const ftsHits = await new Memory(store).recall("quiet-proof", { k: 3, privacy: "private" });
 	assert.equal(ftsHits[0]?.id, "semantic/silent-care");
 
-	const entityHits = await new Memory(store).recall("Samantha Zone", { k: 3 });
+	const entityHits = await new Memory(store).recall("Samantha Zone", { k: 3, privacy: "private" });
 	assert.equal(entityHits[0]?.id, "world/samantha-zone");
 });
 
@@ -680,7 +680,10 @@ test("decaySweep archives only old unaccessed decay-tier semantic notes and keep
 		"---\ntier: exact\nupdated: 2020-01-01\n---\n# Identity\n\nExact memory should never decay.\n",
 	);
 
-	assert.equal((await new Memory(store).recall("repeatedly useful"))[0]?.id, "semantic/old-useful");
+	assert.equal(
+		(await new Memory(store).recall("repeatedly useful", { privacy: "private" }))[0]?.id,
+		"semantic/old-useful",
+	);
 	const result = await new Memory(store).decaySweep({ olderThanDays: 30, now: "2026-06-05" });
 
 	assert.deepEqual(result.archivedKeys, ["old-noise"]);
@@ -733,7 +736,10 @@ test("restoreArchivedSemantic returns an archived note to the main semantic name
 	assert.equal(parsed.data.tier, "decay");
 	assert.equal(parsed.data.restored_at, "2026-06-06");
 	assert.match(parsed.body, /Recoverable archived memory/);
-	assert.equal((await new Memory(store).recall("Recoverable archived"))[0]?.id, "semantic/old-noise");
+	assert.equal(
+		(await new Memory(store).recall("Recoverable archived", { privacy: "private" }))[0]?.id,
+		"semantic/old-noise",
+	);
 });
 
 test("long task ledger persists checkpoints and completion without losing state", async () => {
