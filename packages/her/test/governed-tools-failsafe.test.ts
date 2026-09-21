@@ -22,6 +22,13 @@ function defaultCall(toolName: string, destructive: boolean, attrs: Record<strin
 	};
 }
 
+function heartbeatCall(toolName: string, destructive: boolean): AuthorizationCall {
+	return {
+		...defaultCall(toolName, destructive),
+		...policyEnvelope("heartbeat"),
+	};
+}
+
 test("resolveGovernedTool treats unregistered names as destructive", () => {
 	assert.deepEqual(resolveGovernedTool("apply_patch"), { destructive: true, registered: false });
 	assert.deepEqual(resolveGovernedTool("str_replace"), { destructive: true, registered: false });
@@ -43,6 +50,24 @@ test("default Cedar still allows her_recall via allow_memory_tools", () => {
 	const verdict = evaluate(defaultCall("her_recall", resolved.destructive));
 	assert.equal(verdict.decision, "allow");
 	assert.deepEqual(verdict.matched, ["allow_memory_tools"]);
+});
+
+test("heartbeat denies durable or external actions and keeps read tools", () => {
+	for (const toolName of ["her_act", "her_remember", "her_judgment", "her_synthesize_choice_model"]) {
+		const resolved = resolveGovernedTool(toolName);
+		assert.deepEqual(resolved, { destructive: true, registered: true }, toolName);
+		const verdict = evaluate(heartbeatCall(toolName, resolved.destructive));
+		assert.equal(verdict.decision, "deny", toolName);
+		assert.deepEqual(verdict.matched, ["heartbeat_forbid_destructive_tools"], toolName);
+	}
+
+	for (const toolName of ["read", "her_recall", "list_her_events"]) {
+		const resolved = resolveGovernedTool(toolName);
+		assert.deepEqual(resolved, { destructive: false, registered: true }, toolName);
+		const verdict = evaluate(heartbeatCall(toolName, resolved.destructive));
+		assert.equal(verdict.decision, "allow", toolName);
+		assert.deepEqual(verdict.matched, ["heartbeat_allow_non_destructive_tools"], toolName);
+	}
 });
 
 test("default Cedar denies her_mcp_call until a named permit exists", () => {
