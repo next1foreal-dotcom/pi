@@ -22,6 +22,12 @@ export interface DreamCandidate {
 	evidence: DreamEvidence[];
 }
 
+export interface PendingCorrection {
+	id: string;
+	sourceIds: string[];
+	body: string;
+}
+
 export interface DreamScanWriteSummary {
 	scanned: number;
 	matched: number;
@@ -72,6 +78,15 @@ const CORRECTION_PATTERNS: RegExp[] = [
 
 export function extractUserBlocks(body: string): string[] {
 	const blocks: string[] = [];
+	const jsonStart = body.indexOf("{");
+	if (jsonStart >= 0) {
+		try {
+			const parsed = JSON.parse(body.slice(jsonStart)) as { userPrompt?: unknown };
+			if (typeof parsed.userPrompt === "string" && parsed.userPrompt.trim()) blocks.push(parsed.userPrompt.trim());
+		} catch {
+			// Older/raw free-form episodes are parsed by the block scanners below.
+		}
+	}
 	const queryRe = /<user_query>([\s\S]*?)<\/user_query>/gi;
 	for (const match of body.matchAll(queryRe)) {
 		const text = match[1]?.trim();
@@ -290,6 +305,32 @@ export async function writeDreamProposals(
 		writtenPaths.push(path);
 	}
 	return { written, skippedIdempotent, writtenPaths };
+}
+
+export async function readPendingCorrections(root: string, limit = 3): Promise<PendingCorrection[]> {
+	const paths = new StorePaths(root);
+	const names = (await markdownEntries(paths.proposals)).filter((name) => name.startsWith("dream-")).reverse();
+	const corrections: PendingCorrection[] = [];
+	for (const name of names) {
+		const text = await readText(join(paths.proposals, name));
+		if (text === undefined) continue;
+		const parsed = parseFrontmatter(text);
+		if (
+			parsed.data.kind !== "dream-proposal" ||
+			parsed.data.signal !== "explicit-correction" ||
+			parsed.data.status !== "pending"
+		) {
+			continue;
+		}
+		const sourceIds = Array.isArray(parsed.data.sources)
+			? parsed.data.sources.filter(
+					(source): source is string => typeof source === "string" && Boolean(source.trim()),
+				)
+			: [];
+		corrections.push({ id: name.replace(/\.md$/, ""), sourceIds, body: parsed.body.trim() });
+		if (corrections.length >= Math.max(0, Math.floor(limit))) break;
+	}
+	return corrections;
 }
 
 export async function countRawEpisodes(rawDir: string, limit?: number): Promise<number> {
