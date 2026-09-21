@@ -4,8 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
+	appendContextManifestRecord,
 	appendInjectionRecord,
 	applyBlockDedupe,
+	buildContextManifest,
 	contentDigest,
 	injectionLedgerPath,
 	injectLoggedContent,
@@ -227,6 +229,17 @@ test("injectLoggedContent: HER_INJECT_DEDUPE=1 replaces repeats per session and 
 			injectLoggedContent({ memoryDir: root, session: "s1", kind: "context", content: "changed block" }),
 			"changed block",
 		);
+		const entries = (await readFile(injectionLedgerPath(root), "utf8"))
+			.trim()
+			.split("\n")
+			.map(
+				(line) => JSON.parse(line) as { blocks: Array<{ bytes: number; emittedBytes: number; emission: string }> },
+			);
+		assert.equal(entries[1]?.blocks[0]?.emission, "unchanged-marker");
+		assert.equal(
+			entries[1]?.blocks[0]?.emittedBytes,
+			Buffer.byteLength(unchangedInjectionMarker("context", digest), "utf8"),
+		);
 	} finally {
 		if (previous === undefined) delete process.env.HER_INJECT_DEDUPE;
 		else process.env.HER_INJECT_DEDUPE = previous;
@@ -246,6 +259,38 @@ test("injectLoggedContent warns and still returns content when the ledger cannot
 			content: "A memory surfaced",
 		});
 		assert.equal(text, "A memory surfaced");
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("context manifest records only hashes and selection metadata", async () => {
+	const root = await tempStore();
+	try {
+		const manifest = buildContextManifest({
+			task: "private user prompt",
+			priorId: "abc123",
+			actual: [{ kind: "context", content: "private memory", sources: ["narrative/CONTEXT.md"] }],
+			proposed: [
+				{
+					layer: "L2",
+					source: "narrative/CONTEXT.md",
+					digest: contentDigest("private memory"),
+					availableTokens: 4,
+					selectedTokens: 4,
+					privacy: "private",
+					decision: "full",
+					reason: "within-budget",
+				},
+			],
+		});
+		appendContextManifestRecord({ memoryDir: root, session: "s1", manifest });
+		const raw = await readFile(injectionLedgerPath(root), "utf8");
+		assert.doesNotMatch(raw, /private user prompt|private memory/);
+		const record = JSON.parse(raw) as { manifest: typeof manifest };
+		assert.equal(record.manifest.mode, "shadow");
+		assert.equal(record.manifest.promptChanged, false);
+		assert.match(record.manifest.taskDigest, /^[a-f0-9]{16}$/);
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}

@@ -3,6 +3,7 @@ import { appendFile, mkdir, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { Memory } from "./memory.ts";
 import { StorePaths } from "./paths.ts";
+import { memoryPrivacyForRecall } from "./privacy.ts";
 import { parseFrontmatter, readText } from "./store.ts";
 
 export type PriorMode = "full" | "off" | "her-only";
@@ -15,10 +16,22 @@ export interface PriorBlock {
 	tokens: number;
 }
 
+export interface PriorManifestBlock {
+	layer: PriorLayer;
+	source: string;
+	digest: string;
+	availableTokens: number;
+	selectedTokens: number;
+	privacy: string;
+	decision: "full" | "truncated" | "omitted";
+	reason: "within-budget" | "layer-budget" | "total-budget";
+}
+
 export interface PriorResult {
 	text: string;
 	priorId: string;
 	blocks: PriorBlock[];
+	manifest: PriorManifestBlock[];
 }
 
 export interface AssemblePriorOptions {
@@ -94,14 +107,15 @@ const LAYER_BUDGETS: Partial<Record<PriorLayer, number>> = { L3: 900, L4: 400, L
 const TRIM_ORDER: PriorLayer[] = ["L5", "L4", "L3"];
 
 export async function assemblePrior(opts: AssemblePriorOptions): Promise<PriorResult> {
-	if (opts.mode === "off") return { text: "", priorId: "off", blocks: [] };
+	if (opts.mode === "off") return { text: "", priorId: "off", blocks: [], manifest: [] };
 	const paths = new StorePaths(opts.storeRoot);
 	const sourceBlocks = opts.mode === "her-only" ? await readSBlocks(paths) : await readFullBlocks(paths, opts.task);
-	const blocks = applyBudget(sourceBlocks, opts.budget ?? DEFAULT_TOTAL_BUDGET);
+	const selected = selectPriorBlocks(sourceBlocks, opts.budget ?? DEFAULT_TOTAL_BUDGET);
 	return {
-		blocks,
+		blocks: selected.blocks,
+		manifest: selected.manifest,
 		priorId: priorId(sourceBlocks, opts),
-		text: renderPriorText(blocks),
+		text: renderPriorText(selected.blocks),
 	};
 }
 
@@ -185,21 +199,58 @@ async function markdownEntries(dir: string): Promise<string[]> {
 	}
 }
 
-function applyBudget(blocks: SourceBlock[], totalBudget: number): PriorBlock[] {
-	let capped = blocks.flatMap((block) => trimBlock(block, LAYER_BUDGETS[block.layer] ?? Infinity));
-	let over = totalTokens(capped) - Math.max(0, Math.floor(totalBudget));
+function selectPriorBlocks(
+	blocks: SourceBlock[],
+	totalBudget: number,
+): { blocks: PriorBlock[]; manifest: PriorManifestBlock[] } {
+	const layerCapped = blocks.flatMap((block) => trimBlock(block, LAYER_BUDGETS[block.layer] ?? Infinity));
+	let selected = layerCapped;
+	let over = totalTokens(selected) - Math.max(0, Math.floor(totalBudget));
 	for (const layer of TRIM_ORDER) {
 		if (over <= 0) break;
-		const layerTokens = totalTokens(capped.filter((block) => block.layer === layer));
+		const layerTokens = totalTokens(selected.filter((block) => block.layer === layer));
 		const target = Math.max(0, layerTokens - over);
 		const trimmedLayer = trimBlocks(
-			capped.filter((block) => block.layer === layer),
+			selected.filter((block) => block.layer === layer),
 			target,
 		);
 		over -= layerTokens - totalTokens(trimmedLayer);
-		capped = replaceLayer(capped, layer, trimmedLayer);
+		selected = replaceLayer(selected, layer, trimmedLayer);
 	}
-	return capped;
+	const layerTokens = tokenMap(layerCapped);
+	const selectedTokens = tokenMap(selected);
+	return {
+		blocks: selected,
+		manifest: blocks.map((block) => {
+			const key = blockKey(block);
+			const availableTokens = estimatePriorTokens(block.text);
+			const afterLayer = layerTokens.get(key) ?? 0;
+			const afterTotal = selectedTokens.get(key) ?? 0;
+			return {
+				layer: block.layer,
+				source: block.source,
+				digest: hashText(block.text).slice(0, 16),
+				availableTokens,
+				selectedTokens: afterTotal,
+				privacy: memoryPrivacyForRecall(block.text),
+				decision: afterTotal === availableTokens ? "full" : afterTotal === 0 ? "omitted" : "truncated",
+				reason:
+					afterTotal < afterLayer
+						? "total-budget"
+						: afterLayer < availableTokens
+							? "layer-budget"
+							: "within-budget",
+			};
+		}),
+	};
+}
+
+function blockKey(block: Pick<SourceBlock, "layer" | "source">): string {
+	return `${block.layer}\u0000${block.source}`;
+}
+
+function tokenMap(blocks: PriorBlock[]): Map<string, number> {
+	return new Map(blocks.map((block) => [blockKey(block), block.tokens]));
 }
 
 function trimBlocks(blocks: PriorBlock[], budget: number): PriorBlock[] {

@@ -402,6 +402,7 @@ export type {
 	PriorAuditEntry,
 	PriorBlock,
 	PriorLayer,
+	PriorManifestBlock,
 	PriorMode,
 	PriorResult,
 	RecordPriorAuditOptions,
@@ -416,10 +417,12 @@ export type {
 	MemoryProvenance,
 } from "./privacy.ts";
 export {
+	allowsRecallPrivacy,
 	checkMemoryExport,
 	classifyCapturePrivacy,
 	classifyMemoryCorpus,
 	defaultWorldPrivacy,
+	memoryPrivacyForRecall,
 	memoryPrivacyLevels,
 	memoryProvenanceValues,
 	validateMemoryPrivacy,

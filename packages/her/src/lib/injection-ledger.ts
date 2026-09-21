@@ -19,17 +19,43 @@ export interface InjectionBlock {
 	sources?: string[];
 	digest: string;
 	bytes: number;
+	emittedDigest: string;
+	emittedBytes: number;
+	emission: "full" | "unchanged-marker";
+}
+
+export interface ContextManifestCandidate {
+	layer: string;
+	source: string;
+	digest: string;
+	availableTokens: number;
+	selectedTokens: number;
+	privacy: string;
+	decision: "full" | "truncated" | "omitted";
+	reason: "within-budget" | "layer-budget" | "total-budget";
+}
+
+export interface ContextManifest {
+	version: "context-manifest-v0";
+	mode: "shadow";
+	promptChanged: false;
+	taskDigest: string;
+	priorId: string;
+	actual: InjectionBlock[];
+	proposed: ContextManifestCandidate[];
 }
 
 export interface InjectionRecord {
 	ts: string;
 	session?: string;
 	blocks: InjectionBlock[];
+	manifest?: ContextManifest;
 }
 
 export interface InjectionBlockInput {
 	kind: InjectionKind;
 	content: string;
+	emittedContent?: string;
 	sources?: string[];
 }
 
@@ -83,10 +109,14 @@ function ledgerErrorMessage(error: unknown): string {
 
 function toBlock(input: InjectionBlockInput): InjectionBlock {
 	const sources = input.sources?.map(redactAuditPath).filter(Boolean);
+	const emittedContent = input.emittedContent ?? input.content;
 	const block: InjectionBlock = {
 		kind: input.kind,
 		digest: contentDigest(input.content),
 		bytes: Buffer.byteLength(input.content, "utf8"),
+		emittedDigest: contentDigest(emittedContent),
+		emittedBytes: Buffer.byteLength(emittedContent, "utf8"),
+		emission: emittedContent === input.content ? "full" : "unchanged-marker",
 	};
 	if (sources && sources.length > 0) block.sources = sources;
 	return block;
@@ -96,19 +126,47 @@ function toBlock(input: InjectionBlockInput): InjectionBlock {
 export function appendInjectionRecord(opts: {
 	memoryDir: string;
 	session?: string;
-	blocks: InjectionBlockInput[];
+	blocks?: InjectionBlockInput[];
+	manifest?: ContextManifest;
 	ts?: string;
 }): InjectionRecord {
 	const ts = opts.ts ?? new Date().toISOString();
 	const record: InjectionRecord = {
 		ts,
-		blocks: opts.blocks.map(toBlock),
+		blocks: (opts.blocks ?? []).map(toBlock),
 	};
 	if (opts.session) record.session = opts.session;
+	if (opts.manifest) record.manifest = opts.manifest;
 	const path = injectionLedgerPath(opts.memoryDir);
 	mkdirSync(join(opts.memoryDir, "audit"), { recursive: true });
 	appendFileSync(path, `${JSON.stringify(record)}\n`, "utf8");
 	return record;
+}
+
+export function buildContextManifest(opts: {
+	task: string;
+	priorId: string;
+	actual: InjectionBlockInput[];
+	proposed: ContextManifestCandidate[];
+}): ContextManifest {
+	return {
+		version: "context-manifest-v0",
+		mode: "shadow",
+		promptChanged: false,
+		taskDigest: contentDigest(opts.task),
+		priorId: opts.priorId,
+		actual: opts.actual.map(toBlock),
+		proposed: opts.proposed.map((candidate) => ({ ...candidate, source: redactAuditPath(candidate.source) })),
+	};
+}
+
+export function appendContextManifestRecord(opts: {
+	memoryDir: string;
+	session?: string;
+	manifest: ContextManifest;
+	ts?: string;
+}): InjectionRecord {
+	return appendInjectionRecord(opts);
 }
 
 /**
@@ -122,11 +180,12 @@ export function injectLoggedContent(opts: {
 	content: string;
 	sources?: string[];
 	extraBlocks?: InjectionBlockInput[];
+	dedupe?: boolean;
 }): string {
 	const digest = contentDigest(opts.content);
 	let text = opts.content;
 	try {
-		if (isInjectDedupeEnabled() && opts.session) {
+		if (opts.dedupe !== false && isInjectDedupeEnabled() && opts.session) {
 			const byKind = previousDigests.get(opts.session) ?? new Map<string, string>();
 			const previousDigest = byKind.get(opts.kind);
 			text = applyBlockDedupe({
@@ -148,7 +207,10 @@ export function injectLoggedContent(opts: {
 		appendInjectionRecord({
 			memoryDir: opts.memoryDir,
 			session: opts.session,
-			blocks: [{ kind: opts.kind, content: opts.content, sources: opts.sources }, ...(opts.extraBlocks ?? [])],
+			blocks: [
+				{ kind: opts.kind, content: opts.content, emittedContent: text, sources: opts.sources },
+				...(opts.extraBlocks ?? []),
+			],
 		});
 	} catch (error) {
 		console.warn(`[her] injection ledger append failed: ${ledgerErrorMessage(error)}`);

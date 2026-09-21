@@ -73,7 +73,7 @@ test("recalled notes are fenced as untrusted data", async () => {
 	try {
 		const mem = new Memory(root);
 		await mem.remember("Fei wants evidence before claims.", "preference");
-		const notes = await mem.recall("evidence", { k: 3 });
+		const notes = await mem.recall("evidence", { k: 3, privacy: "private" });
 		assert.ok(notes.length > 0, "fixture must produce at least one hit");
 
 		const { renderRecall } = await import("../src/extension.ts");

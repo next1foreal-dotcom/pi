@@ -710,7 +710,7 @@ export function usage(): string {
   her privacy-audit [--json]
   her privacy-check --ref <memory-path> [--ref <memory-path>] [--json]
   her prior [--task <text>] [--off|--her-only] [--budget <tokens>] [--json]
-  her recall --query <text> [--k <n>] [--archive] [--json]
+  her recall --query <text> [--k <n>] [--privacy public|shared|private|intimate] [--archive] [--json]
   her reingest [--root <store>] [--limit <n>] [--dry-run] [--json]
   her reflect [--if-due] [--json]
   her review-narrative [--keep <id>|--revert <id>] [--json]

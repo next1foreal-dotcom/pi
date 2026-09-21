@@ -3,7 +3,14 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { checkMemoryExport, classifyMemoryCorpus, initStore, readText, writeText } from "../src/her-core/index.ts";
+import {
+	checkMemoryExport,
+	classifyMemoryCorpus,
+	initStore,
+	Memory,
+	readText,
+	writeText,
+} from "../src/her-core/index.ts";
 
 async function tempStore(): Promise<string> {
 	const root = await mkdtemp(join(tmpdir(), "her-privacy-"));
@@ -70,4 +77,34 @@ test("privacy export check blocks private, intimate, and unknown memory refs", a
 	const unknown = await checkMemoryExport(store, ["missing.md"]);
 	assert.equal(unknown.allowed, false);
 	assert.deepEqual(unknown.unknown, ["missing.md"]);
+});
+
+test("recall defaults to shared and requires an explicit level for sensitive memory", async () => {
+	const store = await tempStore();
+	await writeText(join(store, "semantic", "shared.md"), "---\nprivacy: shared\n---\n# Boundary\n\nprivacy needle\n");
+	await writeText(join(store, "semantic", "private.md"), "---\nprivacy: private\n---\n# Boundary\n\nprivacy needle\n");
+	await writeText(
+		join(store, "semantic", "intimate.md"),
+		"---\nprivacy: intimate\n---\n# Boundary\n\nprivacy needle\n",
+	);
+	await writeText(join(store, "semantic", "missing.md"), "# Boundary\n\nprivacy needle\n");
+	const memory = new Memory(store);
+
+	assert.deepEqual(
+		(await memory.recall("privacy needle", { k: 10 })).map((note) => note.id),
+		["semantic/shared"],
+	);
+	const privateHits = new Set(
+		(await memory.recall("privacy needle", { k: 10, privacy: "private" })).map((note) => note.id),
+	);
+	assert.equal(privateHits.has("semantic/shared"), true);
+	assert.equal(privateHits.has("semantic/private"), true);
+	assert.equal(privateHits.has("semantic/missing"), true);
+	assert.equal(privateHits.has("semantic/intimate"), false);
+	assert.equal(
+		(await memory.recall("privacy needle", { k: 10, privacy: "intimate" })).some(
+			(note) => note.id === "semantic/intimate",
+		),
+		true,
+	);
 });

@@ -14,6 +14,7 @@ import type {
 	MemoryClassificationResult,
 	MemoryExportCheckResult,
 	MemoryLintReport,
+	MemoryPrivacy,
 	MemorySyncStatus,
 	ModelLike,
 	PersonaOrganResult,
@@ -135,7 +136,7 @@ export type CliCommand =
 	| { kind: "skill-scan"; ifDue: boolean; json: boolean }
 	| { kind: "privacy-check"; json: boolean; refs: string[] }
 	| { budget?: number; json: boolean; kind: "prior"; mode: PriorMode; task?: string }
-	| { kind: "recall"; archive: boolean; json: boolean; k?: number; query: string }
+	| { kind: "recall"; archive: boolean; json: boolean; k?: number; privacy?: MemoryPrivacy; query: string }
 	| { kind: "reflect"; ifDue: boolean; json: boolean }
 	| { action: "list" | "keep" | "revert"; id?: string; json: boolean; kind: "review-narrative" }
 	| { kind: "restore"; json: boolean; semanticKey: string; now?: string }

@@ -26,7 +26,10 @@ async function writePriorFixture(store: string): Promise<void> {
 	await writeText(join(store, "narrative", "CONTEXT.md"), "# CONTEXT\n\nFei builds Her as owned memory.\n");
 	await writeText(join(store, "choice-model", "code-style.md"), "# Code Style\n\nPrefer small verified diffs.\n");
 	await writeText(join(store, "topics", "active.md"), "# Current Work\n\nA6 prior assembler is active.\n");
-	await writeText(join(store, "semantic", "task-note.md"), "# Task Note\n\nA6 task memory should be cited.\n");
+	await writeText(
+		join(store, "semantic", "task-note.md"),
+		"---\nprivacy: shared\n---\n# Task Note\n\nA6 task memory should be cited.\n",
+	);
 	await writeText(
 		join(store, "samantha", "taste", "room-over-dashboard.md"),
 		"---\nprivacy: private\n---\n# Room Over Dashboard\n\nPrivate taste must not leak.\n",
@@ -81,7 +84,10 @@ test("assemblePrior enforces budgets and trims L5 before L4 before L3", async ()
 	await writeText(join(store, "narrative", "CONTEXT.md"), "Context stays.\n");
 	await writeText(join(store, "choice-model", "code-style.md"), `# L3\n\n${"l3 ".repeat(160)}\n`);
 	await writeText(join(store, "topics", "active.md"), `# L4\n\n${"l4 ".repeat(160)}\n`);
-	await writeText(join(store, "semantic", "task-note.md"), `# L5\n\n${"l5 ".repeat(160)}\n`);
+	await writeText(
+		join(store, "semantic", "task-note.md"),
+		`---\nprivacy: shared\n---\n# L5\n\n${"l5 ".repeat(160)}\n`,
+	);
 
 	const prior = await assemblePrior({ budget: 45, mode: "full", storeRoot: store, task: "l5" });
 
@@ -91,6 +97,9 @@ test("assemblePrior enforces budgets and trims L5 before L4 before L3", async ()
 	assert.doesNotMatch(prior.text, /# L4/);
 	assert.doesNotMatch(prior.text, /# L5/);
 	assert.ok(prior.blocks.reduce((sum, block) => sum + block.tokens, 0) <= 45);
+	assert.equal(prior.manifest.find((block) => block.source === "topics/active.md")?.decision, "omitted");
+	assert.equal(prior.manifest.find((block) => block.source === "semantic/task-note")?.reason, "total-budget");
+	assert.ok(prior.manifest.every((block) => /^[a-f0-9]{16}$/.test(block.digest)));
 });
 
 test("assemblePrior only includes opt-in Samantha taste and accepts an empty S seat", async () => {
@@ -115,7 +124,7 @@ test("assemblePrior supports off and her-only modes", async () => {
 	await writePriorFixture(store);
 
 	const off = await assemblePrior({ mode: "off", storeRoot: store, task: "A6 task" });
-	assert.deepEqual(off, { blocks: [], priorId: "off", text: "" });
+	assert.deepEqual(off, { blocks: [], manifest: [], priorId: "off", text: "" });
 
 	const herOnly = await assemblePrior({ mode: "her-only", storeRoot: store, task: "A6 task" });
 	assert.deepEqual(

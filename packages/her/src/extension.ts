@@ -44,6 +44,7 @@ import {
 	type AgentToolWrappedResult,
 	applyMemoryRetraction,
 	archiveInbox,
+	assemblePrior,
 	buildRecallReceipts,
 	type ChoiceModelDomain,
 	chainHop,
@@ -139,7 +140,13 @@ import { appendAuditLog } from "./lib/audit.ts";
 import { installHerStatusAutoModeBypass } from "./lib/automode-bypass.ts";
 import { evaluate, policyEnvelope, resolveToolCallAnchor } from "./lib/cedar.ts";
 import { governedTools, resolveGovernedTool } from "./lib/governed-tools.ts";
-import { CONTEXT_INJECTION_SOURCES, injectLoggedContent } from "./lib/injection-ledger.ts";
+import {
+	appendContextManifestRecord,
+	buildContextManifest,
+	CONTEXT_INJECTION_SOURCES,
+	type InjectionBlockInput,
+	injectLoggedContent,
+} from "./lib/injection-ledger.ts";
 import { registerMcpTools } from "./mcp/tools.ts";
 import { registerAssetShotTools } from "./preview/asset-shot.ts";
 import { registerDesignSystemTools } from "./preview/design-system.ts";
@@ -972,10 +979,11 @@ export default function her(pi: ExtensionAPI): void {
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
+		const sessionId = ctx.sessionManager.getSessionId();
 		capturedThisTurn.delete(sessionIdOf(ctx));
 		try {
 			await recordPresence(memoryDir, {
-				sessionId: ctx.sessionManager.getSessionId(),
+				sessionId,
 				pid: process.pid,
 				mode: ctx.mode,
 				state: "busy",
@@ -987,24 +995,47 @@ export default function her(pi: ExtensionAPI): void {
 		const herBlock = composeHerMemoryBlock(context, facts, soul, self, choiceModel);
 		const injectedHer = injectLoggedContent({
 			memoryDir,
-			session: ctx.sessionManager.getSessionId(),
+			session: sessionId,
 			kind: "context",
 			content: herBlock,
 			sources: [...CONTEXT_INJECTION_SOURCES],
 		});
+		const actualBlocks: InjectionBlockInput[] = [
+			{
+				kind: "context",
+				content: herBlock,
+				emittedContent: injectedHer,
+				sources: [...CONTEXT_INJECTION_SOURCES],
+			},
+		];
 		let systemPrompt = composeSystemPrompt(event.systemPrompt, injectedHer);
 		// G-120…123: reconcile → wake inject → Telegram outbox → TUI board.
 		try {
 			// G-185/S1b — same ownership filter as the idle poller: a turn starting in this
 			// session must not consume (or inject) another session's task events either.
 			const wakeEvents = await reconcileBgTasks(memoryDir, {
-				sessionId: ctx.sessionManager.getSessionId(),
+				sessionId,
 				deliverable: canDeliverWake(ctx.mode),
 			});
 			const wakeBlock = formatWakeMessage(wakeEvents);
 			if (wakeBlock) {
 				const takeoverNote = formatOwnerTakeoverNote(wakeEvents.filter((e) => e.takenOver).map((e) => e.taskId));
-				systemPrompt = `${systemPrompt}\n\n${wakeBlock}${takeoverNote}`;
+				const wakeContent = `${wakeBlock}${takeoverNote}`;
+				const injectedWake = injectLoggedContent({
+					memoryDir,
+					session: sessionId,
+					kind: "wake",
+					content: wakeContent,
+					sources: ["tasks/wake"],
+					dedupe: false,
+				});
+				actualBlocks.push({
+					kind: "wake",
+					content: wakeContent,
+					emittedContent: injectedWake,
+					sources: ["tasks/wake"],
+				});
+				systemPrompt = `${systemPrompt}\n\n${injectedWake}`;
 			}
 			const runtime = loadRuntimeConfig(memoryDir);
 			if (runtime.tasks.telegramNotify && wakeEvents.length > 0) {
@@ -1017,18 +1048,47 @@ export default function her(pi: ExtensionAPI): void {
 			console.warn(`[her] bg-task reconcile skipped: ${detail}`);
 		}
 		try {
-			const selfId = ctx.sessionManager.getSessionId();
-			const inbox = await drainInbox(memoryDir, selfId);
+			const inbox = await drainInbox(memoryDir, sessionId);
 			if (inbox.length > 0) {
-				systemPrompt = `${systemPrompt}\n\n${formatInbox(inbox)}`;
+				const inboxContent = formatInbox(inbox);
+				const injectedInbox = injectLoggedContent({
+					memoryDir,
+					session: sessionId,
+					kind: "inbox",
+					content: inboxContent,
+					sources: ["messages/inbox"],
+					dedupe: false,
+				});
+				actualBlocks.push({
+					kind: "inbox",
+					content: inboxContent,
+					emittedContent: injectedInbox,
+					sources: ["messages/inbox"],
+				});
+				systemPrompt = `${systemPrompt}\n\n${injectedInbox}`;
 				await archiveInbox(
 					memoryDir,
-					selfId,
+					sessionId,
 					inbox.map((message) => message.path),
 				);
 			}
 		} catch (error) {
 			console.warn(`[her] inbox drain skipped: ${errorMessage(error)}`);
+		}
+		try {
+			const prior = await assemblePrior({ mode: "full", storeRoot: memoryDir, task: event.prompt });
+			appendContextManifestRecord({
+				memoryDir,
+				session: sessionId,
+				manifest: buildContextManifest({
+					task: event.prompt,
+					priorId: prior.priorId,
+					actual: actualBlocks,
+					proposed: prior.manifest,
+				}),
+			});
+		} catch (error) {
+			console.warn(`[her] context manifest shadow skipped: ${errorMessage(error)}`);
 		}
 		return {
 			systemPrompt,
@@ -1040,7 +1100,6 @@ export default function her(pi: ExtensionAPI): void {
 			},
 		};
 	});
-
 	pi.on("turn_end", async (event, ctx) => {
 		const sessionId = ctx.sessionManager.getSessionId();
 		capturedThisTurn.delete(sessionId);
@@ -1326,13 +1385,22 @@ export default function her(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "her_recall",
 		label: "Her Recall",
-		description: "Search Samantha's owned memory.",
+		description:
+			"Search Samantha's owned memory. Defaults to public/shared; private and intimate require an explicit privacy level.",
 		parameters: Type.Object({
 			query: Type.String({ description: "Memory search query" }),
 			k: Type.Optional(Type.Number({ description: "Maximum number of notes to return" })),
+			privacy: Type.Optional(
+				Type.Union([
+					Type.Literal("public"),
+					Type.Literal("shared"),
+					Type.Literal("private"),
+					Type.Literal("intimate"),
+				]),
+			),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			const notes = await mem.recall(params.query, { k: params.k });
+			const notes = await mem.recall(params.query, { k: params.k, privacy: params.privacy });
 			const receipts = buildRecallReceipts(notes);
 			const rendered = renderRecall(notes);
 			const worldNotes = notes.filter((note) => note.kind === "world");

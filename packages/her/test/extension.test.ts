@@ -292,6 +292,10 @@ test("extension injects Her context and captures completed turns", async () => {
 		assert.match(injected.systemPrompt ?? "", /Lead with verified state/);
 		assert.equal(injected.message?.customType, "her-context");
 		assert.equal(injected.message?.details?.pinned, true);
+		const injectionAudit = (await readText(join(store, "audit", "context-injections.jsonl"))) ?? "";
+		assert.match(injectionAudit, /"version":"context-manifest-v0"/);
+		assert.match(injectionAudit, /"promptChanged":false/);
+		assert.doesNotMatch(injectionAudit, /hello/);
 
 		const turnEnd = fake.handlers.get("turn_end")?.[0];
 		assert.ok(turnEnd);
@@ -1378,7 +1382,7 @@ test("extension memory tools write, recall, judge, and update status", async () 
 		);
 		assert.match(firstText(remembered), /Remembered/);
 
-		const recalled = await executeTool(recall, { query: "exact verification", k: 3 }, ctx);
+		const recalled = await executeTool(recall, { query: "exact verification", k: 3, privacy: "private" }, ctx);
 		assert.match(firstText(recalled), /exact verification/);
 
 		const ideaResult = await executeTool(

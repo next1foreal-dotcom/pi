@@ -1,4 +1,12 @@
-import type { ClaimLedgerEntry, LongTaskStatus, PriorMode, SessionMode, WorldNoteData } from "../her-core/index.ts";
+import {
+	type ClaimLedgerEntry,
+	type LongTaskStatus,
+	type MemoryPrivacy,
+	memoryPrivacyLevels,
+	type PriorMode,
+	type SessionMode,
+	type WorldNoteData,
+} from "../her-core/index.ts";
 import {
 	parseJournal,
 	parseJudgment,
@@ -1034,6 +1042,7 @@ function parseRecall(argv: string[]): CliCommand {
 	let archive = false;
 	let json = false;
 	let k: number | undefined;
+	let privacy: MemoryPrivacy | undefined;
 	let query: string | undefined;
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i];
@@ -1049,6 +1058,14 @@ function parseRecall(argv: string[]): CliCommand {
 			k = parsePositiveNumber(requireOptionValue(argv[++i], arg), arg);
 			continue;
 		}
+		if (arg === "--privacy") {
+			const value = requireOptionValue(argv[++i], arg);
+			if (!memoryPrivacyLevels.includes(value as MemoryPrivacy)) {
+				throw new UsageError(`--privacy must be one of ${memoryPrivacyLevels.join(", ")}`);
+			}
+			privacy = value as MemoryPrivacy;
+			continue;
+		}
 		if (arg === "--query") {
 			query = requireOptionValue(argv[++i], arg);
 			continue;
@@ -1056,7 +1073,7 @@ function parseRecall(argv: string[]): CliCommand {
 		throw new UsageError(`unknown recall option: ${arg}`);
 	}
 	if (!query?.trim()) throw new UsageError("recall requires --query <text>");
-	return { kind: "recall", archive, json, k, query };
+	return { kind: "recall", archive, json, k, privacy, query };
 }
 
 function parseIntakeSource(argv: string[]): CliCommand {

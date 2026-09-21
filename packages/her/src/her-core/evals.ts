@@ -155,7 +155,7 @@ async function loadGoldenFixtures(root: string): Promise<GoldenEvalFixture[]> {
 }
 
 async function scoreMemoryFixture(memory: Memory, fixture: MemoryGoldenFixture): Promise<GoldenEvalItemResult> {
-	const hits = await memory.recall(fixture.query, { k: fixture.k ?? 5 });
+	const hits = await memory.recall(fixture.query, { k: fixture.k ?? 5, privacy: "private" });
 	const haystack = hits.map((hit) => `${hit.id}\n${hit.path}\n${hit.text}`).join("\n\n");
 	const matchedRefs = fixture.expectedRefs.filter((ref) =>
 		hits.some((hit) => hit.id === ref || hit.path === ref || hit.id.includes(ref) || hit.path.includes(ref)),
