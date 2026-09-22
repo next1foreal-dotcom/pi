@@ -481,6 +481,7 @@ export {
 export { type ExternalizeResult, externalizeLargeDataUris } from "./publish-assets.ts";
 export type { RecallReceipt } from "./recall-receipts.ts";
 export { buildRecallReceipt, buildRecallReceipts, UNKNOWN_PROVENANCE } from "./recall-receipts.ts";
+export * from "./reflex.ts";
 export type { ReingestEntry, ReingestOptions, ReingestOutcome, ReingestReport } from "./reingest.ts";
 export { runReingest } from "./reingest.ts";
 export type {

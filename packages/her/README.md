@@ -56,6 +56,23 @@ Current status:
 - Verified work tasks live under `tasks/{active,done}` and use `her_task_create`, `her_task_update`, and `her_task_list` to enforce authorize/budget/retry/content gates with audit records.
 - Proactive scan proposals live under `proposals/scan` and use `her_proposal_record`, `her_proposal_feedback`, `her_proposal_stats`, and `her_proposal_list` to track adoption rate and quiet down after repeated rejections.
 - Privacy/provenance guardrails use `privacy/classification.md` as a sidecar ledger for legacy append-only memories. New captures and world notes write `privacy` and `provenance` frontmatter. Use `her_privacy_audit` / `her privacy-audit` and `her_privacy_check` / `her privacy-check` before shared or external output.
+- Her Reflex V0 adds a **shadow-only preconscious judgment layer** beside Mirror. It observes an already-made `surface()` decision and records eight bounded signals (goal relevance, novelty, urgency, contradiction, personal significance, recall need, System-2 wake need, and interruption need) to `.her/reflex-log.jsonl`. It has no action authority and cannot gate Mirror in V0.
+- External reflex state is **off by default**. Protected `samantha/wants/**` and `samantha/journal/**` memories are never exported. When explicitly enabled, only a redacted/truncated state slice is sent; raw state is never written to the reflex log.
+- TypeSafe/Jev can be enabled without adding an SDK dependency by adding this optional block to `.her/config.yaml` and setting the named key in the environment:
+
+```yaml
+reflex:
+  enabled: true
+  shadow: true
+  provider: typesafe
+  base_url: https://api.typesafe.ai
+  model: jev-latest
+  api_key_env: TYPESAFE_API_KEY
+  allow_external_state: true
+  timeout_ms: 2500
+```
+
+  V0 refuses `shadow: false`; promotion to active attention/wake gating requires calibration against real `trigger-log.jsonl` engaged/ignored outcomes first.
 - `packages/her/scripts/her-heartbeat.ps1` is the Phase E heartbeat wrapper. It is STOP-aware, supports dry-run, runs privacy audit, optionally runs a configured Pi print-mode command, captures a heartbeat note, and syncs memory. Real unattended Pi execution requires `HER_HEARTBEAT_PI_COMMAND`, `HER_HEARTBEAT_MAX_USD`, and `HER_DAILY_MAX_USD`.
 - Tools are registered for recall, remember, world notes, judgments, memory status, Her Zone notes, idea capture, evolution synthesis, and context review/keep/revert.
 - `preview_open_review` opens a whitelisted local review page (default Roughdraft) in the samantha-ui preview panel's review view, and `browser_navigate` drives the co-drive live browser through the UI host's control-owner gate. Both call `HER_UI_BASE_URL` (default `http://127.0.0.1:3000`, the samantha-ui dev/start default) and are read-only against the running UI process — see `packages/her/src/preview/tools.ts`.

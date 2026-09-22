@@ -135,6 +135,7 @@ import {
 	recordPresence,
 } from "./her-core/presence.ts";
 import { createReadGuard, extractPath, type ReadGuard } from "./her-core/read-before-edit.ts";
+import { observeReflexShadow } from "./her-core/reflex.ts";
 import { type ReviewEvidenceItem, verifyEvidence } from "./her-core/review-evidence.ts";
 import { cancelWakeup, fireDueWakeups, listWakeups, scheduleWakeup } from "./her-core/self-wakeup.ts";
 import { applyHerStatus, herStatusParameters } from "./her-core/status.ts";
@@ -1308,6 +1309,17 @@ export default function her(pi: ExtensionAPI): void {
 				status: "mirror-sent",
 				noteId: hit.id,
 				memoryDir,
+			});
+			// Her Reflex V0 is observational only. Mirror has already been delivered;
+			// the shadow evaluator cannot gate, retract, or delay the current decision.
+			void observeReflexShadow(mem.paths, {
+				source: "mirror",
+				sessionId,
+				currentDecision: "surfaced",
+				query: safeJson({ message: event.message, toolResults: event.toolResults }),
+				candidate: { noteId: hit.id, kind: hit.kind, text: hit.text },
+			}).catch((error) => {
+				console.warn(`[her] reflex shadow skipped: ${errorMessage(error)}`);
 			});
 		} finally {
 			try {
