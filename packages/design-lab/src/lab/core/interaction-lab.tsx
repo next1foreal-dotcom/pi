@@ -762,7 +762,7 @@ async function applyHistory(
     const r = invert
       ? await labFs.restore(cmd.token)
       : await labFs.delete(cmd.dir);
-    if (!r.ok) {
+    if (r.ok === false) {
       pushToast("skipped — changed on disk");
       return;
     }

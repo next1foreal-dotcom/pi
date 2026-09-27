@@ -84,10 +84,10 @@ export function parsePropWrite(raw: unknown): { ok: true; value: PropWrite } | {
 	}
 	if (rec.as === "expression") {
 		const v = rec.value;
-		if (v !== null && typeof v !== "string" && typeof v !== "number" && typeof v !== "boolean") {
-			return { ok: false, error: "an expression write needs a string, number, boolean or null" };
+		if (v === null || typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
+			return { ok: true, value: { as: "expression", value: v } };
 		}
-		return { ok: true, value: { as: "expression", value: v } };
+		return { ok: false, error: "an expression write needs a string, number, boolean or null" };
 	}
 	return {
 		ok: false,

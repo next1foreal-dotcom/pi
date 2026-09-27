@@ -485,7 +485,7 @@ export function labFsPlugin(projectRoot: string, deps: LabFsPluginDeps = {}): Pl
               const expect =
                 body.expect === null || typeof body.expect === "string" ? body.expect : undefined;
               const edit = editClassList(source, { line, column, tag, add, remove, replace, expect });
-              if (!edit.ok) {
+              if (edit.ok === false) {
                 json(res, 409, { ok: false, problem: edit.problem, error: edit.reason });
                 return;
               }
@@ -542,7 +542,7 @@ export function labFsPlugin(projectRoot: string, deps: LabFsPluginDeps = {}): Pl
               const expect =
                 body.expect === null || typeof body.expect === "string" ? body.expect : undefined;
               const edit = editText(source, { line, column, tag, text: body.text, expect });
-              if (!edit.ok) {
+              if (edit.ok === false) {
                 json(res, 409, { ok: false, problem: edit.problem, error: edit.reason });
                 return;
               }
@@ -588,7 +588,7 @@ export function labFsPlugin(projectRoot: string, deps: LabFsPluginDeps = {}): Pl
                 return;
               }
               const parsed = parsePropWrite(body.value);
-              if (!parsed.ok) {
+              if (parsed.ok === false) {
                 json(res, 400, { ok: false, error: parsed.error });
                 return;
               }
@@ -602,7 +602,7 @@ export function labFsPlugin(projectRoot: string, deps: LabFsPluginDeps = {}): Pl
               const expect =
                 body.expect === null || typeof body.expect === "string" ? body.expect : undefined;
               const edit = editProp(source, { line, column, tag, prop, value: parsed.value, expect });
-              if (!edit.ok) {
+              if (edit.ok === false) {
                 json(res, 409, { ok: false, problem: edit.problem, error: edit.reason });
                 return;
               }
