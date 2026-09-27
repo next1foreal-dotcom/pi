@@ -6,7 +6,7 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test, { type TestContext } from "node:test";
@@ -130,6 +130,48 @@ test("files changed after the pre-rewind snapshot are skipped", (t) => {
 		`expected skipped watched.txt, got ${JSON.stringify(report)}`,
 	);
 	assert.ok(!report.restored.some((path) => posix(path) === "watched.txt"));
+});
+
+test("one conflict aborts the whole restore", (t) => {
+	const { memoryRoot, repoRoot } = tempPair(t);
+	const firstPath = join(repoRoot, "first.txt");
+	const secondPath = join(repoRoot, "second.txt");
+	writeFileSync(firstPath, "one\n");
+	writeFileSync(secondPath, "one\n");
+	const base = captureCheckpoint(memoryRoot, repoRoot, { label: "base" });
+	writeFileSync(firstPath, "two\n");
+	writeFileSync(secondPath, "two\n");
+
+	const runner: GitRunner = (argv) => {
+		const result = defaultGitRunner(argv);
+		const messageIdx = argv.indexOf("-m");
+		if (String(argv[messageIdx + 1]).includes("pre-rewind")) writeFileSync(secondPath, "concurrent\n");
+		return result;
+	};
+
+	const report = restoreCheckpoint(memoryRoot, repoRoot, base.id, { runner });
+	assert.deepEqual(report.restored, []);
+	assert.equal(readFileSync(firstPath, "utf8"), "two\n");
+	assert.equal(readFileSync(secondPath, "utf8"), "concurrent\n");
+});
+
+test("restore handles created, deleted, and renamed files", (t) => {
+	const { memoryRoot, repoRoot } = tempPair(t);
+	writeFileSync(join(repoRoot, "kept.txt"), "base\n");
+	writeFileSync(join(repoRoot, "old-name.txt"), "rename me\n");
+	const base = captureCheckpoint(memoryRoot, repoRoot, { label: "base" });
+
+	rmSync(join(repoRoot, "kept.txt"));
+	rmSync(join(repoRoot, "old-name.txt"));
+	writeFileSync(join(repoRoot, "new-name.txt"), "rename me\n");
+	writeFileSync(join(repoRoot, "created.txt"), "later\n");
+
+	const report = restoreCheckpoint(memoryRoot, repoRoot, base.id);
+	assert.equal(report.skipped.length, 0);
+	assert.equal(readFileSync(join(repoRoot, "kept.txt"), "utf8"), "base\n");
+	assert.equal(readFileSync(join(repoRoot, "old-name.txt"), "utf8"), "rename me\n");
+	assert.equal(existsSync(join(repoRoot, "new-name.txt")), false);
+	assert.equal(existsSync(join(repoRoot, "created.txt")), false);
 });
 
 test("capture with no changes returns created:false and does not add a checkpoint", (t) => {

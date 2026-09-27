@@ -382,7 +382,7 @@ describe("keyboard wiring (full chain, jsdom + StrictMode)", () => {
 
     const deleted: string[] = [];
     const realFetch = globalThis.fetch;
-    globalThis.fetch = ((url: string, init?: RequestInit) => {
+    globalThis.fetch = ((url: string) => {
       if (String(url).includes("/__lab-fs/delete")) deleted.push(String(url));
       return Promise.resolve({ json: () => Promise.resolve({ ok: false }) } as Response);
     }) as typeof fetch;

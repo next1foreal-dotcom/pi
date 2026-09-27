@@ -42,6 +42,7 @@ import {
   locateElementSourced,
   primeSourceLocations,
   servedModuleUrl,
+  sourceKeysOf,
   type SourceLocation,
 } from "./source-location";
 
@@ -469,5 +470,31 @@ describe("finding by location", () => {
       })?.getAttribute("data-n"),
     ).toBe("3");
     expect(findBySourceLocation(document.body, target, { locate, accept: () => false })).toBeNull();
+  });
+});
+
+describe("the owner chain names the call site, not just the inner tag", () => {
+  it("a tick inside Tile still lists the <Tile> in the screen", () => {
+    const parentStack = [
+      "Error: react-stack-top-frame",
+      "    at PlaygroundScreen (D:/repo/packages/design-lab/src/screens/playground/screen.tsx:49:11)",
+    ].join("\n");
+    const childStack = [
+      "Error: react-stack-top-frame",
+      "    at Tile (D:/repo/packages/design-lab/src/screens/playground/components/Tile.tsx:60:2)",
+    ].join("\n");
+    const parent = { _debugStack: { stack: parentStack }, return: null };
+    const el = document.createElement("span");
+    Object.assign(el, {
+      __reactFiber$tick: {
+        _debugStack: { stack: childStack },
+        return: parent,
+      },
+    });
+    document.body.appendChild(el);
+    expect(sourceKeysOf(el)).toEqual([
+      "packages/design-lab/src/screens/playground/components/Tile.tsx:60:2",
+      "packages/design-lab/src/screens/playground/screen.tsx:49:11",
+    ]);
   });
 });

@@ -24,6 +24,7 @@
  */
 
 import { expectFor, pushHistory, type HistoryCommand } from "../../core/history";
+import { noteWorkFromBody } from "../../hand/work";
 import type {
 	ComponentEntry,
 	ComponentIndex,
@@ -390,13 +391,21 @@ const CSS = `
  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pk-ctl{flex:1 1 auto;min-width:0;accent-color:#d8d8d8}
 .pk-ctl:disabled{opacity:.38;cursor:not-allowed}
-select.pk-ctl,input[type=number].pk-ctl{all:unset;box-sizing:border-box;padding:3px 6px;border-radius:4px;
+input[type=number].pk-ctl{all:unset;box-sizing:border-box;padding:3px 6px;border-radius:4px;
  background:rgba(255,255,255,.07);font:11px/1.3 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
  color:inherit;cursor:pointer}
-select.pk-ctl:disabled,input[type=number].pk-ctl:disabled{opacity:.38;cursor:not-allowed}
+input[type=number].pk-ctl:disabled{opacity:.38;cursor:not-allowed}
 input[type=color].pk-ctl{flex:0 0 28px;height:20px;padding:0;border:1px solid rgba(255,255,255,.18);
  border-radius:4px;background:none;cursor:pointer}
 input[type=checkbox].pk-ctl{flex:0 0 auto;cursor:pointer}
+.pk-chips{display:flex;flex-wrap:wrap;gap:4px;flex:1 1 auto;min-width:0}
+.pk-chips[data-disabled]{opacity:.38;pointer-events:none}
+.pk-chip{all:unset;box-sizing:border-box;padding:3px 8px;border-radius:4px;
+ background:rgba(255,255,255,.08);color:inherit;cursor:pointer;
+ font:11px/1.3 ui-sans-serif,system-ui,sans-serif}
+.pk-chip:hover{background:rgba(255,255,255,.16)}
+.pk-chip[data-on]{background:rgba(255,255,255,.22)}
+.pk-chip[data-on]:hover{background:rgba(255,255,255,.22)}
 .pk-val{flex:0 0 auto;min-width:40px;text-align:right;
  font:11px/1.3 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;opacity:.62}
 .pk-why{font:11px/1.4 ui-sans-serif,system-ui;opacity:.72;padding-left:2px}
@@ -654,6 +663,19 @@ export class Knobs {
 		label.textContent = knob.name;
 		line.appendChild(label);
 
+		if (knob.editor.kind === "enum") {
+			const chips = this.enumChips(knob, row, instance, component);
+			line.appendChild(chips);
+			wrap.appendChild(line);
+			if (chips.hasAttribute("data-disabled") && row.note) {
+				const why = document.createElement("div");
+				why.className = "pk-why";
+				why.textContent = row.note;
+				wrap.appendChild(why);
+			}
+			return wrap;
+		}
+
 		const readout = document.createElement("span");
 		readout.className = "pk-val";
 
@@ -686,61 +708,97 @@ export class Knobs {
 		return wrap;
 	}
 
+	/**
+	 * A declared enum is a row of tokens, not a dropdown.
+	 *
+	 * Sample 8's inspector speaks in Regular / Medium / Semi — chips you press.
+	 * The options still come only from `@editor enum` (or its declared
+	 * `literalValues`). Nothing here infers font-weight from computed CSS.
+	 */
+	private enumChips(
+		knob: KnobSpec,
+		row: KnobRow,
+		instance: ComponentInstance | null,
+		component: string,
+	): HTMLDivElement {
+		const group = document.createElement("div");
+		group.className = "pk-chips";
+		group.dataset.prop = knob.name;
+		group.setAttribute("role", "radiogroup");
+		group.setAttribute("aria-label", knob.name);
+		const disabled = !row.writable || instance === null;
+		if (disabled) group.dataset.disabled = "";
+		const current = String(row.value);
+		for (const option of optionsFor(knob)) {
+			const chip = document.createElement("button");
+			chip.type = "button";
+			chip.className = "pk-chip";
+			chip.dataset.prop = knob.name;
+			chip.dataset.chip = option;
+			chip.setAttribute("role", "radio");
+			chip.setAttribute("aria-checked", option === current ? "true" : "false");
+			if (option === current) chip.dataset.on = "";
+			chip.textContent = option;
+			chip.disabled = disabled;
+			if (!disabled && instance) {
+				chip.addEventListener("click", () => {
+					void this.turn(knob, instance, component, option, row.value);
+				});
+			}
+			group.appendChild(chip);
+		}
+		return group;
+	}
+
 	private controlEl(
 		knob: KnobSpec,
 		row: KnobRow,
 		readout: HTMLSpanElement,
-	): HTMLInputElement | HTMLSelectElement {
+	): HTMLInputElement {
 		const kind = knob.editor.kind;
 		if (kind === "enum") {
-			const select = document.createElement("select");
-			for (const option of optionsFor(knob)) {
-				const el = document.createElement("option");
-				el.value = option;
-				el.textContent = option;
-				select.appendChild(el);
-			}
-			select.value = String(row.value);
-			readout.textContent = "";
-			return select;
+			throw new Error("enum knobs are chips");
 		}
 		const input = document.createElement("input");
-		if (kind === "boolean") {
-			input.type = "checkbox";
-			input.checked = row.value === true;
-			readout.textContent = row.value === true ? "true" : "false";
-			input.addEventListener("change", () => {
-				readout.textContent = input.checked ? "true" : "false";
-			});
-			return input;
+		switch (kind) {
+			case "boolean":
+				input.type = "checkbox";
+				input.checked = row.value === true;
+				readout.textContent = row.value === true ? "true" : "false";
+				input.addEventListener("change", () => {
+					readout.textContent = input.checked ? "true" : "false";
+				});
+				return input;
+			case "color":
+				input.type = "color";
+				input.value = String(row.value);
+				readout.textContent = String(row.value);
+				input.addEventListener("input", () => {
+					readout.textContent = input.value;
+				});
+				return input;
+			case "int":
+			case "range":
+				input.type = kind === "range" ? "range" : "number";
+				if (knob.editor.min !== undefined) input.min = String(knob.editor.min);
+				if (knob.editor.max !== undefined) input.max = String(knob.editor.max);
+				input.step = String(knob.editor.step ?? 1);
+				input.value = String(row.value);
+				readout.textContent = this.readoutOf(knob, input.value);
+				return input;
+			default: {
+				const _never: never = kind;
+				return _never;
+			}
 		}
-		if (kind === "color") {
-			input.type = "color";
-			input.value = String(row.value);
-			readout.textContent = String(row.value);
-			input.addEventListener("input", () => {
-				readout.textContent = input.value;
-			});
-			return input;
-		}
-		input.type = kind === "range" ? "range" : "number";
-		if (knob.editor.min !== undefined) input.min = String(knob.editor.min);
-		if (knob.editor.max !== undefined) input.max = String(knob.editor.max);
-		input.step = String(knob.editor.step ?? 1);
-		input.value = String(row.value);
-		readout.textContent = this.readoutOf(knob, input.value);
-		return input;
 	}
 
 	private readoutOf(knob: KnobSpec, value: string): string {
 		return knob.editor.unit ? `${value}${knob.editor.unit}` : value;
 	}
 
-	private valueOf(
-		knob: KnobSpec,
-		control: HTMLInputElement | HTMLSelectElement,
-	): string | number | boolean {
-		if (knob.editor.kind === "boolean") return (control as HTMLInputElement).checked;
+	private valueOf(knob: KnobSpec, control: HTMLInputElement): string | number | boolean {
+		if (knob.editor.kind === "boolean") return control.checked;
 		return control.value;
 	}
 
@@ -828,7 +886,17 @@ export class Knobs {
 		// in the running lab: a knob turn on the playground screen rewrote the
 		// tag and left the undo stack empty. The stack is not the panel.
 		const step = propEditCommand(post, previous, knob, answer.body);
-		if (step) pushHistory(step);
+		if (step) {
+			pushHistory(step);
+			noteWorkFromBody({
+				file: post.file,
+				line: post.line,
+				column: post.column,
+				tag: component,
+				prop: post.prop,
+				value: post.value,
+			});
+		}
 		if (this.closed) return;
 		if (answer.status !== 200 || answer.body.ok !== true) {
 			// The probe said yes and the write said no. Whatever changed since,

@@ -313,8 +313,8 @@ export function registerElementEditTools(pi: ExtensionAPI, deps: ElementEditDeps
 			"add and remove adjust the list in place and leave everything else byte-for-byte; replace rewrites the whole " +
 			"list and has to be asked for by name. A className={...} expression — cn(...), a template literal, a " +
 			"conditional — is refused and named, never guessed at. " +
-			"Writing the file triggers the lab's hot reload, so the next design_lab_still shows the change: take one, " +
-			"because a change you have not looked at is not verified.",
+			"The lab hot-reloads this write onto the canvas he is watching. That is this turn's look. " +
+			"design_lab_still is the gate when the structure moved or you call it done, not after every class.",
 		parameters: Type.Object({
 			file: Type.String(),
 			line: Type.Number(),
@@ -391,7 +391,7 @@ export function registerElementEditTools(pi: ExtensionAPI, deps: ElementEditDeps
 				: `now reads class "${edit.after}" (was "${edit.before}")`;
 			return textResult(
 				`<${tag}> at ${path.relative}:${line}:${column} ${became}.${notes} ` +
-					"The lab hot-reloads on this write — take a design_lab_still and look at it.",
+					"The lab hot-reloads this write onto the canvas he is watching.",
 				{
 					ok: true,
 					changed: true,

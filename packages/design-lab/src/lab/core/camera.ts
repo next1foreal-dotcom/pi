@@ -61,13 +61,17 @@ export function setCameraValue(next: Camera): void {
 
 /** Programmatic writes (fit, lock-in, animation ticks) skip the interactive z-floor. */
 export function setCameraExact(next: Camera, reason: ApplyReason = "program"): void {
-  camera = { x: next.x, y: next.y, z: next.z };
-  if (raf) {
-    cancelAnimationFrame(raf);
-    raf = 0;
-  }
-  applier?.(camera, reason);
-  bumpCoarse();
+	camera = { x: next.x, y: next.y, z: next.z };
+	if (raf) {
+		cancelAnimationFrame(raf);
+		raf = 0;
+	}
+	applier?.(camera, reason);
+	// Discrete jumps (fill, lock-in, zoom-to-100) must move the HUD in the
+	// same turn. Wheel and animation ticks stay on the 100ms debounce so a
+	// gesture does not re-render the lab every frame.
+	if (reason === "program") flushCoarse();
+	else bumpCoarse();
 }
 
 export function scheduleApply(reason: ApplyReason): void {

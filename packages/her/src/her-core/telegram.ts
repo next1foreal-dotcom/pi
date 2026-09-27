@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { StorePaths } from "./paths.ts";
@@ -52,6 +53,8 @@ export interface TelegramPollResult {
 export interface PushTelegramOutboxOptions extends TelegramApiOptions {
 	chatId: string;
 	dryRun?: boolean;
+	includeNameFragments?: string[];
+	includeTypes?: string[];
 	limit?: number;
 	now?: string;
 }
@@ -65,6 +68,24 @@ export interface TelegramOutboxDelivery {
 export interface TelegramOutboxResult {
 	sent: TelegramOutboxDelivery[];
 	skipped: Array<{ path: string; reason: string }>;
+}
+
+export interface DeliverTelegramStudioRepliesOptions {
+	allowedChatId: string;
+	fetch?: typeof fetch;
+	limit?: number;
+	now?: string;
+	studioUrl?: string;
+	token: string;
+}
+
+export interface TelegramStudioReplyDelivery {
+	code: string;
+	path: string;
+	reason?: string;
+	status: "delivered" | "rejected" | "retry";
+	updateId: number;
+	workspaceId?: string;
 }
 
 export type TelegramConfirmationStatus = "pending" | "approved" | "rejected" | "expired";
@@ -139,6 +160,7 @@ const urgentSignals = ["urgent", "blocker", "blocked", "tier2", "guardrail", "ci
 const defaultTelegramBaseUrl = "https://api.telegram.org";
 const telegramMessageLimit = 4096;
 const confirmationCodePattern = /\b(CONFIRM|APPROVE|YES|REJECT|DENY|NO)\s+([A-Z0-9][A-Z0-9-]{2,31})\b/i;
+const studioReplyPattern = /^REPLY\s+(ASK-[A-Z0-9-]{3,32})\s+([^\s][\s\S]*)$/i;
 
 interface TelegramApiResponse<T> {
 	description?: string;
@@ -233,10 +255,26 @@ export async function pushTelegramOutbox(root: string, opts: PushTelegramOutboxO
 			result.skipped.push({ path: relativePath, reason: "limit reached" });
 			continue;
 		}
+		if (opts.includeNameFragments?.length && !opts.includeNameFragments.some((part) => file.includes(part))) {
+			result.skipped.push({ path: relativePath, reason: "type not selected" });
+			continue;
+		}
 		const text = (await readText(join(paths.outbox, file)))?.trim();
 		if (!text) {
 			result.skipped.push({ path: relativePath, reason: "empty outbox item" });
 			continue;
+		}
+		if (opts.includeTypes?.length) {
+			const data = parseFrontmatter(text).data;
+			const type = String(data.type ?? "");
+			if (!opts.includeTypes.includes(type)) {
+				result.skipped.push({ path: relativePath, reason: "type not selected" });
+				continue;
+			}
+			if (["canceled", "delivered", "expired", "rejected"].includes(String(data.status ?? ""))) {
+				result.skipped.push({ path: relativePath, reason: "notice is no longer active" });
+				continue;
+			}
 		}
 		const sentAt = opts.now ?? new Date().toISOString();
 		if (opts.dryRun) {
@@ -255,6 +293,63 @@ export async function pushTelegramOutbox(root: string, opts: PushTelegramOutboxO
 		result.sent.push({ messageId: message.message_id, path: relativePath, sentAt });
 	}
 	return result;
+}
+
+export function telegramStudioReplySignature(body: string, token: string): string {
+	return createHmac("sha256", token).update(body).digest("hex");
+}
+
+export async function deliverTelegramStudioReplies(
+	root: string,
+	opts: DeliverTelegramStudioRepliesOptions,
+): Promise<TelegramStudioReplyDelivery[]> {
+	const pending = await listQueuedStudioReplies(root);
+	const fetcher = opts.fetch ?? globalThis.fetch;
+	if (!fetcher) throw new Error("global fetch is not available");
+	const url = `${(opts.studioUrl ?? "http://127.0.0.1:5177").replace(/\/+$/, "")}/api/attention/reply`;
+	const results: TelegramStudioReplyDelivery[] = [];
+	for (const item of pending.slice(0, opts.limit ?? 20)) {
+		const body = JSON.stringify({
+			chatId: opts.allowedChatId,
+			code: item.code,
+			text: item.text,
+			updateId: item.updateId,
+		});
+		try {
+			const response = await fetcher(url, {
+				body,
+				headers: {
+					"content-type": "application/json",
+					"x-her-telegram-signature": telegramStudioReplySignature(body, opts.token),
+				},
+				method: "POST",
+			});
+			const payload = (await response.json().catch(() => ({}))) as {
+				ok?: boolean;
+				reason?: string;
+				workspaceId?: string;
+			};
+			if (response.ok && payload.ok === true) {
+				await writeStudioReplyInboxStatus(root, item.path, "delivered", opts.now, payload.workspaceId);
+				results.push({ ...item, status: "delivered", workspaceId: payload.workspaceId });
+				continue;
+			}
+			const reason = payload.reason ?? `Studio returned HTTP ${response.status}`;
+			if (response.status === 409 || response.status === 410) {
+				await writeStudioReplyInboxStatus(root, item.path, "rejected", opts.now, undefined, reason);
+				results.push({ ...item, status: "rejected", reason });
+				continue;
+			}
+			results.push({ ...item, status: "retry", reason });
+		} catch (error) {
+			results.push({
+				...item,
+				status: "retry",
+				reason: error instanceof Error ? error.message : "Studio request failed",
+			});
+		}
+	}
+	return results;
 }
 
 export async function createTelegramConfirmationRequest(
@@ -301,6 +396,8 @@ export async function createTelegramConfirmationRequest(
 	await writeText(
 		join(paths.outbox, `${safeTimestamp(now)}-telegram-confirm-${code}.md`),
 		[
+			frontmatter({ type: "her-telegram-confirmation", status: "pending", code }).trimEnd(),
+			"",
 			`确认请求：${summary}`,
 			"",
 			`批准请回复：CONFIRM ${code}`,
@@ -452,6 +549,60 @@ async function listMarkdownFiles(dir: string): Promise<string[]> {
 		if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return [];
 		throw error;
 	}
+}
+
+async function listQueuedStudioReplies(
+	root: string,
+): Promise<Array<{ code: string; path: string; text: string; updateId: number }>> {
+	const paths = new StorePaths(root);
+	const replies: Array<{ code: string; path: string; text: string; updateId: number }> = [];
+	for (const file of await listMarkdownFiles(paths.inboxTasks)) {
+		const parsed = parseFrontmatter(await readText(join(paths.inboxTasks, file)));
+		if (String(parsed.data.type ?? "") !== "her_telegram_inbox") continue;
+		if (String(parsed.data.status ?? "") !== "queued") continue;
+		const updateId = Number(parsed.data.update_id);
+		if (!Number.isSafeInteger(updateId)) continue;
+		const text = parsed.body.match(/## Text\s*\n+([\s\S]*?)\s*$/)?.[1]?.trim() ?? "";
+		const match = text.match(studioReplyPattern);
+		if (!match) continue;
+		replies.push({
+			code: match[1].toUpperCase(),
+			path: `tasks/inbox/${file}`,
+			text: match[2].trim(),
+			updateId,
+		});
+	}
+	return replies;
+}
+
+async function writeStudioReplyInboxStatus(
+	root: string,
+	relativePath: string,
+	status: "delivered" | "rejected",
+	now?: string,
+	workspaceId?: string,
+	reason?: string,
+): Promise<void> {
+	const file = relativePath.split("/").pop();
+	if (!file) throw new Error(`invalid Telegram inbox path: ${relativePath}`);
+	const path = join(new StorePaths(root).inboxTasks, file);
+	const parsed = parseFrontmatter(await readText(path));
+	const at = now ?? new Date().toISOString();
+	await writeText(
+		path,
+		[
+			frontmatter({
+				...parsed.data,
+				status,
+				[`${status}_at`]: at,
+				studio_workspace_id: workspaceId ?? null,
+				studio_reason: reason ?? null,
+			}).trimEnd(),
+			"",
+			parsed.body.trimEnd(),
+			"",
+		].join("\n"),
+	);
 }
 
 async function findPendingConfirmation(root: string, code: string): Promise<TelegramConfirmationRequest | null> {

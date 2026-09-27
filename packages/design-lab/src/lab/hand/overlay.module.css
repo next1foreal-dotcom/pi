@@ -1,0 +1,26 @@
+.root {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  pointer-events: none;
+  z-index: 6;
+}
+
+.cursor {
+  display: block;
+  overflow: visible;
+}
+
+.chip {
+  position: absolute;
+  left: 0;
+  top: 0;
+  background: #1c1c1c;
+  color: #f1f1f1;
+  border-radius: 4px;
+  padding: 3px 8px;
+  font: 500 11px/1.3 Inter, system-ui, -apple-system, sans-serif;
+  white-space: nowrap;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}

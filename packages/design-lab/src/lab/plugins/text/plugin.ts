@@ -1,5 +1,6 @@
 import type { LabPlugin, LabPluginContext, LabPluginHandle } from "../../plugin-api";
 import { pushHistory, type HistoryCommand } from "../../core/history";
+import { noteWorkFromBody } from "../../hand/work";
 import { SKIP_HOSTS } from "../inspect/plugin";
 import { locateElement, locateElementSourced, type SourceLocation } from "../inspect/source-location";
 
@@ -596,7 +597,10 @@ export class TextEditor {
 			// Onto the same stack as everything else on this canvas, so one
 			// Ctrl+Z walks back through what he did in the order he did it.
 			const step = textEditCommand(body, parsed as TextEditReply);
-			if (step) pushHistory(step);
+			if (step) {
+				pushHistory(step);
+				noteWorkFromBody(body);
+			}
 		} catch (error) {
 			// The dev server is gone, or the page is being torn down. Without
 			// this the note sits on "写入中…", which reads as still working.

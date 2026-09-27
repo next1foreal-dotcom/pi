@@ -160,7 +160,6 @@ export type Session = {
   disposeExtras: () => void;
   getSnapshot: () => PersistedV1;
 };
-
 export type LabObject = LabObjectInit & { decor?: HTMLElement[] };
 
 const DECOR_EDGES: ResizeEdge[] = ["n", "s", "e", "w", "nw", "ne", "sw", "se"];
@@ -331,6 +330,9 @@ export function snapshotOf(s: Session): PersistedV1 {
     screens,
     canvasColor: s.canvasColor,
     savedColors: s.savedColors,
+    mode: s.mode,
+    focusedId: s.focusedId,
+    ...(s.exploreCamera ? { exploreCamera: { ...s.exploreCamera } } : {}),
   };
 }
 
@@ -553,6 +555,19 @@ function fitAll(s: Session): void {
   animateCamera(getCamera(), zoomToBounds(b, s.viewport), s.viewport);
 }
 
+/**
+ * The HUD percentage is a fit-all control in explore. In fill it is a lie if
+ * it flies the board — fill's camera is pinned at z=1 on the focused screen.
+ */
+function tapZoomReadout(s: Session): void {
+  if (s.mode === "fill" && s.focusedId) {
+    const l = s.layouts[s.focusedId];
+    if (l) setCameraExact({ x: -l.x, y: -l.y, z: 1 });
+    return;
+  }
+  fitAll(s);
+}
+
 function lockInto(s: Session, id: string, fill = false): void {
   if (s.mode === "explore") s.exploreCamera = { ...getCamera() };
   s.focusedId = id;
@@ -586,6 +601,7 @@ function lockInto(s: Session, id: string, fill = false): void {
     const node = s.root?.querySelector(`[data-screen-scroll="${id}"]`);
     if (node instanceof HTMLElement) node.focus();
   });
+  saveNow(s.getSnapshot());
 }
 
 function exitOne(s: Session): void {
@@ -600,6 +616,7 @@ function exitOne(s: Session): void {
         s.viewport,
       );
     }
+    saveNow(s.getSnapshot());
     return;
   }
   if (s.mode === "focus") {
@@ -609,6 +626,7 @@ function exitOne(s: Session): void {
     s.bump();
     animateCamera(getCamera(), s.exploreCamera ?? getCamera(), s.viewport);
   }
+  saveNow(s.getSnapshot());
 }
 
 function cycle(s: Session, dir: 1 | -1): void {
@@ -622,6 +640,7 @@ function cycle(s: Session, dir: 1 | -1): void {
     selectObject(s, next);
     const l = s.layouts[next];
     setCameraExact({ x: -l.x, y: -l.y, z: 1 });
+    saveNow(s.getSnapshot());
     return;
   }
   if (s.mode === "focus") {
@@ -799,7 +818,7 @@ export {
   selectObject,
   setObjectLayout,
   showSnap,
+  tapZoomReadout,
   unregisterObject,
   writeFrame,
 };
-

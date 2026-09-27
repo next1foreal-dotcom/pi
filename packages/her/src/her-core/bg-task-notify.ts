@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { formatAcceptanceLine } from "./bg-task-acceptance.ts";
 import type { WakeEvent } from "./bg-task-reconcile.ts";
 import { listBgTasks } from "./bg-task-spawn.ts";
-import { writeText } from "./store.ts";
+import { frontmatter, writeText } from "./store.ts";
 
 export async function enqueueTaskTelegramNotices(memoryRoot: string, events: WakeEvent[]): Promise<string[]> {
 	if (events.length === 0) return [];
@@ -19,6 +19,12 @@ export async function enqueueTaskTelegramNotices(memoryRoot: string, events: Wak
 		const file = `${stamp}-bg-task-${e.taskId}.md`;
 		const path = join(outbox, file);
 		const body = [
+			frontmatter({
+				type: "her-task-status",
+				status: e.status,
+				task_id: e.taskId,
+			}).trimEnd(),
+			"",
 			`# Background task ${e.status}`,
 			"",
 			`- id: ${e.taskId}`,

@@ -96,7 +96,6 @@ function validateUnixTransportOptions(options: UnixTransportOptions): number {
 	if (!Number.isSafeInteger(maxPendingBytes) || maxPendingBytes <= 0) {
 		throw new TypeError("Unix transport maxPendingBytes must be a positive safe integer");
 	}
-	if (process.platform === "win32") throw new Error("Unix transport is not supported on Windows");
 	return maxPendingBytes;
 }
 

@@ -342,6 +342,7 @@ export function renderTelegramBridge(payload: CliTelegramBridgePayload): string 
 		`acknowledged: ${payload.result.acknowledgements.length}`,
 		`confirmations: ${payload.result.confirmations.length}`,
 		`replied: ${payload.result.replies.length}`,
+		`Studio replies: ${payload.result.studioReplies.length}`,
 		`outbox sent: ${payload.result.outbox.sent.length}`,
 		`rejected: ${payload.result.poll.rejected.length}`,
 		`next offset: ${payload.result.poll.nextOffset ?? "(unchanged)"}`,

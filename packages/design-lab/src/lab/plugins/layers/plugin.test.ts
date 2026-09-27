@@ -561,8 +561,9 @@ describe("a design's versions, in the panel", () => {
 		const cost = host.querySelector(".ly-cost");
 		const go = host.querySelector(".ly-go");
 		expect(cost?.textContent).toContain("1");
+		expect(cost).not.toBeNull();
 		expect(go).not.toBeNull();
-		expect(cost?.compareDocumentPosition(go as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		expect(cost!.compareDocumentPosition(go as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 	});
 
 	it("the second click is the one that writes, and it carries the guard", async () => {

@@ -30,6 +30,8 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	// G-375 option card. Custom transcript message only; Cedar :6 total permit covers
 	// non-destructive tools, so this stays off named Cedar permits.
 	her_ask: { destructive: false },
+	// Transcript metadata only; title and summary live in the tool-call args.
+	her_mark_chapter: { destructive: false },
 	// G-378 inline visualization. Custom transcript message only; Cedar :6 total
 	// permit covers non-destructive tools, so this stays off named Cedar permits.
 	her_widget: { destructive: false },

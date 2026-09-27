@@ -122,6 +122,7 @@ import {
 	completeLongTask,
 	createEmbeddingSearch,
 	createTelegramConfirmationRequest,
+	deliverTelegramStudioReplies,
 	deriveXThreadTitle,
 	extractJinaReaderTitle,
 	extractLocalPdfText,
@@ -1667,7 +1668,34 @@ async function runTelegramBridgeCycle(
 	const acknowledgements: TelegramBridgeAcknowledgement[] = [];
 	const confirmations: TelegramConfirmationResult[] = [];
 	const replies: TelegramBridgeReply[] = [];
+	const studioReplies = await deliverTelegramStudioReplies(memoryDir, {
+		allowedChatId: opts.allowedChatId,
+		limit: opts.limit,
+		studioUrl: opts.env.HER_STUDIO_URL,
+		token: opts.token,
+	});
+	const studioReplyPaths = new Set(studioReplies.map((reply) => reply.path));
+	for (const reply of studioReplies) {
+		if (reply.status === "retry") continue;
+		const sentAt = new Date().toISOString();
+		const message = await sendTelegramMessage({
+			baseUrl: opts.baseUrl,
+			chatId: opts.chatId,
+			text:
+				reply.status === "delivered"
+					? `已送回 Studio 会话 ${reply.workspaceId ?? ""}。`.trim()
+					: `这条回复没有生效：${reply.reason ?? "等待已失效"}。`,
+			token: opts.token,
+		});
+		acknowledgements.push({
+			messageId: message.message_id,
+			path: reply.path,
+			sentAt,
+			updateId: reply.updateId,
+		});
+	}
 	for (const queued of poll.queued) {
+		if (queued.path && studioReplyPaths.has(queued.path)) continue;
 		const sentAt = new Date().toISOString();
 		const confirmation = await recordTelegramConfirmationFromText(memoryDir, queued.text, { now: sentAt });
 		if (confirmation.status !== "ignored" || confirmation.code) {
@@ -1740,10 +1768,18 @@ async function runTelegramBridgeCycle(
 	const outbox = await pushTelegramOutbox(memoryDir, {
 		baseUrl: opts.baseUrl,
 		chatId: opts.chatId,
+		includeNameFragments: ["-studio-ask-", "-studio-permission-", "-bg-task-", "-telegram-confirm-", "-waiting-"],
+		includeTypes: [
+			"studio-ask-wait",
+			"studio-permission-wait",
+			"her-task-status",
+			"her-telegram-confirmation",
+			"her-session-wait",
+		],
 		limit: opts.limit,
 		token: opts.token,
 	});
-	return { acknowledgements, confirmations, outbox, poll, replies };
+	return { acknowledgements, confirmations, outbox, poll, replies, studioReplies };
 }
 
 async function generatePiTelegramReply(opts: {

@@ -192,7 +192,16 @@ const DEFAULT_IDEAS_MIN_UNITS = 50;
 
 type NoteSummary = { key: string; kind: string; type: string; title: string };
 type OrganKind = "ideas" | "topic-maps";
-type ConsolidateEpisode = { ts: string; id: string; cursorId: string; text: string; body: string; project: string };
+type ConsolidateEpisode = {
+	ts: string;
+	id: string;
+	cursorId: string;
+	text: string;
+	body: string;
+	project: string;
+	externalContext?: boolean;
+};
+type AccessEntry = { count?: number; lastAt?: string };
 type IndexedConsolidateEpisode = ConsolidateEpisode & {
 	sourceIndex: number;
 	duplicateOf?: { id: string; ts: string };
@@ -210,7 +219,7 @@ type OrganSkipEntry = {
 export function selectRelevantKeys(
 	episodeText: string,
 	stems: string[],
-	opts?: { max?: number; recent?: string[] },
+	opts?: { max?: number; recent?: string[]; access?: Record<string, AccessEntry> },
 ): string[] {
 	const recent = [...new Set(opts?.recent ?? [])];
 	if (!episodeText.trim() || stems.length === 0) return recent;
@@ -236,10 +245,23 @@ export function selectRelevantKeys(
 				),
 			];
 			const score = parts.filter((part) => words.has(part)).length;
-			return { stem, score };
+			const access = opts?.access?.[`semantic/${stem}`];
+			const lastAt = Date.parse(access?.lastAt ?? "");
+			return {
+				stem,
+				score,
+				lastAt: Number.isFinite(lastAt) ? lastAt : 0,
+				count: Math.max(0, Math.floor(Number(access?.count) || 0)),
+			};
 		})
 		.filter((item) => item.score > 0)
-		.sort((a, b) => b.score - a.score || (a.stem < b.stem ? -1 : a.stem > b.stem ? 1 : 0));
+		.sort(
+			(a, b) =>
+				b.score - a.score ||
+				b.lastAt - a.lastAt ||
+				b.count - a.count ||
+				(a.stem < b.stem ? -1 : a.stem > b.stem ? 1 : 0),
+		);
 
 	const result: string[] = [];
 	const selected = new Set<string>();
@@ -349,7 +371,17 @@ export function stripCipherBlobs(text: string): { text: string; strippedChars: n
 	return { text: stripped, strippedChars, blobs };
 }
 
-function selectConsolidateBatch<T extends { id: string; text: string }>(
+function episodeSource(externalContext: boolean | undefined): "external" | "local" | "unknown" {
+	if (externalContext === true) return "external";
+	if (externalContext === false) return "local";
+	return "unknown";
+}
+
+function formatConsolidateEpisode(episode: { id: string; text: string; externalContext?: boolean }): string {
+	return `[${episode.id}][source: ${episodeSource(episode.externalContext)}] ${episode.text}`;
+}
+
+function selectConsolidateBatch<T extends { id: string; text: string; externalContext?: boolean }>(
 	episodes: T[],
 	limit: number,
 ): Array<{ episode: T; promptText: string }> {
@@ -359,7 +391,10 @@ function selectConsolidateBatch<T extends { id: string; text: string }>(
 	let chars = 0;
 	for (const episode of episodes) {
 		if (batch.length >= limit) break;
-		const promptText = `[${episode.id}] ${truncateEpisodeText(episode.text, episodeChars)}`;
+		const promptText = formatConsolidateEpisode({
+			...episode,
+			text: truncateEpisodeText(episode.text, episodeChars),
+		});
 		if (batch.length > 0 && chars + promptText.length > batchChars) break;
 		batch.push({ episode, promptText });
 		chars += promptText.length;
@@ -564,6 +599,7 @@ export class Memory {
 			...(meta.executor ? { executor: meta.executor } : {}),
 			...(meta.handoff ? { handoff: meta.handoff } : {}),
 			...(meta.dispatchId ? { dispatch_id: meta.dispatchId } : {}),
+			...(meta.external_context === true ? { external_context: true } : {}),
 		};
 		const rawStem = await this.writeRawEpisode(rawBaseStem, `${frontmatter(rawFm)}\n${safeRaw}`);
 
@@ -967,6 +1003,8 @@ export class Memory {
 		});
 		if (!boot) return { episodes: 0, notesTouched: 0, moments: 0 };
 		const { state, cursor, available, existing, recent } = boot;
+		const access =
+			state.access && typeof state.access === "object" ? (state.access as Record<string, AccessEntry>) : undefined;
 		const consolidateSkipsPath = join(this.paths.root, "audit", "consolidate-skips.jsonl");
 		let workingCursor = cursor;
 		const seenBodies = new Map<string, { id: string; ts: string }>();
@@ -1071,7 +1109,7 @@ export class Memory {
 			sample?: CoarseSample,
 		): Promise<{ notesTouched: number; moments: number }> => {
 			const digestEpisode = sample ? { ...fat, text: sample.text } : fat;
-			const outcome = await this.digestFatEpisode(digestEpisode, existing, recent, initialResponseHead, {
+			const outcome = await this.digestFatEpisode(digestEpisode, existing, recent, access, initialResponseHead, {
 				totalChars: fat.text.length,
 				allowOversizeFirst: Boolean(sample),
 			});
@@ -1181,7 +1219,7 @@ export class Memory {
 				continue;
 			}
 			const joined = batch.map(({ promptText }) => promptText).join("\n\n");
-			const selectedKeys = selectRelevantKeys(joined, existing, { recent });
+			const selectedKeys = selectRelevantKeys(joined, existing, { recent, access });
 			// stderr, not stdout: the CLI writes its --json payload to stdout (cli.ts:335), so an
 			// operational line on stdout would be interleaved into the JSON any consumer parses.
 			console.warn(
@@ -1321,9 +1359,10 @@ export class Memory {
 	// stays frozen. Recursion terminates because splitTextInHalf yields strictly-shorter parts and the
 	// floor stops the descent.
 	private async digestFatEpisode(
-		episode: { id: string; text: string; project: string },
+		episode: { id: string; text: string; project: string; externalContext?: boolean },
 		existing: string[],
 		recent: string[],
+		access: Record<string, AccessEntry> | undefined,
 		initialResponseHead: string,
 		options: { totalChars?: number; allowOversizeFirst?: boolean } = {},
 	): Promise<{
@@ -1402,8 +1441,8 @@ export class Memory {
 				moments?: Array<{ trigger?: string; shift?: string }>;
 			};
 			try {
-				const promptText = "[" + episode.id + "] " + text;
-				const selectedKeys = selectRelevantKeys(promptText, existing, { recent });
+				const promptText = formatConsolidateEpisode({ ...episode, text });
+				const selectedKeys = selectRelevantKeys(promptText, existing, { recent, access });
 				// stderr, not stdout — same reason as the batch path above.
 				console.warn(
 					"[her] consolidate: keys " +
@@ -2235,6 +2274,12 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 				text: stripped.text,
 				body: parsed.body,
 				project: String(parsed.data.project ?? ""),
+				externalContext:
+					parsed.data.external_context === true
+						? true
+						: parsed.data.external_context === false
+							? false
+							: undefined,
 			});
 		}
 		return episodes.sort((a, b) => a.ts.localeCompare(b.ts));

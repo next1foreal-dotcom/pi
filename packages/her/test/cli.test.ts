@@ -10,7 +10,14 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { runHerCli } from "../src/cli.ts";
-import { initStore, Memory, parseFrontmatter, readJson, readText } from "../src/her-core/index.ts";
+import {
+	initStore,
+	Memory,
+	parseFrontmatter,
+	readJson,
+	readText,
+	telegramStudioReplySignature,
+} from "../src/her-core/index.ts";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
@@ -609,6 +616,71 @@ test("CLI Telegram bridge ignores duplicate Telegram update ids", async () => {
 		assert.equal(payload.result.acknowledgements.length, 0);
 		assert.equal(requests.filter((request) => request.url.endsWith("/sendMessage")).length, 1);
 	});
+});
+
+test("CLI Telegram bridge routes a signed REPLY into Studio once instead of the generic responder", async () => {
+	const { store } = await gitBackedStore();
+	let studioCalls = 0;
+	const studio = createServer((req, res) => {
+		let body = "";
+		req.setEncoding("utf8");
+		req.on("data", (chunk) => {
+			body += chunk;
+		});
+		req.on("end", () => {
+			studioCalls += 1;
+			assert.equal(req.url, "/api/attention/reply");
+			assert.equal(req.headers["x-her-telegram-signature"], telegramStudioReplySignature(body, "test-token"));
+			assert.deepEqual(JSON.parse(body), {
+				chatId: "42",
+				code: "ASK-7K2P",
+				text: "选:A",
+				updateId: 7001,
+			});
+			res.writeHead(200, { "content-type": "application/json" });
+			res.end(JSON.stringify({ ok: true, status: "delivered", workspaceId: "session-1" }));
+		});
+	});
+	const studioPort = await listenOnFetchAllowedPort(studio);
+	try {
+		await withLocalTelegramApi(
+			async (env, requests) => {
+				const bridgeEnv = { ...env, HER_STUDIO_URL: `http://127.0.0.1:${studioPort}` };
+				let result = await runCli(
+					["telegram-bridge", "--once", "--timeout", "0", "--limit", "10", "--reply-mode", "pi", "--json"],
+					store,
+					bridgeEnv,
+				);
+				let payload = JSON.parse(result.stdout);
+				assert.equal(payload.result.studioReplies[0].status, "delivered");
+				assert.equal(payload.result.replies.length, 0);
+				assert.match(
+					String(requests.find((request) => request.url.endsWith("/sendMessage"))?.body.text),
+					/Studio 会话/,
+				);
+
+				result = await runCli(
+					["telegram-bridge", "--once", "--timeout", "0", "--limit", "10", "--reply-mode", "pi", "--json"],
+					store,
+					bridgeEnv,
+				);
+				payload = JSON.parse(result.stdout);
+				assert.equal(payload.result.studioReplies.length, 0);
+				assert.equal(payload.result.replies.length, 0);
+			},
+			[
+				{
+					update_id: 7001,
+					message: { message_id: 1, chat: { id: 42 }, text: "REPLY ASK-7K2P 选:A", from: { id: 42 } },
+				},
+			],
+		);
+		assert.equal(studioCalls, 1);
+	} finally {
+		await new Promise<void>((resolveClose, reject) =>
+			studio.close((error) => (error ? reject(error) : resolveClose())),
+		);
+	}
 });
 
 test("CLI Telegram bridge can answer inbound messages through the safe Pi responder", async () => {

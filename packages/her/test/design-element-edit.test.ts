@@ -120,7 +120,20 @@ test("a class added at a verified location lands in the file, and only that tag 
 	assert.equal(details.ok, true);
 	assert.equal(details.changed, true);
 	assert.equal(details.after, "btn primary rounded p-4");
-	assert.match(text, /design_lab_still/);
+	assert.match(text, /hot-reload/i);
+	assert.doesNotMatch(
+		text,
+		/design_lab_still/,
+		"photographing after every class is the clock overlay — the canvas is this turn's look",
+	);
+
+	const classes = tools.get("design_element_classes");
+	assert.ok(classes);
+	assert.doesNotMatch(
+		classes.description,
+		/take one|take a design_lab_still/i,
+		"the tool card lives in her context every turn; a still-after-write reflex there is a 9s tax on every chip",
+	);
 
 	// Byte-for-byte: the whole file, with exactly one attribute value different.
 	const after = await readFile(path, "utf8");

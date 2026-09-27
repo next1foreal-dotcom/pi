@@ -289,6 +289,41 @@ export function locateElement(el: Element): SourceLocation {
   }
 }
 
+function firstProjectFrame(fiber: Fiber): StackFrame | null {
+  const text = stackText(fiber._debugStack);
+  if (!text) return null;
+  for (const raw of text.split("\n")) {
+    const frame = parseFrame(raw);
+    if (frame) return frame;
+  }
+  return null;
+}
+
+/**
+ * Every source location on this node's owner chain, nearest first.
+ *
+ * `locateElement` stops at the tag that made THIS node (a tick inside Tile is
+ * Tile.tsx). The write is the call site (screen.tsx:49 `<Tile>`). The call
+ * site is on a parent fiber; this walk is how the hand finds it.
+ */
+export function sourceKeysOf(el: Element): string[] {
+  const out: string[] = [];
+  const seen = new Set<Fiber>();
+  let cur: Fiber | null | undefined = fiberOf(el);
+  while (cur && !seen.has(cur)) {
+    seen.add(cur);
+    const frame = firstProjectFrame(cur);
+    if (frame) {
+      const loc = resolveFrame(frame);
+      if (loc.file && loc.line !== null && loc.column !== null) {
+        out.push(`${loc.file}:${loc.line}:${loc.column}`);
+      }
+    }
+    cur = cur.return;
+  }
+  return out;
+}
+
 /**
  * `locateElement`, but it waits for the map instead of reporting a pending
  * one. For callers that are already asynchronous — there is no reason for

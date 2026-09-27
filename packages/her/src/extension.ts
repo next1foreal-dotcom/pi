@@ -13,6 +13,7 @@ import {
 	type ProviderConfig,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { registerChapterTools } from "./chapters/tools.ts";
 import { summarizeForCompaction } from "./compaction.ts";
 import { clearConditionalRules, loadConditionalRules } from "./conditional-rules.ts";
 import { registerDesignCanvasTools, withCanvasNag } from "./design-canvas/tools.ts";
@@ -605,6 +606,15 @@ ${safeJson({
 	toolResults: event.toolResults,
 })}
 `;
+}
+
+function turnHasExternalContext(toolResults: unknown): boolean {
+	if (!Array.isArray(toolResults)) return false;
+	return toolResults.some((result) => {
+		if (!result || typeof result !== "object" || !("toolName" in result)) return false;
+		const name = String(result.toolName);
+		return /(?:^|[^a-z0-9])(mcp|web|fetch|browser|http)(?:$|[^a-z0-9])/i.test(name);
+	});
 }
 
 function safeJson(value: unknown): string {
@@ -1203,6 +1213,7 @@ export default function her(pi: ExtensionAPI): void {
 		const noteId = await mem.capture(turnToRaw(event, session, activePromptBySession.get(sessionId)), {
 			sessionId: `${sessionId}-turn-${event.turnIndex}`,
 			project: ctx.cwd,
+			external_context: turnHasExternalContext(event.toolResults),
 		});
 		activePromptBySession.delete(sessionId);
 		pi.appendEntry("her-state", {
@@ -1864,7 +1875,7 @@ export default function her(pi: ExtensionAPI): void {
 		name: "her_rewind",
 		label: "Her Rewind",
 		description:
-			"Restore files that changed since a checkpoint. Only overwrites files unchanged since a pre-rewind snapshot. Does not rewrite session history.",
+			"Restore files that changed since a checkpoint. Any concurrent edit aborts the whole restore. Does not rewrite session history.",
 		parameters: Type.Object({
 			id: Type.String({ description: "Checkpoint id from her_checkpoints" }),
 		}),
@@ -3027,6 +3038,7 @@ export default function her(pi: ExtensionAPI): void {
 	registerDesignVersionTools(pi);
 	registerShowWidgetTools(pi);
 	registerTodoWriteTools(pi);
+	registerChapterTools(pi);
 	registerRelayProviderTools(pi);
 	registerUiActionTools(pi);
 	registerHerActTools(pi);

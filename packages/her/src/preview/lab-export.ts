@@ -115,7 +115,19 @@ export function cssAttrValue(value: string): string {
  * Falls back to the viewport when the driver has no element screenshot, which is
  * every fake page in a test.
  */
-async function shootFrame(page: PageLike, screenId: string): Promise<Buffer> {
+
+const HIDE_LAB_FOR_EXPORT = `(() => {
+  if (document.querySelector("style[data-lab-export-mask]")) return;
+  const style = document.createElement("style");
+  style.dataset.labExportMask = "";
+  style.textContent = "[data-lab-chrome],[data-lab-hand],[data-spotlight-overlay],[data-inspect-overlay],[data-notes-host],[data-labels-host],[data-ruler-host]{display:none!important}";
+  document.head.appendChild(style);
+})()`;
+
+export async function shootFrame(page: PageLike, screenId: string): Promise<Buffer> {
+	// Element screenshots still include siblings painted over their rectangle.
+	// Hide the lab furniture before cropping the design itself.
+	await page.evaluate(HIDE_LAB_FOR_EXPORT);
 	const frame = page.locator(`[data-screen-id="${cssAttrValue(screenId)}"]`).first();
 	if (frame.screenshot && (await frame.count()) > 0) return frame.screenshot();
 	return page.screenshot();

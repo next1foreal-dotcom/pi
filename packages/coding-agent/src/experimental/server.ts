@@ -1,7 +1,9 @@
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { chmod, lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
+import { promisify } from "node:util";
 import type { Context } from "@earendil-works/chord";
 import type { FacetBundleArtifact } from "@earendil-works/chord/node";
 import {
@@ -21,7 +23,7 @@ import {
 	SessionAmbiguousError,
 	SessionNotFoundError,
 } from "@earendil-works/pi-server";
-import { createUnixServer, getUnixSocketPath } from "@earendil-works/pi-server/unix";
+import { createUnixServer, getLocalSocketPath, getUnixSocketPath } from "@earendil-works/pi-server/unix";
 import lockfile from "proper-lockfile";
 import type { AuthInput } from "../cli/experimental/command-options.ts";
 import { getAgentDir } from "../config.ts";
@@ -56,14 +58,53 @@ export function resolveServerDirectory(directory?: string): string {
 }
 
 export async function ensurePrivateServerDirectory(directory: string): Promise<void> {
-	if (typeof process.getuid !== "function") throw new Error("Unix socket directory requires a POSIX user ID");
 	await mkdir(directory, { recursive: true, mode: 0o700 });
 	const stats = await lstat(directory);
 	if (!stats.isDirectory()) throw new Error(`Unix socket directory is not a directory: ${directory}`);
+	if (process.platform === "win32") {
+		await secureWindowsServerDirectory(directory);
+		return;
+	}
+	if (typeof process.getuid !== "function") throw new Error("Unix socket directory requires a POSIX user ID");
 	if (stats.uid !== process.getuid()) {
 		throw new Error(`Unix socket directory is not owned by the current user: ${directory}`);
 	}
 	await chmod(directory, 0o700);
+}
+
+const execFileAsync = promisify(execFile);
+const WINDOWS_PRIVATE_DIRECTORY_SCRIPT = `
+$ErrorActionPreference = 'Stop'
+$directory = [Environment]::GetEnvironmentVariable('PI_PRIVATE_SERVER_DIRECTORY', 'Process')
+$identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+$sid = $identity.User
+$acl = New-Object System.Security.AccessControl.DirectorySecurity
+$acl.SetOwner($sid)
+$acl.SetAccessRuleProtection($true, $false)
+$rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+  $sid,
+  [System.Security.AccessControl.FileSystemRights]::FullControl,
+  ([System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit),
+  [System.Security.AccessControl.PropagationFlags]::None,
+  [System.Security.AccessControl.AccessControlType]::Allow
+)
+[void]$acl.AddAccessRule($rule)
+$directoryInfo = New-Object System.IO.DirectoryInfo($directory)
+$directoryInfo.SetAccessControl($acl)
+$actual = $directoryInfo.GetAccessControl()
+$rules = @($actual.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))
+if (-not $actual.AreAccessRulesProtected) { throw 'Server directory still inherits access rules' }
+if ($actual.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value) { throw 'Server directory owner mismatch' }
+if ($rules.Count -ne 1 -or $rules[0].IdentityReference.Value -ne $sid.Value -or $rules[0].AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow -or (($rules[0].FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl) -ne [System.Security.AccessControl.FileSystemRights]::FullControl)) { throw 'Server directory has unexpected access rules' }
+`;
+
+async function secureWindowsServerDirectory(directory: string): Promise<void> {
+	const encoded = Buffer.from(WINDOWS_PRIVATE_DIRECTORY_SCRIPT, "utf16le").toString("base64");
+	await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded], {
+		env: { ...process.env, PI_PRIVATE_SERVER_DIRECTORY: directory },
+		timeout: 15_000,
+		windowsHide: true,
+	});
 }
 
 export function resolveSessionDirectory(sessionDir?: string): string {
@@ -608,9 +649,9 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
 			return reloaded.presentationArtifacts;
 		};
 		const socketPath = getUnixSocketPath(serverId, directory);
-		const controlPath = join(directory, `control-${serverId}.sock`);
+		const controlPath = getLocalSocketPath(`control-${serverId}.sock`, directory);
 		const serverNonce = randomUUID().replaceAll("-", "").slice(0, 12);
-		const serverPath = join(directory, `server-${serverId}-${serverNonce}.sock`);
+		const serverPath = getLocalSocketPath(`server-${serverId}-${serverNonce}.sock`, directory);
 		startupLease = await ensureCoordinator(socketPath, controlPath);
 		coordinator = new CoordinatorConnection({ controlPath, endpoint: serverPath });
 		const sessionDir = resolveSessionDirectory(options.sessionDir);

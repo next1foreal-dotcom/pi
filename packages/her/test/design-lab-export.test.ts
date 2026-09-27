@@ -14,6 +14,7 @@ import {
 	pdfHtml,
 	registerLabExportTools,
 	runLabExport,
+	shootFrame,
 } from "../src/preview/lab-export.ts";
 
 function harness(deps: LabExportDeps): Map<string, ToolDefinition> {
@@ -91,6 +92,36 @@ test("the pdf is one screen per page and nothing else", () => {
 	assert.match(html, /figure:last-of-type \{[^}]*break-after: auto/);
 	// Nothing stamped over his design.
 	assert.doesNotMatch(html, /<figcaption|page \d/);
+});
+
+test("the frame crop hides lab furniture painted over the screen", async () => {
+	const evaluated: string[] = [];
+	let elementShots = 0;
+	const bytes = await shootFrame(
+		{
+			evaluate: async (script: string) => {
+				evaluated.push(script);
+				return null;
+			},
+			locator: () => ({
+				first: () => ({
+					count: async () => 1,
+					screenshot: async () => {
+						elementShots += 1;
+						return Buffer.from("screen-only");
+					},
+				}),
+			}),
+			screenshot: async () => Buffer.from("viewport"),
+		} as never,
+		"playground",
+	);
+	assert.equal(bytes.toString(), "screen-only");
+	assert.equal(elementShots, 1);
+	assert.match(evaluated[0] ?? "", /data-lab-chrome/);
+	assert.match(evaluated[0] ?? "", /data-lab-hand/);
+	assert.match(evaluated[0] ?? "", /data-spotlight-overlay/);
+	assert.match(evaluated[0] ?? "", /data-inspect-overlay/);
 });
 
 test("a screen id cannot smuggle markup into the printed page", () => {

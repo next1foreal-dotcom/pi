@@ -25,7 +25,7 @@ import {
   zoomAt,
   zoomToBounds,
 } from "./math";
-import { consumeFirstVisit, DEFAULT_CANVAS, saveNow } from "./persistence";
+import { consumeFirstVisit, DEFAULT_CANVAS, loadPersisted, persistedLock, saveNow } from "./persistence";
 import { pushToast, useToasts } from "./lab-toasts";
 import { animateCamera, cancelCameraAnimation } from "./animate-camera";
 import { bindCanvasInput, zoomStepAt } from "./canvas-input";
@@ -53,6 +53,7 @@ import {
   notifySpotlightGesture,
 } from "../spotlight/attach";
 import { SpotlightOverlay } from "../spotlight/overlay";
+import { HandOverlay } from "../hand/overlay";
 import { createPickTool } from "../spotlight/pick";
 import styles from "./lab.module.css";
 import {
@@ -90,6 +91,7 @@ import {
   snapshotOf,
   frameTick,
   subscribeFrame,
+  tapZoomReadout,
   unregisterObject,
   writeFrame,
   type Session,
@@ -357,6 +359,10 @@ export function InteractionLab() {
     if (notesApi instanceof StickyNotes) session.bump();
     const isScreen = (id: string) =>
       Object.hasOwn(session.layouts, id) && !session.objects.has(id);
+    const lock = persistedLock(loadPersisted());
+    if (lock && isScreen(lock.id) && session.mode === "explore") {
+      lockInto(session, lock.id, lock.fill);
+    }
     const unpublish = publishPluginApis(mounted, undefined, {
       screens: () => Object.keys(session.layouts).filter(isScreen),
       lockInto: (id, fill = false) => {
@@ -1064,6 +1070,7 @@ export function InteractionLab() {
           }}
         />
         <SpotlightOverlay />
+        <HandOverlay />
       </div>
       <div className={styles.chrome}>
         {SCREENS.map((def) => (
@@ -1243,7 +1250,7 @@ export function InteractionLab() {
           <button
             type="button"
             className={styles.zoomBtn}
-            onClick={() => fitAll(session)}
+            onClick={() => tapZoomReadout(session)}
           >
             {Math.round(zoom * 100)}%
           </button>

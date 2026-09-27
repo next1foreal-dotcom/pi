@@ -20,6 +20,7 @@ const CAM: Camera = { x: 12, y: 8, z: 0.35 };
 const VISIBLE: SpotlightContext = {
   hidden: false,
   reducedMotion: false,
+  locked: false,
   camera: CAM,
   viewport: VIEWPORT,
   screenFallback: SCREEN,
@@ -256,6 +257,41 @@ describe("hidden pane defers; visible plays exactly once", () => {
     const again = run([{ type: "visible" }], VISIBLE, state);
     expect(again.state.phase).toBe("flying");
     expect(typesOf(again.effects)).not.toContain("animateTo");
+  });
+});
+
+describe("locked in: the work stays on the node", () => {
+  it("coalesce does not fly or cover when he is already looking", () => {
+    const ctx = { ...VISIBLE, locked: true };
+    const { state, effects } = run(
+      [
+        { type: "hmr" },
+        { type: "mutation", rects: [BOX] },
+        { type: "coalesceElapsed" },
+      ],
+      ctx,
+    );
+    expect(state.phase).toBe("idle");
+    expect(state.overlay).toBeNull();
+    expect(typesOf(effects)).not.toContain("animateTo");
+    expect(typesOf(effects)).not.toContain("animateBack");
+  });
+
+  it("coming back to a locked pane still does not steal the camera", () => {
+    const start = run(
+      [
+        { type: "hmr" },
+        { type: "mutation", rects: [BOX] },
+      ],
+      { ...VISIBLE, hidden: true, locked: true },
+    ).state;
+    const { state, effects } = run(
+      [{ type: "visible" }],
+      { ...VISIBLE, locked: true },
+      start,
+    );
+    expect(state.phase).toBe("idle");
+    expect(typesOf(effects)).not.toContain("animateTo");
   });
 });
 

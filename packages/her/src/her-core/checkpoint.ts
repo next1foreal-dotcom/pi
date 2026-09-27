@@ -4,8 +4,8 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 export type GitRunResult = {
 	stdout: string;
@@ -182,32 +182,87 @@ export function restoreCheckpoint(
 	const workTree = resolve(repoRoot);
 	const targetId = id.trim();
 	if (!targetId) throw new Error("git restore aborted: missing checkpoint id");
+	const targetExists = runGit(runner, gitDir, workTree, ["cat-file", "-e", `${targetId}^{commit}`], [0, 128]);
+	if (targetExists.status !== 0) throw new Error(`git restore aborted: unknown checkpoint ${targetId}`);
 
-	const selfie = captureCheckpoint(memoryRoot, repoRoot, { label: "pre-rewind" }, runner);
+	const head = headId(runner, gitDir, workTree);
+	const rewindPaths = uniqueNames(
+		runGit(runner, gitDir, workTree, ["diff", "--no-renames", "--name-only", "-z", targetId, head]).stdout,
+		runGit(runner, gitDir, workTree, ["diff", "--no-renames", "--name-only", "-z", head]).stdout,
+		runGit(runner, gitDir, workTree, ["ls-files", "--others", "--exclude-standard", "-z"]).stdout,
+	);
+	if (rewindPaths.length === 0) {
+		return { restored: [], skipped: [], preRewindCheckpointId: head };
+	}
+	const selfie = captureCheckpoint(memoryRoot, repoRoot, { label: "pre-rewind", paths: rewindPaths }, runner);
 	if (!selfie.id) {
 		throw new Error("git restore aborted: pre-rewind checkpoint has no HEAD");
 	}
 
-	const diff = runGit(runner, gitDir, workTree, ["diff", "--name-only", "-z", targetId, selfie.id]);
-	const restored: string[] = [];
-	const skipped: RestoreSkip[] = [];
+	const diff = runGit(runner, gitDir, workTree, ["diff", "--no-renames", "--name-only", "-z", targetId, selfie.id]);
+	const paths = nulNames(diff.stdout);
+	for (const path of paths) assertSafeRepoPath(workTree, path);
 
-	for (const path of nulNames(diff.stdout)) {
-		const inTarget = runGit(runner, gitDir, workTree, ["cat-file", "-e", `${targetId}:${path}`], [0, 128]);
-		if (inTarget.status !== 0) {
-			skipped.push({ path, reason: "not present in checkpoint" });
-			continue;
-		}
-		const vsSelfie = runGit(runner, gitDir, workTree, ["diff", "--quiet", selfie.id, "--", path], [0, 1]);
-		if (vsSelfie.status !== 0) {
-			skipped.push({ path, reason: "changed after pre-rewind snapshot" });
-			continue;
-		}
-		runGit(runner, gitDir, workTree, ["checkout", targetId, "--", path]);
-		restored.push(path);
+	// Check the whole restore set before touching any file. A single concurrent
+	// edit aborts the operation instead of leaving a half-rewound worktree.
+	const conflicts = paths.filter(
+		(path) => runGit(runner, gitDir, workTree, ["diff", "--quiet", selfie.id, "--", path], [0, 1]).status !== 0,
+	);
+	if (conflicts.length > 0) {
+		return {
+			restored: [],
+			skipped: conflicts.map((path) => ({ path, reason: "changed after pre-rewind snapshot" })),
+			preRewindCheckpointId: selfie.id,
+		};
 	}
 
-	return { restored, skipped, preRewindCheckpointId: selfie.id };
+	const restored: string[] = [];
+	try {
+		for (const path of paths) {
+			const vsSelfie = runGit(runner, gitDir, workTree, ["diff", "--quiet", selfie.id, "--", path], [0, 1]);
+			if (vsSelfie.status !== 0) {
+				rollbackPaths(runner, gitDir, workTree, selfie.id, restored);
+				return {
+					restored: [],
+					skipped: [{ path, reason: "changed after pre-rewind snapshot" }],
+					preRewindCheckpointId: selfie.id,
+				};
+			}
+			restorePath(runner, gitDir, workTree, targetId, path);
+			restored.push(path);
+		}
+	} catch (error) {
+		try {
+			rollbackPaths(runner, gitDir, workTree, selfie.id, restored);
+		} catch (rollbackError) {
+			throw new Error(
+				`git restore failed and rollback failed: ${String(error)}; rollback: ${String(rollbackError)}`,
+			);
+		}
+		throw error;
+	}
+
+	return { restored, skipped: [], preRewindCheckpointId: selfie.id };
+}
+
+function assertSafeRepoPath(workTree: string, path: string): void {
+	const rel = relative(workTree, resolve(workTree, path));
+	if (!path || isAbsolute(path) || rel === ".." || rel.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`)) {
+		throw new Error(`git restore aborted: unsafe path ${path}`);
+	}
+}
+
+function restorePath(runner: GitRunner, gitDir: string, workTree: string, commit: string, path: string): void {
+	const exists = runGit(runner, gitDir, workTree, ["cat-file", "-e", `${commit}:${path}`], [0, 128]);
+	if (exists.status === 0) {
+		runGit(runner, gitDir, workTree, ["checkout", commit, "--", path]);
+		return;
+	}
+	rmSync(resolve(workTree, path), { recursive: true, force: true });
+}
+
+function rollbackPaths(runner: GitRunner, gitDir: string, workTree: string, selfieId: string, paths: string[]): void {
+	for (const path of paths) restorePath(runner, gitDir, workTree, selfieId, path);
 }
 
 export function pruneCheckpoints(
@@ -282,4 +337,8 @@ function parseMeta(body: string): { at?: string; sessionId?: string; label?: str
 
 function nulNames(stdout: string): string[] {
 	return stdout.split("\0").filter((name) => name.length > 0 && name !== "\n" && name !== "\r\n");
+}
+
+function uniqueNames(...outputs: string[]): string[] {
+	return [...new Set(outputs.flatMap(nulNames))];
 }

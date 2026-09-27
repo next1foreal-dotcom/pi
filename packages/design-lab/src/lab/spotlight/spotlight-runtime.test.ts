@@ -16,11 +16,12 @@ const CAM: Camera = { x: 0, y: 0, z: 0.4 };
 type Scheduled = { id: number; fn: () => void; at: number };
 
 function makeHost(
-  overrides: Partial<{ hidden: boolean; reducedMotion: boolean }> = {},
+  overrides: Partial<{ hidden: boolean; reducedMotion: boolean; locked: boolean }> = {},
 ): SpotlightRuntimeHost & {
   now: number;
   hiddenFlag: boolean;
   reduced: boolean;
+  lockedFlag: boolean;
   camera: Camera;
   timeouts: Scheduled[];
   animateTo: Camera[];
@@ -33,6 +34,7 @@ function makeHost(
     now: 0,
     hiddenFlag: overrides.hidden ?? false,
     reduced: overrides.reducedMotion ?? false,
+    lockedFlag: overrides.locked ?? false,
     camera: { ...CAM },
     timeouts: [] as Scheduled[],
     animateTo: [] as Camera[],
@@ -43,6 +45,7 @@ function makeHost(
     nowMs: () => host.now,
     isHidden: () => host.hiddenFlag,
     prefersReducedMotion: () => host.reduced,
+    isLocked: () => host.lockedFlag,
     getCamera: () => host.camera,
     getViewport: () => VIEWPORT,
     getOrigin: () => ({ x: 0, y: 0 }),
@@ -133,6 +136,18 @@ describe("runtime: gesture yields the camera", () => {
     expect(host.animateBack).toEqual([]);
     const overlayHide = host.overlays.filter((o) => o.rect === null);
     expect(overlayHide.some((o) => o.fast)).toBe(true);
+  });
+});
+
+describe("runtime: locked in does not steal the camera", () => {
+  it("HMR + mutation on a filled screen never flies or covers", () => {
+    const host = makeHost({ locked: true });
+    const rt = createSpotlightRuntime(host);
+    rt.noteHmr();
+    rt.noteMutation([BOX], SCREEN);
+    flush(host, COALESCE_MS);
+    expect(host.animateTo).toEqual([]);
+    expect(host.overlays.some((o) => o.rect !== null)).toBe(false);
   });
 });
 

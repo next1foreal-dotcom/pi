@@ -35,6 +35,7 @@ import type {
 	TelegramConfirmationResult,
 	TelegramOutboxResult,
 	TelegramPollResult,
+	TelegramStudioReplyDelivery,
 	TriggerStats,
 	WorldNoteData,
 } from "../her-core/index.ts";
@@ -487,6 +488,7 @@ export interface TelegramBridgeCycleResult {
 	outbox: TelegramOutboxResult;
 	poll: TelegramPollResult;
 	replies: TelegramBridgeReply[];
+	studioReplies: TelegramStudioReplyDelivery[];
 }
 
 export interface CliTelegramBridgePayload extends CliStatusPayload {

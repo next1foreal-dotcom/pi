@@ -19,7 +19,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { StorePaths } from "./paths.ts";
-import { readText, writeJson, writeText } from "./store.ts";
+import { frontmatter, readText, writeJson, writeText } from "./store.ts";
 import { trimTelegramText } from "./telegram.ts";
 
 export const WAITING_LEDGER_VERSION = 1;
@@ -206,7 +206,13 @@ export function parseSessionWaiting(file: string, text: string): SessionWaiting 
  */
 export function renderWaitingMessage(session: SessionWaiting): string {
 	const title = session.name?.trim() || session.sessionId;
-	const lines = [`她在等你 · ${title}`, `会话 ${session.sessionId}`, ""];
+	const lines = [
+		frontmatter({ type: "her-session-wait", status: "pending", session_id: session.sessionId }).trimEnd(),
+		"",
+		`她在等你 · ${title}`,
+		`会话 ${session.sessionId}`,
+		"",
+	];
 	const headline = session.headline.trim();
 	if (headline) lines.push(headline, "");
 	lines.push(session.waiting.question);
