@@ -235,8 +235,9 @@ export function projectNoteCanvas(text: string): NoteFeedProjection {
 				if (!th) break;
 				if (typeof e.x === "number" && Number.isFinite(e.x)) th.x = e.x;
 				if (typeof e.y === "number" && Number.isFinite(e.y)) th.y = e.y;
-				if (e.screenId === null || typeof e.screenId === "string") {
-					th.screenId = e.screenId;
+				const screenId = e.screenId;
+				if (screenId === null || typeof screenId === "string") {
+					th.screenId = screenId;
 				}
 				if (isSource(e.source)) th.source = e.source;
 				th.anchor = isAnchor(e.anchor) ? { ...e.anchor } : undefined;
