@@ -29,6 +29,8 @@ export interface CaptureMeta {
 	handoff?: string;
 	/** her dispatch provenance (T5): dispatch long-task id, for cross-referencing the ledger. */
 	dispatchId?: string;
+	/** Raw turn included content returned by an external tool. */
+	external_context?: boolean;
 }
 
 export interface WorldNoteData {

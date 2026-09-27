@@ -45,7 +45,7 @@ export function animateCamera(
     const cx = fromC.x + (toC.x - fromC.x) * e;
     const cy = fromC.y + (toC.y - fromC.y) * e;
     const cam = cameraCentering({ x: cx, y: cy }, z, viewport);
-    setCameraExact(cam, "program");
+    setCameraExact(cam, t < 1 ? "idle" : "program");
     onTick?.(cam);
     if (t < 1) {
       anim = requestAnimationFrame(frame);

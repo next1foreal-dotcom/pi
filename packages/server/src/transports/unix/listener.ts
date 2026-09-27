@@ -49,11 +49,17 @@ class UnixListener implements ServerListener {
 		if (this.closing) throw new Error("Unix listener is closing or closed");
 		this.accept = accept;
 
-		const ownedBindPath = getOwnedBindPath(this.path);
-		await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
+		const isWindowsPipe = process.platform === "win32";
+		if (isWindowsPipe && !this.path.startsWith("\\\\.\\pipe\\")) {
+			throw new Error(`Windows local listener requires a named pipe path: ${this.path}`);
+		}
+		const ownedBindPath = isWindowsPipe ? this.path : getOwnedBindPath(this.path);
+		if (!isWindowsPipe) await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
 		await removeStaleSocket(this.path);
-		await removeStaleSocket(ownedBindPath);
-		this.ownedBindPath = ownedBindPath;
+		if (!isWindowsPipe) {
+			await removeStaleSocket(ownedBindPath);
+			this.ownedBindPath = ownedBindPath;
+		}
 		const server = createServer((socket) => this.acceptSocket(socket));
 		server.on("error", (error) => this.reportError(error));
 		this.server = server;
@@ -71,6 +77,7 @@ class UnixListener implements ServerListener {
 				server.once("listening", onListening);
 				server.listen(ownedBindPath);
 			});
+			if (isWindowsPipe) return;
 			const stats = await lstat(ownedBindPath);
 			if (!stats.isSocket()) throw new Error(`Unix listener path is not a socket after binding: ${ownedBindPath}`);
 			this.socketIdentity = { dev: stats.dev, ino: stats.ino };
@@ -297,6 +304,10 @@ function getOwnedBindPath(path: string): string {
 }
 
 async function removeStaleSocket(path: string): Promise<void> {
+	if (process.platform === "win32") {
+		if (await isSocketLive(path)) throw new Error(`Windows named pipe listener is already running: ${path}`);
+		return;
+	}
 	let original: Stats;
 	try {
 		original = await lstat(path);

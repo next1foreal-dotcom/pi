@@ -1,6 +1,7 @@
 import type { LabPlugin, LabPluginContext, LabPluginHandle } from "../../plugin-api";
 import type { ComponentIndex } from "../../components/types";
 import { expectFor, pushHistory, type HistoryCommand } from "../../core/history";
+import { noteWorkFromBody } from "../../hand/work";
 import { INDEX_URL } from "../components/plugin";
 import {
 	fiberOf,
@@ -690,7 +691,16 @@ export class Properties {
 					change,
 					body,
 				);
-				if (step) pushHistory(step);
+				if (step) {
+					pushHistory(step);
+					noteWorkFromBody({
+						file: target.file,
+						line: target.line,
+						column: target.column,
+						tag: String(sel.tag),
+						...change,
+					});
+				}
 				back = await refind(target, change, this.limit, this.deps);
 			}
 		} catch (error) {

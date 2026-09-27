@@ -11,6 +11,7 @@ export type SpotlightRuntimeHost = {
   nowMs: () => number;
   isHidden: () => boolean;
   prefersReducedMotion: () => boolean;
+  isLocked: () => boolean;
   getCamera: () => Camera;
   getViewport: () => { width: number; height: number };
   getOrigin: () => Point;
@@ -52,6 +53,7 @@ export function createSpotlightRuntime(
     return {
       hidden: host.isHidden(),
       reducedMotion: host.prefersReducedMotion(),
+      locked: host.isLocked(),
       camera: host.getCamera(),
       viewport: host.getViewport(),
       screenFallback: fallback,

@@ -236,12 +236,13 @@ export class LayersPanel {
 	private versions: LabVersion[] = [];
 	private project: LabProject | null = null;
 	private stages: string[] = [];
-	private dirty: string[] = [];
 	private picked: string | null = null;
 	private plan: RestorePlan | null = null;
 	private note = "";
+	private readonly host: HTMLElement;
 
-	constructor(private host: HTMLElement) {
+	constructor(host: HTMLElement) {
+		this.host = host;
 		acquireStyles();
 		this.panel = document.createElement("div");
 		this.panel.className = "ly-panel";
@@ -492,7 +493,6 @@ export class LayersPanel {
 		this.picked = null;
 		this.plan = null;
 		this.versions = [];
-		this.dirty = [];
 		this.project = null;
 		this.stages = [];
 		this.note = "读取中…";
@@ -536,7 +536,6 @@ export class LayersPanel {
 				this.note = body.error ?? "读不到版本";
 			} else {
 				this.versions = body.versions ?? [];
-				this.dirty = body.dirty ?? [];
 				this.note = this.versions.length === 0 ? "还没有提交过" : "";
 			}
 		} catch (error) {

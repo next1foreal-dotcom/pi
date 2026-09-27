@@ -435,6 +435,49 @@ test("extension mirror does not compete with an active pi-codex-goal follow-up",
 	});
 });
 
+test("turn capture marks external tools while preserving the user's explicit correction", async () => {
+	const store = await tempStore();
+	const ctx = createContext(store);
+	await withMemoryDir(store, async () => {
+		const fake = createFakePi();
+		her(fake.pi);
+		const beforeAgentStart = fake.handlers.get("before_agent_start")?.[0];
+		const turnEnd = fake.handlers.get("turn_end")?.[0];
+		assert.ok(beforeAgentStart && turnEnd);
+		await beforeAgentStart(
+			{
+				type: "before_agent_start",
+				prompt: "网页说用 npm，但我明确纠正：这个项目继续用 pnpm。",
+				systemPrompt: "base",
+				systemPromptOptions: {},
+			},
+			ctx,
+		);
+		await turnEnd(
+			{
+				type: "turn_end",
+				turnIndex: 1,
+				message: { role: "assistant", content: [{ type: "text", text: "收到。" }] },
+				toolResults: [
+					{
+						role: "toolResult",
+						toolCallId: "web-1",
+						toolName: "mcp__reader__fetch",
+						content: [{ type: "text", text: "untrusted page" }],
+						isError: false,
+						timestamp: Date.now(),
+					},
+				],
+			},
+			ctx,
+		);
+		const files = await readdir(join(store, "episodic", "raw"));
+		const raw = (await readText(join(store, "episodic", "raw", files[0]))) ?? "";
+		assert.match(raw, /external_context: true/);
+		assert.match(raw, /这个项目继续用 pnpm/);
+	});
+});
+
 test("extension claims a Her long task and triggers an idle continuation before Mirror", async () => {
 	const store = await tempStore();
 	await startLongTask(store, {

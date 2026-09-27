@@ -37,6 +37,8 @@ export type SpotlightEvent =
 export type SpotlightContext = {
   hidden: boolean;
   reducedMotion: boolean;
+  /** He is already looking at the screen (fill/focus). Do not steal the camera. */
+  locked: boolean;
   camera: Camera;
   viewport: { width: number; height: number };
   screenFallback: Rect;
@@ -100,6 +102,14 @@ function beginChoreography(
   state: SpotlightState,
   ctx: SpotlightContext,
 ): { state: SpotlightState; effects: SpotlightEffect[] } {
+  // Fill/focus: he is already looking at the work. Flying the camera and
+  // holding a dashed box is the clock overlay on our canvas.
+  if (ctx.locked) {
+    return {
+      state: createSpotlightState(),
+      effects: abortEffects(true),
+    };
+  }
   const raw = state.target ?? state.pendingTarget;
   const target = resolveSpotlightTarget(raw ? [raw] : [], ctx.screenFallback);
   const savedCamera = { ...ctx.camera };

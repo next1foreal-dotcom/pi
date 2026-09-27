@@ -54,6 +54,21 @@ export function dropUnknownIds(
   return out;
 }
 
+/**
+ * He was locked into a screen. A remount that starts explore at 26% is the
+ * clock overlay: the write dumped him off the work.
+ */
+export function persistedLock(
+  data: PersistedV1 | null,
+): { id: string; fill: boolean } | null {
+  if (!data) return null;
+  const id = data.focusedId;
+  if (typeof id !== "string" || id.length === 0) return null;
+  if (data.mode === "fill") return { id, fill: true };
+  if (data.mode === "focus") return { id, fill: false };
+  return null;
+}
+
 function isCamera(c: unknown): c is Camera {
   if (!c || typeof c !== "object") return false;
   const o = c as Camera;

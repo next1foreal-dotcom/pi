@@ -12,7 +12,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { RunLabExportInput, RunLabExportOutput } from "../../../her/src/preview/lab-export.ts";
+import type { RunLabExportInput, RunLabExportOutput } from "../../../../her/src/preview/lab-export.ts";
 import { labFsPlugin } from "../../../vite-plugin-lab-fs.ts";
 import { labFs } from "./fs-client.ts";
 
@@ -169,7 +169,7 @@ describe("labFs.export", () => {
 
 	it("sends the canvas guard", async () => {
 		const fetch = vi.fn(
-			async () =>
+			async (_input: RequestInfo | URL, _init?: RequestInit) =>
 				new Response(JSON.stringify({ ok: true, files: ["loora-landing.png"] }), {
 					status: 200,
 					headers: { "content-type": "application/json" },

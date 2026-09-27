@@ -671,6 +671,7 @@ export type {
 	AttentionDigestOptions,
 	AttentionItem,
 	CreateTelegramConfirmationOptions,
+	DeliverTelegramStudioRepliesOptions,
 	PollTelegramInboxOptions,
 	PushTelegramOutboxOptions,
 	QueueTelegramInboundOptions,
@@ -685,12 +686,14 @@ export type {
 	TelegramOutboxResult,
 	TelegramPollResult,
 	TelegramQueueResult,
+	TelegramStudioReplyDelivery,
 	TelegramUpdate,
 	TelegramUser,
 } from "./telegram.ts";
 export {
 	callTelegramMethod,
 	createTelegramConfirmationRequest,
+	deliverTelegramStudioReplies,
 	pollTelegramInbox,
 	pushTelegramOutbox,
 	queueTelegramInbound,
@@ -698,6 +701,7 @@ export {
 	scoreAttentionItem,
 	selectAttentionDigest,
 	sendTelegramMessage,
+	telegramStudioReplySignature,
 	trimTelegramText,
 } from "./telegram.ts";
 export * from "./trigger-log.ts";

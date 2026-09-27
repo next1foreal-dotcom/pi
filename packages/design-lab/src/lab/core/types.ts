@@ -37,4 +37,8 @@ export type PersistedV1 = {
   screens: Record<string, Partial<ScreenLayout>>;
   canvasColor?: string;
   savedColors?: string[];
+  /** Where he was looking. A remount that forgets this dumps him to the board. */
+  mode?: Mode;
+  focusedId?: string | null;
+  exploreCamera?: Camera;
 };

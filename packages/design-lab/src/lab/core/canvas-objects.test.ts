@@ -56,7 +56,9 @@ import {
 	snapshotOf,
 	commitLayout,
 	frameTick,
+	tapZoomReadout,
 } from "./interaction-lab";
+import { getCamera, getCoarseZoom, seedCamera } from "./camera";
 import { pushHistory, popUndo, type LayoutMap } from "./history";
 import type { LabObjectInit } from "../plugin-api";
 import type { Rect } from "./types";
@@ -330,6 +332,17 @@ describe("snapshotOf excludes objects", () => {
 		expect(snap.screens["screen-1"]).toBeDefined();
 		expect(snap.screens["note:1"]).toBeUndefined();
 	});
+
+	it("snapshot remembers the lock he was looking through", () => {
+		const s = stubSession();
+		s.mode = "fill";
+		s.focusedId = "screen-1";
+		s.exploreCamera = { x: 12, y: 8, z: 0.26 };
+		const snap = snapshotOf(s);
+		expect(snap.mode).toBe("fill");
+		expect(snap.focusedId).toBe("screen-1");
+		expect(snap.exploreCamera).toEqual({ x: 12, y: 8, z: 0.26 });
+	});
 });
 
 describe("setLayout", () => {
@@ -433,5 +446,18 @@ describe("whole-map replacements keep object layouts (the trap)", () => {
 		expect(s.layouts["note:1"]).toEqual({ x: 77, y: 88, width: 240, height: 240 });
 		// Screen was reverted
 		expect(s.layouts["screen-1"]).toEqual({ x: 0, y: 0, width: 1440, height: 900 });
+	});
+});
+
+describe("the zoom readout does not dump fill back to the board", () => {
+	it("in fill it re-pins z=1 on the focused screen", () => {
+		const s = stubSession();
+		s.mode = "fill";
+		s.focusedId = "screen-1";
+		seedCamera({ x: 12, y: 8, z: 0.26 });
+		tapZoomReadout(s);
+		expect(s.mode).toBe("fill");
+		expect(getCamera()).toEqual({ x: -0, y: -0, z: 1 });
+		expect(getCoarseZoom()).toBe(1);
 	});
 });

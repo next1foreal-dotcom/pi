@@ -48,7 +48,7 @@ export function spawnInternalProcess(
 	}
 	const entryUrl = defaultEntryUrl(role, options.entryUrl);
 	const sourceRuntimeArgs = import.meta.url.endsWith(".ts")
-		? ["--import", fileURLToPath(new URL("source-resolver.ts", import.meta.url))]
+		? ["--import", new URL("source-resolver.ts", import.meta.url).href]
 		: [];
 	const child = spawn(
 		process.execPath,

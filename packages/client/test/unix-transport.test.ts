@@ -1,5 +1,7 @@
+import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseServiceCall } from "@earendil-works/chord";
 import { ClientMessageDecoder, encodeServerMessage, PROTOCOL_VERSION } from "@earendil-works/pi-protocol";
@@ -13,9 +15,11 @@ const servers = new Set<Server>();
 const sockets = new Set<Socket>();
 
 async function makeSocketPath(): Promise<string> {
-	const directory = await mkdtemp(join("/tmp", "pi-client-transport-"));
+	const directory = await mkdtemp(join(tmpdir(), "pi-client-transport-"));
 	tempDirectories.add(directory);
-	return join(directory, "pi.sock");
+	return process.platform === "win32"
+		? `\\\\.\\pipe\\pi-client-test-${process.pid}-${randomUUID()}`
+		: join(directory, "pi.sock");
 }
 
 async function listen(server: Server, path: string): Promise<void> {
@@ -51,7 +55,7 @@ test("rejects invalid Unix transport options", () => {
 	expect(() => createUnixTransportFactory({ path: "/tmp/pi.sock", maxPendingBytes: 0 })).toThrow(/positive/);
 });
 
-describe.runIf(process.platform !== "win32")("createUnixTransportFactory", () => {
+describe("createUnixTransportFactory", () => {
 	test("carries a complete Client handshake and request over a real Unix socket", async () => {
 		const path = await makeSocketPath();
 		const receivedMembers: string[] = [];

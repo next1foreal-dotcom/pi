@@ -1,11 +1,12 @@
 import { type ChildProcess, fork } from "node:child_process";
 import { once } from "node:events";
 import { lstat, mkdtemp, readdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import type { Server } from "../src/index.ts";
 import { connectUnixTestClient, type ProtocolTestClient, TestServerHost } from "../src/testing/index.ts";
-import { createUnixServer, getUnixSocketPath } from "../src/transports/unix/index.ts";
+import { createUnixServer, getLocalSocketPath, getUnixSocketPath } from "../src/transports/unix/index.ts";
 
 const servers = new Set<Server>();
 const clients = new Set<ProtocolTestClient>();
@@ -13,9 +14,11 @@ const children = new Set<ChildProcess>();
 const tempDirectories = new Set<string>();
 
 async function makeSocketPath(nested = false): Promise<string> {
-	const directory = await mkdtemp(join("/tmp", "ps-"));
+	const directory = await mkdtemp(join(tmpdir(), "ps-"));
 	tempDirectories.add(directory);
-	return nested ? join(directory, "p", "n", "server.sock") : join(directory, "server.sock");
+	return nested
+		? getLocalSocketPath("nested-server.sock", join(directory, "p", "n"))
+		: getLocalSocketPath("server.sock", directory);
 }
 
 function makeServer(path: string): Server {
@@ -39,18 +42,24 @@ afterEach(async () => {
 });
 
 test("creates an in-memory server ID and derives its explicit Unix socket path", async () => {
-	const directory = await mkdtemp(join("/tmp", "pi-server-"));
+	const directory = await mkdtemp(join(tmpdir(), "pi-server-"));
 	tempDirectories.add(directory);
 	const serverId = "00000000-0000-4000-8000-000000000001";
 	const path = getUnixSocketPath(serverId, directory);
 
-	expect(path).toBe(join(directory, `${serverId}.sock`));
+	if (process.platform === "win32") expect(path).toMatch(/^\\\\\.\\pipe\\pi-[0-9a-f]{16}-/);
+	else expect(path).toBe(join(directory, `${serverId}.sock`));
 	const first = createUnixServer(new TestServerHost(), { serverId, path });
 	servers.add(first);
 	await first.start();
 	const firstClient = await connectUnixTestClient(path);
 	clients.add(firstClient);
 	expect(await firstClient.hello()).toMatchObject({ serverId });
+	const duplicate = createUnixServer(new TestServerHost(), { serverId, path });
+	servers.add(duplicate);
+	await expect(duplicate.start()).rejects.toThrow(/already running/);
+	await duplicate.close();
+	servers.delete(duplicate);
 	await firstClient.close();
 	clients.delete(firstClient);
 	await first.close();
@@ -64,7 +73,7 @@ test("creates an in-memory server ID and derives its explicit Unix socket path",
 	expect(await replacementClient.hello()).toMatchObject({ serverId });
 });
 
-describe("Unix listener filesystem lifecycle", () => {
+describe.skipIf(process.platform === "win32")("Unix listener filesystem lifecycle", () => {
 	test("rejects a live listener without unlinking it", async () => {
 		const path = await makeSocketPath();
 		const first = makeServer(path);
