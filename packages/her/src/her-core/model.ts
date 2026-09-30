@@ -1,4 +1,5 @@
 import type { HerConfig } from "./config.ts";
+import { fetchModel } from "./model-fetch.ts";
 
 export interface CompletionUsage {
 	completion_tokens?: number;
@@ -114,7 +115,7 @@ export class OpenAICompatibleModel implements ModelLike {
 		const key = this.env[this.config.llm.apiKeyEnv];
 		if (!key) throw new Error(`Missing API key: set ${this.config.llm.apiKeyEnv}`);
 		const modelName = options.strong ? this.config.llm.modelStrong : this.config.llm.modelFast;
-		const response = await this.fetcher(chatCompletionsUrl(this.config.llm.baseUrl), {
+		const response = await fetchModel(this.fetcher, chatCompletionsUrl(this.config.llm.baseUrl), {
 			method: "POST",
 			headers: new Headers({
 				authorization: `Bearer ${key}`,

@@ -1,4 +1,5 @@
 import type { CompletionOptions, CompletionResult, CompletionUsage, ModelLike } from "./her-core/index.ts";
+import { fetchModel } from "./her-core/model-fetch.ts";
 
 interface SummaryConfig {
 	baseUrl: string;
@@ -86,7 +87,7 @@ async function completeChat(
 	options?: CompletionOptions,
 ): Promise<CompletionResult> {
 	const maxTokens = typeof options?.maxTokens === "number" && options.maxTokens > 0 ? options.maxTokens : 700;
-	const response = await fetch(chatCompletionsUrl(config.baseUrl), {
+	const response = await fetchModel(fetch, chatCompletionsUrl(config.baseUrl), {
 		method: "POST",
 		headers: headers(config.apiKey),
 		body: JSON.stringify({
