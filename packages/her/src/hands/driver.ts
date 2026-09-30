@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 
-export const CUA_DRIVER_M0 = {
-	version: "0.7.0",
+export const CUA_DRIVER = {
+	version: "0.30.1",
 	binary: "cua-driver",
 	callCommand: "call",
 	callArgShape: "cua-driver call <tool> <json-args>",
@@ -23,12 +23,12 @@ export const CUA_DRIVER_M0 = {
 	backgroundUnavailableSignal: "background_unavailable",
 	notepadSnapshotCommand:
 		'\'{"pid":30048,"window_id":25103322,"include_screenshot":false,"max_elements":80}\' | cua-driver call get_window_state',
-	evidenceFile: "pi-package/skills/her-hands-desktop/evidence/cua-driver-0.7.0-m0.txt",
+	evidenceFile: "pi-package/skills/her-hands-desktop/evidence/cua-driver-0.30.1.md",
 } as const;
 
 export type CuaDriverToolName =
-	| typeof CUA_DRIVER_M0.snapshotTool
-	| (typeof CUA_DRIVER_M0.actionTools)[keyof typeof CUA_DRIVER_M0.actionTools];
+	| typeof CUA_DRIVER.snapshotTool
+	| (typeof CUA_DRIVER.actionTools)[keyof typeof CUA_DRIVER.actionTools];
 
 export interface DriverResult {
 	ok: boolean;

@@ -36,7 +36,7 @@ Required input shape:
 
 ## Pinned cua-driver CLI
 
-M0 real run on 4080S pinned `cua-driver 0.7.0`.
+Current integration targets `cua-driver 0.30.1`. The original 0.7.0 M0 evidence is retained below as history.
 
 The CLI call shape is:
 
@@ -69,12 +69,14 @@ cua-driver describe drag
 
 - Snapshot tool: `get_window_state`; required args are `pid` and `window_id`.
 - Action tools: `click`, `double_click`, `right_click`, `scroll`, `type_text`, `press_key`, `hotkey`, `drag`.
-- `click`, `double_click`, and `right_click` accept either `element_index + window_id` or `x + y`.
-- Her keeps the latest snapshot frames in memory and may send click-like `elementIndex` actions to cua-driver as window-local `x/y`; this avoids Windows 0.7.0 bare-CLI element cache loss between separate `call` processes.
+- Indexed actions use the latest `snapshot_id` and, when present, `element_token`. Her attaches them to the selected `elementIndex`; it never converts an index to guessed coordinates.
+- CLI `call` now requires a running daemon. Start `cua-driver serve` in standard permission mode in the interactive desktop session. Do not enable autostart or bypass approvals as part of a tool call. Every snapshot/action must reach the same daemon; Her repeats its session label.
 - `type_text` on XAML/UWP hosts requires `element_index + window_id` and uses UIA ValuePattern.
-- `press_key` and `scroll` accept `element_index` for parity, but it is no-op on Windows in 0.7.0.
+- A failed snapshot, failed action, or unverified action invalidates Her's cached snapshot. Take a new snapshot before continuing; stale-handle failures never trigger an automatic coordinate fallback or retry.
 - `hotkey` may briefly foreground legacy Win32 targets when real modifier state is required; the Her tool must not choose foreground preemptively.
-- `drag` uses window-local screenshot pixels.
+- `drag` uses window-local screenshot pixels: `fromX`, `fromY`, `toX`, `toY`.
+- Only `effect: confirmed` is reported as `ok`. Other successful transports are `unverified` and stop the batch; inspect the actual app state before continuing.
+- The 0.30.1 checksum, regression and scripted live readback evidence are in `evidence/cua-driver-0.30.1.md`.
 
 ## M0 Evidence Summary
 

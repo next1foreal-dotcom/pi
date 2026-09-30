@@ -3,7 +3,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type } from "typebox";
 import type { Memory } from "../her-core/memory.ts";
 import { fenceUntrusted } from "../her-core/store.ts";
-import { CUA_DRIVER_M0, type HandsDriver } from "./driver.ts";
+import { CUA_DRIVER, type HandsDriver } from "./driver.ts";
 import { evaluateHandsPolicy, type HandsActionKind, type HandsResolvedConfig, WRITE_ACTIONS } from "./policy.ts";
 import { type HandsTrailEntry, recordTrail } from "./trail.ts";
 
@@ -33,38 +33,24 @@ interface WindowRef {
 	app_name?: string;
 	title?: string;
 }
-interface UiFrame {
-	x: number;
-	y: number;
-	w: number;
-	h: number;
-}
-
-interface CachedElement {
-	element_index?: number;
-	frame?: UiFrame;
-}
-
 interface CachedSnapshot {
-	pid: number;
-	window_id: number;
-	originX: number;
-	originY: number;
-	elements: CachedElement[];
+	snapshot_id: string;
+	elements: Array<{ element_index: number; element_token?: string }>;
 }
-
 interface ActionInput {
 	action: (typeof actionKinds)[number];
 	elementIndex?: number;
 	x?: number;
 	y?: number;
+	fromX?: number;
+	fromY?: number;
+	toX?: number;
+	toY?: number;
 	text?: string;
 	key?: string;
 	direction?: "up" | "down" | "left" | "right";
 	deliveryMode?: "background" | "foreground";
 }
-
-const coordinateClickActions = new Set<ActionInput["action"]>(["click", "double_click", "right_click"]);
 
 export function registerHandsTools(pi: ExtensionAPI, deps: HandsToolDeps): void {
 	const taskCounts = new Map<string, number>();
@@ -86,14 +72,15 @@ export function registerHandsTools(pi: ExtensionAPI, deps: HandsToolDeps): void 
 			if (!policy.allow) return await denyPolicy(deps, "snapshot", params.process, policy.reason);
 			try {
 				const windowRef = await findWindow(deps.driver, params.process, params.windowTitleHint, config);
+				snapshots.delete(windowKey(windowRef));
 				const result = await callDriver(
 					deps.driver,
-					CUA_DRIVER_M0.snapshotTool,
+					CUA_DRIVER.snapshotTool,
 					{
 						pid: windowRef.pid,
 						window_id: windowRef.window_id,
 						include_screenshot: false,
-						session: CUA_DRIVER_M0.session,
+						session: CUA_DRIVER.session,
 					},
 					config,
 				);
@@ -107,6 +94,7 @@ export function registerHandsTools(pi: ExtensionAPI, deps: HandsToolDeps): void 
 					window: windowRef,
 				});
 			} catch (error) {
+				snapshots.clear();
 				const message = errorMessage(error);
 				await recordTrail(deps.mem, `snapshot ${params.process}`, [
 					entry("snapshot", params.process, "background", "error", message),
@@ -127,9 +115,13 @@ export function registerHandsTools(pi: ExtensionAPI, deps: HandsToolDeps): void 
 			actions: Type.Array(
 				Type.Object({
 					action: StringEnum(actionKinds),
-					elementIndex: Type.Optional(Type.Number()),
+					elementIndex: Type.Optional(Type.Integer({ minimum: 0 })),
 					x: Type.Optional(Type.Number()),
 					y: Type.Optional(Type.Number()),
+					fromX: Type.Optional(Type.Number()),
+					fromY: Type.Optional(Type.Number()),
+					toX: Type.Optional(Type.Number()),
+					toY: Type.Optional(Type.Number()),
 					text: Type.Optional(Type.String()),
 					key: Type.Optional(Type.String()),
 					direction: Type.Optional(StringEnum(["up", "down", "left", "right"] as const)),
@@ -168,6 +160,7 @@ export function registerHandsTools(pi: ExtensionAPI, deps: HandsToolDeps): void 
 							);
 					}
 					const cachedSnapshot = snapshots.get(windowKey(windowRef));
+					if (!cachedSnapshot) throw new Error("snapshot required: call her_hands_snapshot for this window first");
 					for (const item of executable) {
 						const result = await callDriver(
 							deps.driver,
@@ -175,14 +168,17 @@ export function registerHandsTools(pi: ExtensionAPI, deps: HandsToolDeps): void 
 							actionPayload(item, windowRef, cachedSnapshot),
 							config,
 						);
-						const outcome = result.ok ? "ok" : "error";
+						const outcome = actionOutcome(result);
 						trail.push(
 							entry(item.action, params.process, item.deliveryMode ?? "background", outcome, detail(result)),
 						);
-						if (!result.ok) break;
+						if (outcome !== "ok") {
+							snapshots.delete(windowKey(windowRef));
+							break;
+						}
 					}
 				}
-				if (!trail.some((item) => item.outcome === "error") && policyStop) {
+				if (trail.every((item) => item.outcome === "ok") && policyStop) {
 					trail.push(
 						entry(
 							policyStop.action,
@@ -296,20 +292,35 @@ function actionPayload(action: ActionInput, window: WindowRef, snapshot?: Cached
 		pid: window.pid,
 		window_id: window.window_id,
 		delivery_mode: action.deliveryMode ?? "background",
-		session: CUA_DRIVER_M0.session,
+		session: CUA_DRIVER.session,
 	};
 	const hasCoordinates = action.x !== undefined || action.y !== undefined;
-	const frame = action.elementIndex === undefined ? undefined : findCachedFrame(snapshot, action.elementIndex);
-	if (action.elementIndex !== undefined && !hasCoordinates) {
-		if (frame && coordinateClickActions.has(action.action)) {
-			payload.x = Math.round(frame.x + frame.w / 2 - (snapshot?.originX ?? 0));
-			payload.y = Math.round(frame.y + frame.h / 2 - (snapshot?.originY ?? 0));
-		} else {
-			payload.element_index = action.elementIndex;
-		}
+	if (hasCoordinates && action.elementIndex !== undefined) throw new Error("use elementIndex or x/y, not both");
+	if ((action.x === undefined) !== (action.y === undefined)) throw new Error("x and y must be provided together");
+	if (action.elementIndex !== undefined) {
+		if (!snapshot) throw new Error("snapshot required for elementIndex");
+		const element = snapshot.elements.find((item) => item.element_index === action.elementIndex);
+		if (!element) throw new Error("elementIndex is absent from the latest snapshot");
+		payload.element_index = action.elementIndex;
+		payload.snapshot_id = snapshot.snapshot_id;
+		if (element.element_token) payload.element_token = element.element_token;
 	}
 	if (action.x !== undefined) payload.x = action.x;
 	if (action.y !== undefined) payload.y = action.y;
+	if (action.action === "drag") {
+		const points = [action.fromX, action.fromY, action.toX, action.toY];
+		if (
+			!points.every((value) => typeof value === "number" && Number.isFinite(value)) ||
+			hasCoordinates ||
+			action.elementIndex !== undefined
+		) {
+			throw new Error("drag requires fromX/fromY/toX/toY and no elementIndex or x/y");
+		}
+		payload.from_x = action.fromX;
+		payload.from_y = action.fromY;
+		payload.to_x = action.toX;
+		payload.to_y = action.toY;
+	}
 	if (action.text !== undefined) payload.text = action.text;
 	if (action.key !== undefined)
 		payload[action.action === "hotkey" ? "keys" : "key"] =
@@ -319,26 +330,33 @@ function actionPayload(action: ActionInput, window: WindowRef, snapshot?: Cached
 }
 
 function cacheSnapshot(snapshots: Map<string, CachedSnapshot>, window: WindowRef, stdout: string): void {
+	const body = JSON.parse(stdout) as CachedSnapshot;
+	if (
+		typeof body?.snapshot_id !== "string" ||
+		!/^s[0-9a-f]{8}$/.test(body.snapshot_id) ||
+		!Array.isArray(body.elements) ||
+		body.elements.some(
+			(item) =>
+				!item ||
+				!Number.isInteger(item.element_index) ||
+				(item.element_token !== undefined && typeof item.element_token !== "string"),
+		)
+	) {
+		throw new Error("invalid CUA snapshot: expected snapshot_id and structured elements");
+	}
+	snapshots.set(windowKey(window), body);
+}
+
+function actionOutcome(result: { ok: boolean; stdout: string }): HandsTrailEntry["outcome"] {
+	if (!result.ok) return "error";
 	try {
-		const body = JSON.parse(stdout) as { elements?: CachedElement[] };
-		const elements = body.elements ?? [];
-		const frames = elements.map((item) => item.frame).filter((frame): frame is UiFrame => frame !== undefined);
-		snapshots.set(windowKey(window), {
-			pid: window.pid,
-			window_id: window.window_id,
-			originX: frames.length > 0 ? Math.min(...frames.map((frame) => frame.x)) : 0,
-			originY: frames.length > 0 ? Math.min(...frames.map((frame) => frame.y)) : 0,
-			elements,
-		});
+		const body = JSON.parse(result.stdout) as { effect?: string; isError?: boolean };
+		if (body?.isError || body?.effect === "refused") return "error";
+		return body?.effect === "confirmed" ? "ok" : "unverified";
 	} catch {
-		// Snapshot text is still returned to the caller; cache misses fall back to driver-native element_index.
+		return "unverified";
 	}
 }
-
-function findCachedFrame(snapshot: CachedSnapshot | undefined, elementIndex: number): UiFrame | undefined {
-	return snapshot?.elements.find((item) => item.element_index === elementIndex)?.frame;
-}
-
 function windowKey(window: WindowRef): string {
 	return `${window.pid}:${window.window_id}`;
 }
@@ -346,7 +364,7 @@ function entry(
 	action: HandsActionKind,
 	targetProcess: string,
 	deliveryMode: "background" | "foreground",
-	outcome: "ok" | "denied" | "error",
+	outcome: HandsTrailEntry["outcome"],
 	detailText: string,
 ): HandsTrailEntry {
 	return { ts: new Date().toISOString(), action, targetProcess, deliveryMode, outcome, detail: detailText };
@@ -366,6 +384,8 @@ function detail(result: { stdout: string; stderr: string; exitCode: number | nul
 function renderActSummary(trail: HandsTrailEntry[]): string {
 	const error = trail.find((item) => item.outcome === "error");
 	if (error) return `hands act error:\n${error.detail}`;
+	const unverified = trail.find((item) => item.outcome === "unverified");
+	if (unverified) return `hands act unverified (stopped; inspect the target before continuing):\n${unverified.detail}`;
 	const denied = trail.find((item) => item.outcome === "denied");
 	if (denied) return `hands act denied:\n${denied.detail}`;
 	return "hands act ok";
@@ -377,6 +397,7 @@ function summarizeActions(actions: ActionInput[]): string {
 
 // A tier-2 approval is only worth asking for if it shows what is about to be typed or pressed.
 function describePayload(action: ActionInput): string {
+	if (action.action === "drag") return `: (${action.fromX}, ${action.fromY}) -> (${action.toX}, ${action.toY})`;
 	if (action.text !== undefined) return `: ${oneLine(action.text)}`;
 	if (action.key !== undefined) return `: ${oneLine(action.key)}`;
 	if (action.direction !== undefined) return `: ${action.direction}`;
