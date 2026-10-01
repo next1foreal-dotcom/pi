@@ -1,0 +1,14 @@
+{
+  "repository": "next1foreal-dotcom/pi",
+  "branch": "her/phase-0-pi-hygiene",
+  "baseline": "3f918b0dddf373582f1629a7da22a66ade7f0498",
+  "original_files": {
+    "packages/her/src/rsi/anchors.ts": "10c0a92cf973fa830b7627497e36fc3c99f87301",
+    "packages/her/src/her-core/selfmod-paths.ts": "5a0511cc51f69e3c8b368cba17078c8775522265",
+    "packages/her/src/her-core/selfmod-types.ts": "2e5bb6a263c4afb3dac1fab57bc3782c6158c39e",
+    "packages/her/src/her-core/selfmod.ts": "e24f4efdc8a8cbaf448f45270e7afe35ead31673",
+    "packages/her/src/her-core/selfmod-gate.ts": "14e0b6dd2fb8c97142d19c7fb631b5c04bdc3263",
+    "packages/her/src/her-core/selfmod-runners.ts": "e5df120ce755b9cc32ed5e27b88b45c20bca9d10",
+    "packages/her/test/selfmod-runners.test.ts": "40c3033e8c73c594d986c2828f9ec39a5575b357"
+  }
+}
