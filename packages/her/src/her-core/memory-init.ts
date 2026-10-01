@@ -59,7 +59,10 @@ export async function initStore(root: string): Promise<StorePaths> {
 	for (const [dirKey, content] of SAMANTHA_ZONE_READMES) {
 		await writeText(join(paths[dirKey], "README.md"), content);
 	}
-	await writeText(join(paths.root, ".gitignore"), "# secrets - never commit\n.env\n.her/lock\n");
+	await writeText(
+		join(paths.root, ".gitignore"),
+		"# secrets - never commit\n.env\n.her/lock\n\n# per-machine session liveness - never sync\n/presence/\n",
+	);
 	await writeText(join(paths.root, ".env.example"), "HER_LLM_API_KEY=your-key-here\n");
 	return paths;
 }
