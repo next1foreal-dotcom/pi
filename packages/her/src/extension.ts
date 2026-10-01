@@ -1243,7 +1243,13 @@ export default function her(pi: ExtensionAPI): void {
 			lastEventWakeCtx = ctx;
 			wakeTurnActive = false;
 			if (await maybeEventWake(ctx)) return;
-			if (!ctx.isIdle() || ctx.hasPendingMessages() || hasActiveGoal(ctx)) return;
+			// turn_end is dispatched before the run settles, so isIdle() is still false.
+			const completedBoundary =
+				event.context &&
+				event.outcome === "completed" &&
+				event.message.role === "assistant" &&
+				event.message.stopReason === "stop";
+			if ((!ctx.isIdle() && !completedBoundary) || ctx.hasPendingMessages() || hasActiveGoal(ctx)) return;
 			const task = await claimNextLongTask(memoryDir, {
 				leaseMinutes: goalLeaseMinutes(),
 				runner: `pi:${sessionId}`,

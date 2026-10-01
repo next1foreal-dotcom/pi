@@ -1942,3 +1942,81 @@ test("stale UI cannot interrupt sync bookkeeping", async () => {
 		assert.equal(typeof (entry.data as { commit: unknown }).commit, "string");
 	});
 });
+
+test("completed turn boundary surfaces real memory before the run becomes idle", async () => {
+	const store = await tempStore();
+	await writeText(
+		join(store, "semantic", "boundary-memory.md"),
+		"---\nkind: semantic\n---\nUse existing helpers before adding dependencies.\n",
+	);
+	await withMemoryDir(store, async () => {
+		const fake = createFakePi();
+		her(fake.pi);
+		const ctx = createContext(store);
+		ctx.isIdle = () => false;
+		const turnEnd = fake.handlers.get("turn_end")?.[0];
+		assert.ok(turnEnd);
+		await turnEnd(
+			{
+				type: "turn_end",
+				turnIndex: 1,
+				outcome: "completed",
+				context: {
+					contextEntries: [],
+					contextMessages: [],
+					llmMessages: [],
+					pendingMessages: [],
+					canContinue: false,
+				},
+				message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Done." }] },
+				toolResults: [],
+			},
+			ctx,
+		);
+		assert.ok(fake.entries.some((entry) => entryStatus(entry) === "mirror-sent"));
+		const log = (await readText(join(store, ".her", "trigger-log.jsonl"))) ?? "";
+		assert.match(log, /"outcome":"surfaced"/);
+	});
+});
+
+test("non-idle turn boundary does not surface on tools, failure or pending work", async () => {
+	for (const item of [
+		{ outcome: "completed", stopReason: "toolUse", pending: false },
+		{ outcome: "error", stopReason: "error", pending: false },
+		{ outcome: "aborted", stopReason: "aborted", pending: false },
+		{ outcome: "completed", stopReason: "stop", pending: true },
+	]) {
+		const store = await tempStore();
+		await withMemoryDir(store, async () => {
+			const fake = createFakePi();
+			her(fake.pi);
+			const ctx = createContext(store);
+			ctx.isIdle = () => false;
+			ctx.hasPendingMessages = () => item.pending;
+			const turnEnd = fake.handlers.get("turn_end")?.[0];
+			assert.ok(turnEnd);
+			await turnEnd(
+				{
+					type: "turn_end",
+					turnIndex: 1,
+					outcome: item.outcome,
+					context: {
+						contextEntries: [],
+						contextMessages: [],
+						llmMessages: [],
+						pendingMessages: [],
+						canContinue: false,
+					},
+					message: { role: "assistant", stopReason: item.stopReason, content: [] },
+					toolResults: [],
+				},
+				ctx,
+			);
+			assert.equal(
+				fake.entries.some((entry) => entryStatus(entry) === "mirror-sent"),
+				false,
+			);
+			assert.equal(await readText(join(store, ".her", "trigger-log.jsonl")), undefined);
+		});
+	}
+});
