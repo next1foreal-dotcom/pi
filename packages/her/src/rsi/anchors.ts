@@ -17,21 +17,48 @@ export const SELFMOD_ALLOWED_PATHS_V1: readonly string[] = ["packages/her/pi-pac
 
 const RUNTIME_ANCHOR_PATHS = [...ANCHOR_PATHS, "packages/her/src/rsi/anchors.ts"];
 
-function matchesPathPrefix(path: string, prefixes: readonly string[]): boolean {
-	const normalizedPath = path.replaceAll("\\", "/").toLowerCase();
-	const packageRelativePath = normalizedPath.startsWith("packages/her/")
-		? normalizedPath.slice("packages/her/".length)
-		: normalizedPath;
+/**
+ * Canonical repository-relative names only. This is a lexical check, not a
+ * filesystem sandbox: the apply layer must separately reject symlink escapes.
+ * Preserve the existing case-insensitive policy on all hosts.
+ */
+export function normalizeSelfmodBoundaryPath(path: string): string | undefined {
+	const value = path.replaceAll("\\", "/");
+	if (!value || value.startsWith("/") || /[\u0000-\u001f\u007f:]/.test(value)) return undefined;
+	const parts = value.split("/").filter((part) => part !== "" && part !== ".");
+	if (parts.length === 0) return undefined;
+	for (const part of parts) {
+		if (part === ".." || /[. ]$/.test(part) || /[<>"|?*]/.test(part)) return undefined;
+		// Reject Windows device aliases even when tests run on another platform.
+		if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part)) return undefined;
+	}
+	return parts.join("/").toLowerCase();
+}
+
+export function matchesSelfmodPathPrefix(path: string, prefixes: readonly string[]): boolean {
+	const normalized = normalizeSelfmodBoundaryPath(path);
+	if (normalized === undefined) return false;
 	return prefixes.some((prefix) => {
-		const normalizedPrefix = prefix.toLowerCase();
-		return normalizedPath.startsWith(normalizedPrefix) || packageRelativePath.startsWith(normalizedPrefix);
+		const needle = normalizeSelfmodBoundaryPath(prefix);
+		if (needle === undefined) return false;
+		return prefix.replaceAll("\\", "/").endsWith("/")
+			? normalized.startsWith(`${needle}/`)
+			: normalized === needle || normalized.startsWith(`${needle}/`);
 	});
 }
 
 export function isAnchorPath(path: string): boolean {
-	return matchesPathPrefix(path, RUNTIME_ANCHOR_PATHS);
+	const normalized = normalizeSelfmodBoundaryPath(path);
+	if (normalized === undefined) return false;
+	const packageRelative = normalized.startsWith("packages/her/")
+		? normalized.slice("packages/her/".length)
+		: normalized;
+	return (
+		matchesSelfmodPathPrefix(normalized, RUNTIME_ANCHOR_PATHS) ||
+		matchesSelfmodPathPrefix(packageRelative, RUNTIME_ANCHOR_PATHS)
+	);
 }
 
 export function isAllowedSelfModPath(path: string): boolean {
-	return matchesPathPrefix(path, SELFMOD_ALLOWED_PATHS_V1);
+	return matchesSelfmodPathPrefix(path, SELFMOD_ALLOWED_PATHS_V1);
 }

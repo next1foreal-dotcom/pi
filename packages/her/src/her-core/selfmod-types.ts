@@ -51,6 +51,12 @@ export interface SelfModRunRecord {
 	mergeCommit?: string;
 	anchorCommit: string;
 	rollback?: { at: string; revertCommit: string; pulseEvidence: string };
+	rollbackCheck?: {
+		at: string;
+		status: "needs-evidence" | "prepared" | "failed";
+		reason: string;
+		pulseEvidence?: string;
+	};
 	updatedAt: string;
 }
 

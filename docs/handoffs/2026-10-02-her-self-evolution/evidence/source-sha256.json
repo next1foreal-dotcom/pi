@@ -1,0 +1,140 @@
+[
+  {
+    "path": "packages/her/src/her-core/improvement-assessment.ts",
+    "sha256": "111c4b630ba4b3db204d481bf541a270865936c3c9cadd5a640b58e51858a6f6",
+    "lines": 163,
+    "gitBlobSha256": "111c4b630ba4b3db204d481bf541a270865936c3c9cadd5a640b58e51858a6f6"
+  },
+  {
+    "path": "packages/her/src/her-core/improvement-plan.ts",
+    "sha256": "1d4310694693f8e20def66f1f2db64cb3f38b299f8f2eccdad87a85166cdc74d",
+    "lines": 194,
+    "gitBlobSha256": "1d4310694693f8e20def66f1f2db64cb3f38b299f8f2eccdad87a85166cdc74d"
+  },
+  {
+    "path": "packages/her/src/her-core/improvement-process.ts",
+    "sha256": "92ef0da95c237ce00c21775b2cb547913980b007fc4cdbee4d67076690d6e961",
+    "lines": 90,
+    "gitBlobSha256": "92ef0da95c237ce00c21775b2cb547913980b007fc4cdbee4d67076690d6e961"
+  },
+  {
+    "path": "packages/her/src/her-core/improvement-runner.ts",
+    "sha256": "7d7741f81952471cec5c4390d818f6f132078f41920843b08e33d518a908e1c4",
+    "lines": 244,
+    "gitBlobSha256": "7d7741f81952471cec5c4390d818f6f132078f41920843b08e33d518a908e1c4"
+  },
+  {
+    "path": "packages/her/src/her-core/selfmod-gate.ts",
+    "sha256": "a80b4f98258e00550fa01e27943932b746086e88deb296d06d8b7d9f7a75d318",
+    "lines": 256,
+    "gitBlobSha256": "a80b4f98258e00550fa01e27943932b746086e88deb296d06d8b7d9f7a75d318"
+  },
+  {
+    "path": "packages/her/src/her-core/selfmod-paths.ts",
+    "sha256": "890997804ef45d59f9edbb2a577f9995d06dc1b01dfa00dda51443ea2675f745",
+    "lines": 53,
+    "gitBlobSha256": "890997804ef45d59f9edbb2a577f9995d06dc1b01dfa00dda51443ea2675f745"
+  },
+  {
+    "path": "packages/her/src/her-core/selfmod-rollback.ts",
+    "sha256": "93f59e3bfa03dc6d4d1644ec7f25b1ff6a27d252099781e671e4a86ba3871a5c",
+    "lines": 293,
+    "gitBlobSha256": "93f59e3bfa03dc6d4d1644ec7f25b1ff6a27d252099781e671e4a86ba3871a5c"
+  },
+  {
+    "path": "packages/her/src/her-core/selfmod-runners.ts",
+    "sha256": "dde9c0a32d36f1755797ca017c8cf13ef517abb4dd5acab20fbe276302e5704f",
+    "lines": 254,
+    "gitBlobSha256": "dde9c0a32d36f1755797ca017c8cf13ef517abb4dd5acab20fbe276302e5704f"
+  },
+  {
+    "path": "packages/her/src/her-core/selfmod-test-evidence.ts",
+    "sha256": "574be2d960cd79f6c66078ae5af148f31caf3028ceae57d8581d0a0d9e6f47a6",
+    "lines": 41,
+    "gitBlobSha256": "574be2d960cd79f6c66078ae5af148f31caf3028ceae57d8581d0a0d9e6f47a6"
+  },
+  {
+    "path": "packages/her/src/her-core/selfmod-types.ts",
+    "sha256": "97cf67c7c75fee7c1cb4f07b793e579ddc76d4074387579e579b06bf0a45a6bd",
+    "lines": 76,
+    "gitBlobSha256": "97cf67c7c75fee7c1cb4f07b793e579ddc76d4074387579e579b06bf0a45a6bd"
+  },
+  {
+    "path": "packages/her/src/her-core/selfmod.ts",
+    "sha256": "c08f3e5435ea44149fbf461e9136536a6aeef912e43ab47c29eb6c74bca38946",
+    "lines": 330,
+    "gitBlobSha256": "c08f3e5435ea44149fbf461e9136536a6aeef912e43ab47c29eb6c74bca38946"
+  },
+  {
+    "path": "packages/her/src/rsi/anchors.ts",
+    "sha256": "13fe7f06c453e730898e62baab1cfb32d72f0470c155d0ff7ddce7e2c921f562",
+    "lines": 65,
+    "gitBlobSha256": "13fe7f06c453e730898e62baab1cfb32d72f0470c155d0ff7ddce7e2c921f562"
+  },
+  {
+    "path": "packages/her/test/improvement-assessment.test.ts",
+    "sha256": "41782ed25bb162244925c9a55825234515ea7049b273bc0e1ba92b59a5c06877",
+    "lines": 161,
+    "gitBlobSha256": "41782ed25bb162244925c9a55825234515ea7049b273bc0e1ba92b59a5c06877"
+  },
+  {
+    "path": "packages/her/test/improvement-runner.test.ts",
+    "sha256": "4f10ad0f1d2ebd173aab076413325855f2ee7f317fd609169cf637b6a7cb75e0",
+    "lines": 371,
+    "gitBlobSha256": "4f10ad0f1d2ebd173aab076413325855f2ee7f317fd609169cf637b6a7cb75e0"
+  },
+  {
+    "path": "packages/her/test/selfmod-apply.test.ts",
+    "sha256": "7b76d9556116358d9c397bec009d78b219ca816fe8d45ab20c2e8f1a981df2c5",
+    "lines": 340,
+    "gitBlobSha256": "7b76d9556116358d9c397bec009d78b219ca816fe8d45ab20c2e8f1a981df2c5"
+  },
+  {
+    "path": "packages/her/test/selfmod-boundaries.test.ts",
+    "sha256": "a75bdd9fef5cc82021ef58a0e5b92d0e8bc561e16865cf454d9f7c76c7f938fd",
+    "lines": 80,
+    "gitBlobSha256": "a75bdd9fef5cc82021ef58a0e5b92d0e8bc561e16865cf454d9f7c76c7f938fd"
+  },
+  {
+    "path": "packages/her/test/selfmod-harness.ts",
+    "sha256": "048edab384ad537e8176918c7af3a8152b741e4be05687b42623279db60c045f",
+    "lines": 167,
+    "gitBlobSha256": "048edab384ad537e8176918c7af3a8152b741e4be05687b42623279db60c045f"
+  },
+  {
+    "path": "packages/her/test/selfmod-pickup.test.ts",
+    "sha256": "985ba26f569dccd0f076aaca3f0c6b6efa9f4162f1dea9184f49209b6d315f15",
+    "lines": 330,
+    "gitBlobSha256": "985ba26f569dccd0f076aaca3f0c6b6efa9f4162f1dea9184f49209b6d315f15"
+  },
+  {
+    "path": "packages/her/test/selfmod-rollback.test.ts",
+    "sha256": "9bbf9e6ae28f66e844b946035e3212597cbe26fce4e187b7515c82600ccca02d",
+    "lines": 201,
+    "gitBlobSha256": "9bbf9e6ae28f66e844b946035e3212597cbe26fce4e187b7515c82600ccca02d"
+  },
+  {
+    "path": "packages/her/test/selfmod-runners.test.ts",
+    "sha256": "243791b67e350eadf2e1c29aa96bd38c2900c32db56908692df7458b91e6e4af",
+    "lines": 236,
+    "gitBlobSha256": "243791b67e350eadf2e1c29aa96bd38c2900c32db56908692df7458b91e6e4af"
+  },
+  {
+    "path": "packages/her/test/selfmod-test-evidence.test.ts",
+    "sha256": "3785df7d7dd9ae5f37e27dc17b98a527e6411504c1000c38da7f1c05dbaca963",
+    "lines": 97,
+    "gitBlobSha256": "3785df7d7dd9ae5f37e27dc17b98a527e6411504c1000c38da7f1c05dbaca963"
+  },
+  {
+    "path": "packages/her/test/selfmod-v1.test.ts",
+    "sha256": "454a9d4051eb898aea3d2a87a01c391429a782aacc0959c79fd0c63092020704",
+    "lines": 143,
+    "gitBlobSha256": "454a9d4051eb898aea3d2a87a01c391429a782aacc0959c79fd0c63092020704"
+  },
+  {
+    "path": "packages/her/test/selfmod-v2.test.ts",
+    "sha256": "efb94e4d4f412ce506e91a09f092b5d48706214c89c8be677d26147ae01ef006",
+    "lines": 67,
+    "gitBlobSha256": "efb94e4d4f412ce506e91a09f092b5d48706214c89c8be677d26147ae01ef006"
+  }
+]

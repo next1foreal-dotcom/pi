@@ -1,0 +1,4 @@
+Command: git commit -m 'feat(her): integrate measured self-evolution with bound rollback evidence'
+Exit: 1
+anchor-path-gate blocked staged anchor paths:
+packages/her/src/rsi/anchors.ts

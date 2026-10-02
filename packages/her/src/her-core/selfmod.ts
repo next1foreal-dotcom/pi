@@ -1,4 +1,6 @@
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
+import { type FrozenImprovementPlan, loadImprovementPlan } from "./improvement-plan.ts";
+import { assertImprovementReady, type ImprovementRun, runImprovementExperiment } from "./improvement-runner.ts";
 import { applyErrorMessage, applySelfmodPatch } from "./selfmod-apply.ts";
 import { meetsMergeCriteria, runSelfmodGate, type SelfModGateHooks, type SelfModRetry } from "./selfmod-gate.ts";
 import { appendSelfmodSnapshot, readSelfmodRecords } from "./selfmod-ledger.ts";
@@ -51,6 +53,8 @@ export interface RunSelfModOptions {
 	worktreeRoot: string;
 }
 
+type PreparedSelfModOptions = RunSelfModOptions & { improvementPlan: FrozenImprovementPlan };
+
 export interface SelfModRunResult {
 	outcome: "not-run" | "rejected" | "merged";
 	record: SelfModRunRecord;
@@ -73,12 +77,25 @@ export async function runSelfMod(opts: RunSelfModOptions): Promise<SelfModRunRes
 			anchorHits: [],
 		});
 	}
+	let improvementPlan: FrozenImprovementPlan;
+	try {
+		improvementPlan = await loadImprovementPlan({
+			memoryDir: opts.memoryDir,
+			proposalId: opts.proposal.id,
+			baselineCommit: anchorCommit,
+			targetPaths: opts.proposal.targetPaths,
+		});
+	} catch (error) {
+		return snapshot(opts.memoryDir, { ...base, stage: "rejected" }, "start", "rejected", {
+			error: `independent evaluation unavailable: ${applyErrorMessage(error)}`,
+		});
+	}
 	await appendSelfmodSnapshot(opts.memoryDir, base, "start");
-	return continueAfterPropose(opts, base, now);
+	return continueAfterPropose({ ...opts, improvementPlan }, base, now);
 }
 
 async function continueAfterPropose(
-	opts: RunSelfModOptions,
+	opts: PreparedSelfModOptions,
 	proposed: SelfModRunRecord,
 	now: () => string,
 ): Promise<SelfModRunResult> {
@@ -93,6 +110,11 @@ async function continueAfterPropose(
 	try {
 		if (await selfmodIdAlreadyUsed(opts)) {
 			return rejectIdAlreadyUsed(opts, proposed, now);
+		}
+		if ((await readHead(opts.repoRoot, opts.git)) !== opts.improvementPlan.baselineCommit) {
+			return snapshot(opts.memoryDir, { ...proposed, stage: "rejected" }, "propose", "rejected", {
+				error: "baseline changed before isolated apply",
+			});
 		}
 		const tree = await createSelfmodWorktree({
 			git: opts.git,
@@ -157,7 +179,7 @@ async function continueAfterPropose(
 }
 
 async function finishGateAndMerge(
-	opts: RunSelfModOptions,
+	opts: PreparedSelfModOptions,
 	applied: SelfModRunRecord,
 	now: () => string,
 ): Promise<SelfModRunResult> {
@@ -190,6 +212,22 @@ async function finishGateAndMerge(
 		const rejected: SelfModRunRecord = { ...gated, stage: "rejected", updatedAt: now() };
 		return snapshot(opts.memoryDir, rejected, "gate", "rejected", { error: "empty diff", ...extraOf(report) });
 	}
+	// Frozen before apply. Process results are measured by the host, not the proposal.
+	let improvement: ImprovementRun | undefined;
+	try {
+		improvement = await runImprovementExperiment({
+			plan: opts.improvementPlan,
+			worktreePath,
+			auditRoot: join(opts.memoryDir, "audit", "selfmod-improvement"),
+		});
+		await appendSelfmodSnapshot(opts.memoryDir, gated, "gate", { improvement });
+		await assertImprovementReady(improvement, opts.repoRoot, worktreePath);
+	} catch (error) {
+		return snapshot(opts.memoryDir, { ...gated, stage: "rejected", updatedAt: now() }, "gate", "rejected", {
+			error: `independent improvement gate: ${applyErrorMessage(error)}`,
+			improvement,
+		});
+	}
 	const mergeCommit = await mergeSelfmodBranch({
 		branch: applied.branch,
 		git: opts.git,
@@ -197,7 +235,7 @@ async function finishGateAndMerge(
 		repoRoot: opts.repoRoot,
 	});
 	const merged: SelfModRunRecord = { ...gated, stage: "merge", mergeCommit, updatedAt: now() };
-	return snapshot(opts.memoryDir, merged, "gate", "merged");
+	return snapshot(opts.memoryDir, merged, "gate", "merged", { improvement });
 }
 
 function extraOf(report: {

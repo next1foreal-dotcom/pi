@@ -35,15 +35,18 @@ test("defaultRunTests spawns node --import tsx --test with the pinned file list"
 	const calls: Array<{ args: string[]; cmd: string; cwd: string }> = [];
 	const result = await defaultRunTests("/tmp/wt", [], async (cmd, args, opts) => {
 		calls.push({ cmd, args: [...args], cwd: opts.cwd });
-		return { code: 0 };
+		return {
+			code: 0,
+			stdout: "TAP version 13\n# tests 3\n# pass 3\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n",
+		};
 	});
 	assert.equal(calls.length, 1);
 	assert.equal(calls[0].cmd, "node");
 	assert.equal(calls[0].cwd, "/tmp/wt");
-	assert.deepEqual(calls[0].args.slice(0, 3), ["--import", "tsx", "--test"]);
-	assert.deepEqual(calls[0].args.slice(3), [...SELFMOD_GATE_TEST_FILES]);
+	assert.deepEqual(calls[0].args.slice(0, 4), ["--import", "tsx", "--test", "--test-reporter=tap"]);
+	assert.deepEqual(calls[0].args.slice(4), [...SELFMOD_GATE_TEST_FILES]);
 	assert.equal(result.failed, 0);
-	assert.ok(result.passed >= 1);
+	assert.equal(result.passed, 3);
 });
 
 test("defaultRunTests rejects a non-zero run with the exit code and the stderr tail, so the gate ledger carries a reason", async () => {

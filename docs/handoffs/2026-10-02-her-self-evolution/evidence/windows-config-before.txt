@@ -1,0 +1,20 @@
+✖ revision checks preserve the host Git line-ending configuration (895.6925ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1113.2836
+
+✖ failing tests:
+
+test at packages\her\test\improvement-runner.test.ts:5:10199
+✖ revision checks preserve the host Git line-ending configuration (895.6925ms)
+  Error: candidate has uncommitted tracked changes
+      at runImprovementExperiment (D:\@Her\wt-self-evolution-20261002\packages\her\src\her-core\improvement-runner.ts:105:91)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\improvement-runner.test.ts:206:15)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3)

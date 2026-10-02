@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { promisify } from "node:util";
+import { parseSelfmodTestEvidence } from "./selfmod-test-evidence.ts";
 import type { SelfModProposal } from "./selfmod-types.ts";
 import { listDiffNames, type SelfmodGit } from "./selfmod-worktree.ts";
 
@@ -17,6 +18,7 @@ export const SELFMOD_GATE_TEST_FILES = [
 	"packages/her/test/selfmod-runners.test.ts",
 	"packages/her/test/selfmod-v1.test.ts",
 	"packages/her/test/selfmod-v2.test.ts",
+	"packages/her/test/selfmod-rollback.test.ts",
 	"packages/her/test/selfmod-v3.test.ts",
 	"packages/her/test/selfmod-v4.test.ts",
 	"packages/her/test/selfmod-worktree.test.ts",
@@ -24,6 +26,10 @@ export const SELFMOD_GATE_TEST_FILES = [
 	"packages/her/test/anchor-tool-call.test.ts",
 	"packages/her/test/governed-tools-failsafe.test.ts",
 	"packages/her/test/rsi-anchors.test.ts",
+	"packages/her/test/selfmod-boundaries.test.ts",
+	"packages/her/test/selfmod-test-evidence.test.ts",
+	"packages/her/test/improvement-assessment.test.ts",
+	"packages/her/test/improvement-runner.test.ts",
 ] as const;
 
 export const SELFMOD_EVAL_DIR = "evals/selfmod-gate";
@@ -62,14 +68,18 @@ export async function defaultRunTests(
 	// Resolve only on a green run. Anything else rejects with the exit code and the tail of the
 	// output, so runTestsStep records a reason and the ledger stops showing a bare
 	// { failed: 1, passed: 0 } sentinel that reads the same for a broken worktree and a real failure.
-	const result = await spawn("node", ["--import", "tsx", "--test", ...SELFMOD_GATE_TEST_FILES], {
-		cwd: worktreePath,
-	});
+	const result = await spawn(
+		"node",
+		["--import", "tsx", "--test", "--test-reporter=tap", ...SELFMOD_GATE_TEST_FILES],
+		{
+			cwd: worktreePath,
+		},
+	);
 	if (result.code !== 0) {
 		const tail = (result.stderr?.trim() || result.stdout?.trim() || "(no output)").slice(-12000);
 		throw new Error(`node --test exit ${result.code}: ${tail}`);
 	}
-	return { failed: 0, passed: 1 };
+	return parseSelfmodTestEvidence(result.stdout ?? "");
 }
 
 export async function defaultRunEvalFixtures(opts: DefaultEvalOptions): Promise<boolean> {

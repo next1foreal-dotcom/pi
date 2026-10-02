@@ -1,0 +1,321 @@
+✖ rollback refuses pre-adoption error (2090.929ms)
+✖ rollback refuses future error (1974.8095ms)
+✖ rollback refuses invalid timestamp (1983.6155ms)
+✖ rollback refuses free-text filename and proposal mention (2235.5674ms)
+✖ rollback refuses derived crash claim (1912.4369ms)
+✖ rollback requires exact structured proposalId (1865.4768ms)
+✖ rollback requires exact structured mergeCommit (1825.2893ms)
+✖ rollback requires exact structured targetPaths (1783.214ms)
+✖ a still-running unmatched start is pending evidence, never a crash (1789.7801ms)
+✔ planned restart suppresses a related failed host exit (1512.313ms)
+✖ confirmed failed host exit with exact adoption binding can revert (1392.4419ms)
+✖ actual revert restores exact bytes and only appends both audit histories (1738.7762ms)
+✖ concurrent rollback checks execute only one real revert (1591.6494ms)
+✖ rollback respects the shared adoption lock (1965.7126ms)
+✖ later target edits are preserved for manual review (1878.1589ms)
+✖ revert failure stays pending and is not retried automatically (1424.2536ms)
+✖ interruption after real revert does not cause a second revert (1545.8369ms)
+ℹ tests 17
+ℹ suites 0
+ℹ pass 1
+ℹ fail 16
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 31761.158
+
+✖ failing tests:
+
+test at packages\her\test\selfmod-rollback.test.ts:1:2206
+✖ rollback refuses pre-adoption error (2090.929ms)
+  AssertionError [ERR_ASSERTION]: Expected "actual" to be strictly unequal to:
+
+  'reverted'
+      at TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\selfmod-rollback.test.ts:43:10)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'reverted',
+    expected: 'reverted',
+    operator: 'notStrictEqual',
+    diff: 'simple'
+  }
+
+test at packages\her\test\selfmod-rollback.test.ts:1:2206
+✖ rollback refuses future error (1974.8095ms)
+  AssertionError [ERR_ASSERTION]: Expected "actual" to be strictly unequal to:
+
+  'reverted'
+      at TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\selfmod-rollback.test.ts:43:10)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'reverted',
+    expected: 'reverted',
+    operator: 'notStrictEqual',
+    diff: 'simple'
+  }
+
+test at packages\her\test\selfmod-rollback.test.ts:1:2206
+✖ rollback refuses invalid timestamp (1983.6155ms)
+  AssertionError [ERR_ASSERTION]: Expected "actual" to be strictly unequal to:
+
+  'reverted'
+      at TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\selfmod-rollback.test.ts:43:10)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'reverted',
+    expected: 'reverted',
+    operator: 'notStrictEqual',
+    diff: 'simple'
+  }
+
+test at packages\her\test\selfmod-rollback.test.ts:1:2206
+✖ rollback refuses free-text filename and proposal mention (2235.5674ms)
+  AssertionError [ERR_ASSERTION]: Expected "actual" to be strictly unequal to:
+
+  'reverted'
+      at TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\selfmod-rollback.test.ts:43:10)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'reverted',
+    expected: 'reverted',
+    operator: 'notStrictEqual',
+    diff: 'simple'
+  }
+
+test at packages\her\test\selfmod-rollback.test.ts:1:2206
+✖ rollback refuses derived crash claim (1912.4369ms)
+  AssertionError [ERR_ASSERTION]: Expected "actual" to be strictly unequal to:
+
+  'reverted'
+      at TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\selfmod-rollback.test.ts:43:10)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'reverted',
+    expected: 'reverted',
+    operator: 'notStrictEqual',
+    diff: 'simple'
+  }
+
+test at packages\her\test\selfmod-rollback.test.ts:1:2517
+✖ rollback requires exact structured proposalId (1865.4768ms)
+  AssertionError [ERR_ASSERTION]: Expected "actual" to be strictly unequal to:
+
+  'reverted'
+      at TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\selfmod-rollback.test.ts:51:10)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'reverted',
+    expected: 'reverted',
+    operator: 'notStrictEqual',
+    diff: 'simple'
+  }
+
+test at packages\her\test\selfmod-rollback.test.ts:1:2517
+✖ rollback requires exact structured mergeCommit (1825.2893ms)
+  AssertionError [ERR_ASSERTION]: Expected "actual" to be strictly unequal to:
+
+  'reverted'
+      at TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\selfmod-rollback.test.ts:51:10)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'reverted',
+    expected: 'reverted',
+    operator: 'notStrictEqual',
+    diff: 'simple'
+  }
+
+test at packages\her\test\selfmod-rollback.test.ts:1:2517
+✖ rollback requires exact structured targetPaths (1783.214ms)
+  AssertionError [ERR_ASSERTION]: Expected "actual" to be strictly unequal to:
+
+  'reverted'
+      at TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\selfmod-rollback.test.ts:51:10)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'reverted',
+    expected: 'reverted',
+    operator: 'notStrictEqual',
+    diff: 'simple'
+  }
+
+test at packages\her\test\selfmod-rollback.test.ts:1:2858
+✖ a still-running unmatched start is pending evidence, never a crash (1789.7801ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+
+  + 'reverted'
+  - 'needs-evidence'
+
+      at TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\selfmod-rollback.test.ts:57:9)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'reverted',
+    expected: 'needs-evidence',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at packages\her\test\selfmod-rollback.test.ts:1:3689
+✖ confirmed failed host exit with exact adoption binding can revert (1392.4419ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+
+  + 'watching'
+  - 'reverted'
+
+      at TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\selfmod-rollback.test.ts:72:9)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'watching',
+    expected: 'reverted',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at packages\her\test\selfmod-rollback.test.ts:1:3921
+✖ actual revert restores exact bytes and only appends both audit histories (1738.7762ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  ... Skipped lines
+
+  + Buffer(18) [Uint8Array] [
+  - Buffer(16) [Uint8Array] [
+      35,
+      32,
+      102,
+      105,
+      120,
+  ...
+      101,
+  +   13,
+      10,
+      104,
+      101,
+      108,
+      108,
+      111,
+  +   13,
+      10
+    ]
+
+      at TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\selfmod-rollback.test.ts:81:9)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: <Buffer 23 20 66 69 78 74 75 72 65 0d 0a 68 65 6c 6c 6f 0d 0a>,
+    expected: <Buffer 23 20 66 69 78 74 75 72 65 0a 68 65 6c 6c 6f 0a>,
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at packages\her\test\selfmod-rollback.test.ts:1:4738
+✖ concurrent rollback checks execute only one real revert (1591.6494ms)
+  Error: Command failed: git revert --no-edit b07c450b9ae4b5c0628cce921fea9bce40f01113
+  error: Unable to create 'C:/Users/Admin/AppData/Local/Temp/her-g280-repo-rollback-evidence-73c1Hm/.git/index.lock': File exists.
+
+  Another git process seems to be running in this repository, e.g.
+  an editor opened by 'git commit'. Please make sure all processes
+  are terminated then try again. If it still fails, a git process
+  may have crashed in this repository earlier:
+  remove the file manually to continue.
+  fatal: revert failed
+
+      at genericNodeError (node:internal/errors:985:15)
+      at wrappedFn (node:internal/errors:539:14)
+      at ChildProcess.exithandler (node:child_process:417:12)
+      at ChildProcess.emit (node:events:509:28)
+      at maybeClose (node:internal/child_process:1124:16)
+      at ChildProcess._handle.onexit (node:internal/child_process:306:5) {
+    code: 128,
+    killed: false,
+    signal: null,
+    cmd: 'git revert --no-edit b07c450b9ae4b5c0628cce921fea9bce40f01113',
+    stdout: '',
+    stderr: "error: Unable to create 'C:/Users/Admin/AppData/Local/Temp/her-g280-repo-rollback-evidence-73c1Hm/.git/index.lock': File exists.\n\nAnother git process seems to be running in this repository, e.g.\nan editor opened by 'git commit'. Please make sure all processes\nare terminated then try again. If it still fails, a git process\nmay have crashed in this repository earlier:\nremove the file manually to continue.\nfatal: revert failed\n"
+  }
+
+test at packages\her\test\selfmod-rollback.test.ts:1:5047
+✖ rollback respects the shared adoption lock (1965.7126ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+  'reverted' !== 'busy'
+
+      at TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\selfmod-rollback.test.ts:96:15)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'reverted',
+    expected: 'busy',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at packages\her\test\selfmod-rollback.test.ts:1:5304
+✖ later target edits are preserved for manual review (1878.1589ms)
+  Error: Command failed: git revert --no-edit a0782e99dfd39058da9fd3f77cb92b2a047c6f87
+  error: could not revert a0782e9... selfmod apply
+  hint: After resolving the conflicts, mark them with
+  hint: "git add/rm <pathspec>", then run
+  hint: "git revert --continue".
+  hint: You can instead skip this commit with "git revert --skip".
+  hint: To abort and get back to the state before "git revert",
+  hint: run "git revert --abort".
+  hint: Disable this message with "git config set advice.mergeConflict false"
+
+      at genericNodeError (node:internal/errors:985:15)
+      at wrappedFn (node:internal/errors:539:14)
+      at ChildProcess.exithandler (node:child_process:417:12)
+      at ChildProcess.emit (node:events:509:28)
+      at maybeClose (node:internal/child_process:1124:16)
+      at ChildProcess._handle.onexit (node:internal/child_process:306:5) {
+    code: 1,
+    killed: false,
+    signal: null,
+    cmd: 'git revert --no-edit a0782e99dfd39058da9fd3f77cb92b2a047c6f87',
+    stdout: 'Auto-merging packages/her/pi-package/skills/her-intake/SKILL.md\nCONFLICT (content): Merge conflict in packages/her/pi-package/skills/her-intake/SKILL.md\n',
+    stderr: 'error: could not revert a0782e9... selfmod apply\nhint: After resolving the conflicts, mark them with\nhint: "git add/rm <pathspec>", then run\nhint: "git revert --continue".\nhint: You can instead skip this commit with "git revert --skip".\nhint: To abort and get back to the state before "git revert",\nhint: run "git revert --abort".\nhint: Disable this message with "git config set advice.mergeConflict false"\n'
+  }
+
+test at packages\her\test\selfmod-rollback.test.ts:1:5593
+✖ revert failure stays pending and is not retried automatically (1424.2536ms)
+  Error: revert conflict
+      at failingGit (D:\@Her\wt-self-evolution-20261002\packages\her\test\selfmod-rollback.test.ts:109:49)
+      at revertSelfmodMerge (D:\@Her\wt-self-evolution-20261002\packages\her\src\her-core\selfmod-worktree.ts:144:8)
+      at checkRollback (D:\@Her\wt-self-evolution-20261002\packages\her\src\her-core\selfmod-rollback.ts:35:29)
+      at async TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\selfmod-rollback.test.ts:112:16)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7)
+
+test at packages\her\test\selfmod-rollback.test.ts:1:6120
+✖ interruption after real revert does not cause a second revert (1545.8369ms)
+  Error: host interrupted after revert
+      at interruptedGit (D:\@Her\wt-self-evolution-20261002\packages\her\test\selfmod-rollback.test.ts:121:23)
+      at readHead (D:\@Her\wt-self-evolution-20261002\packages\her\src\her-core\selfmod-worktree.ts:31:16)
+      at revertSelfmodMerge (D:\@Her\wt-self-evolution-20261002\packages\her\src\her-core\selfmod-worktree.ts:145:9)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async checkRollback (D:\@Her\wt-self-evolution-20261002\packages\her\src\her-core\selfmod-rollback.ts:35:23)
+      at async TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\selfmod-rollback.test.ts:126:16)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7)

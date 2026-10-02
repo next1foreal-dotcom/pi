@@ -3,6 +3,7 @@ import { lstat, mkdir, mkdtemp, rm, rmdir, unlink, writeFile } from "node:fs/pro
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
+import { IMPROVEMENT_PLAN_DIR, sha256 } from "../src/her-core/improvement-plan.ts";
 import { initStore } from "../src/her-core/index.ts";
 import type { SelfModProposal } from "../src/her-core/selfmod-types.ts";
 
@@ -11,6 +12,18 @@ const execFileAsync = promisify(execFile);
 export const SKILL_REL = "packages/her/pi-package/skills/her-intake/SKILL.md";
 export const SKILL_TS_REL = "packages/her/pi-package/skills/her-intake/note.ts";
 export const PROMPT_REL = "prompts/her.md";
+
+const SYNTHETIC_EVALUATOR = [
+	'import { readFileSync } from "node:fs";',
+	'const request = JSON.parse(readFileSync(0, "utf8"));',
+	'const artifact = request.artifacts.find((item) => item.path.endsWith("/SKILL.md"));',
+	'const text = typeof artifact?.content === "string" ? artifact.content : "";',
+	"const mode = request.input?.mode;",
+	'const observation = mode === "holdout"',
+	'? { source: "synthetic-selfmod-fixture", mode, changed: text.trimEnd().split("\\n").length > 2 }',
+	': { source: "synthetic-selfmod-fixture", mode, nonEmpty: text.trim().length > 0 };',
+	"process.stdout.write(JSON.stringify({ observation }));",
+].join("\n");
 
 export interface SelfmodFixture {
 	id: string;
@@ -37,7 +50,10 @@ export async function makeFixture(slug: string): Promise<SelfmodFixture> {
 	await writeRel(repoRoot, PROMPT_REL, "# her\n");
 	await git(repoRoot, "add", "-A");
 	await git(repoRoot, "commit", "-q", "-m", "initial");
-	return { id: `selfmod-20260818-${slug}`, memoryDir, repoRoot, worktreeRoot };
+	const id = `selfmod-20260818-${slug}`;
+	const baselineCommit = (await git(repoRoot, "rev-parse", "HEAD")).stdout.trim();
+	await writeImprovementPlan(memoryDir, id, baselineCommit);
+	return { id, memoryDir, repoRoot, worktreeRoot };
 }
 
 export async function destroyFixture(fx: SelfmodFixture): Promise<void> {
@@ -58,6 +74,44 @@ export async function destroyFixture(fx: SelfmodFixture): Promise<void> {
 		await rm(fx.worktreeRoot, { force: true, recursive: true }).catch(() => undefined);
 		await rm(fx.memoryDir, { force: true, recursive: true }).catch(() => undefined);
 	}
+}
+
+export async function writeImprovementPlan(
+	memoryDir: string,
+	proposalId: string,
+	baselineCommit: string,
+	targets: readonly string[] = [SKILL_REL],
+): Promise<void> {
+	const evaluatorPath = `${IMPROVEMENT_PLAN_DIR}/evaluators/deterministic.mjs`;
+	const raw = {
+		version: 1,
+		proposalId,
+		baselineCommit,
+		targets: [...targets],
+		trainingInputDigests: [],
+		cases: [
+			{
+				id: "holdout",
+				split: "holdout",
+				input: { mode: "holdout" },
+				expected: { source: "synthetic-selfmod-fixture", mode: "holdout", changed: true },
+			},
+			{
+				id: "regression",
+				split: "regression",
+				input: { mode: "regression" },
+				expected: { source: "synthetic-selfmod-fixture", mode: "regression", nonEmpty: true },
+			},
+		],
+		minHoldoutGain: 1,
+		maxTotalCostMs: 120_000,
+		priorExperimentCostMs: 0,
+		timeoutMs: 10_000,
+		maxOutputBytes: 8_192,
+		evaluator: { path: evaluatorPath, sha256: sha256(SYNTHETIC_EVALUATOR) },
+	};
+	await writeRel(memoryDir, evaluatorPath, SYNTHETIC_EVALUATOR);
+	await writeRel(memoryDir, `${IMPROVEMENT_PLAN_DIR}/${proposalId}.json`, `${JSON.stringify(raw, null, 2)}\n`);
 }
 
 export function proposalFor(fx: SelfmodFixture, over: Partial<SelfModProposal> = {}): SelfModProposal {

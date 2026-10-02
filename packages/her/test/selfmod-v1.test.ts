@@ -1,8 +1,20 @@
 import assert from "node:assert/strict";
+import { rm } from "node:fs/promises";
+import { join } from "node:path";
 import test from "node:test";
 import { listHerEvents } from "../src/her-core/event-history.ts";
+import { loadImprovementPlan } from "../src/her-core/improvement-plan.ts";
 import { readSelfmodRecords, runSelfMod } from "../src/her-core/selfmod.ts";
-import { applySkillLine, destroyFixture, git, greenHooks, makeFixture, proposalFor } from "./selfmod-harness.ts";
+import {
+	applySkillLine,
+	destroyFixture,
+	git,
+	greenHooks,
+	makeFixture,
+	proposalFor,
+	SKILL_TS_REL,
+	writeImprovementPlan,
+} from "./selfmod-harness.ts";
 
 test("V1: injected failing test rejects with full gate result and no merge", async () => {
 	const fx = await makeFixture("v1");
@@ -76,6 +88,54 @@ test("bare runSelfMod without test/eval runners rejects closed, no merge, no tag
 		assert.match(evidence, /no selfmod-gate eval fixtures wired/);
 		const tags = (await git(fx.repoRoot, "tag", "-l", `selfmod/${fx.id}`)).stdout.trim();
 		assert.equal(tags, "");
+	} finally {
+		await destroyFixture(fx);
+	}
+});
+
+test("missing host-frozen plan rejects before apply", { timeout: 60_000 }, async () => {
+	const fx = await makeFixture("no-plan");
+	try {
+		await rm(join(fx.memoryDir, "evals", "selfmod-improvement", `${fx.id}.json`));
+		let applied = false;
+		const result = await runSelfMod({
+			hooks: {
+				...greenHooks,
+				apply: async ({ worktreePath }) => {
+					applied = true;
+					await applySkillLine(worktreePath);
+				},
+			},
+			memoryDir: fx.memoryDir,
+			proposal: proposalFor(fx),
+			repoRoot: fx.repoRoot,
+			worktreeRoot: fx.worktreeRoot,
+		});
+		assert.equal(applied, false);
+		assert.equal(result.record.stage, "rejected");
+		const events = await listHerEvents(fx.memoryDir, { kind: "selfmod.transition" });
+		assert.ok(events.some((event) => /independent evaluation unavailable/.test(String(event.data?.error ?? ""))));
+		assert.equal((await git(fx.repoRoot, "rev-parse", "HEAD")).stdout.trim(), result.record.anchorCommit);
+		assert.equal((await git(fx.repoRoot, "tag", "-l", `selfmod/${fx.id}`)).stdout.trim(), "");
+	} finally {
+		await destroyFixture(fx);
+	}
+});
+
+test("independent evaluation plan remains Markdown-only", { timeout: 60_000 }, async () => {
+	const fx = await makeFixture("plan-markdown");
+	try {
+		const baseline = (await git(fx.repoRoot, "rev-parse", "HEAD")).stdout.trim();
+		await writeImprovementPlan(fx.memoryDir, fx.id, baseline, [SKILL_TS_REL]);
+		await assert.rejects(
+			loadImprovementPlan({
+				memoryDir: fx.memoryDir,
+				proposalId: fx.id,
+				baselineCommit: baseline,
+				targetPaths: [SKILL_TS_REL],
+			}),
+			/Markdown skills only/,
+		);
 	} finally {
 		await destroyFixture(fx);
 	}

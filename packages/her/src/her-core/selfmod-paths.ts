@@ -1,48 +1,43 @@
-import { isAbsolute } from "node:path";
-import { ANCHOR_PATHS, SELFMOD_ALLOWED_PATHS_V1, SELFMOD_OWNED_SKILLS } from "./selfmod-types.ts";
+import {
+	isAllowedSelfModPath,
+	isAnchorPath,
+	matchesSelfmodPathPrefix,
+	normalizeSelfmodBoundaryPath,
+} from "../rsi/anchors.ts";
+import { SELFMOD_OWNED_SKILLS } from "./selfmod-types.ts";
 
 export function normalizeSelfmodPath(path: string): string {
 	return path.replace(/\\/g, "/").replace(/^\.\//, "").toLowerCase();
 }
 
 export function isUnsafeSelfmodTarget(path: string): boolean {
-	const normalized = path.replace(/\\/g, "/").trim();
-	if (!normalized) return true;
-	if (isAbsolute(path) || isAbsolute(normalized)) return true;
-	if (/^[a-zA-Z]:/.test(normalized) || normalized.startsWith("//")) return true;
-	return normalized.split("/").some((part) => part === "..");
+	return normalizeSelfmodBoundaryPath(path) === undefined;
 }
 
 export function hitsPathPrefix(path: string, prefixes: readonly string[]): boolean {
-	const normalized = normalizeSelfmodPath(path);
-	return prefixes.some((prefix) => {
-		const needle = prefix.toLowerCase();
-		return normalized === needle || normalized.startsWith(needle);
-	});
+	return matchesSelfmodPathPrefix(path, prefixes);
 }
 
 export function isSelfmodAnchorPath(path: string): boolean {
-	return hitsPathPrefix(path, ANCHOR_PATHS);
+	return isAnchorPath(path);
 }
 
 export function isSelfmodAllowedPath(path: string): boolean {
-	return hitsPathPrefix(path, SELFMOD_ALLOWED_PATHS_V1);
+	return isAllowedSelfModPath(path);
 }
 
 export function skillDirOf(path: string): string | undefined {
-	const normalized = normalizeSelfmodPath(path);
+	const normalized = normalizeSelfmodBoundaryPath(path);
+	if (normalized === undefined) return undefined;
 	const marker = "pi-package/skills/";
-	const idx = normalized.indexOf(marker);
-	if (idx < 0) return undefined;
-	const rest = normalized.slice(idx + marker.length);
-	const seg = rest.split("/").filter(Boolean)[0];
-	return seg;
+	const index = normalized.indexOf(marker);
+	if (index < 0) return undefined;
+	return normalized.slice(index + marker.length).split("/")[0] || undefined;
 }
 
 export function isOwnedSkillPath(path: string): boolean {
 	const dir = skillDirOf(path);
-	if (!dir) return false;
-	return SELFMOD_OWNED_SKILLS.some((name) => name.toLowerCase() === dir);
+	return dir !== undefined && SELFMOD_OWNED_SKILLS.some((name) => name.toLowerCase() === dir);
 }
 
 export function disallowedTargetPaths(paths: string[]): string[] {
@@ -50,11 +45,8 @@ export function disallowedTargetPaths(paths: string[]): string[] {
 }
 
 export function classifyDiffPaths(paths: string[]): { allowlistViolations: string[]; anchorHits: string[] } {
-	const allowlistViolations: string[] = [];
-	const anchorHits: string[] = [];
-	for (const path of paths) {
-		if (isSelfmodAnchorPath(path)) anchorHits.push(path);
-		if (!isSelfmodAllowedPath(path) || !isOwnedSkillPath(path)) allowlistViolations.push(path);
-	}
-	return { allowlistViolations, anchorHits };
+	return {
+		allowlistViolations: disallowedTargetPaths(paths),
+		anchorHits: paths.filter(isSelfmodAnchorPath),
+	};
 }

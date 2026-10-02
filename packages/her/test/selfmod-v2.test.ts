@@ -3,7 +3,15 @@ import test from "node:test";
 import { appendEvent } from "../src/her-core/event-history.ts";
 import { readSelfmodRecords, runSelfMod } from "../src/her-core/selfmod.ts";
 import { checkRollback } from "../src/her-core/selfmod-rollback.ts";
-import { applySkillLine, destroyFixture, git, greenHooks, makeFixture, proposalFor } from "./selfmod-harness.ts";
+import {
+	applySkillLine,
+	destroyFixture,
+	git,
+	greenHooks,
+	makeFixture,
+	proposalFor,
+	SKILL_REL,
+} from "./selfmod-harness.ts";
 
 test("V2: merge a harmless skill edit then rollback on red organ ledger", { timeout: 60_000 }, async () => {
 	const fx = await makeFixture("v2");
@@ -13,6 +21,7 @@ test("V2: merge a harmless skill edit then rollback on red organ ledger", { time
 			memoryDir: fx.memoryDir,
 			proposal: proposalFor(fx),
 			repoRoot: fx.repoRoot,
+			now: new Date(Date.now() - 1_000),
 			worktreeRoot: fx.worktreeRoot,
 		});
 		assert.equal(merged.record.stage, "merge");
@@ -24,15 +33,15 @@ test("V2: merge a harmless skill edit then rollback on red organ ledger", { time
 		await appendEvent(
 			"organ.round.end",
 			"synthesize",
-			{ runId: "g280-rollback-pulse", ok: false, error: `organ failed for ${fx.id}` },
-			undefined,
+			{ runId: "g280-rollback-pulse", ok: false },
+			{ selfmod: { proposalId: fx.id, mergeCommit: merged.record.mergeCommit, targetPaths: [SKILL_REL] } },
 			fx.memoryDir,
 		);
 
 		const rolled = await checkRollback({
 			id: fx.id,
 			memoryDir: fx.memoryDir,
-			now: new Date("2026-08-18T01:00:00.000Z"),
+			now: new Date(),
 			repoRoot: fx.repoRoot,
 		});
 		assert.equal(rolled.record.stage, "rolledback");

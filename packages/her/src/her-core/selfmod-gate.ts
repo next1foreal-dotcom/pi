@@ -3,7 +3,8 @@ import { promisify } from "node:util";
 import { errorMessage } from "./memory-utils.ts";
 import { classifyDiffPaths } from "./selfmod-paths.ts";
 import type { SelfModEvalContext } from "./selfmod-runners.ts";
-import { MERGE_CRITERIA, type SelfModGateResult, type SelfModProposal } from "./selfmod-types.ts";
+import { meetsMeasuredMergeCriteria } from "./selfmod-test-evidence.ts";
+import type { SelfModGateResult, SelfModProposal } from "./selfmod-types.ts";
 import { listDiffNames, readPathDiff, type SelfmodGit } from "./selfmod-worktree.ts";
 import { isTransientFsContention, retryOnFsContention } from "./store.ts";
 
@@ -32,13 +33,7 @@ export interface SelfModGateReport {
 }
 
 export function meetsMergeCriteria(gate: SelfModGateResult): boolean {
-	return (
-		gate.typecheckExit === MERGE_CRITERIA.typecheckExit &&
-		gate.testsFailed === MERGE_CRITERIA.testsFailed &&
-		gate.evalGateFixturesPassed === MERGE_CRITERIA.evalGateFixturesPassed &&
-		gate.anchorScanClean === MERGE_CRITERIA.anchorScanClean &&
-		gate.encodingScanClean === MERGE_CRITERIA.encodingScanClean
-	);
+	return meetsMeasuredMergeCriteria(gate);
 }
 
 export async function runSelfmodGate(opts: {

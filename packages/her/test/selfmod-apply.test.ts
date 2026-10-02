@@ -15,6 +15,7 @@ import {
 	makeFixture,
 	proposalFor,
 	SKILL_REL,
+	writeImprovementPlan,
 	writeRel,
 } from "./selfmod-harness.ts";
 
@@ -133,6 +134,7 @@ test("patch touching a non-owned skill is rejected at the gate", { timeout: 60_0
 		await writeRel(fx.repoRoot, other, "# other\nhello\n");
 		await git(fx.repoRoot, "add", other);
 		await git(fx.repoRoot, "commit", "-q", "-m", "add other skill");
+		await writeImprovementPlan(fx.memoryDir, fx.id, (await git(fx.repoRoot, "rev-parse", "HEAD")).stdout.trim());
 		const patch = [
 			`diff --git a/${other} b/${other}`,
 			`--- a/${other}`,
@@ -272,6 +274,7 @@ test(
 			assert.equal(first.record.stage, "merge");
 			assert.equal(await listedSelfmodBranch(fx.repoRoot, fx.id), "");
 			assert.notEqual(await listedSelfmodTag(fx.repoRoot, fx.id), "");
+			await writeImprovementPlan(fx.memoryDir, fx.id, (await git(fx.repoRoot, "rev-parse", "HEAD")).stdout.trim());
 			const second = await runSelfMod({
 				hooks: { ...greenHooks, apply: async ({ worktreePath }) => applySkillLine(worktreePath, "# again") },
 				memoryDir: fx.memoryDir,

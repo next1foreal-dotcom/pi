@@ -296,15 +296,15 @@ test("pickup sweeps in-window merges through checkRollback", { timeout: 60_000 }
 		await appendEvent(
 			"organ.round.end",
 			"synthesize",
-			{ runId: "g281-rb", ok: false, error: `organ failed for ${fx.id}` },
-			undefined,
+			{ runId: "g281-rb", ok: false },
+			{ selfmod: { proposalId: fx.id, mergeCommit: merged.record.mergeCommit, targetPaths: [SKILL_REL] } },
 			fx.memoryDir,
 		);
 		const notices: string[] = [];
 		const result = await runSelfmodPickup({
 			hooks: pipelineHooks(),
 			memoryDir: fx.memoryDir,
-			now: new Date("2026-08-18T01:00:00.000Z"),
+			now: new Date(),
 			repoRoot: fx.repoRoot,
 			sendNotify: async (text) => {
 				notices.push(text);

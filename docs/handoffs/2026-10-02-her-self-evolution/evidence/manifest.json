@@ -1,0 +1,197 @@
+{
+  "taskId": "her-self-evolution-integration-20261002",
+  "sessionId": "01a0f910-9d84-7d31-9ccb-074570b833b5",
+  "executor": "Codex main; initial legacy fixture migration by Luna, completed and revalidated by main",
+  "cwd": "D:\\@Her\\wt-self-evolution-20261002",
+  "node": "v24.17.0",
+  "npm": "11.13.0",
+  "tsx": "4.22.1",
+  "commands": [
+    {
+      "name": "baseline-tests",
+      "argv": [
+        "node",
+        "--import",
+        "tsx",
+        "--test",
+        "--test-concurrency=1",
+        "D:\\@Her\\wt-self-evolution-20261002\\packages\\her\\test\\governed-tools-failsafe.test.ts",
+        "D:\\@Her\\wt-self-evolution-20261002\\packages\\her\\test\\rsi-anchors.test.ts",
+        "D:\\@Her\\wt-self-evolution-20261002\\packages\\her\\test\\selfmod-apply.test.ts",
+        "D:\\@Her\\wt-self-evolution-20261002\\packages\\her\\test\\selfmod-c.test.ts",
+        "D:\\@Her\\wt-self-evolution-20261002\\packages\\her\\test\\selfmod-cli.test.ts",
+        "D:\\@Her\\wt-self-evolution-20261002\\packages\\her\\test\\selfmod-encoding.test.ts",
+        "D:\\@Her\\wt-self-evolution-20261002\\packages\\her\\test\\selfmod-pickup.test.ts",
+        "D:\\@Her\\wt-self-evolution-20261002\\packages\\her\\test\\selfmod-propose.test.ts",
+        "D:\\@Her\\wt-self-evolution-20261002\\packages\\her\\test\\selfmod-runners.test.ts",
+        "D:\\@Her\\wt-self-evolution-20261002\\packages\\her\\test\\selfmod-v1.test.ts",
+        "D:\\@Her\\wt-self-evolution-20261002\\packages\\her\\test\\selfmod-v2.test.ts",
+        "D:\\@Her\\wt-self-evolution-20261002\\packages\\her\\test\\selfmod-v3.test.ts",
+        "D:\\@Her\\wt-self-evolution-20261002\\packages\\her\\test\\selfmod-v4.test.ts",
+        "D:\\@Her\\wt-self-evolution-20261002\\packages\\her\\test\\selfmod-worktree.test.ts"
+      ],
+      "exitCode": 0,
+      "tests": 66,
+      "pass": 66,
+      "skipped": 0,
+      "source": "3f918b0dddf373582f1629a7da22a66ade7f0498",
+      "log": "baseline-tests.txt"
+    },
+    {
+      "name": "baseline-check",
+      "argv": [
+        "npm",
+        "run",
+        "check"
+      ],
+      "exitCode": 0,
+      "tests": null,
+      "infos": 5,
+      "source": "3f918b0dddf373582f1629a7da22a66ade7f0498",
+      "log": "baseline-check.txt"
+    },
+    {
+      "name": "rollback-red",
+      "argv": [
+        "node",
+        "--import",
+        "tsx",
+        "--test",
+        "--test-concurrency=1",
+        "packages/her/test/selfmod-rollback.test.ts"
+      ],
+      "exitCode": 1,
+      "tests": 17,
+      "pass": 1,
+      "fail": 16,
+      "skipped": 0,
+      "log": "rollback-before.txt"
+    },
+    {
+      "name": "windows-config-red",
+      "argv": [
+        "node",
+        "--import",
+        "tsx",
+        "--test",
+        "--test-name-pattern=revision checks preserve",
+        "packages/her/test/improvement-runner.test.ts"
+      ],
+      "exitCode": 1,
+      "tests": 1,
+      "pass": 0,
+      "fail": 1,
+      "skipped": 0,
+      "log": "windows-config-before.txt"
+    },
+    {
+      "name": "candidate-check",
+      "argv": [
+        "npm",
+        "run",
+        "check"
+      ],
+      "exitCode": 0,
+      "tests": null,
+      "infos": 5,
+      "sourceManifest": "source-sha256.json",
+      "log": "candidate-check.txt"
+    },
+    {
+      "name": "candidate-tests",
+      "argv": [
+        "node",
+        "--import",
+        "tsx",
+        "--test",
+        "--test-concurrency=1",
+        "--test-reporter=tap",
+        "packages/her/test/anchor-commit-gate.test.ts",
+        "packages/her/test/anchor-tool-call.test.ts",
+        "packages/her/test/event-history-organs.test.ts",
+        "packages/her/test/event-history-verify.test.ts",
+        "packages/her/test/event-history.test.ts",
+        "packages/her/test/governed-tools-failsafe.test.ts",
+        "packages/her/test/improvement-assessment.test.ts",
+        "packages/her/test/improvement-runner.test.ts",
+        "packages/her/test/op-brackets.test.ts",
+        "packages/her/test/rsi-anchors.test.ts",
+        "packages/her/test/selfmod-apply.test.ts",
+        "packages/her/test/selfmod-boundaries.test.ts",
+        "packages/her/test/selfmod-c.test.ts",
+        "packages/her/test/selfmod-cli.test.ts",
+        "packages/her/test/selfmod-encoding.test.ts",
+        "packages/her/test/selfmod-pickup.test.ts",
+        "packages/her/test/selfmod-propose.test.ts",
+        "packages/her/test/selfmod-rollback.test.ts",
+        "packages/her/test/selfmod-runners.test.ts",
+        "packages/her/test/selfmod-test-evidence.test.ts",
+        "packages/her/test/selfmod-v1.test.ts",
+        "packages/her/test/selfmod-v2.test.ts",
+        "packages/her/test/selfmod-v3.test.ts",
+        "packages/her/test/selfmod-v4.test.ts",
+        "packages/her/test/selfmod-worktree.test.ts"
+      ],
+      "exitCode": 0,
+      "tests": 228,
+      "pass": 228,
+      "fail": 0,
+      "skipped": 0,
+      "sourceManifest": "source-sha256.json",
+      "log": "candidate-tests.txt"
+    }
+  ],
+  "files": [
+    {
+      "path": "baseline-check.txt",
+      "sha256": "8286c45e66402a8f1ee05c33fa757c1cc2f9cfb45d739a97b9a7f345c8b1974a",
+      "originalLocalSha256": "ffd54350630f7d9c57c102c4a024265807e749f50ddb2d8112ad1bf002985b8b"
+    },
+    {
+      "path": "baseline-test-files.txt",
+      "sha256": "d0336acb852838520ec42619820baf6865bbe4270a36bb84e26854ca9d36a728",
+      "originalLocalSha256": "7841c5c3eea9a4d9c143faa2d8e690c8b8ed6e0021e7edad92ce5db93324f7d0"
+    },
+    {
+      "path": "baseline-tests.txt",
+      "sha256": "d78c89f8aaa60f41babe4ed5c65f3e691f7d020f5fef4541747c2b7f0d31c446",
+      "originalLocalSha256": "1dad362d4210343de6596b0fdada2686739456d1073352a261aa2201e3ae7911"
+    },
+    {
+      "path": "candidate-check.txt",
+      "sha256": "9f78f3b54e3571f010c05383a3713a9fe31c203fee45e5b6ad60dcb80573b293",
+      "originalLocalSha256": "638f89eb2c17cdb32ac4934af1544698ee0724ded5aa7d1d8261bf36cd4c5109"
+    },
+    {
+      "path": "candidate-command.json",
+      "sha256": "7d1cc635ae49dc77098ebc95e70a2fee9bb123eb9db2a1c5bfe72ebb5a3f3a8e",
+      "originalLocalSha256": "17ce3a7d40c8eab76c99e737e3bc646049b226f4a9a12a8f19b9f8652f61d6b4"
+    },
+    {
+      "path": "candidate-tests.txt",
+      "sha256": "d64fa19f3efcc695105e72edb7960e5ee1f29061e6d0289e7774078b464c6d7a",
+      "originalLocalSha256": "8d0106656aac055a095b3cd02cbff55f75e0d2abc4342845475438f6f474473a"
+    },
+    {
+      "path": "rollback-before.txt",
+      "sha256": "e2822f0979ddaf098096f4e7c9d1c5372f8ba905aa203584c7db35785ee00c3b",
+      "originalLocalSha256": "2ff34c7e3c3a394796f8ed1caf0845e4f7ba04dd943df968f0c741bd7a90cf14"
+    },
+    {
+      "path": "source-sha256.json",
+      "sha256": "c35f0340dfba762d0c981dd6e6eb29f9b33cfa51c9d58a6b067e68cca201d48a",
+      "originalLocalSha256": "33cf01c4ceb6ef5df9407eb1863912597ce1eaf348cd54e46d91fc14cd0c346b"
+    },
+    {
+      "path": "windows-config-before.txt",
+      "sha256": "b49ab352617ce39424f11568cf6277bda584506016888f18913a971a09eaa081",
+      "originalLocalSha256": "8bf2830e6d9700e6b10403040fe4eb9886caa738c72b2718177399ce316a94ad"
+    },
+    {
+      "path": "commit-attempt.txt",
+      "sha256": "e77c9eb395be7bb0a2af2e816746ce95d223c3a1246dd5fb6cbecf6ac49a9811"
+    }
+  ],
+  "publicationNormalization": "Published text uses LF, strips trailing horizontal whitespace and extra trailing blank lines only. Complete diagnostic/test content retained. originalLocalSha256 identifies raw local receipts in work/self-evolution-evidence; sha256 identifies these portable published files.",
+  "sourceHashSemantics": "Source sha256 is the tested Windows worktree byte digest; gitBlobSha256 is the staged LF-normalized blob digest. Both are recorded explicitly because repository .gitattributes enforces LF."
+}
