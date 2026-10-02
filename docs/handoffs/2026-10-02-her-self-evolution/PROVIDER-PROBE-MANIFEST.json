@@ -1,0 +1,16 @@
+{
+  "base_commit": "e2a9e23b850917f7ee19a2d3bf91653051ca9876",
+  "base_git_blobs": {
+    "packages/her/src/her-core/model.ts": "697a6c6e1cce62b080e5d83861f5eb3ad8612cdc",
+    "packages/her/src/growth-experiment/model.ts": "2356fb57587c00a7088d05a9a278b7010a9661b1",
+    "packages/her/src/growth-experiment/host.ts": "4b32b30b396231cdfdcb2653167181fcc60f73a3",
+    "packages/her/src/growth-experiment/cli.ts": "2fce4b9ee978a453fcf4a887f27f9b0b816652ba"
+  },
+  "patch_sha256": "1610fa73cee5299c6dfd02e4c19d63ac1550ea3a3903fbed2229e81eb2cb1398",
+  "patch_bytes": 38348,
+  "archive_sha256": "a7175265c50d08dc90a638035816cad84ebda82edd25012c893f18d725ac57fc",
+  "archive_bytes": 9812,
+  "archive_blob_sha1": "924103775dd5998d0e72e12ecb00b15b8008a870",
+  "path": "provider-probe.patch.xz",
+  "scope": "quarantined cumulative patch, not runtime application"
+}

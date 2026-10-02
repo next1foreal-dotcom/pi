@@ -18,11 +18,17 @@ export async function runGrowthCli(
 	const [action, rootArg, planPath, argument, extra] = argv;
 	if (!action || !rootArg || !planPath)
 		throw new Error(
-			"growth: <init|step|status|use|wake|recall> <memoryRoot> <hostPlan-relative-path> [experience-file|task-id] [expectation]",
+			"growth: <init|step|status|use|wake|recall|probe-model> <memoryRoot> <hostPlan-relative-path> [experience-file|task-id] [expectation]",
 		);
 	const root = resolve(cwd, rootArg);
 	const model = new OpenAICompatibleModel(loadConfig(resolve(root, ".her/config.yaml")), env);
 	const host = await HerGrowthHost.open(root, planPath, cwd, model);
+	if (action === "probe-model") {
+		const authorization = argument
+			? JSON.parse((await readProtectedFile(root, argument, 16384)).toString("utf8"))
+			: undefined;
+		return host.probeModel(undefined, authorization);
+	}
 	if (action === "recall")
 		return (await recallGrowthMethods(root)).map((s) => ({ inquiryId: s.id, method: s.method }));
 	if (action === "init") {
@@ -60,6 +66,7 @@ export async function runGrowthCli(
 	throw new Error("unknown growth command");
 }
 export function growthExitCode(result: unknown): number {
+	if ((result as { status?: string } | null)?.status === "probe-failed") return 1;
 	const phase = (result as { phase?: string } | null)?.phase;
 	return phase === "blocked" || phase?.startsWith("pending-") ? 1 : 0;
 }

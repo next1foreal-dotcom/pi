@@ -1,0 +1,47 @@
+[
+  {
+    "path": "packages/her/src/her-core/model.ts",
+    "sha256": "89de8d08494bb0707a5b7bf098d5dd72e16183ebece56d1fbefffd581be4c12f",
+    "gitBlob": "84e2acb1dba6d50ca1c80e37c65e4f0b36271fe2"
+  },
+  {
+    "path": "packages/her/src/growth-experiment/model.ts",
+    "sha256": "fa3cb5f5504653ab95bf32f87d08500e521dbde2af91b452112864eef925305d",
+    "gitBlob": "c81ec9937e12507fddc2553ef231568b5fcd4e74"
+  },
+  {
+    "path": "packages/her/src/growth-experiment/host.ts",
+    "sha256": "6eac398ab7a0da7a81c3eac4a53ff3fa767d2f1812bd53e6b282e81522c25881",
+    "gitBlob": "ef8e10f3e99994837dd102193e563befe6652245"
+  },
+  {
+    "path": "packages/her/src/growth-experiment/cli.ts",
+    "sha256": "0c7da786af2ca0e0ebb06af10634dd31f472a357ae811eefcdca9962e184374d",
+    "gitBlob": "7432f064fc4c62418518f94408152c3cfdec34f0"
+  },
+  {
+    "path": "packages/her/test/growth-host.test.ts",
+    "sha256": "583e03a723dacddcc664984d7acc7b5a4722238029c37435d400814c8c2302d0",
+    "gitBlob": "744c1801006d746fba53a99bf0a2a361af183125"
+  },
+  {
+    "path": "packages/her/test/model-connect-timeout.test.ts",
+    "sha256": "e271939304342255b2691b0151cbb7f148f34d302b5d05ffc7e852e686649cd0",
+    "gitBlob": "97b7dc0a010f6a552a9a2bdc079351e637f924bf"
+  },
+  {
+    "path": "packages/her/test/model-response-boundary.test.ts",
+    "sha256": "b54c7efc706e1d15e96317f98fd2dc8e651355543a3bbdfd3fee9cd230621476",
+    "gitBlob": "5fadf72973b58f6556d760b5267c5ad3bd419d36"
+  },
+  {
+    "path": "packages/her/test/growth-completion-policy.test.ts",
+    "sha256": "09d74543e267f4eaf12698c0e8e876f4f72eb911521eba9d250ab39f2f9aef3c",
+    "gitBlob": "68e239b5d958655e73a149897605bdf1aa4548d5"
+  },
+  {
+    "path": "packages/her/test/growth-model-probe.test.ts",
+    "sha256": "98530237e9516b0ea7eb47ad1e941e6d77ef307961b9019a20c412e7f860629d",
+    "gitBlob": "a4fd532f3fd3f187c1e168b24d9d0992ac043adf"
+  }
+]

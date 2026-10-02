@@ -1,0 +1,92 @@
+[
+  {
+    "path": "experience.json",
+    "bytes": 2469,
+    "sha256": "1a12f55ef3611c9a3e8ddd4da33d0957059386e38d8587d53f13260d1c04717e"
+  },
+  {
+    "path": "text-observed.txt",
+    "bytes": 22,
+    "sha256": "11a5e19810434546ede8951a251aeeac72af66375f73bd978e2bb82673a9285d"
+  },
+  {
+    "path": "evals\\growth\\observe.mjs",
+    "bytes": 2861,
+    "sha256": "1e0cf44d0fec69a3f6242333f065831ea69fa03035dace6e8cf6c2702aa9b595"
+  },
+  {
+    "path": "evals\\growth\\plan.json",
+    "bytes": 4498,
+    "sha256": "4367cb00ad1fa8b14fdc3cf3926e3e7b08306b44bb174b2c803920e4cdc11191"
+  },
+  {
+    "path": "evidence\\adapt-text-view-input.json",
+    "bytes": 99,
+    "sha256": "3c8308c7950a1849d5f29ff5ad563431ede17269401fd7f610e28422b9396cb2"
+  },
+  {
+    "path": "evidence\\adapt-text-view-truth.json",
+    "bytes": 155,
+    "sha256": "7cb5a480246e527d9d8767023b8768314c44fa61f41da61e988cdfb9b958049a"
+  },
+  {
+    "path": "evidence\\counterexample-raw-input.json",
+    "bytes": 94,
+    "sha256": "52480d660ced5f1c6f3978ca995bdb503051d5549cc64ea7c9a62b3b03426d67"
+  },
+  {
+    "path": "evidence\\counterexample-raw-truth.json",
+    "bytes": 150,
+    "sha256": "ca4c36e2c83eb3d8bc64d6e9c573254385dfd120836865dd34bf8c77872189cf"
+  },
+  {
+    "path": "evidence\\final-git-clean-input.json",
+    "bytes": 88,
+    "sha256": "20786bf7e8071a094da55862bdcebd1c836bdf0f5418c0a9ca855c9e553e2e8b"
+  },
+  {
+    "path": "evidence\\final-git-clean-truth.json",
+    "bytes": 266,
+    "sha256": "83a333f52de45c8e317c189acdef8d909f8860949c3cf112e8fa00405d389df4"
+  },
+  {
+    "path": "evidence\\final-git-filter-input.json",
+    "bytes": 89,
+    "sha256": "01a978a3b592a97b0ed9b4445cdd254b189300ad1c8223067aa4f0aef497726a"
+  },
+  {
+    "path": "evidence\\final-git-filter-truth.json",
+    "bytes": 279,
+    "sha256": "d8cc1cf174dc28a1d913079fc65b280f320d230780ac19a863b7152905d0751b"
+  },
+  {
+    "path": "evidence\\observed-windows-failure.txt",
+    "bytes": 916,
+    "sha256": "8bf2830e6d9700e6b10403040fe4eb9886caa738c72b2718177399ce316a94ad"
+  },
+  {
+    "path": "evidence\\transfer-new-git-input.json",
+    "bytes": 85,
+    "sha256": "46d8ccccd64650725dff090f12ef929f0b7cbf0a91ea75b481fb93249ea2cb1c"
+  },
+  {
+    "path": "evidence\\transfer-new-git-truth.json",
+    "bytes": 263,
+    "sha256": "bf8e92d9032438abd557420afcfa38670e460f0b3560251a410d6b6c0641939f"
+  },
+  {
+    "path": "evidence\\transfer-text-view-input.json",
+    "bytes": 103,
+    "sha256": "0007e700fc4dd4cd5b6b4a6890289674d3736c06d3901de99f39bc2a1548b46d"
+  },
+  {
+    "path": "evidence\\transfer-text-view-truth.json",
+    "bytes": 161,
+    "sha256": "e1045c3c354a0bbd6d56694541d55b92b06fdae94828c6939a1fab219a62e703"
+  },
+  {
+    "path": "proposals\\growth\\windows-reader-inquiry.md",
+    "bytes": 9558,
+    "sha256": "a5f5f9374805d58b06b6a55f21716d9e3f7c309313c2bcb4385b47b2cf46b7a7"
+  }
+]

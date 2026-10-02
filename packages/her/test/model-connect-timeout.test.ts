@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { DEFAULT_CONFIG } from "../src/her-core/config.ts";
-import { OpenAICompatibleModel } from "../src/her-core/model.ts";
+import { CompletionResponseError, OpenAICompatibleModel } from "../src/her-core/model.ts";
 import { createSummaryModel } from "../src/summary-model.ts";
 
 const connectError = () =>
@@ -77,7 +77,13 @@ for (const adapter of ["core", "summary"] as const) {
 				}
 				calls = 0;
 				behavior = async () => new Response("invalid json");
-				await assert.rejects(() => Promise.resolve(model.complete("test")), SyntaxError);
+				await assert.rejects(
+					() => Promise.resolve(model.complete("test")),
+					(error) =>
+						adapter === "core"
+							? error instanceof CompletionResponseError && error.code === "invalid_json"
+							: error instanceof SyntaxError,
+				);
 				assert.equal(calls, 1);
 			});
 			await t.test("pre-aborted request never starts fetch", async () => {

@@ -1,0 +1,18 @@
+{
+  "argv": [
+    "node",
+    "--import",
+    "tsx",
+    "packages/her/src/growth-experiment/cli.ts",
+    "probe-model",
+    "D:/@Her/tmp/growth-live-20261002",
+    "evals/growth/plan.json",
+    "evals/growth/provider-probe-authorization-20261002.json"
+  ],
+  "cwd": "D:\\@Her\\wt-self-evolution-20261002",
+  "exitCode": 0,
+  "startedAt": "2026-10-01T23:44:35.8809714-07:00",
+  "endedAt": "2026-10-01T23:44:37.2597350-07:00",
+  "durationMs": 1378.7636,
+  "noRetry": true
+}

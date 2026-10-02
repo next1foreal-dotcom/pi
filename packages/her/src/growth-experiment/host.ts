@@ -22,13 +22,19 @@ import {
 	readProtectedFile,
 	sha256,
 } from "../her-core/improvement-plan.ts";
-import { type CompletionMeta, type CompletionResult, invokeCompletion, type ModelLike } from "../her-core/model.ts";
+import {
+	type CompletionMeta,
+	CompletionResponseError,
+	type CompletionResult,
+	invokeCompletion,
+	type ModelLike,
+} from "../her-core/model.ts";
 import { readText, redactSecrets, writeNewText } from "../her-core/store.ts";
 import { storeLock } from "../her-core/store-lock.ts";
 import { launchTask, stopTask } from "../her-core/task-executor.ts";
 import { appendAuditLog } from "../lib/audit.ts";
 import { GrowthJournal } from "./journal.ts";
-import { createReasoner } from "./model.ts";
+import { createReasoner, type GrowthCompletionPolicy, growthCompletionOptions, isModelProbeEcho } from "./model.ts";
 import { record, text } from "./parse.ts";
 import type {
 	Evidence,
@@ -59,6 +65,7 @@ export interface GrowthHostPlan {
 		reported: string[];
 		provider: string;
 		maxOutputTokens: number;
+		requestOptions?: GrowthCompletionPolicy;
 		inputUsdPerMillion: number;
 		outputUsdPerMillion: number;
 	};
@@ -78,6 +85,36 @@ export interface GrowthHostPlan {
 	review: { cases: Array<HostTask & { split: "holdout" | "regression" }>; minGain: number };
 	tasks: HostTask[];
 }
+/** Separate owner approval; the original plan and unresolved spend remain immutable. */
+export interface GrowthProbeAuthorization {
+	version: 1;
+	scope: "provider-response-only";
+	inquiryId: string;
+	planDigest: string;
+	approvedBy: string;
+	historicalRunId: string;
+	reservationDigest: string;
+	decisionDigest: string;
+	startsAt: string;
+	expiresAt: string;
+	maxRequests: 1;
+	requireComplete: true;
+	budget: { tokens: number; usd: number };
+}
+export interface ModelProbeResult {
+	status: "model-ready" | "probe-failed";
+	scope: "provider-response-only";
+	inquiryId: string;
+	runId: string;
+	planDigest: string;
+	reportedModel: string;
+	provider: string;
+	responseId?: string;
+	tokens: number;
+	estimatedUsd: number;
+	reason?: "invalid-json-echo";
+}
+
 const evidence = (ref: string, bytes: string): Evidence => ({
 	ref,
 	digest: sha256(bytes),
@@ -106,6 +143,8 @@ export class HerGrowthHost implements GrowthHost {
 		) as GrowthHostPlan;
 		if (plan.version !== 1 || !plan.approvedBy?.trim() || !Number.isFinite(Date.parse(plan.expiresAt)))
 			throw new Error("approved frozen host plan required");
+		// These settings are part of the frozen model plan, not a response-driven fallback.
+		growthCompletionOptions(plan.model.maxOutputTokens, plan.model.requestOptions);
 		const cfg = loadRuntimeConfig(root);
 		if (
 			plan.model.request !== cfg.llm.modelFast ||
@@ -188,11 +227,16 @@ export class HerGrowthHost implements GrowthHost {
 	save(next: Readonly<GrowthState>, expected: number): Promise<void> {
 		return this.journal.save(next, expected);
 	}
-	async assertRunning(signal?: AbortSignal): Promise<void> {
+	async assertRunning(signal?: AbortSignal, authorization?: GrowthProbeAuthorization): Promise<void> {
 		signal?.throwIfAborted();
 		const drain = await readDrainState(this.journal.root);
 		if (drain.active || (drain.warning && drain.warning !== "drain flag expired"))
 			throw new Error("growth STOP: drain active or unreadable");
+		if (authorization) {
+			if (Date.now() < Date.parse(authorization.startsAt) || Date.now() >= Date.parse(authorization.expiresAt))
+				throw new Error("owner probe window inactive or exhausted");
+			return;
+		}
 		const created = (await this.journal.read())[0]?.at;
 		if (
 			Date.now() >= Date.parse(this.plan.expiresAt) ||
@@ -212,8 +256,72 @@ export class HerGrowthHost implements GrowthHost {
 			this.plan.model.maxOutputTokens,
 		)({ ...request, instruction }, signal);
 	}
+	/** One explicit response check, charged to this inquiry. Never starts or resumes learning. */
+	async probeModel(signal?: AbortSignal, authorization?: GrowthProbeAuthorization): Promise<ModelProbeResult> {
+		if (authorization) {
+			authorization = JSON.parse(JSON.stringify(authorization)) as GrowthProbeAuthorization;
+			this.validateProbeAuthorization(authorization);
+		}
+		if (!authorization && this.plan.model.requestOptions?.requireComplete !== true)
+			throw new Error("probe-model requires frozen requireComplete=true; do not edit an already frozen plan");
+		const nonce = randomUUID();
+		const prompt = `Return exactly this JSON object, with no other keys or commentary: ${JSON.stringify({ probe: nonce })}`;
+		const receipt = await this.completeWithReceipt(prompt, "response-probe", signal, authorization);
+		const ok = isModelProbeEcho(receipt.result.text, nonce);
+		const report: ModelProbeResult = {
+			status: ok ? "model-ready" : "probe-failed",
+			scope: "provider-response-only",
+			inquiryId: this.plan.inquiryId,
+			runId: receipt.runId,
+			planDigest: this.planDigest,
+			reportedModel: receipt.result.model!,
+			provider: receipt.result.provider!,
+			...(receipt.result.diagnostics?.responseId ? { responseId: receipt.result.diagnostics.responseId } : {}),
+			tokens: receipt.result.usage!.total_tokens!,
+			estimatedUsd: receipt.usd,
+			...(!ok ? { reason: "invalid-json-echo" as const } : {}),
+		};
+		await this.journal.append("model-probe-result", { ...report });
+		return report;
+	}
+	private validateProbeAuthorization(auth: GrowthProbeAuthorization): void {
+		const start = Date.parse(auth.startsAt);
+		const end = Date.parse(auth.expiresAt);
+		if (
+			auth.version !== 1 ||
+			auth.scope !== "provider-response-only" ||
+			auth.inquiryId !== this.plan.inquiryId ||
+			auth.planDigest !== this.planDigest ||
+			typeof auth.approvedBy !== "string" ||
+			!auth.approvedBy.trim() ||
+			auth.maxRequests !== 1 ||
+			auth.requireComplete !== true ||
+			!Number.isFinite(start) ||
+			!Number.isFinite(end) ||
+			end <= start ||
+			end - start > 600000 ||
+			!Number.isSafeInteger(auth.budget?.tokens) ||
+			auth.budget.tokens <= 0 ||
+			auth.budget.tokens > this.plan.budget.tokens ||
+			!Number.isFinite(auth.budget.usd) ||
+			auth.budget.usd <= 0 ||
+			auth.budget.usd > this.plan.budget.usd
+		)
+			throw new Error("invalid owner single-probe authorization or plan binding");
+	}
 	private async complete(prompt: string, purpose: string, signal?: AbortSignal): Promise<string> {
-		await this.assertRunning(signal);
+		return (await this.completeWithReceipt(prompt, purpose, signal)).result.text;
+	}
+	private async completeWithReceipt(
+		prompt: string,
+		purpose: string,
+		signal?: AbortSignal,
+		authorization?: GrowthProbeAuthorization,
+	): Promise<{ result: CompletionResult; runId: string; usd: number }> {
+		await this.assertRunning(signal, authorization);
+		const authorizationDigest = authorization ? sha256(canonicalJson(authorization)) : undefined;
+		const budget = authorization?.budget ?? this.plan.budget;
+		const expiresAt = authorization?.expiresAt ?? this.plan.expiresAt;
 		const runId = randomUUID();
 		// UTF-8 bytes plus fixed framing is a conservative tokenizer-independent input reservation.
 		const reservedTokens = Buffer.byteLength(prompt) + 1024 + this.plan.model.maxOutputTokens;
@@ -226,11 +334,33 @@ export class HerGrowthHost implements GrowthHost {
 					r.kind === "model-reserve" &&
 					!rows.some((s) => s.kind === "model-result" && s.data.runId === r.data.runId),
 			);
-			if (pending.length) throw new Error("unreconciled model spend; do not replay");
-			const results = rows.filter((r) => r.kind === "model-result");
+			if (authorization) {
+				if (rows.some((r) => r.kind === "model-reserve" && r.data.authorizationDigest))
+					throw new Error("owner single probe already consumed");
+				const decision = rows.find(
+					(r) => r.kind === "human-spend-risk-acceptance" && r.digest === authorization.decisionDigest,
+				);
+				if (
+					!decision ||
+					decision.data.runId !== authorization.historicalRunId ||
+					decision.data.reservationDigest !== authorization.reservationDigest ||
+					decision.data.actualTokens !== "unknown" ||
+					decision.data.actualUsd !== "unknown" ||
+					pending.length !== 1 ||
+					pending[0].data.runId !== authorization.historicalRunId ||
+					pending[0].digest !== authorization.reservationDigest
+				)
+					throw new Error("unreconciled spend outside the specific owner decision");
+				const frozen = rows.find((r) => r.kind === "human-probe-authorization");
+				if (frozen && frozen.data.authorizationDigest !== authorizationDigest)
+					throw new Error("owner probe authorization changed after freeze");
+			} else if (pending.length) throw new Error("unreconciled model spend; do not replay");
+			const results = rows.filter(
+				(r) => r.kind === "model-result" && (!authorization || r.data.authorizationDigest === authorizationDigest),
+			);
 			const tokens = results.reduce((n, r) => n + Number(r.data.tokens), 0);
 			const usd = results.reduce((n, r) => n + Number(r.data.usd), 0);
-			if (tokens + reservedTokens > this.plan.budget.tokens || usd + reservedUsd > this.plan.budget.usd)
+			if (tokens + reservedTokens > budget.tokens || usd + reservedUsd > budget.usd)
 				throw new Error("growth token/USD budget exhausted");
 			const daily = await enforceDailyCostCap(
 				this.journal.root,
@@ -238,7 +368,14 @@ export class HerGrowthHost implements GrowthHost {
 			);
 			if (daily.usd + reservedUsd > loadRuntimeConfig(this.journal.root).tasks.budgetDailyCap)
 				throw new Error("daily USD reservation exceeds cap");
+			await this.assertRunning(signal, authorization);
+			if (authorization && !rows.some((r) => r.kind === "human-probe-authorization"))
+				await this.journal.append("human-probe-authorization", {
+					authorizationDigest: authorizationDigest!,
+					authorization: { ...authorization },
+				});
 			await this.journal.append("model-reserve", {
+				...(authorizationDigest ? { authorizationDigest } : {}),
 				runId,
 				purpose,
 				reservedTokens,
@@ -247,7 +384,7 @@ export class HerGrowthHost implements GrowthHost {
 			});
 		});
 		const timeout = AbortSignal.timeout(
-			Math.min(this.plan.budget.processMs, Math.max(1, Date.parse(this.plan.expiresAt) - Date.now())),
+			Math.min(this.plan.budget.processMs, Math.max(1, Date.parse(expiresAt) - Date.now())),
 		);
 		// A thrown empty-content response may still carry real usage. Clear older metadata first.
 		this.model.lastCompletion = undefined;
@@ -255,12 +392,20 @@ export class HerGrowthHost implements GrowthHost {
 		let failure: unknown;
 		try {
 			result = await invokeCompletion(this.model, prompt, {
-				maxTokens: this.plan.model.maxOutputTokens,
-				signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+				...growthCompletionOptions(
+					this.plan.model.maxOutputTokens,
+					this.plan.model.requestOptions,
+					signal ? AbortSignal.any([signal, timeout]) : timeout,
+				),
+				...(authorization ? { requireComplete: true, singleRequest: true } : {}),
 			});
 		} catch (error) {
 			failure = error;
-			result = { text: "", ...(this.model.lastCompletion as CompletionMeta | undefined) };
+			const meta =
+				error instanceof CompletionResponseError
+					? error.meta
+					: (this.model.lastCompletion as CompletionMeta | undefined);
+			result = { text: "", ...meta };
 		}
 		const usage = result.usage;
 		const input = usage?.prompt_tokens;
@@ -274,17 +419,23 @@ export class HerGrowthHost implements GrowthHost {
 			output! < 0 ||
 			tokens! !== input! + output! ||
 			!this.plan.model.reported.includes(result.model ?? "") ||
-			result.provider !== this.plan.model.provider
+			result.provider !== this.plan.model.provider ||
+			result.diagnostics?.modelIdentity === "requested-fallback"
 		) {
 			await this.journal.append("model-unknown", {
 				runId,
 				reason: "missing/mismatched usage or configured model identity",
+				...(usage ? { observedUsage: usage } : {}),
+				...(result.model ? { reportedModel: redactSecrets(result.model).slice(0, 200) } : {}),
+				...(result.finishReason ? { finishReason: result.finishReason } : {}),
+				...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
 				...(failure instanceof Error ? { error: redactSecrets(failure.message) } : {}),
 			});
 			throw new Error("real usage/model identity required; spend remains reserved");
 		}
 		const usd = (input! * this.plan.model.inputUsdPerMillion + output! * this.plan.model.outputUsdPerMillion) / 1e6;
 		await this.journal.append("model-result", {
+			...(authorizationDigest ? { authorizationDigest } : {}),
 			runId,
 			purpose,
 			tokens: tokens!,
@@ -293,6 +444,7 @@ export class HerGrowthHost implements GrowthHost {
 			model: result.model,
 			provider: result.provider,
 			finishReason: result.finishReason ?? "unknown",
+			...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
 			prompt: redactSecrets(prompt),
 			response: redactSecrets(result.text),
 			...(failure instanceof Error ? { error: redactSecrets(failure.message) } : {}),
@@ -312,8 +464,8 @@ export class HerGrowthHost implements GrowthHost {
 		if (failure !== undefined) throw failure;
 		if (tokens! > reservedTokens || usd > reservedUsd || result.finishReason === "length")
 			throw new Error("model exceeded reservation or truncated; stop inquiry");
-		await this.assertRunning(signal);
-		return result.text;
+		await this.assertRunning(signal, authorization);
+		return { result, runId, usd };
 	}
 	async authorizeProbe(request: ProbeRequest, signal?: AbortSignal): Promise<boolean> {
 		if (request.inquiryId !== this.plan.inquiryId) return false;

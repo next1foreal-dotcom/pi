@@ -1,0 +1,14 @@
+{
+  "planDigest": "02a1b25de4d63c812d43a7068c049f451cf7cf30f77060ba19adc1a5fb815f6d",
+  "historicalRunId": "e9e181c7-b228-4feb-929f-6e54da270947",
+  "reservationDigest": "10a01f888aa0e6f392430add96cb9325c76096b28a135f1bbc55a2039d3e34b2",
+  "decisionDigest": "18762bc558312f5d8581a85515228ca993a6ac54f1b3f128cd368f88968fc4a4",
+  "originalJournalSha256": "a5f5f9374805d58b06b6a55f21716d9e3f7c309313c2bcb4385b47b2cf46b7a7",
+  "originalJournalBytes": 9558,
+  "originalPlanSha256": "4367cb00ad1fa8b14fdc3cf3926e3e7b08306b44bb174b2c803920e4cdc11191",
+  "configuredModel": "deepseek-v4-flash",
+  "endpoint": "https://api.deepseek.com",
+  "outputCap": 2048,
+  "inputUsdPerMillion": 0.3,
+  "outputUsdPerMillion": 1.2
+}

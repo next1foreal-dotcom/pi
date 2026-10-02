@@ -1,3 +1,4 @@
+import { type CompletionOptions, validateCompletionOptions } from "../her-core/model.ts";
 import type { ReasonRequest } from "./types.ts";
 
 /** Structurally compatible with her-core/ModelLike. The host supplies the configured model. */
@@ -47,4 +48,39 @@ export function createReasoner(model: CompletionPort, maxTokens: number) {
 		if (typeof reply !== "string" || reply.length > 64_000) throw new Error("growth response exceeds size cap");
 		return JSON.parse(reply);
 	};
+}
+
+/** Owner-frozen generation settings only. No endpoint, model, credentials or budget overrides. */
+export type GrowthCompletionPolicy = Pick<
+	CompletionOptions,
+	"thinking" | "reasoningEffort" | "responseFormat" | "requireComplete"
+>;
+
+export function growthCompletionOptions(maxTokens: number, policy: unknown, signal?: AbortSignal): CompletionOptions {
+	if (policy !== undefined && (policy === null || typeof policy !== "object" || Array.isArray(policy)))
+		throw new Error("growth model requestOptions must be an object");
+	const input = (policy ?? {}) as Record<string, unknown>;
+	for (const key of Object.keys(input)) {
+		if (!["thinking", "reasoningEffort", "responseFormat", "requireComplete"].includes(key))
+			throw new Error(`unsupported growth model option: ${key}`);
+	}
+	const result: CompletionOptions = { ...input, maxTokens, ...(signal ? { signal } : {}) };
+	validateCompletionOptions(result);
+	return result;
+}
+
+/** A response check only. Matching an echo does not establish learning or task competence. */
+export function isModelProbeEcho(reply: string, nonce: string): boolean {
+	try {
+		const value: unknown = JSON.parse(reply);
+		return (
+			value !== null &&
+			typeof value === "object" &&
+			!Array.isArray(value) &&
+			Object.keys(value).length === 1 &&
+			(value as Record<string, unknown>).probe === nonce
+		);
+	} catch {
+		return false;
+	}
 }

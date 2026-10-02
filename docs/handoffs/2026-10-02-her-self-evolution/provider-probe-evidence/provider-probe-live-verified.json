@@ -1,0 +1,115 @@
+{
+  "prefixPreserved": true,
+  "oldPlanUnchanged": true,
+  "oldActualTokens": "unknown",
+  "oldActualUsd": "unknown",
+  "newRequestReservations": 1,
+  "newSettledReceipts": 1,
+  "stateUnchanged": true,
+  "growthPhase": "blocked",
+  "revision": 2,
+  "thoughts": 1,
+  "probes": 0,
+  "authorization": {
+    "seq": 6,
+    "at": "2026-10-02T06:44:36.159Z",
+    "kind": "human-probe-authorization",
+    "data": {
+      "authorizationDigest": "38182824527a8877e57da44aed23bcb44f89e6378895702247ea78914246a76e",
+      "authorization": {
+        "version": 1,
+        "scope": "provider-response-only",
+        "inquiryId": "windows-reader-inquiry",
+        "planDigest": "02a1b25de4d63c812d43a7068c049f451cf7cf30f77060ba19adc1a5fb815f6d",
+        "approvedBy": "Fei: direct explicit one-shot approval in this task",
+        "historicalRunId": "e9e181c7-b228-4feb-929f-6e54da270947",
+        "reservationDigest": "10a01f888aa0e6f392430add96cb9325c76096b28a135f1bbc55a2039d3e34b2",
+        "decisionDigest": "18762bc558312f5d8581a85515228ca993a6ac54f1b3f128cd368f88968fc4a4",
+        "startsAt": "2026-10-01T23:44:35.8689235-07:00",
+        "expiresAt": "2026-10-01T23:54:35.8689235-07:00",
+        "maxRequests": 1,
+        "requireComplete": true,
+        "budget": {
+          "tokens": 10000,
+          "usd": 0.1
+        }
+      }
+    },
+    "previous": "18762bc558312f5d8581a85515228ca993a6ac54f1b3f128cd368f88968fc4a4",
+    "digest": "b38e86759845cd0a7ccff21f6e838033847af8342e518848cb4e3bbdd2152070"
+  },
+  "response": {
+    "seq": 8,
+    "at": "2026-10-02T06:44:37.247Z",
+    "kind": "model-result",
+    "data": {
+      "authorizationDigest": "38182824527a8877e57da44aed23bcb44f89e6378895702247ea78914246a76e",
+      "runId": "bab894ed-95e5-47f9-ad22-092291ede92d",
+      "purpose": "response-probe",
+      "tokens": 146,
+      "usd": 0.0001131,
+      "usage": {
+        "prompt_tokens": 69,
+        "completion_tokens": 77,
+        "total_tokens": 146
+      },
+      "model": "deepseek-flash",
+      "provider": "api.deepseek.com",
+      "finishReason": "stop",
+      "diagnostics": {
+        "responseId": "2336dfae-e347-4d2f-a00e-d710d7beb68b",
+        "httpStatus": 200,
+        "choiceCount": 1,
+        "contentBytes": 48,
+        "reasoningBytes": 155,
+        "modelIdentity": "reported",
+        "usageStatus": "complete"
+      },
+      "prompt": "Return exactly this JSON object, with no other keys or commentary: {\"probe\":\"9369a938-01fc-4703-b80a-681a5ecd2a81\"}",
+      "response": "{\"probe\":\"9369a938-01fc-4703-b80a-681a5ecd2a81\"}"
+    },
+    "previous": "e91ee790871c7d5c4cdaeb87c9853d41d422ac28a92d27785dfcd7cfafb73a49",
+    "digest": "1093dfa27be5406797afcb90cb86053a21977ff32e56feb989c2b82c8ee55451"
+  },
+  "probe": {
+    "seq": 9,
+    "at": "2026-10-02T06:44:37.250Z",
+    "kind": "model-probe-result",
+    "data": {
+      "status": "model-ready",
+      "scope": "provider-response-only",
+      "inquiryId": "windows-reader-inquiry",
+      "runId": "bab894ed-95e5-47f9-ad22-092291ede92d",
+      "planDigest": "02a1b25de4d63c812d43a7068c049f451cf7cf30f77060ba19adc1a5fb815f6d",
+      "reportedModel": "deepseek-flash",
+      "provider": "api.deepseek.com",
+      "responseId": "2336dfae-e347-4d2f-a00e-d710d7beb68b",
+      "tokens": 146,
+      "estimatedUsd": 0.0001131
+    },
+    "previous": "1093dfa27be5406797afcb90cb86053a21977ff32e56feb989c2b82c8ee55451",
+    "digest": "6afe30c7903cc3a8666786449af39a11d1e78616c9a50982a3bc46f2403a4d64"
+  },
+  "audit": [
+    {
+      "ts": "2026-10-02T06:44:37.248Z",
+      "tool": "growth-model",
+      "verdict": "ALLOW",
+      "rule": "frozen-growth-budget",
+      "toolCallId": "bab894ed-95e5-47f9-ad22-092291ede92d",
+      "cost": {
+        "usd": 0.0001131,
+        "model": "deepseek-flash",
+        "provider": "api.deepseek.com",
+        "purpose": "response-probe",
+        "outputTokens": 77
+      },
+      "context": {
+        "inquiryId": "windows-reader-inquiry",
+        "planDigest": "02a1b25de4d63c812d43a7068c049f451cf7cf30f77060ba19adc1a5fb815f6d",
+        "tokens": 146
+      }
+    }
+  ],
+  "journalSha256": "5295b5196b568e8e3cae692847ee63ae0bbeab6e9e0bd4e8de803874e9c4a5c8"
+}

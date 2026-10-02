@@ -1,0 +1,12 @@
+{
+  "status": "model-ready",
+  "scope": "provider-response-only",
+  "inquiryId": "windows-reader-inquiry",
+  "runId": "bab894ed-95e5-47f9-ad22-092291ede92d",
+  "planDigest": "02a1b25de4d63c812d43a7068c049f451cf7cf30f77060ba19adc1a5fb815f6d",
+  "reportedModel": "deepseek-flash",
+  "provider": "api.deepseek.com",
+  "responseId": "2336dfae-e347-4d2f-a00e-d710d7beb68b",
+  "tokens": 146,
+  "estimatedUsd": 0.0001131
+}

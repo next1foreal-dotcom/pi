@@ -1,0 +1,2 @@
+# Preserve actual journal, plan, authorization and audit bytes.
+live/** -text whitespace=cr-at-eol,-blank-at-eof

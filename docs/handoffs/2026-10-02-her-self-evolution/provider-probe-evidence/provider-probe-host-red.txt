@@ -1,0 +1,110 @@
+✖ probe-model records a bound receipt without touching inquiry or heldout (19.2527ms)
+✖ probe-model rejects plans lacking frozen strict policy before any request (13.8913ms)
+✖ probe-model unknown prevents a provider request with real host gates (13.6931ms)
+✖ probe-model expired prevents a provider request with real host gates (11.473ms)
+✖ probe-model stop prevents a provider request with real host gates (23.8571ms)
+✖ probe-model cancel prevents a provider request with real host gates (11.197ms)
+✖ probe-model tokens prevents a provider request with real host gates (12.2095ms)
+✖ probe-model usd prevents a provider request with real host gates (15.1024ms)
+✖ probe-model invalid JSON is charged and failed, without a repair request (13.0956ms)
+✖ probe-model receipt persistence failure never returns model-ready (11.1997ms)
+✖ standalone and formal CLI probe-model bootstrap real dependencies over loopback only (303.1096ms)
+ℹ tests 11
+ℹ suites 0
+ℹ pass 0
+ℹ fail 11
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1329.0395
+
+✖ failing tests:
+
+test at packages\her\test\growth-host.test.ts:1:13926
+✖ probe-model records a bound receipt without touching inquiry or heldout (19.2527ms)
+  TypeError: host.probeModel is not a function
+      at TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-host.test.ts:411:28)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3)
+
+test at packages\her\test\growth-host.test.ts:1:14789
+✖ probe-model rejects plans lacking frozen strict policy before any request (13.8913ms)
+  TypeError: host.probeModel is not a function
+      at TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-host.test.ts:427:28)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7)
+
+test at packages\her\test\growth-host.test.ts:1:15089
+✖ probe-model unknown prevents a provider request with real host gates (13.6931ms)
+  TypeError: host.probeModel is not a function
+      at TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-host.test.ts:443:29)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7)
+
+test at packages\her\test\growth-host.test.ts:1:15089
+✖ probe-model expired prevents a provider request with real host gates (11.473ms)
+  TypeError: host.probeModel is not a function
+      at TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-host.test.ts:443:29)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7)
+
+test at packages\her\test\growth-host.test.ts:1:15089
+✖ probe-model stop prevents a provider request with real host gates (23.8571ms)
+  TypeError: host.probeModel is not a function
+      at TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-host.test.ts:443:29)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7)
+
+test at packages\her\test\growth-host.test.ts:1:15089
+✖ probe-model cancel prevents a provider request with real host gates (11.197ms)
+  TypeError: host.probeModel is not a function
+      at TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-host.test.ts:443:29)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7)
+
+test at packages\her\test\growth-host.test.ts:1:15089
+✖ probe-model tokens prevents a provider request with real host gates (12.2095ms)
+  TypeError: host.probeModel is not a function
+      at TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-host.test.ts:443:29)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7)
+
+test at packages\her\test\growth-host.test.ts:1:15089
+✖ probe-model usd prevents a provider request with real host gates (15.1024ms)
+  TypeError: host.probeModel is not a function
+      at TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-host.test.ts:443:29)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7)
+
+test at packages\her\test\growth-host.test.ts:1:15882
+✖ probe-model invalid JSON is charged and failed, without a repair request (13.0956ms)
+  TypeError: host.probeModel is not a function
+      at TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-host.test.ts:451:28)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7)
+
+test at packages\her\test\growth-host.test.ts:1:16480
+✖ probe-model receipt persistence failure never returns model-ready (11.1997ms)
+  TypeError: host.probeModel is not a function
+      at TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-host.test.ts:466:28)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7)
+
+test at packages\her\test\growth-host.test.ts:1:17016
+✖ standalone and formal CLI probe-model bootstrap real dependencies over loopback only (303.1096ms)
+  Error: Command failed: C:\Program Files\nodejs\node.exe --import tsx packages/her/src/growth-experiment/cli.ts probe-model C:\Users\Admin\AppData\Local\Temp\her-growth-host-J86Phf evals/plan.json
+  unknown growth command
+
+      at genericNodeError (node:internal/errors:985:15)
+      at wrappedFn (node:internal/errors:539:14)
+      at ChildProcess.exithandler (node:child_process:417:12)
+      at ChildProcess.emit (node:events:509:28)
+      at maybeClose (node:internal/child_process:1124:16)
+      at ChildProcess._handle.onexit (node:internal/child_process:306:5) {
+    code: 1,
+    killed: false,
+    signal: null,
+    cmd: 'C:\\Program Files\\nodejs\\node.exe --import tsx packages/her/src/growth-experiment/cli.ts probe-model C:\\Users\\Admin\\AppData\\Local\\Temp\\her-growth-host-J86Phf evals/plan.json',
+    stdout: '',
+    stderr: 'unknown growth command\n'
+  }

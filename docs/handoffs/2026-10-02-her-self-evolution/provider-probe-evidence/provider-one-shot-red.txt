@@ -1,0 +1,52 @@
+✖ owner one-shot probe preserves expired plan/unknown history and cannot replay or resume learning (23.7615ms)
+✔ owner one-shot probe other-unknown remains fail-closed (18.5974ms)
+✔ owner one-shot probe expired remains fail-closed (15.4089ms)
+✔ owner one-shot probe future remains fail-closed (15.4458ms)
+✔ owner one-shot probe decision remains fail-closed (14.772ms)
+✔ owner one-shot probe reservation remains fail-closed (18.038ms)
+✔ owner one-shot probe plan remains fail-closed (14.5936ms)
+✔ owner one-shot probe tokens remains fail-closed (14.2342ms)
+✔ owner one-shot probe usd remains fail-closed (15.1794ms)
+✔ owner one-shot probe stop remains fail-closed (26.6742ms)
+✔ owner one-shot probe cancel remains fail-closed (15.2103ms)
+✔ owner one-shot probe window remains fail-closed (15.3693ms)
+✖ owner one-shot probe new unknown usage consumes permission without granting another exception (16.7505ms)
+ℹ tests 13
+ℹ suites 0
+ℹ pass 11
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1106.6399
+
+✖ failing tests:
+
+test at packages\her\test\growth-host.test.ts:6:1610
+✖ owner one-shot probe preserves expired plan/unknown history and cannot replay or resume learning (23.7615ms)
+  Error: probe-model requires frozen requireComplete=true; do not edit an already frozen plan
+      at HerGrowthHost.probeModel (D:\@Her\wt-self-evolution-20261002\packages\her\src\growth-experiment\host.ts:241:10)
+      at TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-host.test.ts:569:28)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3)
+
+test at packages\her\test\growth-host.test.ts:6:3989
+✖ owner one-shot probe new unknown usage consumes permission without granting another exception (16.7505ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /real usage/. Input:
+
+  'Error: probe-model requires frozen requireComplete=true; do not edit an already frozen plan'
+
+      at async TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-host.test.ts:605:2)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: probe-model requires frozen requireComplete=true; do not edit an already frozen plan
+        at HerGrowthHost.probeModel (D:\@Her\wt-self-evolution-20261002\packages\her\src\growth-experiment\host.ts:241:10)
+        at TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-host.test.ts:605:28)
+        at async Test.run (node:internal/test_runner/test:1313:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:897:7),
+    expected: /real usage/,
+    operator: 'rejects',
+    diff: 'simple'
+  }

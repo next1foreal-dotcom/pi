@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "scope": "provider-response-only",
+  "inquiryId": "windows-reader-inquiry",
+  "planDigest": "02a1b25de4d63c812d43a7068c049f451cf7cf30f77060ba19adc1a5fb815f6d",
+  "approvedBy": "Fei: direct explicit one-shot approval in this task",
+  "historicalRunId": "e9e181c7-b228-4feb-929f-6e54da270947",
+  "reservationDigest": "10a01f888aa0e6f392430add96cb9325c76096b28a135f1bbc55a2039d3e34b2",
+  "decisionDigest": "18762bc558312f5d8581a85515228ca993a6ac54f1b3f128cd368f88968fc4a4",
+  "startsAt": "2026-10-01T23:44:35.8689235-07:00",
+  "expiresAt": "2026-10-01T23:54:35.8689235-07:00",
+  "maxRequests": 1,
+  "requireComplete": true,
+  "budget": {
+    "tokens": 10000,
+    "usd": 0.1
+  }
+}
