@@ -1,0 +1,42 @@
+name: Her Observer Workspace Gates
+on:
+  pull_request:
+    paths:
+      - 'packages/her/**'
+      - '.pi/extensions/her-observer.ts'
+      - '.github/workflows/her-observer-workspace.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  workspace:
+    name: workspace (${{ matrix.revision }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        revision: [base, head]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          ref: ${{ matrix.revision == 'base' && (github.event.pull_request.base.sha || 'a142e559d847dde0eb6c512fe485ef4acf9957e9') || (github.event.pull_request.head.sha || github.sha) }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Install locked workspace without lifecycle scripts
+        id: install
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Her regression tests on unchanged checked-out sources
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        env:
+          HER_MEMORY_DIR: ${{ runner.temp }}/her-workspace-memory
+          HER_CEDAR_PROFILE: plan
+        run: node --import tsx --test packages/her/test/*.test.ts
+      - name: Full repository check (does not hide failure)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run check
+      - name: Report generated check edits without committing them
+        if: ${{ always() }}
+        run: git status --short
