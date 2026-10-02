@@ -1,0 +1,102 @@
+{
+  "stage": "report",
+  "phase": "deferred",
+  "question": {
+    "problem": "The read-only revision check failed because the candidate had uncommitted tracked changes. It is unresolved whether this is caused by Windows Git line-ending normalization/reader configuration during checkout or read, or whether the candidate was already dirty before the check.",
+    "hypotheses": [
+      {
+        "id": "crlf-normalization-dirty",
+        "explanation": "If the repository commits LF but the Windows environment checks out or reads with CRLF, or vice versa, Git may report tracked files as modified even though no intentional edit occurred. This would appear when git-status changes across checkoutAutocrlf/newline/readerConfig settings and text-pair shows only newline differences."
+      },
+      {
+        "id": "pre-existing-dirty-candidate",
+        "explanation": "The candidate may have been genuinely modified before the read-only revision check. This would appear when git-status shows tracked changes independent of reader/newline configuration, and text-pair shows substantive content differences beyond line endings."
+      },
+      {
+        "id": "attributes-or-config-mismatch",
+        "explanation": "A .gitattributes, autocrlf, or safecrlf interaction may cause Git to consider a clean checkout dirty under the Windows reader configuration. This would appear when matched content observations produce differing git-status results across sanitized versus inherited readerConfig or LF versus CRLF settings."
+      }
+    ],
+    "wakeWhen": "New evidence from an approved bounded observation distinguishes line-ending normalization from pre-existing content changes, such as matched git-status and text-pair/text-view cases across checkoutAutocrlf and newline settings showing either only newline deltas or substantive tracked-file edits."
+  },
+  "probes": [],
+  "note": "probe not authorized",
+  "actualRequests": 2,
+  "knownTokens": 9419,
+  "knownEstimatedUsd": 0.009911399999999999,
+  "newUnknown": 0,
+  "historicalTokens": "unknown",
+  "historicalUsd": "unknown",
+  "usage": [
+    {
+      "runId": "d2541332-4a6a-4f54-b36b-3fc7f21c8ea1",
+      "purpose": "discover",
+      "model": "deepseek-flash",
+      "usage": {
+        "prompt_tokens": 570,
+        "completion_tokens": 1439,
+        "total_tokens": 2009
+      },
+      "usd": 0.0018978,
+      "responseId": "16673bb0-429c-4d78-951a-bacf0fc184e3",
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "runId": "656b8d61-d016-48ee-a315-3322300eecd8",
+      "purpose": "investigate",
+      "model": "deepseek-flash",
+      "usage": {
+        "prompt_tokens": 976,
+        "completion_tokens": 6434,
+        "total_tokens": 7410
+      },
+      "usd": 0.0080136,
+      "responseId": "26e8f22b-0b95-43d0-8303-e37dd0e0c51e",
+      "finishReason": "stop",
+      "error": null
+    }
+  ],
+  "table": [
+    {
+      "taskId": "T1-fresh-git",
+      "arm": "A",
+      "receipt": null
+    },
+    {
+      "taskId": "T1-fresh-git",
+      "arm": "B",
+      "receipt": null
+    },
+    {
+      "taskId": "T2-file-views",
+      "arm": "A",
+      "receipt": null
+    },
+    {
+      "taskId": "T2-file-views",
+      "arm": "B",
+      "receipt": null
+    },
+    {
+      "taskId": "T3-changed-comparator",
+      "arm": "A",
+      "receipt": null
+    },
+    {
+      "taskId": "T3-changed-comparator",
+      "arm": "B",
+      "receipt": null
+    },
+    {
+      "taskId": "T4-binary-boundary",
+      "arm": "A",
+      "receipt": null
+    },
+    {
+      "taskId": "T4-binary-boundary",
+      "arm": "B",
+      "receipt": null
+    }
+  ]
+}

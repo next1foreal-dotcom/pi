@@ -1,0 +1,106 @@
+import assert from "node:assert/strict";
+import {readFile, readdir} from "node:fs/promises";
+import {join} from "node:path";
+import {HerGrowthHost} from "../packages/her/src/growth-experiment/host.ts";
+import {GrowthJournal,recallGrowthMethods} from "../packages/her/src/growth-experiment/journal.ts";
+import {advance,startInquiry,tryMethod} from "../packages/her/src/growth-experiment/loop.ts";
+import {loadConfig} from "../packages/her/src/her-core/config.ts";
+import {canonicalJson,sha256} from "../packages/her/src/her-core/improvement-plan.ts";
+import {OpenAICompatibleModel} from "../packages/her/src/her-core/model.ts";
+const [stage,root]=process.argv.slice(2);
+assert.ok(["prepare","learn","review","final","report"].includes(stage));
+assert.ok(root);
+const path="evals/pilot01";
+const prepared=JSON.parse(await readFile(join(root,path,"prepared-plan.json"),"utf8"));
+const old=new GrowthJournal(root,"windows-reader-inquiry");
+const historical=await old.read();
+assert.equal(historical.find(r=>r.kind==="plan")?.data.digest,"02a1b25de4d63c812d43a7068c049f451cf7cf30f77060ba19adc1a5fb815f6d");
+const pending=historical.filter(r=>r.kind==="model-reserve"&&!historical.some(s=>s.kind==="model-result"&&s.data.runId===r.data.runId));
+assert.equal(pending.length,1);
+assert.equal(pending[0].data.runId,"e9e181c7-b228-4feb-929f-6e54da270947");
+assert.equal(pending[0].digest,"10a01f888aa0e6f392430add96cb9325c76096b28a135f1bbc55a2039d3e34b2");
+assert.equal(historical.find(r=>r.kind==="human-spend-risk-acceptance")?.digest,"18762bc558312f5d8581a85515228ca993a6ac54f1b3f128cd368f88968fc4a4");
+assert.equal(historical.find(r=>r.kind==="model-probe-result")?.data.status,"model-ready");
+for(const file of await readdir(join(root,"proposals/growth"))) {
+ if(!file.endsWith(".md") || file==="windows-reader-inquiry.md" || file==="growth-pilot-01.md")continue;
+ const rows=await new GrowthJournal(root,file.slice(0,-3)).read();
+ assert.ok(!rows.some(r=>r.kind==="model-reserve"&&!rows.some(s=>s.kind==="model-result"&&s.data.runId===r.data.runId)),"unapproved unknown spend outside accepted history");
+}
+const cfg=loadConfig(join(root,".her/config.yaml"));
+assert.equal(prepared.model.request,cfg.llm.modelFast);
+assert.equal(prepared.model.provider,new URL(cfg.llm.baseUrl).host);
+assert.ok(process.env[cfg.llm.apiKeyEnv],"configured credential absent");
+assert.equal(prepared.model.maxOutputTokens,8192);
+assert.equal(prepared.model.requestOptions.requireComplete,true);
+assert.deepEqual([prepared.budget.usd,prepared.budget.tokens,prepared.budget.requests,prepared.budget.wallMs],[1,100000,32,1800000]);
+const experiences=JSON.parse(await readFile(join(root,path,"experiences.json"),"utf8"));
+for(const e of experiences.flatMap((e:{evidence:Array<{ref:string,digest:string}>})=>e.evidence))assert.equal(sha256(await readFile(join(root,e.ref))),e.digest);
+if(stage==="prepare") {
+ assert.ok(!(await readdir(join(root,"proposals/growth"))).includes("growth-pilot-01.md"),"pilot already started; never reset window");
+ console.log(JSON.stringify({status:"prepared",model:cfg.llm.modelFast,provider:new URL(cfg.llm.baseUrl).host,credentialPresent:true,oldUnknownRetained:true,historicalJournalSha256:sha256(await readFile(old.path)),historicalPlanSha256:sha256(await readFile(join(root,"evals/growth/plan.json"))),riskDecision:historical.find(r=>r.kind==="human-spend-risk-acceptance")?.digest,successfulProbe:historical.find(r=>r.kind==="model-probe-result")?.digest,requests:0}));
+ process.exit(0);
+}
+const frozen=JSON.parse(await readFile(join(root,path,"plan.json"),"utf8"));
+const authorization=JSON.parse(await readFile(join(root,path,"authorization.json"),"utf8"));
+assert.equal(authorization.scope,"growth-pilot-01");
+assert.equal(authorization.actualHistoricalTokens,"unknown");
+assert.equal(authorization.actualHistoricalUsd,"unknown");
+assert.equal(authorization.historicalJournalSha256,sha256(await readFile(old.path)));
+assert.equal(authorization.historicalPlanSha256,sha256(await readFile(join(root,"evals/growth/plan.json"))));
+assert.equal(frozen.expiresAt,authorization.T1);
+assert.equal(Date.parse(authorization.T1)-Date.parse(authorization.T0),1800000);
+assert.equal(frozen.lineage.authorizationDigest,sha256(canonicalJson(authorization)));
+const model=new OpenAICompatibleModel(cfg,process.env);
+const host=await HerGrowthHost.open(root,`${path}/plan.json`,process.cwd(),model);
+let state=await host.journal.state();
+try {
+ if(stage==="learn") {
+  assert.equal(state,undefined,"learning entry already consumed");
+  await host.journal.append("human-pilot-authorization",{authorization,authorizationDigest:frozen.lineage.authorizationDigest});
+  state=startInquiry(host.plan.inquiryId,experiences,{thoughts:12,probes:2});
+  await host.save(state,-1);
+  while(["discover","investigate"].includes(state.phase)) {
+   state=await advance(state,host);
+   console.log(JSON.stringify({phase:state.phase,revision:state.revision,note:state.note,question:state.question,probes:state.probes.length,method:state.method}));
+  }
+  if(state.phase==="candidate")await host.reflect();
+ }
+ if(stage==="review") {
+  assert.equal(state?.phase,"candidate","review must start once from original candidate");
+  state=await advance(state!,host);
+  console.log(JSON.stringify({phase:state.phase,note:state.note,review:state.method?.review}));
+ } if(stage==="final") {
+  assert.equal(state?.phase,"trial-ready","independent gate did not allow final use");
+  assert.ok(!(await host.journal.read()).some(r=>r.kind==="pilot-final-reserved"),"final comparison already consumed");
+  await host.journal.append("pilot-final-reserved",{order:["T1A","T1B","T2B","T2A","T3B","T3A","T4A","T4B"],perArmCalls:2,entry:"existing recallGrowthMethods + tryMethod (controlled method-use, not full autonomous retrieval)"});
+  for(const [index,arm] of [[0,"A"],[0,"B"],[1,"B"],[1,"A"],[2,"B"],[2,"A"],[3,"A"],[3,"B"]] as const) {
+   const task=host.plan.tasks[index];
+   const before=await host.journal.read();
+   const at=new Date().toISOString();
+   let outcome,selection,status;
+   if(arm==="A") {outcome=await host.runBaseline(task.id);status="observed";}
+   else {
+    const recalled=(await recallGrowthMethods(root)).find(s=>s.id===host.plan.inquiryId);
+    if(!recalled) {await host.journal.append("pilot-task-missing",{taskId:task.id,arm,reason:"method inactive",at});continue;}
+    state=await tryMethod(recalled,{id:task.id,description:task.description,environment:task.environment},host);
+    const trial=state.trials.find(t=>t.task.id===task.id);
+    selection=trial?.selection;status=trial?.status??state.phase;outcome=trial?.observation;
+    if(status==="declined")outcome=await host.runBaseline(task.id,false);
+   }
+   const after=(await host.journal.read()).slice(before.length);
+   const paid=after.filter(r=>r.kind==="model-result");
+   await host.journal.append("pilot-task-result",{taskId:task.id,arm,status,selection:selection??null,outcome:outcome??null,at,endedAt:new Date().toISOString(),requests:after.filter(r=>r.kind==="model-reserve").length,tokens:paid.reduce((n,r)=>n+Number(r.data.tokens),0),usd:paid.reduce((n,r)=>n+Number(r.data.usd),0)});
+   if(state?.phase==="blocked" || state?.phase.startsWith("pending-"))throw new Error(state.note);
+  }
+ }
+} catch(error) {
+ const message=error instanceof Error?error.message:String(error);
+ await host.journal.append("pilot-stop",{stage,error:message,at:new Date().toISOString()});
+ console.error(message);process.exitCode=1;
+}
+const rows=await host.journal.read();
+const results=rows.filter(r=>r.kind==="model-result");
+const reservations=rows.filter(r=>r.kind==="model-reserve");
+const unknown=rows.filter(r=>r.kind==="model-unknown");
+const current=await host.journal.state();
+console.log(JSON.stringify({stage,phase:current?.phase,question:current?.question,probes:current?.probes,method:current?.method,note:current?.note,actualRequests:reservations.length,knownTokens:results.reduce((n,r)=>n+Number(r.data.tokens),0),knownEstimatedUsd:results.reduce((n,r)=>n+Number(r.data.usd),0),newUnknown:unknown.length,historicalTokens:"unknown",historicalUsd:"unknown",usage:results.map(r=>({runId:r.data.runId,purpose:r.data.purpose,model:r.data.model,usage:r.data.usage,usd:r.data.usd,responseId:(r.data.diagnostics as {responseId?:string})?.responseId,finishReason:r.data.finishReason,error:r.data.error??null})),table:host.plan.tasks.flatMap(task=>["A","B"].map(arm=>({taskId:task.id,arm,receipt:rows.find(r=>r.kind==="pilot-task-result"&&r.data.taskId===task.id&&r.data.arm===arm)?.data??null})))},null,2));

@@ -1,0 +1,219 @@
+{
+  "gitleaksExit": 0,
+  "at": "2026-10-02T01:36:08.6398585-07:00",
+  "files": [
+    {
+      "file": "docs/handoffs/2026-10-02-her-self-evolution/GROWTH-PILOT-01-LOCAL-EXECUTION.md",
+      "sha256": "e7f3898774a563e963c1d3c55631476db418059882a4a7eee2f90ff5bd611d92",
+      "noReplacement": true,
+      "utf8NoBom": true,
+      "noCurrentSecretValue": true
+    },
+    {
+      "file": "docs/handoffs/2026-10-02-her-self-evolution/GROWTH-PILOT-01.md",
+      "sha256": "dbcea77f6e63387fb20b3a8ffa2a84fd19a0fc21556eb1f8e83a12fa91f3cb7a",
+      "noReplacement": true,
+      "utf8NoBom": true,
+      "noCurrentSecretValue": true
+    },
+    {
+      "file": "docs/handoffs/2026-10-02-her-self-evolution/pilot-01-evidence/.gitattributes",
+      "sha256": "f95bbed73bba5e6c14eb5f98c4f1dd9ecf7dd66b92a9f4d292e2fc9f85a27d3c",
+      "noReplacement": true,
+      "utf8NoBom": true,
+      "noCurrentSecretValue": true
+    },
+    {
+      "file": "docs/handoffs/2026-10-02-her-self-evolution/pilot-01-evidence/artifact-manifest.json",
+      "sha256": "be708d2eb5069bb9f4738b85a00fae3018601185a2aefa011419f2eaa13fcf48",
+      "noReplacement": true,
+      "utf8NoBom": true,
+      "noCurrentSecretValue": true
+    },
+    {
+      "file": "docs/handoffs/2026-10-02-her-self-evolution/pilot-01-evidence/check.txt",
+      "sha256": "4ac9246f28e503a6d55df16a4efb7f3aeb4fcf9d2c969456ed4d02b54f41e5d7",
+      "noReplacement": true,
+      "utf8NoBom": true,
+      "noCurrentSecretValue": true
+    },
+    {
+      "file": "docs/handoffs/2026-10-02-her-self-evolution/pilot-01-evidence/close.txt",
+      "sha256": "48ab634abfcde7fbe0560692bafb18abce062fb5be5e8777ae6f9072d5a02db6",
+      "noReplacement": true,
+      "utf8NoBom": true,
+      "noCurrentSecretValue": true
+    },
+    {
+      "file": "docs/handoffs/2026-10-02-her-self-evolution/pilot-01-evidence/learn.txt",
+      "sha256": "b6482bde92aeba81e8a59dc2b06c66d6ad8024d184e6158427b862cb30f65221",
+      "noReplacement": true,
+      "utf8NoBom": true,
+      "noCurrentSecretValue": true
+    },
+    {
+      "file": "docs/handoffs/2026-10-02-her-self-evolution/pilot-01-evidence/live/audit-pilot.jsonl",
+      "sha256": "576a2f1153357b05862b0a6bfc460a787a27e5574f61137bd160198314079898",
+      "noReplacement": true,
+      "utf8NoBom": true,
+      "noCurrentSecretValue": true
+    },
+    {
+      "file": "docs/handoffs/2026-10-02-her-self-evolution/pilot-01-evidence/live/authorization.json",
+      "sha256": "66ae5e7d90962de75c30455469ebdb15d83c1517505743a2053b492aba3a1531",
+      "noReplacement": true,
+      "utf8NoBom": true,
+      "noCurrentSecretValue": true
+    },
+    {
+      "file": "docs/handoffs/2026-10-02-her-self-evolution/pilot-01-evidence/live/execution-sources.json",
+      "sha256": "b6d6527d54cd48b57a4999a429f7acc4c27d422cb6674beca1939bb5a2f1635a",
+      "noReplacement": true,
+      "utf8NoBom": true,
+      "noCurrentSecretValue": true
+    },
+    {
+      "file": "docs/handoffs/2026-10-02-her-self-evolution/pilot-01-evidence/live/experiences.json",
+      "sha256": "367e8bc35633a250e2ffaba7379e9bc0921a134f01aaf292f45b87f875a935bb",
+      "noReplacement": true,
+      "utf8NoBom": true,
+      "noCurrentSecretValue": true
+    },
+    {
+      "file": "docs/handoffs/2026-10-02-her-self-evolution/pilot-01-evidence/live/historical-journal-unchanged.md",
+      "sha256": "5295b5196b568e8e3cae692847ee63ae0bbeab6e9e0bd4e8de803874e9c4a5c8",
+      "noReplacement": true,
+      "utf8NoBom": true,
+      "noCurrentSecretValue": true
+    },
+    {
+      "file": "docs/handoffs/2026-10-02-her-self-evolution/pilot-01-evidence/live/input-inventory.json",
+      "sha256": "479256f0daff82db6de133187477701346e6817e5b01ff24f224289f475a1e0d",
+      "noReplacement": true,
+      "utf8NoBom": true,
+      "noCurrentSecretValue": true
+    },
+    {
+      "file": "docs/handoffs/2026-10-02-her-self-evolution/pilot-01-evidence/live/journal.md",
+      "sha256": "8ce9c8b81a1d40f8c8e2f3100eaec84c5fea20022e5eecc80296be05f8a3eb80",
+      "noReplacement": true,
+      "utf8NoBom": true,
+      "noCurrentSecretValue": true
+    },
+    {
+      "file": "docs/handoffs/2026-10-02-her-self-evolution/pilot-01-evidence/live/learning-input.txt",
+      "sha256": "5ff1f65cb61b32486cf6461688596a9c66944218da2745db2ef104cc401646af",
+      "noReplacement": true,
+      "utf8NoBom": true,
+      "noCurrentSecretValue": true
+    },
+    {
+      "file": "docs/handoffs/2026-10-02-her-self-evolution/pilot-01-evidence/live/model-receipts.json",
+      "sha256": "21c379644543279d79cd2c5ff5e09d57aadc7244b3544a038ac13a85bcae61ef",
+      "noReplacement": true,
+      "utf8NoBom": true,
+      "noCurrentSecretValue": true
+    },
+    {
+      "file": "docs/handoffs/2026-10-02-her-self-evolution/pilot-01-evidence/live/observe.mjs",
+      "sha256": "e53638f5bc0cdce989c5984e5e0ca6b6c78740f8912ed85b4ade7321be34df0c",
+      "noReplacement": true,
+      "utf8NoBom": true,
+      "noCurrentSecretValue": true
+    },
+    {
+      "file": "docs/handoffs/2026-10-02-her-self-evolution/pilot-01-evidence/live/original-observed-failure.txt",
+      "sha256": "8bf2830e6d9700e6b10403040fe4eb9886caa738c72b2718177399ce316a94ad",
+      "noReplacement": true,
+      "utf8NoBom": true,
+      "noCurrentSecretValue": true
+    },
+    {
+      "file": "docs/handoffs/2026-10-02-her-self-evolution/pilot-01-evidence/live/plan.json",
+      "sha256": "6dc629810d9aeafbe17dbc2a2a1c01d1133c1da3e60a0069f7a24636ce3b26b6",
+      "noReplacement": true,
+      "utf8NoBom": true,
+      "noCurrentSecretValue": true
+    },
+    {
+      "file": "docs/handoffs/2026-10-02-her-self-evolution/pilot-01-evidence/live/preflight.json",
+      "sha256": "773eb67e6ca5065565a29610ae93a23b78d0e01a4728838e079cdb44158aefb4",
+      "noReplacement": true,
+      "utf8NoBom": true,
+      "noCurrentSecretValue": true
+    },
+    {
+      "file": "docs/handoffs/2026-10-02-her-self-evolution/pilot-01-evidence/live/prepared-plan.json",
+      "sha256": "aa44219c65380ad57a463ddd068707213fe7c5e049b7d9bcc618b7c7c5e443bc",
+      "noReplacement": true,
+      "utf8NoBom": true,
+      "noCurrentSecretValue": true
+    },
+    {
+      "file": "docs/handoffs/2026-10-02-her-self-evolution/pilot-01-evidence/live/result.json",
+      "sha256": "ab02efa0f110ae143cd0a7f3822f42d75f3f31e710c20824ff5858e93e396c32",
+      "noReplacement": true,
+      "utf8NoBom": true,
+      "noCurrentSecretValue": true
+    },
+    {
+      "file": "docs/handoffs/2026-10-02-her-self-evolution/pilot-01-evidence/log-normalization.json",
+      "sha256": "f384c1de02becfa198ac0d29be434d4d257bb655a58f4654aa03d19060dc6696",
+      "noReplacement": true,
+      "utf8NoBom": true,
+      "noCurrentSecretValue": true
+    },
+    {
+      "file": "docs/handoffs/2026-10-02-her-self-evolution/pilot-01-evidence/prepare.json",
+      "sha256": "d182a670cc511410cea11c9e89f7d1360a2eef52bd337417dce459602a64957d",
+      "noReplacement": true,
+      "utf8NoBom": true,
+      "noCurrentSecretValue": true
+    },
+    {
+      "file": "docs/handoffs/2026-10-02-her-self-evolution/pilot-01-evidence/regression.txt",
+      "sha256": "f09824e49db72930cecbe160c954eb3dd19d51c8c44ab7006c9e29f0118826ad",
+      "noReplacement": true,
+      "utf8NoBom": true,
+      "noCurrentSecretValue": true
+    },
+    {
+      "file": "docs/handoffs/2026-10-02-her-self-evolution/pilot-01-evidence/runner.txt",
+      "sha256": "2e2e6f0bdcbf91306f56d81997e48e4169c7aee2458360cdeecec76271d4a443",
+      "noReplacement": true,
+      "utf8NoBom": true,
+      "noCurrentSecretValue": true
+    },
+    {
+      "file": "docs/handoffs/2026-10-02-her-self-evolution/pilot-01-evidence/verification.json",
+      "sha256": "5daa6130c226d4330d08632a3be6fd3934c38511aa07f2127b295c4c00874090",
+      "noReplacement": true,
+      "utf8NoBom": true,
+      "noCurrentSecretValue": true
+    },
+    {
+      "file": "docs/handoffs/2026-10-02-her-self-evolution/pilot-01-evidence/verified-sources.json",
+      "sha256": "d6ea8d04cd2ec024785edc59024eb7798b6d0d2d4f845e4f55d802062457902d",
+      "noReplacement": true,
+      "utf8NoBom": true,
+      "noCurrentSecretValue": true
+    },
+    {
+      "file": "packages/her/src/growth-experiment/host.ts",
+      "sha256": "e45a28feb59fa36aa7b96d12ce8a2c1b700dfb70f9c3d27dffcfaf5b903898e5",
+      "noReplacement": true,
+      "utf8NoBom": true,
+      "noCurrentSecretValue": true
+    },
+    {
+      "file": "packages/her/test/growth-host.test.ts",
+      "sha256": "653387a606ef54fb7bb64032358c303a32ade551b1243ed3d61ddff04fa4e7bf",
+      "noReplacement": true,
+      "utf8NoBom": true,
+      "noCurrentSecretValue": true
+    }
+  ],
+  "noCurrentCredentialValues": true,
+  "liveByteMatch": true,
+  "scope": "materialized staged index before adding this scan metadata and scanner log"
+}

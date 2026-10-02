@@ -1,0 +1,44 @@
+[
+  {
+    "taskId": "pilot-review-holdout",
+    "stdout": "{\"value\":{\"dirty\":true},\"facts\":{\"dirty\":true,\"status\":\" M sample.md\\n\",\"gitVersion\":\"git version 2.51.0.windows.2\",\"fixture\":\"D:\\\\@Her\\\\wt-self-evolution-20261002\\\\work\\\\pilot01-preflight\\\\pilot-review-holdout\\\\fixture-HikwxB\",\"input\":{\"content\":\"独立门禁甲\\nred ledger\\n\",\"checkoutAutocrlf\":true,\"kind\":\"git-status\",\"readerConfig\":\"sanitized\",\"newline\":\"CRLF\"}}}\n",
+    "exitCode": 0,
+    "stderr": "",
+    "at": "2026-10-02T01:08:13.5015667-07:00"
+  },
+  {
+    "taskId": "pilot-review-regression",
+    "stdout": "{\"value\":{\"equal\":true},\"facts\":{\"input\":{\"right\":\"独立门禁乙\\n一二\\n\",\"rule\":\"normalize-lf\",\"kind\":\"text-pair\",\"left\":\"独立门禁乙\\r\\n一二\\r\\n\"}}}\n",
+    "exitCode": 0,
+    "stderr": "",
+    "at": "2026-10-02T01:08:13.5670068-07:00"
+  },
+  {
+    "taskId": "T1-fresh-git",
+    "stdout": "{\"value\":{\"dirty\":false},\"facts\":{\"dirty\":false,\"status\":\"\",\"gitVersion\":\"git version 2.51.0.windows.2\",\"fixture\":\"D:\\\\@Her\\\\wt-self-evolution-20261002\\\\work\\\\pilot01-preflight\\\\T1-fresh-git\\\\fixture-JjJ9ae\",\"input\":{\"content\":\"新任务壹\\nno local edit\\n\",\"checkoutAutocrlf\":true,\"kind\":\"git-status\",\"readerConfig\":\"inherit\",\"newline\":\"CRLF\"}}}\n",
+    "exitCode": 0,
+    "stderr": "",
+    "at": "2026-10-02T01:08:14.2500014-07:00"
+  },
+  {
+    "taskId": "T2-file-views",
+    "stdout": "{\"value\":{\"equal\":false},\"facts\":{\"input\":{\"right\":\"订单编号731\\n供应商甲\\n\",\"rule\":\"literal\",\"kind\":\"text-pair\",\"left\":\"订单编号731\\r\\n供应商甲\\r\\n\"}}}\n",
+    "exitCode": 0,
+    "stderr": "",
+    "at": "2026-10-02T01:08:14.3143875-07:00"
+  },
+  {
+    "taskId": "T3-changed-comparator",
+    "stdout": "{\"value\":{\"equal\":true},\"facts\":{\"input\":{\"right\":\"delivery-alpha\\n阶段三\\n\",\"rule\":\"case-insensitive\",\"kind\":\"text-pair\",\"left\":\"Delivery-Alpha\\n阶段三\\n\"}}}\n",
+    "exitCode": 0,
+    "stderr": "",
+    "at": "2026-10-02T01:08:14.3840920-07:00"
+  },
+  {
+    "taskId": "T4-binary-boundary",
+    "stdout": "{\"value\":{\"equal\":false},\"facts\":{\"input\":{\"leftHex\":\"ff000d0a807f\",\"rightHex\":\"ff000a807f\",\"kind\":\"binary-pair\"}}}\n",
+    "exitCode": 0,
+    "stderr": "",
+    "at": "2026-10-02T01:08:14.4477721-07:00"
+  }
+]

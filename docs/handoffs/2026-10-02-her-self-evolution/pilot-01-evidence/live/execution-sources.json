@@ -1,0 +1,14 @@
+[
+  {
+    "path": "packages/her/src/growth-experiment/host.ts",
+    "sha256": "26336215584eeeb7407c3d127553f7c7795555f8e9455cf173c2877e2a33d6e4"
+  },
+  {
+    "path": "packages/her/test/growth-host.test.ts",
+    "sha256": "73bcb64331ac54fc6fef170a5a0fee5f95120912b928a729e4e4e24ce43a4f99"
+  },
+  {
+    "path": "work/pilot01-run.ts",
+    "sha256": "2e2e6f0bdcbf91306f56d81997e48e4169c7aee2458360cdeecec76271d4a443"
+  }
+]

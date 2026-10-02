@@ -1,0 +1,8 @@
+{
+  "rawCheckSha256": "cc1232a61b8ce5231e364ccf10c947515d198d21c7d24f9e6e06003dc44b74da",
+  "unchangedLiveArtifacts": true,
+  "publishedCheckFile": "check.txt",
+  "publishedCheckSha256": "4ac9246f28e503a6d55df16a4efb7f3aeb4fcf9d2c969456ed4d02b54f41e5d7",
+  "rawCheckFile": "work/pilot01-check-raw.txt",
+  "transformation": "CRLF to LF; trim line-end whitespace and blank EOF only. No diagnostics removed."
+}

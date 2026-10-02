@@ -708,3 +708,107 @@ test("host retains observed usage on unapproved identity without settling it", a
 	assert.equal(unknown.data.finishReason, "stop");
 	assert.ok(!rows.some((row) => row.kind === "model-result"));
 });
+
+test("pilot request cap survives restart and all calls are single-request; shared context reaches control and selection", async (t) => {
+	const { host, model, root, plan } = await fixture(t, undefined, (plan) => {
+		plan.budget.requests = 4;
+		plan.model.requestOptions = { requireComplete: true };
+	});
+	const initial = (await host.journal.state())!;
+	await host.save(
+		{
+			...initial,
+			revision: 1,
+			probes: [
+				{
+					plan: { purpose: "observe", action: "{}", predictions: [] },
+					observation: {
+						runId: "observed",
+						outcome: "success",
+						summary: "actual probe marker",
+						evidence: sample.evidence,
+					},
+				},
+			],
+		},
+		0,
+	);
+	let singleRequests = 0;
+	model.completeWithMeta = (prompt, options) => {
+		assert.equal(options?.singleRequest, true);
+		singleRequests++;
+		model.calls.push({ prompt, strong: false, maxTokens: options?.maxTokens });
+		return {
+			text: '{"rows":["a","b"]}',
+			finishReason: "stop",
+			model: "deepseek-v4-flash",
+			provider: "api.deepseek.com",
+			usage: { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30 },
+		};
+	};
+	await host.reflect();
+	await assert.rejects(host.reflect(), /already frozen/);
+	assert.equal((await host.runBaseline("new-task")).outcome, "success");
+	await host.reason({ stage: "select", instruction: "Select", data: { task: { id: "new-task" } } });
+	assert.equal(singleRequests, 4);
+	assert.ok(model.calls.every((c) => c.prompt.includes("actual probe marker")));
+	assert.ok(model.calls.slice(1).every((c) => c.prompt.includes('"reflection"')));
+	assert.ok(model.calls[3].prompt.includes('"input":{"rows":["a","b"]}'));
+	assert.ok(model.calls.every((c) => !c.prompt.includes('"expected"')));
+	const restarted = await HerGrowthHost.open(root, "evals/plan.json", join(root, "candidate"), model);
+	await assert.rejects(restarted.reason({ stage: "discover", instruction: "JSON", data: {} }), /request budget/);
+	assert.equal(singleRequests, 4);
+	assert.equal(
+		(await restarted.journal.read()).filter((r) => r.kind === "model-reserve").length,
+		plan.budget.requests,
+	);
+});
+
+test("pilot known provider failure also prevents any further request", async (t) => {
+	const { host, model } = await fixture(t, undefined, (plan) => {
+		plan.budget.requests = 32;
+		plan.model.requestOptions = { requireComplete: true };
+	});
+	let calls = 0;
+	model.completeWithMeta = () => {
+		calls++;
+		throw new CompletionResponseError("empty_content", {
+			model: "deepseek-v4-flash",
+			provider: "api.deepseek.com",
+			finishReason: "stop",
+			usage: { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30 },
+		});
+	};
+	await assert.rejects(host.reason({ stage: "discover", instruction: "JSON", data: {} }), /empty content/);
+	await assert.rejects(
+		host.reason({ stage: "investigate", instruction: "JSON", data: {} }),
+		/previous provider failure/,
+	);
+	assert.equal(calls, 1);
+});
+
+test("sealed review and final inputs cannot become development probes through batching", async (t) => {
+	const { host, plan } = await fixture(t);
+	for (const input of [plan.tasks[0].input, { cases: [plan.review.cases[0].input] }]) {
+		assert.equal(
+			await host.authorizeProbe({
+				inquiryId: "inquiry",
+				runId: "overlap",
+				probe: { purpose: "probe", action: JSON.stringify({ operationId: "observe", input }), predictions: [] },
+			}),
+			false,
+		);
+	}
+	assert.ok(!(await host.journal.read()).some((row) => row.kind === "grant"));
+});
+
+test("pilot stop is durable even with remaining budget and window", async (t) => {
+	const { host, root, model } = await fixture(t, undefined, (plan) => {
+		plan.budget.requests = 32;
+		plan.model.requestOptions = { requireComplete: true };
+	});
+	await host.journal.append("pilot-stop", { reason: "invalid action proposal; no automatic retry" });
+	const restarted = await HerGrowthHost.open(root, "evals/plan.json", join(root, "candidate"), model);
+	await assert.rejects(restarted.reason({ stage: "investigate", instruction: "JSON", data: {} }), /pilot stopped/);
+	assert.equal(model.calls.length, 0);
+});

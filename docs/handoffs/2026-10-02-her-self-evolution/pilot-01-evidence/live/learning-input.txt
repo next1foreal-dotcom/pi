@@ -1,0 +1,7 @@
+ℹ tests 1
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+  Error: candidate has uncommitted tracked changes

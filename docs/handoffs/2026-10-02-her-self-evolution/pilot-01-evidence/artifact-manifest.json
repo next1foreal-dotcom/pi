@@ -1,0 +1,77 @@
+[
+  {
+    "length": 829,
+    "sha256": "576a2f1153357b05862b0a6bfc460a787a27e5574f61137bd160198314079898",
+    "file": "audit-pilot.jsonl"
+  },
+  {
+    "length": 1891,
+    "sha256": "66ae5e7d90962de75c30455469ebdb15d83c1517505743a2053b492aba3a1531",
+    "file": "authorization.json"
+  },
+  {
+    "length": 431,
+    "sha256": "b6d6527d54cd48b57a4999a429f7acc4c27d422cb6674beca1939bb5a2f1635a",
+    "file": "execution-sources.json"
+  },
+  {
+    "length": 727,
+    "sha256": "367e8bc35633a250e2ffaba7379e9bc0921a134f01aaf292f45b87f875a935bb",
+    "file": "experiences.json"
+  },
+  {
+    "length": 13556,
+    "sha256": "5295b5196b568e8e3cae692847ee63ae0bbeab6e9e0bd4e8de803874e9c4a5c8",
+    "file": "historical-journal-unchanged.md"
+  },
+  {
+    "length": 1394,
+    "sha256": "479256f0daff82db6de133187477701346e6817e5b01ff24f224289f475a1e0d",
+    "file": "input-inventory.json"
+  },
+  {
+    "length": 26343,
+    "sha256": "8ce9c8b81a1d40f8c8e2f3100eaec84c5fea20022e5eecc80296be05f8a3eb80",
+    "file": "journal.md"
+  },
+  {
+    "length": 125,
+    "sha256": "5ff1f65cb61b32486cf6461688596a9c66944218da2745db2ef104cc401646af",
+    "file": "learning-input.txt"
+  },
+  {
+    "length": 11046,
+    "sha256": "21c379644543279d79cd2c5ff5e09d57aadc7244b3544a038ac13a85bcae61ef",
+    "file": "model-receipts.json"
+  },
+  {
+    "length": 4229,
+    "sha256": "e53638f5bc0cdce989c5984e5e0ca6b6c78740f8912ed85b4ade7321be34df0c",
+    "file": "observe.mjs"
+  },
+  {
+    "length": 916,
+    "sha256": "8bf2830e6d9700e6b10403040fe4eb9886caa738c72b2718177399ce316a94ad",
+    "file": "original-observed-failure.txt"
+  },
+  {
+    "length": 5356,
+    "sha256": "6dc629810d9aeafbe17dbc2a2a1c01d1133c1da3e60a0069f7a24636ce3b26b6",
+    "file": "plan.json"
+  },
+  {
+    "length": 2472,
+    "sha256": "773eb67e6ca5065565a29610ae93a23b78d0e01a4728838e079cdb44158aefb4",
+    "file": "preflight.json"
+  },
+  {
+    "length": 4778,
+    "sha256": "aa44219c65380ad57a463ddd068707213fe7c5e049b7d9bcc618b7c7c5e443bc",
+    "file": "prepared-plan.json"
+  },
+  {
+    "length": 3700,
+    "sha256": "ab02efa0f110ae143cd0a7f3822f42d75f3f31e710c20824ff5858e93e396c32",
+    "file": "result.json"
+  }
+]

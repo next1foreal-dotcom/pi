@@ -1,0 +1,12 @@
+[
+  {
+    "sha256": "e45a28feb59fa36aa7b96d12ce8a2c1b700dfb70f9c3d27dffcfaf5b903898e5",
+    "lines": 931,
+    "file": "packages/her/src/growth-experiment/host.ts"
+  },
+  {
+    "sha256": "653387a606ef54fb7bb64032358c303a32ade551b1243ed3d61ddff04fa4e7bf",
+    "lines": 814,
+    "file": "packages/her/test/growth-host.test.ts"
+  }
+]

@@ -1,0 +1,32 @@
+{
+  "learning": {
+    "sha256": "5ff1f65cb61b32486cf6461688596a9c66944218da2745db2ef104cc401646af",
+    "redactions": [
+      "cause-revealing test title",
+      "stack implementation paths",
+      "root cause and known fix excluded",
+      "later outcomes excluded"
+    ],
+    "path": "evals/pilot01/learning-input.txt",
+    "transformation": "verbatim selected run-count and Error lines; original objective supplied separately"
+  },
+  "preparationFailure": "First local preflight used default .NET pipe encoding; rejected and retained privately. Reran with explicit UTF-8 before sealing. No provider request.",
+  "source": {
+    "sha256": "8bf2830e6d9700e6b10403040fe4eb9886caa738c72b2718177399ce316a94ad",
+    "path": "evidence/observed-windows-failure.txt"
+  },
+  "sealedSuites": {
+    "preflightSha256": "773eb67e6ca5065565a29610ae93a23b78d0e01a4728838e079cdb44158aefb4",
+    "preparedPlanSha256": "aa44219c65380ad57a463ddd068707213fe7c5e049b7d9bcc618b7c7c5e443bc",
+    "development": "original observation plus at most two self-selected experiments"
+  },
+  "providerSupport": {
+    "url": "https://api-docs.deepseek.com/quick_start/pricing/",
+    "selectedOutput": 8192,
+    "maximumOutput": "384K",
+    "invoiceVerified": false,
+    "conservativeInputRate": 0.3,
+    "conservativeOutputRate": 1.2,
+    "checkedAt": "2026-10-02T01:09:09.6327290-07:00"
+  }
+}

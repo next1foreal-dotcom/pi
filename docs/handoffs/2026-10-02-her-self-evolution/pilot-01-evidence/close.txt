@@ -1,0 +1,8 @@
+import {GrowthJournal} from "../packages/her/src/growth-experiment/journal.ts";
+const journal=new GrowthJournal(process.argv[2],"growth-pilot-01");
+const rows=await journal.read();
+if(rows.some(r=>r.kind==="pilot-stop"))throw new Error("pilot already stopped");
+const reserves=rows.filter(r=>r.kind==="model-reserve");
+if(reserves.length!==2)throw new Error("unexpected pilot request count");
+await journal.append("pilot-stop",{status:"INCOMPLETE",reason:"Host denied self-selected probe: operationId git-status is unapproved; only observe-environment was frozen. Batched cases also omit required kind. No experiment observation or method; no automatic retry or repair request.",modelActiveJudgment:false,knownTokens:9419,conservativeEstimatedUsd:0.0099114,actualRequests:2,newUnknown:0,gate:"not reached",finalRows:"all eight missing; no calls made",historicalTokens:"unknown",historicalUsd:"unknown"});
+console.log("pilot stopped durably; no provider call");
