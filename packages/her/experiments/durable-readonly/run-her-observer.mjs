@@ -17,14 +17,16 @@ const run = (command, args) => {
 };
 try {
   const dependencies = { '@earendil-works/chord': '1.0.0', '@earendil-works/pi-ai': '1.0.0',
-    '@earendil-works/pi-durable': '1.0.0', '@cedar-policy/cedar-wasm': '4.11.1' };
+    '@earendil-works/pi-durable': '1.0.0', '@cedar-policy/cedar-wasm': '4.11.1',
+    '@earendil-works/pi-coding-agent': '1.0.0', 'typescript': '5.9.3', '@types/node': '22.19.19' };
   await writeFile(join(temp, 'package.json'), JSON.stringify({ private: true, type: 'module', dependencies,
     overrides: { '@earendil-works/chord': '1.0.0', '@earendil-works/pi-ai': '1.0.0' } }, null, 2));
   const experiment = 'packages/her/experiments/durable-readonly';
-  const files = ['observer-scope.mjs', 'observer-scope.test.mjs', 'her-observer.mjs', 'observer-worker.mjs', 'observer-sdk.test.mjs']
+  const files = ['observer-scope.mjs', 'observer-scope.test.mjs', 'her-observer.mjs', 'observer-worker.mjs', 'observer-sdk.test.mjs', 'observer-report-server.mjs']
     .map((file) => `${experiment}/${file}`);
   files.push(...['lib/cedar.ts', 'lib/governed-tools.ts', 'lib/audit.ts', 'rsi/anchors.ts',
-    'her-core/review-evidence.ts', 'her-core/read-before-edit.ts'].map((file) => `packages/her/src/${file}`));
+    'her-core/review-evidence.ts', 'her-core/read-before-edit.ts', 'observer-report/protocol.ts', 'observer-report/extension.ts'].map((file) => `packages/her/src/${file}`));
+  files.push('packages/her/test/observer-report.test.ts', '.pi/extensions/her-observer.ts');
   for (const path of files) {
     await mkdir(dirname(join(temp, path)), { recursive: true });
     await copyFile(join(root, path), join(temp, path));
@@ -41,7 +43,16 @@ try {
   }
   console.log(JSON.stringify({ node: process.versions.node, dependencies, integration: 'real Her Cedar + real Her evidence helper' }));
   run(process.execPath, [npm, 'ls', '--depth=0']);
-  run(process.execPath, ['--experimental-strip-types', '--test', `${experiment}/observer-scope.test.mjs`, `${experiment}/observer-sdk.test.mjs`]);
+  await writeFile(join(temp, 'tsconfig.report.json'), JSON.stringify({
+    compilerOptions: { target: 'ES2023', module: 'NodeNext', moduleResolution: 'NodeNext',
+      strict: true, noEmit: true, skipLibCheck: true, allowImportingTsExtensions: true, types: ['node'] },
+    files: ['packages/her/src/observer-report/extension.ts', 'packages/her/src/observer-report/protocol.ts',
+      'packages/her/test/observer-report.test.ts', '.pi/extensions/her-observer.ts'],
+  }, null, 2));
+  run(process.execPath, ['node_modules/typescript/bin/tsc', '-p', 'tsconfig.report.json']);
+  run(process.execPath, ['--experimental-strip-types', '--test', '--test-concurrency=1',
+    `${experiment}/observer-scope.test.mjs`, `${experiment}/observer-sdk.test.mjs`,
+    'packages/her/test/observer-report.test.ts']);
 } finally {
   await rm(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 }

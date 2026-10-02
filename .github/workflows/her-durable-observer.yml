@@ -5,6 +5,9 @@ on:
       - packages/her/experiments/durable-readonly/**
       - packages/her/src/her-core/review-evidence.ts
       - packages/her/src/lib/cedar.ts
+      - packages/her/src/observer-report/**
+      - packages/her/test/observer-report.test.ts
+      - .pi/extensions/her-observer.ts
       - packages/her/pi-package/policies/**
       - .github/workflows/her-durable-observer.yml
 permissions:
@@ -16,7 +19,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
