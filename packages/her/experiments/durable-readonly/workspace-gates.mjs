@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { appendFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { compareResults, modelDataFingerprint, parseResults } from './workspace-comparison.mjs';
 import { runStage } from './validation-stage.mjs';
 
@@ -52,7 +52,7 @@ for (const [label, directory] of [['base', basePath], ['head', headPath]]) {
       .filter((file) => file.endsWith('.test.ts')).sort().map((file) => `packages/her/test/${file}`);
     const resultsPath = join(output, `${label}-tests.jsonl`);
     run('tests', ['--import', 'tsx', '--test', '--test-reporter=dot',
-      `--test-reporter=${join(here, 'workspace-reporter.mjs')}`, '--test-reporter-destination=stdout',
+      `--test-reporter=${pathToFileURL(join(here, 'workspace-reporter.mjs')).href}`, '--test-reporter-destination=stdout',
       `--test-reporter-destination=${resultsPath}`, ...testFiles], 600000);
     try { metadata.tests = parseResults(await readFile(resultsPath, 'utf8')); }
     catch (error) { metadata.resultsError = error.message; }

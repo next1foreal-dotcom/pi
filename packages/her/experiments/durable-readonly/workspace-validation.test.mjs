@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { test } from 'node:test';
 import report from './workspace-reporter.mjs';
 import { compareResults, modelDataFingerprint, parseResults } from './workspace-comparison.mjs';
@@ -109,9 +109,11 @@ test('real Node subprocess reports pass, failure, nested names, skipped and canc
     // Error retains custom cancellation metadata across process serialization.
     cancelled.abort(new Error('fixture cancellation'));
     test('cancel', { signal: cancelled.signal }, () => assert.fail('cancelled body ran'));\n`);
+  const reporterPath = join(root, 'reporter # with spaces.mjs');
+  await copyFile(join(here, 'workspace-reporter.mjs'), reporterPath);
   const env = { ...process.env };
   delete env.NODE_TEST_CONTEXT; // The child is a separate runner, not a nested test context.
-  const result = spawnSync(process.execPath, ['--test', `--test-reporter=${join(here, 'workspace-reporter.mjs')}`,
+  const result = spawnSync(process.execPath, ['--test', `--test-reporter=${pathToFileURL(reporterPath).href}`,
     'test/fixture.mjs'], { cwd: root, env, encoding: 'utf8', timeout: 15000, shell: false });
   assert.ifError(result.error);
   assert.equal(result.status, 1, result.stderr);
