@@ -3,7 +3,7 @@ import { createModels } from '@earendil-works/pi-ai';
 import { discoverAndLoadExtensions } from '@earendil-works/pi-coding-agent';
 import { createRegistry, Harness } from '@earendil-works/pi-durable';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
-import { createHerObserver, Observation } from './her-observer.mjs';
+import { authorizeHerRead, createHerObserver, Observation } from './her-observer.mjs';
 import { serveObserverReport } from './observer-report-server.mjs';
 import { fetchReport } from '../../src/observer-report/protocol.ts';
 import assert from 'node:assert/strict';
@@ -13,7 +13,6 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
-import { authorizeHerRead } from './her-observer.mjs';
 import { evaluate, policyEnvelope } from '../../src/lib/cedar.ts';
 import { digest } from './observer-scope.mjs';
 

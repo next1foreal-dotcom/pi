@@ -54,10 +54,25 @@ The expanded isolated suite targets 42 tests: 13 source-scope tests, 14 protocol
 
 The real loader tests exercise published Pi's module loader and ExtensionAPI registration against the real Durable/Cedar report endpoint. Session storage/UI dispatch in those tests are capture sinks, not a deployed main AgentSession. This is not a browser renderer, live-user installation, or proof of the unupgraded 0.87 host.
 
-Local authoring check: 27/27 dependency-free scope and protocol/command tests passed on Node 22.16.0; changed MJS syntax checks passed. Real SDK/typecheck results must come from the dedicated Linux/Windows workflow, not from that local result.
+### Measured results (2026-10-02)
 
-## Workspace gate
+Code commit `2fbc3354b641a2c868bf6abb4c11d9f0bd90088e` passed the dedicated Linux and Windows workflow `37042549370`. Both jobs completed successfully (Linux `110955954611`; Windows `110955954936`). The Linux detailed log records 42 passed, 0 failed, 0 skipped and successful SDK type checking; the Windows job completed the same mandatory runner successfully. These are the same 42 scenarios on two platforms, not 84 distinct scenarios.
 
-Workspace workflow 37040407212 attempted locked installation on both the unchanged base and the PR head. Both failed because the root lockfile lacks `undici@8.5.0` and `@earendil-works/pi-session-backend-sqlite-node@0.87.0`. Consequently full Her regressions and root `npm run check` did not execute. This bridge does not modify the root lockfile to bypass that baseline failure.
+The previous run exposed an invalid `session_switch` event through real SDK type checking. The adapter and tests now use Pi 1.0.0's `session_before_switch` event; no check or assertion was disabled. Local authoring validation is separately 27/27 scope/protocol tests on Node 22.16.0; it is not a local real SDK run.
 
-Keep PR #10 draft. Root install/check, full regressions, live primary-session integration and operator provisioning remain rollout gates. No deployment or merge is performed by these workflows.
+A subsequent follow-up only consolidates duplicate imports in `observer-sdk.test.mjs` and updates this document. The passing CI evidence above belongs to `2fbc3354`, not automatically to later commits. The follow-up needs its own CI result.
+
+## Workspace gate — not clean
+
+The initial workspace workflow `37040407212` failed locked installation on both revisions because the lockfile was missing dependencies. A later run, `37042549502`, successfully installed both revisions and actually ran Her regressions and `npm run check`; those commands failed. The later measurements supersede the earlier installation-only limitation.
+
+| Revision in run 37042549502 | Test summary | Root check |
+| --- | --- | --- |
+| Base `a142e559` | 730 total; 653 passed, 73 failed, 4 cancelled | Failed |
+| Head `2fbc3354` | 782 total; 691 passed, 87 failed, 4 cancelled | Failed |
+
+Both revisions have missing generated/build artifacts and other regression failures. The head has 14 additional failures in the aggregate; their cause has NOT been isolated, so do not dismiss them as baseline-only or claim this PR is regression-free. The suites have different totals; aggregate differences are not a one-to-one diagnosis.
+
+The root lint check also identified a duplicate import from `her-observer.mjs` in this PR's SDK test. That import was consolidated in the follow-up, without changing test behavior. This does not establish that the full check passes. No runner-generated bulk formatting edits, root dependency manifests, or lockfile changes were committed.
+
+Keep PR #10 draft. Root check, full regressions including the additional head failures, a real primary AgentSession/browser integration, and operator provisioning remain rollout gates. No merge, deployment or enablement was performed. This bridge is implemented and integration-tested at the loader/endpoint boundary, not activated in the user's Her installation.
