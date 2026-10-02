@@ -311,6 +311,7 @@ test('real AgentSession persists the report, rejects revoked evidence and restor
   };
   let modelCalls = 0;
   let agentStarts = 0;
+  const extensionErrors = [];
   async function attach(sessionManager) {
     const settingsManager = SettingsManager.inMemory();
     const loader = new DefaultResourceLoader({
@@ -334,7 +335,7 @@ test('real AgentSession persists the report, rejects revoked evidence and restor
     sessions.push(session);
     session.agent.streamFn = async () => { modelCalls++; throw new Error('report commands must not invoke a model'); };
     session.subscribe((event) => { if (event.type === 'agent_start') agentStarts++; });
-    await session.bindExtensions();
+    await session.bindExtensions({ onError: (error) => extensionErrors.push(error) });
     assert.deepEqual(session.getActiveToolNames(), []);
     return session;
   }
@@ -390,6 +391,7 @@ test('real AgentSession persists the report, rejects revoked evidence and restor
   assert.match(messages(other).at(-1).content, /未通过本次核对/);
   assert.equal(modelCalls, 0);
   assert.equal(agentStarts, 0);
+  assert.deepEqual(extensionErrors, []);
   assert.deepEqual(await host.harness.snapshot(Observation, host.root.id, context), before);
   t.diagnostic(JSON.stringify({ runtime: 'real AgentSession + real JSONL + real Durable/Her endpoint',
     modelCalls, agentStarts, freshSessionDiskFile: false, persistedSuccessfulReceipts: 2,
