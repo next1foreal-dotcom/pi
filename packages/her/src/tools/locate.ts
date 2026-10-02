@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
+import { join, parse, sep } from "node:path";
 
 export type ToolName =
 	| "pandoc"
@@ -138,10 +139,16 @@ export function expandEnv(input: string): string {
  * Wildcard segments are matched case-insensitively; newer names sort first.
  */
 export function globFirst(pattern: string): string | null {
-	const segments = pattern.split(/[\\/]/).filter((segment, index) => index === 0 || segment.length > 0);
-	let bases = [segments[0]];
-	for (let i = 1; i < segments.length; i++) {
-		const segment = segments[i];
+	if (!pattern) return null;
+	// Preserve native roots, including Windows drive/UNC roots, instead of
+	// treating the first segment as a drive and appending backslashes on every OS.
+	const root = parse(pattern).root;
+	const segments = pattern
+		.slice(root.length)
+		.split(sep === "\\" ? /[\\/]/ : /\//)
+		.filter(Boolean);
+	let bases = [root || "."];
+	for (const segment of segments) {
 		const next: string[] = [];
 		if (segment.includes("*")) {
 			const matcher = wildcardToRegExp(segment);
@@ -156,21 +163,16 @@ export function globFirst(pattern: string): string | null {
 					.filter((name) => matcher.test(name))
 					.sort()
 					.reverse()) {
-					next.push(joinSegment(base, entry));
+					next.push(join(base, entry));
 				}
 			}
 		} else {
-			for (const base of bases) next.push(joinSegment(base, segment));
+			for (const base of bases) next.push(join(base, segment));
 		}
 		bases = next;
 		if (bases.length === 0) return null;
 	}
 	return bases.find((path) => existsSync(path)) ?? null;
-}
-
-function joinSegment(base: string, segment: string): string {
-	// base is either a drive ("C:") or an accumulated path; both take a backslash.
-	return `${base}\\${segment}`;
 }
 
 function wildcardToRegExp(segment: string): RegExp {

@@ -58,6 +58,10 @@ for (const [label, directory] of [['base', basePath], ['head', headPath]]) {
     catch (error) { metadata.resultsError = error.message; }
     run('check', [npm, 'run', 'check'], 600000);
     runStage(`${label}:generated-edits`, 'git', ['status', '--short'], { cwd, env, timeout: 30000 });
+    runStage(`${label}:review-format-diff`, 'git', ['diff', '--',
+      'packages/her/src/observer-report', 'packages/her/test/observer-report.test.ts',
+      'packages/her/src/tools/locate.ts', 'packages/her/test/tool-locator-paths.test.ts',
+      'packages/her/test/side-chat-guard.test.ts'], { cwd, env, timeout: 30000 });
   }
 }
 let comparison;

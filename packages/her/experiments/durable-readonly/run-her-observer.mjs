@@ -23,8 +23,10 @@ try {
     'validation-stage.mjs', 'workspace-reporter.mjs', 'workspace-comparison.mjs', 'workspace-validation.test.mjs']
     .map((file) => `${experiment}/${file}`);
   files.push(...['lib/cedar.ts', 'lib/governed-tools.ts', 'lib/audit.ts', 'rsi/anchors.ts',
-    'her-core/review-evidence.ts', 'her-core/read-before-edit.ts', 'observer-report/protocol.ts', 'observer-report/extension.ts'].map((file) => `packages/her/src/${file}`));
-  files.push('packages/her/test/observer-report.test.ts', '.pi/extensions/her-observer.ts');
+    'her-core/review-evidence.ts', 'her-core/read-before-edit.ts', 'observer-report/protocol.ts', 'observer-report/extension.ts',
+    'tools/locate.ts', 'side-chat-guard.ts'].map((file) => `packages/her/src/${file}`));
+  files.push('packages/her/test/observer-report.test.ts', 'packages/her/test/tool-locator-paths.test.ts',
+    'packages/her/test/side-chat-guard.test.ts', '.pi/extensions/her-observer.ts');
   for (const path of files) {
     await mkdir(dirname(join(temp, path)), { recursive: true });
     await copyFile(join(root, path), join(temp, path));
@@ -45,12 +47,14 @@ try {
     compilerOptions: { target: 'ES2023', module: 'NodeNext', moduleResolution: 'NodeNext',
       strict: true, noEmit: true, skipLibCheck: true, allowImportingTsExtensions: true, types: ['node'] },
     files: ['packages/her/src/observer-report/extension.ts', 'packages/her/src/observer-report/protocol.ts',
-      'packages/her/test/observer-report.test.ts', '.pi/extensions/her-observer.ts'],
+      'packages/her/test/observer-report.test.ts', 'packages/her/test/tool-locator-paths.test.ts',
+      'packages/her/test/side-chat-guard.test.ts', '.pi/extensions/her-observer.ts'],
   }, null, 2));
   run('typecheck', ['node_modules/typescript/bin/tsc', '-p', 'tsconfig.report.json']);
   run('tests', ['--experimental-strip-types', '--test', '--test-concurrency=1',
     `${experiment}/workspace-validation.test.mjs`, `${experiment}/observer-scope.test.mjs`, `${experiment}/observer-sdk.test.mjs`,
-    'packages/her/test/observer-report.test.ts']);
+    'packages/her/test/observer-report.test.ts', 'packages/her/test/tool-locator-paths.test.ts',
+    'packages/her/test/side-chat-guard.test.ts']);
 } finally {
   await rm(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 }
