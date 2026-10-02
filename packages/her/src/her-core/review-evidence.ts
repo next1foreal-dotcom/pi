@@ -18,6 +18,23 @@ export interface ReviewEvidenceItem {
 	verify_note?: string;
 }
 
+/** Check an already-read snapshot. This checks line bounds, not the truth of the claim.
+ * Callers own path authorization, decoding and bounded reading before calling this helper.
+ */
+export function verifyEvidenceContent(e: ReviewEvidenceItem, content: string): ReviewEvidenceItem {
+	if (e.lines) {
+		const m = /^(\d+)(?:\s*-\s*(\d+))?$/.exec(e.lines);
+		if (!m) return { ...e, verified: false, verify_note: `行号格式无法解析: ${e.lines}` };
+		const start = Number(m[1]);
+		const end = m[2] ? Number(m[2]) : start;
+		const total = content.split("\n").length;
+		if (start < 1 || end < start || end > total) {
+			return { ...e, verified: false, verify_note: `行号越界（文件共 ${total} 行）` };
+		}
+	}
+	return { ...e, verified: true };
+}
+
 /**
  * 自动核验模型返回的 evidence：文件真实存在、行号范围不越界。
  * 核验不通过不删除条目（模型可能引用了目录外的常识性路径），只如实标记，
@@ -35,16 +52,6 @@ export function verifyEvidence(evidence: ReviewEvidenceItem[], cwd: string): Rev
 		} catch {
 			return { ...e, verified: false, verify_note: "文件不存在或不可读" };
 		}
-		if (e.lines) {
-			const m = e.lines.match(/^(\d+)(?:\s*-\s*(\d+))?$/);
-			if (!m) return { ...e, verified: false, verify_note: `行号格式无法解析: ${e.lines}` };
-			const start = Number(m[1]);
-			const end = m[2] ? Number(m[2]) : start;
-			const total = content.split("\n").length;
-			if (start < 1 || end < start || end > total) {
-				return { ...e, verified: false, verify_note: `行号越界（文件共 ${total} 行）` };
-			}
-		}
-		return { ...e, verified: true };
+		return verifyEvidenceContent(e, content);
 	});
 }
