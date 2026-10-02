@@ -43,14 +43,24 @@ Five other scenarios cover normal completion and duplicate submission; a tool wi
 - A tool without `replay: safe` is simulated with an otherwise read-only fixture. No actual external side effects are introduced to test non-replay behavior.
 - Only temporary SQLite state and test instrumentation are written. The input fixtures are checked for changes at cleanup. Nothing reads the real Her memory directory.
 - Worker environment variables are allowlisted; provider secrets, proxy settings and `NODE_OPTIONS` are not forwarded. Accidental `fetch` calls in the worker throw.
-- View tests exercise Durable's committed view/watch API and restart/reconnection snapshots, not a browser UI, multi-machine service or network authentication.
+- View tests exercise the built-in conversation watch plus a separate `watchDoc(Receipts, ...)` subscription. Pi 1.0.0 mounts only `pi.agent`, `pi.live`, `pi.inbox`, and `pi.usage` in its conversation view. This composite projection converges from two committed streams; it does not promise one atomic UI frame across both. Tests check checkpoint/reconnection snapshots at quiescent boundaries and receipt delivery to an already attached client, not a browser UI, multi-machine service or network authentication.
 - This is not an OS security sandbox. A malicious process with the same filesystem permissions is outside scope, as are power-loss guarantees, multi-writer storage, billing recovery, and exactly-once external effects.
 
 ## Validation record
 
 Authoring container: **12/12 dependency-free policy tests passed**, Node 22.16.0. Every authored `.mjs` file passed `node --check`. The full SDK suite is a separate gate and is not reported as passed from these checks. The authoring container cannot resolve the npm registry and lacks SDK packages; its Node is also below the supported SDK minimum.
 
-The PR must stay draft until the dedicated Linux/Windows workflow runs all **18 tests (12 policy + 6 real SDK scenarios)** successfully and the root check has been run in the actual workspace. Inspect failures rather than weakening assertions or adding skips. Even passing this probe does not approve migrating Her's primary runtime.
+The first real Linux and Windows CI run (`36989524025`) reached the SDK: 14/18 tests passed on each OS. The four failures exposed an adapter mistake, not absent stored receipts: custom documents are not mounted in the built-in conversation view. The adapter now subscribes to the receipt document separately; original recovery assertions remain and live custom-document delivery is also asserted. The corrected code commit `cf88ce0726aaa842069fc395110b7c2887bedb63` passed the real SDK workflow on 2026-10-02:
+
+- Run: https://github.com/next1foreal-dotcom/pi/actions/runs/36990233514
+- Linux job `110784476527`: **18/18 passed, 0 failed, 0 skipped**.
+- Windows job `110784476845`: **18/18 passed, 0 failed, 0 skipped**.
+- Both used Node **24.21.0**, with Chord, Pi AI and Pi Durable all exactly **1.0.0**.
+- The SIGKILL probe measured attempts `{a: 1, b: 2}`, one admitted user input/submission, and equal reconnected receipts. Both logs were inspected, not only the workflow's green indicator.
+
+These are six real SDK scenarios plus twelve policy tests on each OS, not 36 distinct scenarios. The faux model does not call a paid provider. The custom-document fix also asserts that an already attached client receives receipt updates.
+
+**Remaining gates:** root `npm run check` and actual Her integration have not run. Keep the PR draft and unmerged. The separate `Merge Upstream Dry Run` workflow (`36990233576`) still reports conflicts in existing files including `biome.json`, `package-lock.json`, `agent-session.ts`, `main.ts`, and `tsconfig.json`; this experiment does not modify or resolve those files. Passing the isolated probe does not approve migrating Her's primary runtime.
 
 ## Source contract
 
@@ -61,5 +71,6 @@ Implemented against the tagged upstream sources, not remembered API names:
 - https://github.com/earendil-works/pi/blob/v1.0.0/packages/durable/test/chat-support.ts
 - https://github.com/earendil-works/pi/blob/v1.0.0/packages/durable/test/harness-tools.test.ts
 - https://github.com/earendil-works/pi/blob/v1.0.0/packages/durable/test/harness-generation-recovery.test.ts
+- https://github.com/earendil-works/pi/blob/v1.0.0/packages/durable/src/harness/view.ts
 
 Next migration decision: only after these measurements, consider an opt-in read-only observer adapter. Keep Her's durable memory and acceptance-policy ownership unchanged.
