@@ -1277,6 +1277,7 @@ export default function her(pi: ExtensionAPI): void {
 				});
 				return;
 			}
+			// Passive memory notices remain in the session without generating another answer.
 			const digest = await mem.contextDigestDue();
 			if (digest.length > 0) {
 				pi.sendMessage(
@@ -1286,7 +1287,7 @@ export default function her(pi: ExtensionAPI): void {
 						display: true,
 						details: { updates: digest.map((update) => update.id), pinned: true },
 					},
-					{ deliverAs: "followUp" },
+					{ deliverAs: "followUp", triggerTurn: false },
 				);
 				await mem.markContextDigestSent(digest.map((update) => update.id));
 				pi.appendEntry("her-state", {
@@ -1318,7 +1319,7 @@ export default function her(pi: ExtensionAPI): void {
 					display: true,
 					details: { noteId: hit.id, kind: hit.kind, pinned: true },
 				},
-				{ deliverAs: "followUp" },
+				{ deliverAs: "followUp", triggerTurn: false },
 			);
 			pi.appendEntry("her-state", {
 				phase: "5",
