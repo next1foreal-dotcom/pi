@@ -152,8 +152,8 @@ test("session-switch clears cached evidence without fetching again", async () =>
 	try {
 		const h = harness(host.url);
 		await h.command("refresh");
-		assert.ok(h.handlers.has("session_switch"));
-		h.handlers.get("session_switch")!({}, h.ctx);
+		assert.ok(h.handlers.has("session_before_switch"));
+		h.handlers.get("session_before_switch")!({}, h.ctx);
 		await h.command("status");
 		assert.match(h.messages.at(-1)!.content, /尚无观察回执/);
 	} finally { await host.close(); }

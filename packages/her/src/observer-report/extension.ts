@@ -16,7 +16,7 @@ export default function observerReport(pi: ExtensionAPI): void {
 		try { if (ctx.hasUI) ctx.ui.setStatus("her-observer", undefined); } catch { /* Disconnected UI. */ }
 	};
 	pi.on("session_start", clear);
-	pi.on("session_switch", clear);
+	pi.on("session_before_switch", clear);
 	pi.on("session_shutdown", clear);
 	pi.on("session_tree", clear);
 	pi.registerCommand("her-observer", {
@@ -60,7 +60,12 @@ export default function observerReport(pi: ExtensionAPI): void {
 					content: "观察回执未通过本次核对，旧快照不可作为当前证明。未启动或恢复任何任务。",
 					details: { sessionId, unavailable: true } }, { deliverAs: "followUp" });
 			} finally {
-				if (active === controller) active = undefined;
+				if (active === controller) {
+					active = undefined;
+					if (signal.aborted && generation === epoch) {
+						try { if (ctx.hasUI) ctx.ui.setStatus("her-observer", "观察核对已取消"); } catch { /* UI only. */ }
+					}
+				}
 			}
 		},
 	});

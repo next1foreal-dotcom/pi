@@ -283,7 +283,7 @@ test('real Pi loader command reaches actual Durable/Her HTTP report without trig
   assert.equal(entries[0].data.report.status, 'evidence-complete');
   assert.equal(deliveries[0].options.triggerTurn, undefined);
   assert.ok(!JSON.stringify(deliveries).includes(host.connection.token));
-  for (const handler of extension.handlers.get('session_switch') ?? []) await handler({}, ctx);
+  for (const handler of extension.handlers.get('session_before_switch') ?? []) await handler({}, ctx);
   await command.handler('status', ctx);
   assert.match(deliveries.at(-1).message.content, /尚无观察回执/);
   assert.equal((await host.harness.snapshot(Observation, host.root.id, context)).attempts, 2);
