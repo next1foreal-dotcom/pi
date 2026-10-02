@@ -1,0 +1,357 @@
+{
+  "task": "her-self-evolution-integration-20261002",
+  "node": "v24.17.0",
+  "sourceManifest": "source-sha256.json",
+  "actualExperiment": {
+    "actualUsd": null,
+    "successfulModelReplies": 0,
+    "actualUsage": null,
+    "reservedTokens": 6877,
+    "providerRequests": 1,
+    "phase": "discover",
+    "correctionTrials": 0,
+    "budget": {
+      "wallMs": 1200000,
+      "tokens": 30000,
+      "usd": 2
+    },
+    "reservedUsd": 0.0082524,
+    "preflightCases": 6,
+    "reason": "model returned empty content",
+    "noReplay": true,
+    "startUtc": "2026-10-02T05:00:31.364Z",
+    "methodCount": 0,
+    "blockedUtc": "2026-10-02T05:00:42.066Z",
+    "preflightIsLearning": false,
+    "usageReconciliationRequired": true,
+    "transferTrials": 0,
+    "status": "BLOCKED",
+    "probeCount": 0,
+    "priceSource": "https://api-docs.deepseek.com/quick_start/pricing/"
+  },
+  "artifacts": [
+    {
+      "originalLocalSha256": "33477d56025e0f724ddf306913b3d67cff069d6ec3c62521a53edba1042945fa",
+      "sha256": "808da809d0aef008ac74d76da8a6492ba5f4de73b14872bbe7614848a6fbae5d",
+      "path": "growth-final-affected-tests.txt",
+      "kind": "engineering-or-command-log"
+    },
+    {
+      "originalLocalSha256": "875f3cb8a3918e83f66ff996ea93b0bce3299fcff4ef91fed45f5b9dbe42485b",
+      "sha256": "2227a647f9df05cce051025e20e194b66537ae586924f0c33ca9ecd9cd3a743d",
+      "path": "growth-final-check-green.txt",
+      "kind": "engineering-or-command-log"
+    },
+    {
+      "originalLocalSha256": "2a54043668fce95f0d98a0f98eddcb484ca37af459a4e5cbbe1185fb1c3c2fa2",
+      "sha256": "15eec1cb4e80ddede3e3a9b53a1be994668ad6be112b5527b4c1809a76d085ad",
+      "path": "growth-final-engineering-check.txt",
+      "kind": "engineering-or-command-log"
+    },
+    {
+      "originalLocalSha256": "d6e16a5cf5239e828372b81aea6f7dbe8c6f5e859fdc9e1224307e48b6ab0bc9",
+      "sha256": "e55f00642cb9ec471ace1fb82936da1084c1522c5f7be8fc072d357876eada8d",
+      "path": "growth-final-engineering-check-single-thread.txt",
+      "kind": "engineering-or-command-log"
+    },
+    {
+      "originalLocalSha256": "02a8adfd61c96ff5ca0c877c48656756c13741698da28f426c63b864455f6190",
+      "sha256": "f60ed4f3c6a5fe6ea25b8530dd38fe75080f91d01c509a89a88f7f74fb402561",
+      "path": "growth-final-host-tests.txt",
+      "kind": "engineering-or-command-log"
+    },
+    {
+      "originalLocalSha256": "bcd1813f6824e84633d878c0ce0f4ce6381632ac90bb942394d409a3b3d83c43",
+      "sha256": "867b9e7d2a5e6d6c0860bbb94f2fb5069ad15fff439f9eaf5835f988837ac5f6",
+      "path": "growth-final-host-tests-green.txt",
+      "kind": "engineering-or-command-log"
+    },
+    {
+      "originalLocalSha256": "37b63633534c350ecb948853791fd7d22dbd6597af46d10e158bcaea9aa545bf",
+      "sha256": "e4026e00a402f2289ad3af61ac7a29fa6e2b5248863c49b6c0c3bd32391bfda6",
+      "path": "growth-live-init.txt",
+      "kind": "engineering-or-command-log"
+    },
+    {
+      "originalLocalSha256": "4d8b774161d0e50f328b57eac6cbb522725fb36129d1ba381044a8013be00a99",
+      "sha256": "16914a5a2bd278bec5e15a4384acf20a073b82592972095b4f6303f734e3ad93",
+      "path": "growth-live-step-1.txt",
+      "kind": "engineering-or-command-log"
+    },
+    {
+      "originalLocalSha256": "bd1e77b60609b50acd761f72c10064b72bcb68da5ec83c8c2dedde66d5c4007e",
+      "sha256": "54d2ec0695a6cace2c19eba2f065737ef24015b8eec4540d19641064662be64f",
+      "path": "growth-live-status-final.txt",
+      "kind": "engineering-or-command-log"
+    },
+    {
+      "originalLocalSha256": "6b88a2e9a21500ba3abc216e38d3d63f71a4b2a9eeb36a83061e020f38526798",
+      "sha256": "87c0710c7fb7549b3f79ff900ce42f6dec1e25b619e020418c9382a68cdc2ced",
+      "path": "growth-final-test-argv.json",
+      "kind": "engineering-or-command-log"
+    },
+    {
+      "sha256": "1a12f55ef3611c9a3e8ddd4da33d0957059386e38d8587d53f13260d1c04717e",
+      "path": "live/experience.json",
+      "kind": "actual-experiment-exact-bytes"
+    },
+    {
+      "sha256": "1e0cf44d0fec69a3f6242333f065831ea69fa03035dace6e8cf6c2702aa9b595",
+      "path": "live/evals/growth/observe.mjs",
+      "kind": "actual-experiment-exact-bytes"
+    },
+    {
+      "sha256": "4367cb00ad1fa8b14fdc3cf3926e3e7b08306b44bb174b2c803920e4cdc11191",
+      "path": "live/evals/growth/plan.json",
+      "kind": "actual-experiment-exact-bytes"
+    },
+    {
+      "sha256": "a5f5f9374805d58b06b6a55f21716d9e3f7c309313c2bcb4385b47b2cf46b7a7",
+      "path": "live/proposals/growth/windows-reader-inquiry.md",
+      "kind": "actual-experiment-exact-bytes"
+    },
+    {
+      "sha256": "3c8308c7950a1849d5f29ff5ad563431ede17269401fd7f610e28422b9396cb2",
+      "path": "live/evidence/adapt-text-view-input.json",
+      "kind": "actual-experiment-exact-bytes"
+    },
+    {
+      "sha256": "7cb5a480246e527d9d8767023b8768314c44fa61f41da61e988cdfb9b958049a",
+      "path": "live/evidence/adapt-text-view-truth.json",
+      "kind": "actual-experiment-exact-bytes"
+    },
+    {
+      "sha256": "52480d660ced5f1c6f3978ca995bdb503051d5549cc64ea7c9a62b3b03426d67",
+      "path": "live/evidence/counterexample-raw-input.json",
+      "kind": "actual-experiment-exact-bytes"
+    },
+    {
+      "sha256": "ca4c36e2c83eb3d8bc64d6e9c573254385dfd120836865dd34bf8c77872189cf",
+      "path": "live/evidence/counterexample-raw-truth.json",
+      "kind": "actual-experiment-exact-bytes"
+    },
+    {
+      "sha256": "20786bf7e8071a094da55862bdcebd1c836bdf0f5418c0a9ca855c9e553e2e8b",
+      "path": "live/evidence/final-git-clean-input.json",
+      "kind": "actual-experiment-exact-bytes"
+    },
+    {
+      "sha256": "83a333f52de45c8e317c189acdef8d909f8860949c3cf112e8fa00405d389df4",
+      "path": "live/evidence/final-git-clean-truth.json",
+      "kind": "actual-experiment-exact-bytes"
+    },
+    {
+      "sha256": "01a978a3b592a97b0ed9b4445cdd254b189300ad1c8223067aa4f0aef497726a",
+      "path": "live/evidence/final-git-filter-input.json",
+      "kind": "actual-experiment-exact-bytes"
+    },
+    {
+      "sha256": "d8cc1cf174dc28a1d913079fc65b280f320d230780ac19a863b7152905d0751b",
+      "path": "live/evidence/final-git-filter-truth.json",
+      "kind": "actual-experiment-exact-bytes"
+    },
+    {
+      "sha256": "8bf2830e6d9700e6b10403040fe4eb9886caa738c72b2718177399ce316a94ad",
+      "path": "live/evidence/observed-windows-failure.txt",
+      "kind": "actual-experiment-exact-bytes"
+    },
+    {
+      "sha256": "46d8ccccd64650725dff090f12ef929f0b7cbf0a91ea75b481fb93249ea2cb1c",
+      "path": "live/evidence/transfer-new-git-input.json",
+      "kind": "actual-experiment-exact-bytes"
+    },
+    {
+      "sha256": "bf8e92d9032438abd557420afcfa38670e460f0b3560251a410d6b6c0641939f",
+      "path": "live/evidence/transfer-new-git-truth.json",
+      "kind": "actual-experiment-exact-bytes"
+    },
+    {
+      "sha256": "0007e700fc4dd4cd5b6b4a6890289674d3736c06d3901de99f39bc2a1548b46d",
+      "path": "live/evidence/transfer-text-view-input.json",
+      "kind": "actual-experiment-exact-bytes"
+    },
+    {
+      "sha256": "e1045c3c354a0bbd6d56694541d55b92b06fdae94828c6939a1fab219a62e703",
+      "path": "live/evidence/transfer-text-view-truth.json",
+      "kind": "actual-experiment-exact-bytes"
+    }
+  ],
+  "notRun": [
+    "root npm test",
+    "build",
+    "full E2E",
+    "successful real discover/learn/transfer/correct",
+    "real paired gain review",
+    "production adoption/observation/rollback",
+    "Samantha JUDGE",
+    "deployment",
+    "runtime branch merge"
+  ],
+  "session": "01a0f910-9d84-7d31-9ccb-074570b833b5",
+  "handoff": "027e298331fd74090688f062c7ff4c6b58008434",
+  "executor": "main Codex",
+  "previousPiCommit": "37ab9c387ca603109a2a9a47d80abc97b869e686",
+  "commands": [
+    {
+      "log": "growth-final-affected-tests.txt",
+      "argv": [
+        "node",
+        "--import",
+        "tsx",
+        "--test",
+        "--test-concurrency=1",
+        "--test-reporter=tap",
+        "packages/her/test/anchor-commit-gate.test.ts",
+        "packages/her/test/anchor-tool-call.test.ts",
+        "packages/her/test/event-history-organs.test.ts",
+        "packages/her/test/event-history-verify.test.ts",
+        "packages/her/test/event-history.test.ts",
+        "packages/her/test/governed-tools-failsafe.test.ts",
+        "packages/her/test/improvement-assessment.test.ts",
+        "packages/her/test/improvement-runner.test.ts",
+        "packages/her/test/op-brackets.test.ts",
+        "packages/her/test/rsi-anchors.test.ts",
+        "packages/her/test/selfmod-apply.test.ts",
+        "packages/her/test/selfmod-boundaries.test.ts",
+        "packages/her/test/selfmod-c.test.ts",
+        "packages/her/test/selfmod-cli.test.ts",
+        "packages/her/test/selfmod-encoding.test.ts",
+        "packages/her/test/selfmod-pickup.test.ts",
+        "packages/her/test/selfmod-propose.test.ts",
+        "packages/her/test/selfmod-rollback.test.ts",
+        "packages/her/test/selfmod-runners.test.ts",
+        "packages/her/test/selfmod-test-evidence.test.ts",
+        "packages/her/test/selfmod-v1.test.ts",
+        "packages/her/test/selfmod-v2.test.ts",
+        "packages/her/test/selfmod-v3.test.ts",
+        "packages/her/test/selfmod-v4.test.ts",
+        "packages/her/test/selfmod-worktree.test.ts",
+        "packages/her/test/growth-experiment.test.ts",
+        "packages/her/test/growth-host.test.ts",
+        "packages/her/test/cli.test.ts",
+        "packages/her/test/bg-task-executor.test.ts",
+        "packages/her/test/bg-task-owner.test.ts",
+        "packages/her/test/self-wakeup.test.ts",
+        "packages/her/test/task-reconcile-cli.test.ts"
+      ],
+      "durationMs": 330800.4739,
+      "files": 32,
+      "pass": 351,
+      "skip": 0,
+      "tests": 351,
+      "exitCode": 0,
+      "fail": 0
+    },
+    {
+      "log": "growth-final-check-green.txt",
+      "baselineInfos": 5,
+      "exitCode": 0,
+      "env": {
+        "RAYON_NUM_THREADS": "1"
+      },
+      "argv": [
+        "npm",
+        "run",
+        "check"
+      ]
+    },
+    {
+      "outcome": "native Biome crash",
+      "log": "growth-final-engineering-check.txt",
+      "exitCode": -1073741819,
+      "argv": [
+        "npm",
+        "run",
+        "check"
+      ]
+    },
+    {
+      "outcome": "type errors subsequently fixed",
+      "log": "growth-final-engineering-check-single-thread.txt",
+      "exitCode": 2,
+      "env": {
+        "RAYON_NUM_THREADS": "1"
+      },
+      "argv": [
+        "npm",
+        "run",
+        "check"
+      ]
+    },
+    {
+      "argv": [
+        "node",
+        "--import",
+        "tsx",
+        "--test",
+        "packages/her/test/growth-experiment.test.ts",
+        "packages/her/test/growth-host.test.ts"
+      ],
+      "log": "growth-final-host-tests.txt",
+      "pass": 34,
+      "tests": 37,
+      "outcome": "undefined error field rejected by canonical JSON; subsequently fixed",
+      "exitCode": 1
+    },
+    {
+      "log": "growth-final-host-tests-green.txt",
+      "exitCode": 0,
+      "pass": 37,
+      "argv": [
+        "node",
+        "--import",
+        "tsx",
+        "--test",
+        "packages/her/test/growth-experiment.test.ts",
+        "packages/her/test/growth-host.test.ts"
+      ],
+      "tests": 37
+    },
+    {
+      "log": "growth-live-init.txt",
+      "exitCode": 0,
+      "argv": [
+        "node",
+        "--import",
+        "tsx",
+        "packages/her/src/growth-experiment/cli.ts",
+        "init",
+        "D:/@Her/tmp/growth-live-20261002",
+        "evals/growth/plan.json",
+        "D:/@Her/tmp/growth-live-20261002/experience.json"
+      ]
+    },
+    {
+      "semanticOutcome": "BLOCKED, NOT PASS",
+      "log": "growth-live-step-1.txt",
+      "exitCode": 0,
+      "argv": [
+        "node",
+        "--import",
+        "tsx",
+        "packages/her/src/growth-experiment/cli.ts",
+        "step",
+        "D:/@Her/tmp/growth-live-20261002",
+        "evals/growth/plan.json"
+      ]
+    },
+    {
+      "semanticOutcome": "read-only persisted blocked state",
+      "log": "growth-live-status-final.txt",
+      "exitCode": 0,
+      "argv": [
+        "node",
+        "--import",
+        "tsx",
+        "packages/her/src/cli.ts",
+        "growth",
+        "status",
+        "D:/@Her/tmp/growth-live-20261002",
+        "evals/growth/plan.json"
+      ]
+    }
+  ],
+  "tsx": "4.22.1",
+  "npm": "11.13.0",
+  "cwd": "D:\\@Her\\wt-self-evolution-20261002"
+}

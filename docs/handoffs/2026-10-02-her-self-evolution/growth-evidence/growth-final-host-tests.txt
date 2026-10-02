@@ -1,0 +1,102 @@
+✔ four stages: discover, investigate, review, use in fresh state, suspend, reopen (3.1283ms)
+✔ no-learning-needed is a real branch; no probe or method is manufactured (0.2497ms)
+✔ a probe whose hypotheses predict the same outcome is refused before execution (0.365ms)
+✔ candidate cannot cite invented evidence (0.4817ms)
+✔ pending probe is never silently replayed after a lost response (0.409ms)
+✔ out-of-scope new task does not invalidate the method globally (0.6416ms)
+✔ declining a method records an opportunity, without executing it (0.56ms)
+✔ two concurrent drivers cannot both pass the save compare-and-swap (2.7649ms)
+✔ thought and probe limits stop before the next action (0.2344ms)
+✔ training tasks cannot be relabeled as held-out evaluation (0.5481ms)
+✔ self-reported success without host evidence is not accepted (0.3614ms)
+✔ wrong method/task receipt stays pending and cannot suspend another version (0.6409ms)
+✔ permission denial stops a proposed probe (0.1922ms)
+✔ failed independent review cannot activate a candidate (0.4725ms)
+✔ cancellation before a call prevents both reasoning and action (0.3065ms)
+✔ probe port can return actual filesystem observations; driver does not score them (8.2942ms)
+✔ review is reserved once; interrupted review requires explicit host reconciliation (0.5932ms)
+✔ missing precondition evidence blocks use even when the model recommends it (0.4966ms)
+✔ permission for a new task is not inherited from approval of a method (0.504ms)
+✔ cancel during durable reservation prevents probe execution (0.2619ms)
+✔ reopening does not silently replenish the research budget or discard history (0.5358ms)
+✔ model adapter uses the injected model and token cap, not its own provider or credentials (0.1266ms)
+✔ model adapter rejects malformed output without a repair loop or extra calls (0.0623ms)
+✔ held-out review record is not included in later model prompts (0.742ms)
+✔ durable host snapshots survive a new object without rewriting earlier records (3.9871ms)
+✔ missing budgets cannot turn limits into an unbounded loop (0.1151ms)
+✔ inquiry ids cannot masquerade as filesystem paths (0.0588ms)
+✔ real Markdown journal: revision zero, append-only CAS, restart and corruption refusal (238.4159ms)
+✖ model host records actual usage and monthly cost ledger; preset reply is only engineering evidence (25.7087ms)
+✔ budget/STOP reject before provider call and frozen plans cannot be replaced (50.0942ms)
+✖ unknown usage leaves durable reservation, blocks replay across new host instance (19.8936ms)
+✔ real task executor runs only granted frozen actions, preserves logs and drops credentials (291.8285ms)
+✖ independent paired review uses actual executor artifacts, sealed cases and measured costs; no final replay (24.9623ms)
+✔ task execution interruption stays pending, consumed action cannot run again (22.9385ms)
+✔ budget exhaustion survives reopening and blocks before a model call (16.2792ms)
+✔ failed response retains fresh real usage, never settles with stale metadata (38.2805ms)
+✔ formal CLI reads persisted state and wakes from a real completed task without resetting budget (327.2733ms)
+ℹ tests 37
+ℹ suites 0
+ℹ pass 34
+ℹ fail 3
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1940.7858
+
+✖ failing tests:
+
+test at packages\her\test\growth-host.test.ts:1:3483
+✖ model host records actual usage and monthly cost ledger; preset reply is only engineering evidence (25.7087ms)
+  Error: only finite JSON values are allowed
+      at canonicalJson (D:\@Her\wt-self-evolution-20261002\packages\her\src\her-core\improvement-plan.ts:45:8)
+      at <anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\src\her-core\improvement-plan.ts:42:44)
+      at Array.map (<anonymous>)
+      at canonicalJson (D:\@Her\wt-self-evolution-20261002\packages\her\src\her-core\improvement-plan.ts:42:5)
+      at <anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\src\her-core\improvement-plan.ts:42:44)
+      at Array.map (<anonymous>)
+      at canonicalJson (D:\@Her\wt-self-evolution-20261002\packages\her\src\her-core\improvement-plan.ts:42:5)
+      at <anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\src\growth-experiment\journal.ts:64:49)
+      at async storeLock (D:\@Her\wt-self-evolution-20261002\packages\her\src\her-core\store-lock.ts:33:10)
+      at async HerGrowthHost.complete (D:\@Her\wt-self-evolution-20261002\packages\her\src\growth-experiment\host.ts:287:3)
+
+test at packages\her\test\growth-host.test.ts:1:4626
+✖ unknown usage leaves durable reservation, blocks replay across new host instance (19.8936ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /usage/. Input:
+
+  'Error: only finite JSON values are allowed'
+
+      at async TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-host.test.ts:123:2)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: only finite JSON values are allowed
+        at canonicalJson (D:\@Her\wt-self-evolution-20261002\packages\her\src\her-core\improvement-plan.ts:45:8)
+        at <anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\src\her-core\improvement-plan.ts:42:44)
+        at Array.map (<anonymous>)
+        at canonicalJson (D:\@Her\wt-self-evolution-20261002\packages\her\src\her-core\improvement-plan.ts:42:5)
+        at <anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\src\her-core\improvement-plan.ts:42:44)
+        at Array.map (<anonymous>)
+        at canonicalJson (D:\@Her\wt-self-evolution-20261002\packages\her\src\her-core\improvement-plan.ts:42:5)
+        at <anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\src\growth-experiment\journal.ts:64:49)
+        at async storeLock (D:\@Her\wt-self-evolution-20261002\packages\her\src\her-core\store-lock.ts:33:10)
+        at async HerGrowthHost.complete (D:\@Her\wt-self-evolution-20261002\packages\her\src\growth-experiment\host.ts:279:4),
+    expected: /usage/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at packages\her\test\growth-host.test.ts:1:6531
+✖ independent paired review uses actual executor artifacts, sealed cases and measured costs; no final replay (24.9623ms)
+  Error: only finite JSON values are allowed
+      at canonicalJson (D:\@Her\wt-self-evolution-20261002\packages\her\src\her-core\improvement-plan.ts:45:8)
+      at <anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\src\her-core\improvement-plan.ts:42:44)
+      at Array.map (<anonymous>)
+      at canonicalJson (D:\@Her\wt-self-evolution-20261002\packages\her\src\her-core\improvement-plan.ts:42:5)
+      at <anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\src\her-core\improvement-plan.ts:42:44)
+      at Array.map (<anonymous>)
+      at canonicalJson (D:\@Her\wt-self-evolution-20261002\packages\her\src\her-core\improvement-plan.ts:42:5)
+      at <anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\src\growth-experiment\journal.ts:64:49)
+      at async storeLock (D:\@Her\wt-self-evolution-20261002\packages\her\src\her-core\store-lock.ts:33:10)
+      at async HerGrowthHost.complete (D:\@Her\wt-self-evolution-20261002\packages\her\src\growth-experiment\host.ts:287:3)

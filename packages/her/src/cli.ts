@@ -104,6 +104,7 @@ import {
 	requireOptionValue,
 	UsageError,
 } from "./cli/utils.ts";
+import { growthExitCode, runGrowthCli } from "./growth-experiment/cli.ts";
 import { getSessionAgentToolRegistry } from "./her-core/agent-tools.ts";
 import { loadRuntimeConfig } from "./her-core/bg-task-config.ts";
 import { applyDreamProposal, rejectDreamProposal } from "./her-core/evidence-apply.ts";
@@ -207,6 +208,17 @@ export async function runHerCli(
 	// CONTEXT.md (the approve-only invariant stays intact).
 	if (argv[0] === "persona") {
 		return runPersonaCommand(argv.slice(1), env, cwd, io);
+	}
+
+	if (argv[0] === "growth") {
+		try {
+			const result = await runGrowthCli(argv.slice(1), env, cwd);
+			writeLine(io.stdout, JSON.stringify(result));
+			return growthExitCode(result);
+		} catch (error) {
+			writeLine(io.stderr, `her growth: ${errorMessage(error)}`);
+			return 1;
+		}
 	}
 
 	if (argv[0] === "doctor") {

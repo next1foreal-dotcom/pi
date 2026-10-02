@@ -1,0 +1,2130 @@
+TAP version 13
+# Subtest: A: session write and edit of her-memory/narrative/SOUL.md deny and audit forbid_anchor_write
+ok 1 - A: session write and edit of her-memory/narrative/SOUL.md deny and audit forbid_anchor_write
+  ---
+  duration_ms: 107.6789
+  type: 'test'
+  ...
+# Subtest: ADR-0002 worktree git gate
+    # Subtest: B: inherited hooksPath blocks a staged evals.ts commit and names the path
+    ok 1 - B: inherited hooksPath blocks a staged evals.ts commit and names the path
+      ---
+      duration_ms: 1053.612
+      type: 'test'
+      ...
+    # Subtest: B: FEI_ANCHOR_OVERRIDE=1 allows the same staged evals.ts commit
+    ok 2 - B: FEI_ANCHOR_OVERRIDE=1 allows the same staged evals.ts commit
+      ---
+      duration_ms: 910.3525
+      type: 'test'
+      ...
+    # Subtest: B: a non-anchor packages/her/test file commit is not blocked
+    ok 3 - B: a non-anchor packages/her/test file commit is not blocked
+      ---
+      duration_ms: 1070.0085
+      type: 'test'
+      ...
+    # Subtest: C4: Cedar is absent from the hook; the git gate alone blocks evals.ts
+    ok 4 - C4: Cedar is absent from the hook; the git gate alone blocks evals.ts
+      ---
+      duration_ms: 636.8965
+      type: 'test'
+      ...
+    # Subtest: C5: hooksPath=/dev/null lets evals.ts commit; Cedar still denies a SOUL write
+    ok 5 - C5: hooksPath=/dev/null lets evals.ts commit; Cedar still denies a SOUL write
+      ---
+      duration_ms: 575.1169
+      type: 'test'
+      ...
+    1..5
+ok 2 - ADR-0002 worktree git gate
+  ---
+  duration_ms: 7673.7261
+  type: 'suite'
+  ...
+# Subtest: git() surfaces a spawn failure instead of a bare null status
+ok 3 - git() surfaces a spawn failure instead of a bare null status
+  ---
+  duration_ms: 1.6936
+  type: 'test'
+  ...
+# Subtest: stub PATH prepend keeps inherited entries when the parent env spells the key Path
+ok 4 - stub PATH prepend keeps inherited entries when the parent env spells the key Path
+  ---
+  duration_ms: 0.1296
+  type: 'test'
+  ...
+# Subtest: resolveToolCallAnchor flags write path fields and bash commands that touch SOUL.md
+ok 5 - resolveToolCallAnchor flags write path fields and bash commands that touch SOUL.md
+  ---
+  duration_ms: 4.5541
+  type: 'test'
+  ...
+# Subtest: resolveToolCallAnchor canonicalizes Windows long-path prefix and session cwd
+ok 6 - resolveToolCallAnchor canonicalizes Windows long-path prefix and session cwd
+  ---
+  duration_ms: 47.6881
+  type: 'test'
+  ...
+# Subtest: extension Cedar uses ctx.cwd, not process.cwd, for relative anchor writes
+ok 7 - extension Cedar uses ctx.cwd, not process.cwd, for relative anchor writes
+  ---
+  duration_ms: 57.7284
+  type: 'test'
+  ...
+# Subtest: extension Cedar denies bash whose command targets an anchor path
+ok 8 - extension Cedar denies bash whose command targets an anchor path
+  ---
+  duration_ms: 49.6196
+  type: 'test'
+  ...
+# Subtest: resolveToolCallAnchor denies edit/write/bash against event-history files
+ok 9 - resolveToolCallAnchor denies edit/write/bash against event-history files
+  ---
+  duration_ms: 54.1355
+  type: 'test'
+  ...
+# Subtest: exec-flag plus encoding keywords hit as anchors; negatives do not
+ok 10 - exec-flag plus encoding keywords hit as anchors; negatives do not
+  ---
+  duration_ms: 1.5847
+  type: 'test'
+  ...
+# Subtest: extractPathCandidates names bare event-history.jsonl and does not false-hit data.json
+ok 11 - extractPathCandidates names bare event-history.jsonl and does not false-hit data.json
+  ---
+  duration_ms: 0.6029
+  type: 'test'
+  ...
+# Subtest: T1: node -e worker completes with exit 0 and log
+ok 12 - T1: node -e worker completes with exit 0 and log
+  ---
+  duration_ms: 279.1093
+  type: 'test'
+  ...
+# Subtest: T2: nonzero exit → failed
+ok 13 - T2: nonzero exit → failed
+  ---
+  duration_ms: 261.391
+  type: 'test'
+  ...
+# Subtest: T6: stop is idempotent
+ok 14 - T6: stop is idempotent
+  ---
+  duration_ms: 1397.2079
+  type: 'test'
+  ...
+# Subtest: T6b: stop immediately after spawn kills the runner (no pid-file window)
+ok 15 - T6b: stop immediately after spawn kills the runner (no pid-file window)
+  ---
+  duration_ms: 958.8045
+  type: 'test'
+  ...
+# Subtest: T8: UTF-8 safe chunk read
+ok 16 - T8: UTF-8 safe chunk read
+  ---
+  duration_ms: 0.4248
+  type: 'test'
+  ...
+# Subtest: her_task_output paginates
+ok 17 - her_task_output paginates
+  ---
+  duration_ms: 262.0114
+  type: 'test'
+  ...
+# Subtest: resolveWorkerCommand wraps .cmd on win32
+ok 18 - resolveWorkerCommand wraps .cmd on win32
+  ---
+  duration_ms: 0.1891
+  type: 'test'
+  ...
+# Subtest: formatWakeMessage empty → empty
+ok 19 - formatWakeMessage empty → empty
+  ---
+  duration_ms: 0.0874
+  type: 'test'
+  ...
+# Subtest: T15 foreign host skipped by reconcile
+ok 20 - T15 foreign host skipped by reconcile
+  ---
+  duration_ms: 3.0699
+  type: 'test'
+  ...
+# Subtest: S1-1 shouldDeferToOwner: owner 是我 / 不是我 / ownerless / 超宽限接手
+ok 21 - S1-1 shouldDeferToOwner: owner 是我 / 不是我 / ownerless / 超宽限接手
+  ---
+  duration_ms: 0.6639
+  type: 'test'
+  ...
+# Subtest: S1-2 grace boundary flips defer → takeover at OWNER_WAKE_GRACE_MS
+ok 22 - S1-2 grace boundary flips defer → takeover at OWNER_WAKE_GRACE_MS
+  ---
+  duration_ms: 0.3304
+  type: 'test'
+  ...
+# Subtest: S1-3 headless caller defers to a named owner until grace lapses
+ok 23 - S1-3 headless caller defers to a named owner until grace lapses
+  ---
+  duration_ms: 0.1032
+  type: 'test'
+  ...
+# Subtest: S1-4 formatOwnerTakeoverNote is empty without takeovers and names ids with them
+ok 24 - S1-4 formatOwnerTakeoverNote is empty without takeovers and names ids with them
+  ---
+  duration_ms: 0.1597
+  type: 'test'
+  ...
+# Subtest: S1b-1 无损三部曲: B 让路不消费 → A 认领拿到事件 → B 再扫不重发
+ok 25 - S1b-1 无损三部曲: B 让路不消费 → A 认领拿到事件 → B 再扫不重发
+  ---
+  duration_ms: 23.3694
+  type: 'test'
+  ...
+# Subtest: S1b-2 超宽限 B 代送盖章, A 迟到不重发
+ok 26 - S1b-2 超宽限 B 代送盖章, A 迟到不重发
+  ---
+  duration_ms: 13.6923
+  type: 'test'
+  ...
+# Subtest: S1b-3 ownerless task is still claimed by whoever reconciles first
+ok 27 - S1b-3 ownerless task is still claimed by whoever reconciles first
+  ---
+  duration_ms: 9.2099
+  type: 'test'
+  ...
+# Subtest: S1b-4 自动重试等到认领那趟, 子任务继承 owner
+ok 28 - S1b-4 自动重试等到认领那趟, 子任务继承 owner
+  ---
+  duration_ms: 835.1873
+  type: 'test'
+  ...
+# Subtest: S1-8 spawnBgTask persists ownerSessionId; ownerless spawn is unchanged
+ok 29 - S1-8 spawnBgTask persists ownerSessionId; ownerless spawn is unchanged
+  ---
+  duration_ms: 1516.6432
+  type: 'test'
+  ...
+# Subtest: CLI intake-url passes a URL with shell metacharacters to curl.md as a single literal argv element
+ok 30 - CLI intake-url passes a URL with shell metacharacters to curl.md as a single literal argv element
+  ---
+  duration_ms: 2336.8139
+  type: 'test'
+  ...
+# Subtest: CLI intake-url passes an X URL with shell metacharacters to defuddle as a single literal argv element
+ok 31 - CLI intake-url passes an X URL with shell metacharacters to defuddle as a single literal argv element
+  ---
+  duration_ms: 2120.5813
+  type: 'test'
+  ...
+# Subtest: CLI intake-url prefers curl.md optimized markdown for public pages
+ok 32 - CLI intake-url prefers curl.md optimized markdown for public pages
+  ---
+  duration_ms: 2126.0027
+  type: 'test'
+  ...
+# Subtest: CLI intake-url can read X URLs through defuddle when curl.md is disabled
+ok 33 - CLI intake-url can read X URLs through defuddle when curl.md is disabled
+  ---
+  duration_ms: 2153.1553
+  type: 'test'
+  ...
+# Subtest: CLI Telegram poll and outbox commands use env credentials against the Bot API
+ok 34 - CLI Telegram poll and outbox commands use env credentials against the Bot API
+  ---
+  duration_ms: 3105.94
+  type: 'test'
+  ...
+# Subtest: CLI Telegram bridge polls inbound messages and acknowledges queued items
+ok 35 - CLI Telegram bridge polls inbound messages and acknowledges queued items
+  ---
+  duration_ms: 2092.7007
+  type: 'test'
+  ...
+# Subtest: CLI Telegram bridge survives a single-cycle exception, backs off, and keeps looping
+ok 36 - CLI Telegram bridge survives a single-cycle exception, backs off, and keeps looping
+  ---
+  duration_ms: 1380.7085
+  type: 'test'
+  ...
+# Subtest: CLI Telegram bridge exits loudly with non-zero code after consecutive-failure threshold
+ok 37 - CLI Telegram bridge exits loudly with non-zero code after consecutive-failure threshold
+  ---
+  duration_ms: 1203.7236
+  type: 'test'
+  ...
+# Subtest: CLI Telegram bridge ignores duplicate Telegram update ids
+ok 38 - CLI Telegram bridge ignores duplicate Telegram update ids
+  ---
+  duration_ms: 3006.8153
+  type: 'test'
+  ...
+# Subtest: CLI Telegram bridge routes a signed REPLY into Studio once instead of the generic responder
+ok 39 - CLI Telegram bridge routes a signed REPLY into Studio once instead of the generic responder
+  ---
+  duration_ms: 3008.182
+  type: 'test'
+  ...
+# Subtest: CLI Telegram bridge can answer inbound messages through the safe Pi responder
+ok 40 - CLI Telegram bridge can answer inbound messages through the safe Pi responder
+  ---
+  duration_ms: 2154.6694
+  type: 'test'
+  ...
+# Subtest: CLI Telegram Pi responder rejects non-read-only tools from env
+ok 41 - CLI Telegram Pi responder rejects non-read-only tools from env
+  ---
+  duration_ms: 1885.8074
+  type: 'test'
+  ...
+# Subtest: CLI Telegram confirmation request queues a phone approval without executing it
+ok 42 - CLI Telegram confirmation request queues a phone approval without executing it
+  ---
+  duration_ms: 1999.4108
+  type: 'test'
+  ...
+# Subtest: CLI Telegram bridge records confirmation replies and does not invoke the Pi responder
+ok 43 - CLI Telegram bridge records confirmation replies and does not invoke the Pi responder
+  ---
+  duration_ms: 3859.7582
+  type: 'test'
+  ...
+# Subtest: CLI Telegram bridge refuses expired confirmation codes
+ok 44 - CLI Telegram bridge refuses expired confirmation codes
+  ---
+  duration_ms: 3858.2254
+  type: 'test'
+  ...
+# Subtest: CLI reports Her memory sync status as JSON
+ok 45 - CLI reports Her memory sync status as JSON
+  ---
+  duration_ms: 2934.0713
+  type: 'test'
+  ...
+# Subtest: CLI sync commits and pushes dirty Her memory
+ok 46 - CLI sync commits and pushes dirty Her memory
+  ---
+  duration_ms: 3423.9127
+  type: 'test'
+  ...
+# Subtest: CLI captures a UI message through TS her-core as JSON
+ok 47 - CLI captures a UI message through TS her-core as JSON
+  ---
+  duration_ms: 2054.3162
+  type: 'test'
+  ...
+# Subtest: CLI capture writes source and type into raw frontmatter
+ok 48 - CLI capture writes source and type into raw frontmatter
+  ---
+  duration_ms: 2975.8535
+  type: 'test'
+  ...
+# Subtest: CLI writes a protected weekly Samantha journal entry
+ok 49 - CLI writes a protected weekly Samantha journal entry
+  ---
+  duration_ms: 2091.1447
+  type: 'test'
+  ...
+# Subtest: CLI writes a protected Samantha taste judgment
+ok 50 - CLI writes a protected Samantha taste judgment
+  ---
+  duration_ms: 2110.8756
+  type: 'test'
+  ...
+# Subtest: CLI audits privacy classification and blocks unsafe export refs
+ok 51 - CLI audits privacy classification and blocks unsafe export refs
+  ---
+  duration_ms: 3864.6691
+  type: 'test'
+  ...
+# Subtest: CLI persists an intake source with recall verification as JSON
+ok 52 - CLI persists an intake source with recall verification as JSON
+  ---
+  duration_ms: 2038.2731
+  type: 'test'
+  ...
+# Subtest: CLI intake-source can update related topics and ideas immediately
+ok 53 - CLI intake-source can update related topics and ideas immediately
+  ---
+  duration_ms: 3329.1629
+  type: 'test'
+  ...
+# Subtest: CLI intakes a local path as a world note
+ok 54 - CLI intakes a local path as a world note
+  ---
+  duration_ms: 2109.6698
+  type: 'test'
+  ...
+# Subtest: CLI intake-source frontmatter keys are unchanged now that taste-card fields exist (snapshot)
+ok 55 - CLI intake-source frontmatter keys are unchanged now that taste-card fields exist (snapshot)
+  ---
+  duration_ms: 2091.0993
+  type: 'test'
+  ...
+# Subtest: CLI bootstrap-feed recursively feeds local text sources
+ok 56 - CLI bootstrap-feed recursively feeds local text sources
+  ---
+  duration_ms: 2063.0799
+  type: 'test'
+  ...
+# Subtest: CLI intakes an ordinary URL as a world note
+ok 57 - CLI intakes an ordinary URL as a world note
+  ---
+  duration_ms: 2180.7856
+  type: 'test'
+  ...
+# Subtest: CLI saves oversized URL intake as needs_deep_read
+ok 58 - CLI saves oversized URL intake as needs_deep_read
+  ---
+  duration_ms: 2085.0866
+  type: 'test'
+  ...
+# Subtest: CLI records judgment and memory status through TS her-core
+ok 59 - CLI records judgment and memory status through TS her-core
+  ---
+  duration_ms: 2939.0294
+  type: 'test'
+  ...
+# Subtest: CLI recalls active and archived memory as JSON
+ok 60 - CLI recalls active and archived memory as JSON
+  ---
+  duration_ms: 3004.1846
+  type: 'test'
+  ...
+# Subtest: CLI backfill dry-run plans cursor batches without writing memory
+ok 61 - CLI backfill dry-run plans cursor batches without writing memory
+  ---
+  duration_ms: 2062.0763
+  type: 'test'
+  ...
+# Subtest: CLI backfill requires a budget for non-dry runs
+ok 62 - CLI backfill requires a budget for non-dry runs
+  ---
+  duration_ms: 1890.0713
+  type: 'test'
+  ...
+# Subtest: CLI backfill processes one budgeted batch with the configured model
+ok 63 - CLI backfill processes one budgeted batch with the configured model
+  ---
+  duration_ms: 2228.164
+  type: 'test'
+  ...
+# Subtest: CLI recall can use configured embedding search for semantic hits
+ok 64 - CLI recall can use configured embedding search for semantic hits
+  ---
+  duration_ms: 2155.7242
+  type: 'test'
+  ...
+# Subtest: CLI runs TS growth maintenance commands as JSON
+ok 65 - CLI runs TS growth maintenance commands as JSON
+  ---
+  duration_ms: 5122.6553
+  type: 'test'
+  ...
+# Subtest: CLI reports synthesize due and approves a proposal as JSON
+ok 66 - CLI reports synthesize due and approves a proposal as JSON
+  ---
+  duration_ms: 3820.726
+  type: 'test'
+  ...
+# Subtest: CLI review-narrative lists, keeps, and reverts context updates
+ok 67 - CLI review-narrative lists, keeps, and reverts context updates
+  ---
+  duration_ms: 4864.3901
+  type: 'test'
+  ...
+# Subtest: CLI runs governed archive sweep as JSON
+ok 68 - CLI runs governed archive sweep as JSON
+  ---
+  duration_ms: 2091.7447
+  type: 'test'
+  ...
+# Subtest: CLI synthesizes choice model as JSON
+ok 69 - CLI synthesizes choice model as JSON
+  ---
+  duration_ms: 2516.0919
+  type: 'test'
+  ...
+# Subtest: CLI sync completes and reports failure when choice model synthesis errors, without advancing last_choice_model
+ok 70 - CLI sync completes and reports failure when choice model synthesis errors, without advancing last_choice_model
+  ---
+  duration_ms: 3784.4852
+  type: 'test'
+  ...
+# Subtest: CLI synthesizes Samantha self narrative as JSON
+ok 71 - CLI synthesizes Samantha self narrative as JSON
+  ---
+  duration_ms: 2518.0757
+  type: 'test'
+  ...
+# Subtest: CLI restores an archived semantic note as JSON
+ok 72 - CLI restores an archived semantic note as JSON
+  ---
+  duration_ms: 2091.407
+  type: 'test'
+  ...
+# Subtest: CLI persists Her long task checkpoints and completion writeback
+ok 73 - CLI persists Her long task checkpoints and completion writeback
+  ---
+  duration_ms: 6659.3254
+  type: 'test'
+  ...
+# Subtest: CLI dispatch requires --executor and a handoff path
+ok 74 - CLI dispatch requires --executor and a handoff path
+  ---
+  duration_ms: 2655.5759
+  type: 'test'
+  ...
+# Subtest: CLI dispatch loudly rejects an unknown executor with a non-zero exit
+ok 75 - CLI dispatch loudly rejects an unknown executor with a non-zero exit
+  ---
+  duration_ms: 4952.1825
+  type: 'test'
+  ...
+# Subtest: CLI dispatch accepts --timeout-min and still reaches executor validation
+ok 76 - CLI dispatch accepts --timeout-min and still reaches executor validation
+  ---
+  duration_ms: 5900.205
+  type: 'test'
+  ...
+# Subtest: CLI dispatch loudly rejects a missing handoff file with a non-zero exit
+ok 77 - CLI dispatch loudly rejects a missing handoff file with a non-zero exit
+  ---
+  duration_ms: 5647.6088
+  type: 'test'
+  ...
+# Subtest: CLI dispatch is never added to the read-only Telegram responder whitelist
+ok 78 - CLI dispatch is never added to the read-only Telegram responder whitelist
+  ---
+  duration_ms: 1.972
+  type: 'test'
+  ...
+# Subtest: withOpBracket writes organ.round start/end on success and error
+ok 79 - withOpBracket writes organ.round start/end on success and error
+  ---
+  duration_ms: 308.3353
+  type: 'test'
+  ...
+# Subtest: syncMemory writes organ.sync start/end around a git-backed round
+ok 80 - syncMemory writes organ.sync start/end around a git-backed round
+  ---
+  duration_ms: 5995.9156
+  type: 'test'
+  ...
+# Subtest: events-verify turns red on truncate, mid rewrite, first-line replace, and lastId regression, then green on append
+ok 81 - events-verify turns red on truncate, mid rewrite, first-line replace, and lastId regression, then green on append
+  ---
+  duration_ms: 258.9527
+  type: 'test'
+  ...
+# [her] event-history telegram alert failed: chat id cannot be blank
+# Subtest: her events-verify CLI exits non-zero on a truncated history
+ok 82 - her events-verify CLI exits non-zero on a truncated history
+  ---
+  duration_ms: 190.1506
+  type: 'test'
+  ...
+# Subtest: appendEvent writes one valid host.run.start line with uuidv7 and actor
+ok 83 - appendEvent writes one valid host.run.start line with uuidv7 and actor
+  ---
+  duration_ms: 125.7113
+  type: 'test'
+  ...
+# Subtest: appendEvent throws on missing actor or unknown kind and writes no row
+ok 84 - appendEvent throws on missing actor or unknown kind and writes no row
+  ---
+  duration_ms: 101.9056
+  type: 'test'
+  ...
+# Subtest: 1000 sequential appendEvent ids sort in write order including same-ms
+ok 85 - 1000 sequential appendEvent ids sort in write order including same-ms
+  ---
+  duration_ms: 6280.0621
+  type: 'test'
+  ...
+# Subtest: two processes appending 200 lines each yield 400 intact JSONL rows
+ok 86 - two processes appending 200 lines each yield 400 intact JSONL rows
+  ---
+  duration_ms: 2663.0481
+  type: 'test'
+  ...
+# Subtest: truncated tail yields prior events plus corrupt_tail; mid-file bad JSON yields corrupt_line
+ok 87 - truncated tail yields prior events plus corrupt_tail; mid-file bad JSON yields corrupt_line
+  ---
+  duration_ms: 119.683
+  type: 'test'
+  ...
+# Subtest: detectPresumedCrashes isolates actors and marks derived rows
+ok 88 - detectPresumedCrashes isolates actors and marks derived rows
+  ---
+  duration_ms: 0.5214
+  type: 'test'
+  ...
+# Subtest: host.run crash grammar is bracket pairing, not first-boot false positive
+ok 89 - host.run crash grammar is bracket pairing, not first-boot false positive
+  ---
+  duration_ms: 0.3246
+  type: 'test'
+  ...
+# Subtest: listHerEvents filters newest-first and can attach derived crashes
+ok 90 - listHerEvents filters newest-first and can attach derived crashes
+  ---
+  duration_ms: 101.656
+  type: 'test'
+  ...
+# Subtest: list_her_events is a non-destructive governed tool and is registered
+ok 91 - list_her_events is a non-destructive governed tool and is registered
+  ---
+  duration_ms: 105.1269
+  type: 'test'
+  ...
+# Subtest: host-event CLI is a sealed runner vocabulary with no --actor
+ok 92 - host-event CLI is a sealed runner vocabulary with no --actor
+  ---
+  duration_ms: 113.9326
+  type: 'test'
+  ...
+# Subtest: resolveGovernedTool treats unregistered names as destructive
+ok 93 - resolveGovernedTool treats unregistered names as destructive
+  ---
+  duration_ms: 1.1541
+  type: 'test'
+  ...
+# Subtest: default Cedar still allows bash via permit_coding_destructive_tools
+ok 94 - default Cedar still allows bash via permit_coding_destructive_tools
+  ---
+  duration_ms: 21.4957
+  type: 'test'
+  ...
+# Subtest: default Cedar still allows her_recall via allow_memory_tools
+ok 95 - default Cedar still allows her_recall via allow_memory_tools
+  ---
+  duration_ms: 2.6316
+  type: 'test'
+  ...
+# Subtest: heartbeat denies durable or external actions and keeps read tools
+ok 96 - heartbeat denies durable or external actions and keeps read tools
+  ---
+  duration_ms: 15.6361
+  type: 'test'
+  ...
+# Subtest: default Cedar denies her_mcp_call until a named permit exists
+ok 97 - default Cedar denies her_mcp_call until a named permit exists
+  ---
+  duration_ms: 5.1645
+  type: 'test'
+  ...
+# Subtest: permit_coding_destructive_tools does not cover an anchor-classified write
+ok 98 - permit_coding_destructive_tools does not cover an anchor-classified write
+  ---
+  duration_ms: 2.7082
+  type: 'test'
+  ...
+# Subtest: authorizationGateForUsedTools evaluates unregistered tools instead of skipping them
+ok 99 - authorizationGateForUsedTools evaluates unregistered tools instead of skipping them
+  ---
+  duration_ms: 6.4502
+  type: 'test'
+  ...
+# Subtest: authorizeSelfModTool denies str_replace and powershell on an anchor path
+ok 100 - authorizeSelfModTool denies str_replace and powershell on an anchor path
+  ---
+  duration_ms: 21.0636
+  type: 'test'
+  ...
+# Subtest: four stages: discover, investigate, review, use in fresh state, suspend, reopen
+ok 101 - four stages: discover, investigate, review, use in fresh state, suspend, reopen
+  ---
+  duration_ms: 3.9897
+  type: 'test'
+  ...
+# Subtest: no-learning-needed is a real branch; no probe or method is manufactured
+ok 102 - no-learning-needed is a real branch; no probe or method is manufactured
+  ---
+  duration_ms: 0.4319
+  type: 'test'
+  ...
+# Subtest: a probe whose hypotheses predict the same outcome is refused before execution
+ok 103 - a probe whose hypotheses predict the same outcome is refused before execution
+  ---
+  duration_ms: 0.6156
+  type: 'test'
+  ...
+# Subtest: candidate cannot cite invented evidence
+ok 104 - candidate cannot cite invented evidence
+  ---
+  duration_ms: 0.8308
+  type: 'test'
+  ...
+# Subtest: pending probe is never silently replayed after a lost response
+ok 105 - pending probe is never silently replayed after a lost response
+  ---
+  duration_ms: 0.6483
+  type: 'test'
+  ...
+# Subtest: out-of-scope new task does not invalidate the method globally
+ok 106 - out-of-scope new task does not invalidate the method globally
+  ---
+  duration_ms: 1.2264
+  type: 'test'
+  ...
+# Subtest: declining a method records an opportunity, without executing it
+ok 107 - declining a method records an opportunity, without executing it
+  ---
+  duration_ms: 1.3986
+  type: 'test'
+  ...
+# Subtest: two concurrent drivers cannot both pass the save compare-and-swap
+ok 108 - two concurrent drivers cannot both pass the save compare-and-swap
+  ---
+  duration_ms: 5.3121
+  type: 'test'
+  ...
+# Subtest: thought and probe limits stop before the next action
+ok 109 - thought and probe limits stop before the next action
+  ---
+  duration_ms: 0.5621
+  type: 'test'
+  ...
+# Subtest: training tasks cannot be relabeled as held-out evaluation
+ok 110 - training tasks cannot be relabeled as held-out evaluation
+  ---
+  duration_ms: 1.2324
+  type: 'test'
+  ...
+# Subtest: self-reported success without host evidence is not accepted
+ok 111 - self-reported success without host evidence is not accepted
+  ---
+  duration_ms: 0.6949
+  type: 'test'
+  ...
+# Subtest: wrong method/task receipt stays pending and cannot suspend another version
+ok 112 - wrong method/task receipt stays pending and cannot suspend another version
+  ---
+  duration_ms: 1.2343
+  type: 'test'
+  ...
+# Subtest: permission denial stops a proposed probe
+ok 113 - permission denial stops a proposed probe
+  ---
+  duration_ms: 0.4546
+  type: 'test'
+  ...
+# Subtest: failed independent review cannot activate a candidate
+ok 114 - failed independent review cannot activate a candidate
+  ---
+  duration_ms: 1.1098
+  type: 'test'
+  ...
+# Subtest: cancellation before a call prevents both reasoning and action
+ok 115 - cancellation before a call prevents both reasoning and action
+  ---
+  duration_ms: 0.5931
+  type: 'test'
+  ...
+# Subtest: probe port can return actual filesystem observations; driver does not score them
+ok 116 - probe port can return actual filesystem observations; driver does not score them
+  ---
+  duration_ms: 14.318
+  type: 'test'
+  ...
+# Subtest: review is reserved once; interrupted review requires explicit host reconciliation
+ok 117 - review is reserved once; interrupted review requires explicit host reconciliation
+  ---
+  duration_ms: 1.198
+  type: 'test'
+  ...
+# Subtest: missing precondition evidence blocks use even when the model recommends it
+ok 118 - missing precondition evidence blocks use even when the model recommends it
+  ---
+  duration_ms: 0.8532
+  type: 'test'
+  ...
+# Subtest: permission for a new task is not inherited from approval of a method
+ok 119 - permission for a new task is not inherited from approval of a method
+  ---
+  duration_ms: 0.7584
+  type: 'test'
+  ...
+# Subtest: cancel during durable reservation prevents probe execution
+ok 120 - cancel during durable reservation prevents probe execution
+  ---
+  duration_ms: 0.5011
+  type: 'test'
+  ...
+# Subtest: reopening does not silently replenish the research budget or discard history
+ok 121 - reopening does not silently replenish the research budget or discard history
+  ---
+  duration_ms: 0.876
+  type: 'test'
+  ...
+# Subtest: model adapter uses the injected model and token cap, not its own provider or credentials
+ok 122 - model adapter uses the injected model and token cap, not its own provider or credentials
+  ---
+  duration_ms: 0.229
+  type: 'test'
+  ...
+# Subtest: model adapter rejects malformed output without a repair loop or extra calls
+ok 123 - model adapter rejects malformed output without a repair loop or extra calls
+  ---
+  duration_ms: 0.1307
+  type: 'test'
+  ...
+# Subtest: held-out review record is not included in later model prompts
+ok 124 - held-out review record is not included in later model prompts
+  ---
+  duration_ms: 1.0284
+  type: 'test'
+  ...
+# Subtest: durable host snapshots survive a new object without rewriting earlier records
+ok 125 - durable host snapshots survive a new object without rewriting earlier records
+  ---
+  duration_ms: 13.609
+  type: 'test'
+  ...
+# Subtest: missing budgets cannot turn limits into an unbounded loop
+ok 126 - missing budgets cannot turn limits into an unbounded loop
+  ---
+  duration_ms: 0.3402
+  type: 'test'
+  ...
+# Subtest: inquiry ids cannot masquerade as filesystem paths
+ok 127 - inquiry ids cannot masquerade as filesystem paths
+  ---
+  duration_ms: 0.1186
+  type: 'test'
+  ...
+# Subtest: real Markdown journal: revision zero, append-only CAS, restart and corruption refusal
+ok 128 - real Markdown journal: revision zero, append-only CAS, restart and corruption refusal
+  ---
+  duration_ms: 265.2935
+  type: 'test'
+  ...
+# Subtest: model host records actual usage and monthly cost ledger; preset reply is only engineering evidence
+ok 129 - model host records actual usage and monthly cost ledger; preset reply is only engineering evidence
+  ---
+  duration_ms: 47.0404
+  type: 'test'
+  ...
+# Subtest: budget/STOP reject before provider call and frozen plans cannot be replaced
+ok 130 - budget/STOP reject before provider call and frozen plans cannot be replaced
+  ---
+  duration_ms: 49.5572
+  type: 'test'
+  ...
+# Subtest: unknown usage leaves durable reservation, blocks replay across new host instance
+ok 131 - unknown usage leaves durable reservation, blocks replay across new host instance
+  ---
+  duration_ms: 61.8394
+  type: 'test'
+  ...
+# Subtest: real task executor runs only granted frozen actions, preserves logs and drops credentials
+ok 132 - real task executor runs only granted frozen actions, preserves logs and drops credentials
+  ---
+  duration_ms: 412.3111
+  type: 'test'
+  ...
+# Subtest: independent paired review uses actual executor artifacts, sealed cases and measured costs; no final replay
+ok 133 - independent paired review uses actual executor artifacts, sealed cases and measured costs; no final replay
+  ---
+  duration_ms: 2089.8243
+  type: 'test'
+  ...
+# Subtest: task execution interruption stays pending, consumed action cannot run again
+ok 134 - task execution interruption stays pending, consumed action cannot run again
+  ---
+  duration_ms: 64.0414
+  type: 'test'
+  ...
+# Subtest: budget exhaustion survives reopening and blocks before a model call
+ok 135 - budget exhaustion survives reopening and blocks before a model call
+  ---
+  duration_ms: 36.2941
+  type: 'test'
+  ...
+# Subtest: failed response retains fresh real usage, never settles with stale metadata
+ok 136 - failed response retains fresh real usage, never settles with stale metadata
+  ---
+  duration_ms: 76.1882
+  type: 'test'
+  ...
+# Subtest: formal CLI reads persisted state and wakes from a real completed task without resetting budget
+ok 137 - formal CLI reads persisted state and wakes from a real completed task without resetting budget
+  ---
+  duration_ms: 406.6182
+  type: 'test'
+  ...
+# Subtest: paired held-out gain with no regression is only eligible for review
+ok 138 - paired held-out gain with no regression is only eligible for review
+  ---
+  duration_ms: 1.987
+  type: 'test'
+  ...
+# Subtest: mismatched proposalId does not reuse stale evidence
+ok 139 - mismatched proposalId does not reuse stale evidence
+  ---
+  duration_ms: 0.8953
+  type: 'test'
+  ...
+# Subtest: mismatched baselineDigest does not reuse stale evidence
+ok 140 - mismatched baselineDigest does not reuse stale evidence
+  ---
+  duration_ms: 0.0871
+  type: 'test'
+  ...
+# Subtest: mismatched candidateDigest does not reuse stale evidence
+ok 141 - mismatched candidateDigest does not reuse stale evidence
+  ---
+  duration_ms: 0.1387
+  type: 'test'
+  ...
+# Subtest: mismatched suiteDigest does not reuse stale evidence
+ok 142 - mismatched suiteDigest does not reuse stale evidence
+  ---
+  duration_ms: 0.0959
+  type: 'test'
+  ...
+# Subtest: mismatched evaluatorDigest does not reuse stale evidence
+ok 143 - mismatched evaluatorDigest does not reuse stale evidence
+  ---
+  duration_ms: 0.0601
+  type: 'test'
+  ...
+# Subtest: baseline error is not a measured outcome
+ok 144 - baseline error is not a measured outcome
+  ---
+  duration_ms: 0.1082
+  type: 'test'
+  ...
+# Subtest: baseline not-run is not a measured outcome
+ok 145 - baseline not-run is not a measured outcome
+  ---
+  duration_ms: 0.0646
+  type: 'test'
+  ...
+# Subtest: baseline skipped is not a measured outcome
+ok 146 - baseline skipped is not a measured outcome
+  ---
+  duration_ms: 0.0659
+  type: 'test'
+  ...
+# Subtest: baseline claimed-success is not a measured outcome
+ok 147 - baseline claimed-success is not a measured outcome
+  ---
+  duration_ms: 0.1193
+  type: 'test'
+  ...
+# Subtest: candidate error is not a measured outcome
+ok 148 - candidate error is not a measured outcome
+  ---
+  duration_ms: 0.0786
+  type: 'test'
+  ...
+# Subtest: candidate not-run is not a measured outcome
+ok 149 - candidate not-run is not a measured outcome
+  ---
+  duration_ms: 0.0768
+  type: 'test'
+  ...
+# Subtest: candidate skipped is not a measured outcome
+ok 150 - candidate skipped is not a measured outcome
+  ---
+  duration_ms: 0.0524
+  type: 'test'
+  ...
+# Subtest: candidate claimed-success is not a measured outcome
+ok 151 - candidate claimed-success is not a measured outcome
+  ---
+  duration_ms: 0.0547
+  type: 'test'
+  ...
+# Subtest: success language without structured measurements is refused
+ok 152 - success language without structured measurements is refused
+  ---
+  duration_ms: 0.0775
+  type: 'test'
+  ...
+# Subtest: missing case cannot silently shrink the evaluation suite
+ok 153 - missing case cannot silently shrink the evaluation suite
+  ---
+  duration_ms: 0.089
+  type: 'test'
+  ...
+# Subtest: duplicated cases cannot overweight a success
+ok 154 - duplicated cases cannot overweight a success
+  ---
+  duration_ms: 0.0761
+  type: 'test'
+  ...
+# Subtest: unexpected case cannot replace a required one
+ok 155 - unexpected case cannot replace a required one
+  ---
+  duration_ms: 0.049
+  type: 'test'
+  ...
+# Subtest: case content hash must match the frozen suite
+ok 156 - case content hash must match the frozen suite
+  ---
+  duration_ms: 0.0431
+  type: 'test'
+  ...
+# Subtest: training and held-out content cannot overlap even under another ID
+ok 157 - training and held-out content cannot overlap even under another ID
+  ---
+  duration_ms: 0.0412
+  type: 'test'
+  ...
+# Subtest: repeated case contents cannot inflate the suite size
+ok 158 - repeated case contents cannot inflate the suite size
+  ---
+  duration_ms: 0.0425
+  type: 'test'
+  ...
+# Subtest: better aggregate results cannot hide an old capability regression
+ok 159 - better aggregate results cannot hide an old capability regression
+  ---
+  duration_ms: 0.0487
+  type: 'test'
+  ...
+# Subtest: a formerly successful held-out case cannot regress either
+ok 160 - a formerly successful held-out case cannot regress either
+  ---
+  duration_ms: 0.0384
+  type: 'test'
+  ...
+# Subtest: unchanged performance is not an improvement
+ok 161 - unchanged performance is not an improvement
+  ---
+  duration_ms: 0.0687
+  type: 'test'
+  ...
+# Subtest: an identical candidate cannot be assessed as a new version
+ok 162 - an identical candidate cannot be assessed as a new version
+  ---
+  duration_ms: 0.0433
+  type: 'test'
+  ...
+# Subtest: invalid measurement cost -1 is refused
+ok 163 - invalid measurement cost -1 is refused
+  ---
+  duration_ms: 0.0625
+  type: 'test'
+  ...
+# Subtest: invalid measurement cost NaN is refused
+ok 164 - invalid measurement cost NaN is refused
+  ---
+  duration_ms: 0.037
+  type: 'test'
+  ...
+# Subtest: invalid measurement cost Infinity is refused
+ok 165 - invalid measurement cost Infinity is refused
+  ---
+  duration_ms: 0.0334
+  type: 'test'
+  ...
+# Subtest: budget includes both candidates and experiment overhead
+ok 166 - budget includes both candidates and experiment overhead
+  ---
+  duration_ms: 0.0692
+  type: 'test'
+  ...
+# Subtest: missing evidence digest is not a passing measurement
+ok 167 - missing evidence digest is not a passing measurement
+  ---
+  duration_ms: 0.0533
+  type: 'test'
+  ...
+# Subtest: regression suite cannot be omitted
+ok 168 - regression suite cannot be omitted
+  ---
+  duration_ms: 0.06
+  type: 'test'
+  ...
+# Subtest: holdout suite cannot be omitted
+ok 169 - holdout suite cannot be omitted
+  ---
+  duration_ms: 0.0429
+  type: 'test'
+  ...
+# Subtest: zero gain threshold cannot label a tie as growth
+ok 170 - zero gain threshold cannot label a tie as growth
+  ---
+  duration_ms: 0.0336
+  type: 'test'
+  ...
+# Subtest: a frozen plan with malformed values fails closed at runtime
+ok 171 - a frozen plan with malformed values fails closed at runtime
+  ---
+  duration_ms: 0.0466
+  type: 'test'
+  ...
+# Subtest: actual child processes compare exact Git revisions and write verifiable evidence
+ok 172 - actual child processes compare exact Git revisions and write verifiable evidence
+  ---
+  duration_ms: 2503.8945
+  type: 'test'
+  ...
+# Subtest: regression rejects even when a new case improves
+ok 173 - regression rejects even when a new case improves
+  ---
+  duration_ms: 2101.9825
+  type: 'test'
+  ...
+# Subtest: a changed skill without held-out gain cannot qualify
+ok 174 - a changed skill without held-out gain cannot qualify
+  ---
+  duration_ms: 2301.7876
+  type: 'test'
+  ...
+# Subtest: missing independent plan fails closed
+ok 175 - missing independent plan fails closed
+  ---
+  duration_ms: 906.4584
+  type: 'test'
+  ...
+# Subtest: frozen plan retains the pre-apply suite after files are edited
+ok 176 - frozen plan retains the pre-apply suite after files are edited
+  ---
+  duration_ms: 2159.3382
+  type: 'test'
+  ...
+# Subtest: a deserialized plan is not a host-frozen plan
+ok 177 - a deserialized plan is not a host-frozen plan
+  ---
+  duration_ms: 924.6779
+  type: 'test'
+  ...
+# Subtest: wrong proposal baseline or targets reject
+ok 178 - wrong proposal baseline or targets reject
+  ---
+  duration_ms: 921.2386
+  type: 'test'
+  ...
+# Subtest: duplicate cases and training leakage reject
+ok 179 - duplicate cases and training leakage reject
+  ---
+  duration_ms: 845.9147
+  type: 'test'
+  ...
+# Subtest: evaluator digest mismatch rejects
+ok 180 - evaluator digest mismatch rejects
+  ---
+  duration_ms: 877.1063
+  type: 'test'
+  ...
+# Subtest: symlinked evaluation manifests reject
+ok 181 - symlinked evaluation manifests reject
+  ---
+  duration_ms: 873.8649
+  type: 'test'
+  ...
+# Subtest: symlinked revision targets reject rather than reading the link target
+ok 182 - symlinked revision targets reject rather than reading the link target
+  ---
+  duration_ms: 1199.6691
+  type: 'test'
+  ...
+# Subtest: unplanned candidate changes reject before evaluation
+ok 183 - unplanned candidate changes reject before evaluation
+  ---
+  duration_ms: 1160.5544
+  type: 'test'
+  ...
+# Subtest: uncommitted candidate changes reject
+ok 184 - uncommitted candidate changes reject
+  ---
+  duration_ms: 1080.2163
+  type: 'test'
+  ...
+# Subtest: a success assertion is not an observed result
+ok 185 - a success assertion is not an observed result
+  ---
+  duration_ms: 1613.7283
+  type: 'test'
+  ...
+# Subtest: exiting zero without any result cannot qualify
+ok 186 - exiting zero without any result cannot qualify
+  ---
+  duration_ms: 1631.0271
+  type: 'test'
+  ...
+# Subtest: nonzero evaluator exit cannot qualify
+ok 187 - nonzero evaluator exit cannot qualify
+  ---
+  duration_ms: 1593.8107
+  type: 'test'
+  ...
+# Subtest: a hung evaluator is stopped by the timeout
+ok 188 - a hung evaluator is stopped by the timeout
+  ---
+  duration_ms: 1714.0301
+  type: 'test'
+  ...
+# Subtest: excessive evaluator output is bounded and cannot qualify
+ok 189 - excessive evaluator output is bounded and cannot qualify
+  ---
+  duration_ms: 1778.9297
+  type: 'test'
+  ...
+# Subtest: an exhausted total budget prevents a successful assessment
+ok 190 - an exhausted total budget prevents a successful assessment
+  ---
+  duration_ms: 1530.4143
+  type: 'test'
+  ...
+# Subtest: audit artifact tampering is caught before adoption
+ok 191 - audit artifact tampering is caught before adoption
+  ---
+  duration_ms: 1859.7621
+  type: 'test'
+  ...
+# Subtest: a copied success receipt cannot grant adoption
+ok 192 - a copied success receipt cannot grant adoption
+  ---
+  duration_ms: 1807.7276
+  type: 'test'
+  ...
+# Subtest: baseline advancement invalidates the old measurement
+ok 193 - baseline advancement invalidates the old measurement
+  ---
+  duration_ms: 1898.4139
+  type: 'test'
+  ...
+# Subtest: candidate advancement invalidates the old measurement
+ok 194 - candidate advancement invalidates the old measurement
+  ---
+  duration_ms: 1890.7524
+  type: 'test'
+  ...
+# Subtest: aborted evaluation does not launch work
+ok 195 - aborted evaluation does not launch work
+  ---
+  duration_ms: 721.0366
+  type: 'test'
+  ...
+# Subtest: audit files cannot live inside candidate worktree
+ok 196 - audit files cannot live inside candidate worktree
+  ---
+  duration_ms: 714.3
+  type: 'test'
+  ...
+# Subtest: JSON canonicalization is order-independent and rejects unsupported numbers
+ok 197 - JSON canonicalization is order-independent and rejects unsupported numbers
+  ---
+  duration_ms: 0.345
+  type: 'test'
+  ...
+# Subtest: revision checks preserve the host Git line-ending configuration
+ok 198 - revision checks preserve the host Git line-ending configuration
+  ---
+  duration_ms: 2103.1437
+  type: 'test'
+  ...
+# Subtest: op bracket writes end after a thrown error with ok:false
+ok 199 - op bracket writes end after a thrown error with ok:false
+  ---
+  duration_ms: 71.4313
+  type: 'test'
+  ...
+# Subtest: detectOrphanBrackets returns start-without-end past timeout
+ok 200 - detectOrphanBrackets returns start-without-end past timeout
+  ---
+  duration_ms: 0.6049
+  type: 'test'
+  ...
+# Subtest: synthesize finish_reason=length fails loud with zero writes
+ok 201 - synthesize finish_reason=length fails loud with zero writes
+  ---
+  duration_ms: 81.1472
+  type: 'test'
+  ...
+# [her] consolidate: keys 0 → 0 (relevance-filtered, budget 120)
+# [her] consolidate: batch 4 → 2 (truncated)
+# [her] consolidate: keys 0 → 0 (relevance-filtered, budget 120)
+# [her] consolidate: keys 0 → 0 (relevance-filtered, budget 120)
+# Subtest: consolidate finish_reason=length routes into existing batch-shrink handling
+ok 202 - consolidate finish_reason=length routes into existing batch-shrink handling
+  ---
+  duration_ms: 137.438
+  type: 'test'
+  ...
+# Subtest: anchor paths normalize separators and case
+ok 203 - anchor paths normalize separators and case
+  ---
+  duration_ms: 0.7959
+  type: 'test'
+  ...
+# Subtest: selfmod allows only the v1 skill path
+ok 204 - selfmod allows only the v1 skill path
+  ---
+  duration_ms: 0.0953
+  type: 'test'
+  ...
+# Subtest: git gate finds staged policy paths
+ok 205 - git gate finds staged policy paths
+  ---
+  duration_ms: 0.4889
+  type: 'test'
+  ...
+# Subtest: git gate blocks staged anchors and permits an explicit override
+ok 206 - git gate blocks staged anchors and permits an explicit override
+  ---
+  duration_ms: 366.406
+  type: 'test'
+  ...
+# Subtest: selfmod Cedar denies a memory anchor and audits the denial
+ok 207 - selfmod Cedar denies a memory anchor and audits the denial
+  ---
+  duration_ms: 20.9194
+  type: 'test'
+  ...
+# Subtest: selfmod Cedar denies an unregistered tool writing a memory anchor (ADR-0002 \#6)
+ok 208 - selfmod Cedar denies an unregistered tool writing a memory anchor (ADR-0002 \#6)
+  ---
+  duration_ms: 7.2192
+  type: 'test'
+  ...
+# Subtest: V-06a: with the git gate provably dead, Cedar still denies a SOUL.md write
+ok 209 - V-06a: with the git gate provably dead, Cedar still denies a SOUL.md write
+  ---
+  duration_ms: 331.0068
+  type: 'test'
+  ...
+# Subtest: V-06b: with Cedar absent by construction, the git gate still blocks staged evals and policies
+ok 210 - V-06b: with Cedar absent by construction, the git gate still blocks staged evals and policies
+  ---
+  duration_ms: 300.1815
+  type: 'test'
+  ...
+# Subtest: selfmod Cedar permits a v1 skill write
+ok 211 - selfmod Cedar permits a v1 skill write
+  ---
+  duration_ms: 6.5302
+  type: 'test'
+  ...
+# Subtest: scheduleWakeup accepts a future at and returns {id, at}
+ok 212 - scheduleWakeup accepts a future at and returns {id, at}
+  ---
+  duration_ms: 8.3708
+  type: 'test'
+  ...
+# Subtest: scheduleWakeup accepts inMinutes and rejects missing at/inMinutes, both, past, and >7 days
+ok 213 - scheduleWakeup accepts inMinutes and rejects missing at/inMinutes, both, past, and >7 days
+  ---
+  duration_ms: 3.0551
+  type: 'test'
+  ...
+# Subtest: scheduleWakeup requires a note of at most 500 characters and redacts secrets
+ok 214 - scheduleWakeup requires a note of at most 500 characters and redacts secrets
+  ---
+  duration_ms: 3.8257
+  type: 'test'
+  ...
+# Subtest: listWakeups returns rows in ascending at order
+ok 215 - listWakeups returns rows in ascending at order
+  ---
+  duration_ms: 7.5331
+  type: 'test'
+  ...
+# Subtest: cancelWakeup is idempotent and does not throw when missing
+ok 216 - cancelWakeup is idempotent and does not throw when missing
+  ---
+  duration_ms: 8.6193
+  type: 'test'
+  ...
+# Subtest: fireDueWakeups writes an urgent [闹钟] inbox message then deletes the due row
+ok 217 - fireDueWakeups writes an urgent [闹钟] inbox message then deletes the due row
+  ---
+  duration_ms: 15.0296
+  type: 'test'
+  ...
+# Subtest: fireDueWakeups leaves a not-due row untouched
+ok 218 - fireDueWakeups leaves a not-due row untouched
+  ---
+  duration_ms: 4.6785
+  type: 'test'
+  ...
+# Subtest: fireDueWakeups keeps the row when writeMessage fails
+ok 219 - fireDueWakeups keeps the row when writeMessage fails
+  ---
+  duration_ms: 3.5946
+  type: 'test'
+  ...
+# Subtest: task-reconcile --json fires due wakeups and reports wakeupsFired
+ok 220 - task-reconcile --json fires due wakeups and reports wakeupsFired
+  ---
+  duration_ms: 12.0401
+  type: 'test'
+  ...
+# Subtest: Cedar: her_schedule_wakeup is allowed by its named permit and stays denied on heartbeat
+ok 221 - Cedar: her_schedule_wakeup is allowed by its named permit and stays denied on heartbeat
+  ---
+  duration_ms: 3578.875
+  type: 'test'
+  ...
+# Subtest: G-374: alarm_self_start_daily_max defaults to 6 and 0 disables; G-373 knobs stay
+ok 222 - G-374: alarm_self_start_daily_max defaults to 6 and 0 disables; G-373 knobs stay
+  ---
+  duration_ms: 3.9438
+  type: 'test'
+  ...
+# Subtest: G-374: scheduleWakeup stores optional sessionDir
+ok 223 - G-374: scheduleWakeup stores optional sessionDir
+  ---
+  duration_ms: 4.4429
+  type: 'test'
+  ...
+# Subtest: G-374: 7th launch in UTC day is skipped:daily_cap and does not spawn
+ok 224 - G-374: 7th launch in UTC day is skipped:daily_cap and does not spawn
+  ---
+  duration_ms: 7.839
+  type: 'test'
+  ...
+# Subtest: G-374: in-flight live pid skips with in_flight and does not spawn
+ok 225 - G-374: in-flight live pid skips with in_flight and does not spawn
+  ---
+  duration_ms: 5.5653
+  type: 'test'
+  ...
+# Subtest: G-374: ledger row shape and spawn argv pin session-id + deepseek
+ok 226 - G-374: ledger row shape and spawn argv pin session-id + deepseek
+  ---
+  duration_ms: 7.5844
+  type: 'test'
+  ...
+# Subtest: G-374: alarmSelfStartDailyMax 0 skips as disabled and does not spawn
+ok 227 - G-374: alarmSelfStartDailyMax 0 skips as disabled and does not spawn
+  ---
+  duration_ms: 5.6292
+  type: 'test'
+  ...
+# Subtest: G-374: task-reconcile --json includes selfStart when a due wakeup fires
+ok 228 - G-374: task-reconcile --json includes selfStart when a due wakeup fires
+  ---
+  duration_ms: 10.2445
+  type: 'test'
+  ...
+# Subtest: patch-carrying proposal applies and merges into the host tree
+ok 229 - patch-carrying proposal applies and merges into the host tree
+  ---
+  duration_ms: 3199.0327
+  type: 'test'
+  ...
+# Subtest: failure-anchored proposal with no patch is invalid and never enters the pipeline
+ok 230 - failure-anchored proposal with no patch is invalid and never enters the pipeline
+  ---
+  duration_ms: 783.1768
+  type: 'test'
+  ...
+# Subtest: malformed patch is rejected with the git error on the ledger
+ok 231 - malformed patch is rejected with the git error on the ledger
+  ---
+  duration_ms: 1307.7788
+  type: 'test'
+  ...
+# Subtest: patch touching a non-owned skill is rejected at the gate
+ok 232 - patch touching a non-owned skill is rejected at the gate
+  ---
+  duration_ms: 1768.275
+  type: 'test'
+  ...
+# Subtest: patch creating a new skill directory is rejected
+ok 233 - patch creating a new skill directory is rejected
+  ---
+  duration_ms: 1494.6922
+  type: 'test'
+  ...
+# Subtest: empty diff is rejected and never tagged
+ok 234 - empty diff is rejected and never tagged
+  ---
+  duration_ms: 1313.906
+  type: 'test'
+  ...
+# Subtest: same id twice: first rejected then retry is id already used and branch is gone
+ok 235 - same id twice: first rejected then retry is id already used and branch is gone
+  ---
+  duration_ms: 1510.512
+  type: 'test'
+  ...
+# Subtest: same id twice: first merged then retry is id already used, branch gone, tag kept
+ok 236 - same id twice: first merged then retry is id already used, branch gone, tag kept
+  ---
+  duration_ms: 3231.6765
+  type: 'test'
+  ...
+# Subtest: pre-existing selfmod branch at worktree rejects id already used
+ok 237 - pre-existing selfmod branch at worktree rejects id already used
+  ---
+  duration_ms: 877.7006
+  type: 'test'
+  ...
+# Subtest: two overlapping lock acquisitions: exactly one wins
+ok 238 - two overlapping lock acquisitions: exactly one wins
+  ---
+  duration_ms: 629.9061
+  type: 'test'
+  ...
+# Subtest: all selfmod boundaries refuse "packages/her/pi-package/skills/her-intake/../../../src/rsi/anchors.ts"
+ok 239 - all selfmod boundaries refuse "packages/her/pi-package/skills/her-intake/../../../src/rsi/anchors.ts"
+  ---
+  duration_ms: 1.4569
+  type: 'test'
+  ...
+# Subtest: all selfmod boundaries refuse "packages\\\\her\\\\pi-package\\\\skills\\\\her-intake\\\\..\\\\..\\\\..\\\\src\\\\rsi\\\\anchors.ts"
+ok 240 - all selfmod boundaries refuse "packages\\\\her\\\\pi-package\\\\skills\\\\her-intake\\\\..\\\\..\\\\..\\\\src\\\\rsi\\\\anchors.ts"
+  ---
+  duration_ms: 0.1978
+  type: 'test'
+  ...
+# Subtest: all selfmod boundaries refuse "packages/her/pi-package/skills/her-intake/../her-design/SKILL.md"
+ok 241 - all selfmod boundaries refuse "packages/her/pi-package/skills/her-intake/../her-design/SKILL.md"
+  ---
+  duration_ms: 0.1563
+  type: 'test'
+  ...
+# Subtest: all selfmod boundaries refuse "packages/her/pi-package/skills/her-intake/SKILL.md:stream"
+ok 242 - all selfmod boundaries refuse "packages/her/pi-package/skills/her-intake/SKILL.md:stream"
+  ---
+  duration_ms: 0.0681
+  type: 'test'
+  ...
+# Subtest: all selfmod boundaries refuse "packages/her/pi-package/skills/her-intake/SKILL.md\\u0000"
+ok 243 - all selfmod boundaries refuse "packages/her/pi-package/skills/her-intake/SKILL.md\\u0000"
+  ---
+  duration_ms: 0.0629
+  type: 'test'
+  ...
+# Subtest: all selfmod boundaries refuse "packages/her/pi-package/skills/her-intake/SKILL.md\\n"
+ok 244 - all selfmod boundaries refuse "packages/her/pi-package/skills/her-intake/SKILL.md\\n"
+  ---
+  duration_ms: 0.0651
+  type: 'test'
+  ...
+# Subtest: all selfmod boundaries refuse "packages/her/pi-package/skills/her-intake/.. /escape.md"
+ok 245 - all selfmod boundaries refuse "packages/her/pi-package/skills/her-intake/.. /escape.md"
+  ---
+  duration_ms: 0.0668
+  type: 'test'
+  ...
+# Subtest: all selfmod boundaries refuse "packages/her/pi-package/skills/her-intake/NUL.md"
+ok 246 - all selfmod boundaries refuse "packages/her/pi-package/skills/her-intake/NUL.md"
+  ---
+  duration_ms: 0.0544
+  type: 'test'
+  ...
+# Subtest: all selfmod boundaries refuse "/packages/her/pi-package/skills/her-intake/SKILL.md"
+ok 247 - all selfmod boundaries refuse "/packages/her/pi-package/skills/her-intake/SKILL.md"
+  ---
+  duration_ms: 0.0746
+  type: 'test'
+  ...
+# Subtest: all selfmod boundaries refuse "C:\\\\packages\\\\her\\\\pi-package\\\\skills\\\\her-intake\\\\SKILL.md"
+ok 248 - all selfmod boundaries refuse "C:\\\\packages\\\\her\\\\pi-package\\\\skills\\\\her-intake\\\\SKILL.md"
+  ---
+  duration_ms: 0.1035
+  type: 'test'
+  ...
+# Subtest: all selfmod boundaries refuse "\\\\\\\\server\\\\packages\\\\her\\\\pi-package\\\\skills\\\\her-intake\\\\SKILL.md"
+ok 249 - all selfmod boundaries refuse "\\\\\\\\server\\\\packages\\\\her\\\\pi-package\\\\skills\\\\her-intake\\\\SKILL.md"
+  ---
+  duration_ms: 0.0637
+  type: 'test'
+  ...
+# Subtest: owned skill remains permitted: packages/her/pi-package/skills/her-intake/SKILL.md
+ok 250 - owned skill remains permitted: packages/her/pi-package/skills/her-intake/SKILL.md
+  ---
+  duration_ms: 0.2536
+  type: 'test'
+  ...
+# Subtest: owned skill remains permitted: packages\\her\\pi-package\\skills\\her-intake\\SKILL.md
+ok 251 - owned skill remains permitted: packages\\her\\pi-package\\skills\\her-intake\\SKILL.md
+  ---
+  duration_ms: 0.1153
+  type: 'test'
+  ...
+# Subtest: owned skill remains permitted: ./packages/her/pi-package/skills/her-intake/SKILL.md
+ok 252 - owned skill remains permitted: ./packages/her/pi-package/skills/her-intake/SKILL.md
+  ---
+  duration_ms: 0.0864
+  type: 'test'
+  ...
+# Subtest: owned skill remains permitted: PACKAGES/HER/PI-PACKAGE/SKILLS/HER-INTAKE/SKILL.MD
+ok 253 - owned skill remains permitted: PACKAGES/HER/PI-PACKAGE/SKILLS/HER-INTAKE/SKILL.MD
+  ---
+  duration_ms: 0.0692
+  type: 'test'
+  ...
+# Subtest: unowned skill is still rejected by the ownership gate
+ok 254 - unowned skill is still rejected by the ownership gate
+  ---
+  duration_ms: 0.1028
+  type: 'test'
+  ...
+# Subtest: allowlist does not accept a lookalike directory
+ok 255 - allowlist does not accept a lookalike directory
+  ---
+  duration_ms: 0.0422
+  type: 'test'
+  ...
+# Subtest: runtime anchor itself remains protected at both entrypoints
+ok 256 - runtime anchor itself remains protected at both entrypoints
+  ---
+  duration_ms: 0.0812
+  type: 'test'
+  ...
+# Subtest: package-relative policy directory remains protected
+ok 257 - package-relative policy directory remains protected
+  ---
+  duration_ms: 0.1133
+  type: 'test'
+  ...
+# Subtest: owned skill accepts an ordinary Unicode filename without expanding scope
+ok 258 - owned skill accepts an ordinary Unicode filename without expanding scope
+  ---
+  duration_ms: 0.131
+  type: 'test'
+  ...
+# Subtest: ownership names require an exact match, not a prefix
+ok 259 - ownership names require an exact match, not a prefix
+  ---
+  duration_ms: 0.0749
+  type: 'test'
+  ...
+# Subtest: ADR-0002 C: legal targetPaths but diff sneaks prompts/her.md is rejected with both scans
+ok 260 - ADR-0002 C: legal targetPaths but diff sneaks prompts/her.md is rejected with both scans
+  ---
+  duration_ms: 1655.337
+  type: 'test'
+  ...
+# Subtest: CLI selfmod-run records an idea proposal and status dumps it
+ok 261 - CLI selfmod-run records an idea proposal and status dumps it
+  ---
+  duration_ms: 660.1227
+  type: 'test'
+  ...
+# Subtest: encoding: added Chinese in a skill .md is clean
+ok 262 - encoding: added Chinese in a skill .md is clean
+  ---
+  duration_ms: 2798.9477
+  type: 'test'
+  ...
+# Subtest: encoding: added Cyrillic in a skill .md is dirty
+ok 263 - encoding: added Cyrillic in a skill .md is dirty
+  ---
+  duration_ms: 1525.0361
+  type: 'test'
+  ...
+# Subtest: encoding: added non-ASCII in a skill .ts is dirty
+ok 264 - encoding: added non-ASCII in a skill .ts is dirty
+  ---
+  duration_ms: 1462.1457
+  type: 'test'
+  ...
+# Subtest: valid failure-anchored proposal enters the pipeline and is filed under done/
+ok 265 - valid failure-anchored proposal enters the pipeline and is filed under done/
+  ---
+  duration_ms: 2810.6471
+  type: 'test'
+  ...
+# Subtest: idea proposals move to for-fei and notify Fei without running the pipeline
+ok 266 - idea proposals move to for-fei and notify Fei without running the pipeline
+  ---
+  duration_ms: 695.1259
+  type: 'test'
+  ...
+# Subtest: malformed JSON, bad id, and escaped paths are filed invalid and never enter the pipeline
+ok 267 - malformed JSON, bad id, and escaped paths are filed invalid and never enter the pipeline
+  ---
+  duration_ms: 959.3083
+  type: 'test'
+  ...
+# Subtest: UTC daily quota of 3 pipeline runs skips the tick and notifies
+ok 268 - UTC daily quota of 3 pipeline runs skips the tick and notifies
+  ---
+  duration_ms: 746.5317
+  type: 'test'
+  ...
+# selfmod-pickup: drain active, skip
+# Subtest: active drain skips pickup with exit 0 and leaves the inbox file
+ok 269 - active drain skips pickup with exit 0 and leaves the inbox file
+  ---
+  duration_ms: 569.4534
+  type: 'test'
+  ...
+# Subtest: TG text from the proposal is fenced
+ok 270 - TG text from the proposal is fenced
+  ---
+  duration_ms: 697.442
+  type: 'test'
+  ...
+# Subtest: pickup sweeps in-window merges through checkRollback
+ok 271 - pickup sweeps in-window merges through checkRollback
+  ---
+  duration_ms: 3233.209
+  type: 'test'
+  ...
+# Subtest: CLI usage lists selfmod-pickup
+ok 272 - CLI usage lists selfmod-pickup
+  ---
+  duration_ms: 548.4352
+  type: 'test'
+  ...
+# Subtest: idea motivation stops at propose and does not run
+ok 273 - idea motivation stops at propose and does not run
+  ---
+  duration_ms: 612.6032
+  type: 'test'
+  ...
+# Subtest: targetPaths outside the v1 allowlist reject at propose
+ok 274 - targetPaths outside the v1 allowlist reject at propose
+  ---
+  duration_ms: 579.8861
+  type: 'test'
+  ...
+# Subtest: rollback refuses pre-adoption error
+ok 275 - rollback refuses pre-adoption error
+  ---
+  duration_ms: 942.744
+  type: 'test'
+  ...
+# Subtest: rollback refuses future error
+ok 276 - rollback refuses future error
+  ---
+  duration_ms: 985.097
+  type: 'test'
+  ...
+# Subtest: rollback refuses invalid timestamp
+ok 277 - rollback refuses invalid timestamp
+  ---
+  duration_ms: 929.366
+  type: 'test'
+  ...
+# Subtest: rollback refuses free-text filename and proposal mention
+ok 278 - rollback refuses free-text filename and proposal mention
+  ---
+  duration_ms: 927.3842
+  type: 'test'
+  ...
+# Subtest: rollback refuses derived crash claim
+ok 279 - rollback refuses derived crash claim
+  ---
+  duration_ms: 937.4649
+  type: 'test'
+  ...
+# Subtest: rollback requires exact structured proposalId
+ok 280 - rollback requires exact structured proposalId
+  ---
+  duration_ms: 935.526
+  type: 'test'
+  ...
+# Subtest: rollback requires exact structured mergeCommit
+ok 281 - rollback requires exact structured mergeCommit
+  ---
+  duration_ms: 915.091
+  type: 'test'
+  ...
+# Subtest: rollback requires exact structured targetPaths
+ok 282 - rollback requires exact structured targetPaths
+  ---
+  duration_ms: 961.4328
+  type: 'test'
+  ...
+# Subtest: a still-running unmatched start is pending evidence, never a crash
+ok 283 - a still-running unmatched start is pending evidence, never a crash
+  ---
+  duration_ms: 916.8103
+  type: 'test'
+  ...
+# Subtest: planned restart suppresses a related failed host exit
+ok 284 - planned restart suppresses a related failed host exit
+  ---
+  duration_ms: 894.8538
+  type: 'test'
+  ...
+# Subtest: confirmed failed host exit with exact adoption binding can revert
+ok 285 - confirmed failed host exit with exact adoption binding can revert
+  ---
+  duration_ms: 1332.364
+  type: 'test'
+  ...
+# Subtest: actual revert restores exact bytes and only appends both audit histories
+ok 286 - actual revert restores exact bytes and only appends both audit histories
+  ---
+  duration_ms: 1284.4405
+  type: 'test'
+  ...
+# Subtest: concurrent rollback checks execute only one real revert
+ok 287 - concurrent rollback checks execute only one real revert
+  ---
+  duration_ms: 1273.3178
+  type: 'test'
+  ...
+# Subtest: rollback respects the shared adoption lock
+ok 288 - rollback respects the shared adoption lock
+  ---
+  duration_ms: 880.875
+  type: 'test'
+  ...
+# Subtest: later target edits are preserved for manual review
+ok 289 - later target edits are preserved for manual review
+  ---
+  duration_ms: 1322.6615
+  type: 'test'
+  ...
+# Subtest: revert failure stays pending and is not retried automatically
+ok 290 - revert failure stays pending and is not retried automatically
+  ---
+  duration_ms: 1137.8892
+  type: 'test'
+  ...
+# Subtest: interruption after real revert does not cause a second revert
+ok 291 - interruption after real revert does not cause a second revert
+  ---
+  duration_ms: 1205.5633
+  type: 'test'
+  ...
+# Subtest: pending observations do not renew the original watch window
+ok 292 - pending observations do not renew the original watch window
+  ---
+  duration_ms: 872.1928
+  type: 'test'
+  ...
+# Subtest: invalid adoption time is pending, not an unlimited watch window
+ok 293 - invalid adoption time is pending, not an unlimited watch window
+  ---
+  duration_ms: 911.7764
+  type: 'test'
+  ...
+# Subtest: actual Git conflict is recorded and preserved without automatic retry
+ok 294 - actual Git conflict is recorded and preserved without automatic retry
+  ---
+  duration_ms: 1434.9131
+  type: 'test'
+  ...
+# Subtest: SELFMOD_GATE_TEST_FILES lists the pinned cage plus the four sibling families
+ok 295 - SELFMOD_GATE_TEST_FILES lists the pinned cage plus the four sibling families
+  ---
+  duration_ms: 0.5542
+  type: 'test'
+  ...
+# Subtest: defaultRunTests spawns node --import tsx --test with the pinned file list
+ok 296 - defaultRunTests spawns node --import tsx --test with the pinned file list
+  ---
+  duration_ms: 0.7576
+  type: 'test'
+  ...
+# Subtest: defaultRunTests rejects a non-zero run with the exit code and the stderr tail, so the gate ledger carries a reason
+ok 297 - defaultRunTests rejects a non-zero run with the exit code and the stderr tail, so the gate ledger carries a reason
+  ---
+  duration_ms: 0.3175
+  type: 'test'
+  ...
+# Subtest: defaultRunTests lets a thrown spawn propagate with its own message
+ok 298 - defaultRunTests lets a thrown spawn propagate with its own message
+  ---
+  duration_ms: 0.1244
+  type: 'test'
+  ...
+# Subtest: zero eval fixture files is fail-closed
+ok 299 - zero eval fixture files is fail-closed
+  ---
+  duration_ms: 4.5755
+  type: 'test'
+  ...
+# Subtest: skill-shape green when touched skill is a legal SKILL.md under the size cap
+ok 300 - skill-shape green when touched skill is a legal SKILL.md under the size cap
+  ---
+  duration_ms: 3.1847
+  type: 'test'
+  ...
+# Subtest: skill-shape red when the touched skill is empty, oversized, or missing name
+ok 301 - skill-shape red when the touched skill is empty, oversized, or missing name
+  ---
+  duration_ms: 4.3916
+  type: 'test'
+  ...
+# Subtest: diff-budget green under the cap and red when added+deleted exceed it
+ok 302 - diff-budget green under the cap and red when added+deleted exceed it
+  ---
+  duration_ms: 3.219
+  type: 'test'
+  ...
+# Subtest: evidence-exists green on an in-memory file and red on missing or escaped refs
+ok 303 - evidence-exists green on an in-memory file and red on missing or escaped refs
+  ---
+  duration_ms: 4.0686
+  type: 'test'
+  ...
+# Subtest: misspelled fixture param key is fail-closed
+ok 304 - misspelled fixture param key is fail-closed
+  ---
+  duration_ms: 1.8825
+  type: 'test'
+  ...
+# Subtest: unknown fixture kind is fail-closed
+ok 305 - unknown fixture kind is fail-closed
+  ---
+  duration_ms: 1.8528
+  type: 'test'
+  ...
+# Subtest: returns measured counts, not one invented passing test
+ok 306 - returns measured counts, not one invented passing test
+  ---
+  duration_ms: 1.1786
+  type: 'test'
+  ...
+# Subtest: refuses empty test evidence
+ok 307 - refuses empty test evidence
+  ---
+  duration_ms: 0.1481
+  type: 'test'
+  ...
+# Subtest: refuses claim test evidence
+ok 308 - refuses claim test evidence
+  ---
+  duration_ms: 0.0529
+  type: 'test'
+  ...
+# Subtest: refuses zero test evidence
+ok 309 - refuses zero test evidence
+  ---
+  duration_ms: 0.0859
+  type: 'test'
+  ...
+# Subtest: refuses skipped test evidence
+ok 310 - refuses skipped test evidence
+  ---
+  duration_ms: 0.0796
+  type: 'test'
+  ...
+# Subtest: refuses failed test evidence
+ok 311 - refuses failed test evidence
+  ---
+  duration_ms: 0.0574
+  type: 'test'
+  ...
+# Subtest: refuses cancelled test evidence
+ok 312 - refuses cancelled test evidence
+  ---
+  duration_ms: 0.0511
+  type: 'test'
+  ...
+# Subtest: refuses todo test evidence
+ok 313 - refuses todo test evidence
+  ---
+  duration_ms: 0.0467
+  type: 'test'
+  ...
+# Subtest: refuses missing test evidence
+ok 314 - refuses missing test evidence
+  ---
+  duration_ms: 0.0607
+  type: 'test'
+  ...
+# Subtest: refuses duplicate test evidence
+ok 315 - refuses duplicate test evidence
+  ---
+  duration_ms: 0.0971
+  type: 'test'
+  ...
+# Subtest: refuses negative test evidence
+ok 316 - refuses negative test evidence
+  ---
+  duration_ms: 0.0547
+  type: 'test'
+  ...
+# Subtest: refuses fractional test evidence
+ok 317 - refuses fractional test evidence
+  ---
+  duration_ms: 0.0396
+  type: 'test'
+  ...
+# Subtest: refuses nonfinite test evidence
+ok 318 - refuses nonfinite test evidence
+  ---
+  duration_ms: 0.0666
+  type: 'test'
+  ...
+# Subtest: refuses inconsistent test evidence
+ok 319 - refuses inconsistent test evidence
+  ---
+  duration_ms: 0.0636
+  type: 'test'
+  ...
+# Subtest: refuses overflow test evidence
+ok 320 - refuses overflow test evidence
+  ---
+  duration_ms: 0.0454
+  type: 'test'
+  ...
+# Subtest: accepts real Node TAP output including nested tests
+ok 321 - accepts real Node TAP output including nested tests
+  ---
+  duration_ms: 140.6104
+  type: 'test'
+  ...
+# Subtest: empty real Node suite cannot pass the evidence gate
+ok 322 - empty real Node suite cannot pass the evidence gate
+  ---
+  duration_ms: 132.6427
+  type: 'test'
+  ...
+# Subtest: measured green permits only the existing merge predicate
+ok 323 - measured green permits only the existing merge predicate
+  ---
+  duration_ms: 0.1205
+  type: 'test'
+  ...
+# Subtest: merge predicate rejects invalid passing count 0
+ok 324 - merge predicate rejects invalid passing count 0
+  ---
+  duration_ms: 0.0711
+  type: 'test'
+  ...
+# Subtest: merge predicate rejects invalid passing count -1
+ok 325 - merge predicate rejects invalid passing count -1
+  ---
+  duration_ms: 0.0227
+  type: 'test'
+  ...
+# Subtest: merge predicate rejects invalid passing count 0.5
+ok 326 - merge predicate rejects invalid passing count 0.5
+  ---
+  duration_ms: 0.0344
+  type: 'test'
+  ...
+# Subtest: merge predicate rejects invalid passing count NaN
+ok 327 - merge predicate rejects invalid passing count NaN
+  ---
+  duration_ms: 0.0225
+  type: 'test'
+  ...
+# Subtest: merge predicate rejects invalid passing count Infinity
+ok 328 - merge predicate rejects invalid passing count Infinity
+  ---
+  duration_ms: 0.0149
+  type: 'test'
+  ...
+# Subtest: merge predicate rejects invalid passing count 9007199254740992
+ok 329 - merge predicate rejects invalid passing count 9007199254740992
+  ---
+  duration_ms: 0.0144
+  type: 'test'
+  ...
+# Subtest: every prior safety gate remains necessary
+ok 330 - every prior safety gate remains necessary
+  ---
+  duration_ms: 0.0658
+  type: 'test'
+  ...
+# Subtest: V1: injected failing test rejects with full gate result and no merge
+ok 331 - V1: injected failing test rejects with full gate result and no merge
+  ---
+  duration_ms: 1173.0522
+  type: 'test'
+  ...
+# Subtest: bare runSelfMod without test/eval runners rejects closed, no merge, no tag
+ok 332 - bare runSelfMod without test/eval runners rejects closed, no merge, no tag
+  ---
+  duration_ms: 1383.0475
+  type: 'test'
+  ...
+# Subtest: missing host-frozen plan rejects before apply
+ok 333 - missing host-frozen plan rejects before apply
+  ---
+  duration_ms: 687.4752
+  type: 'test'
+  ...
+# Subtest: independent evaluation plan remains Markdown-only
+ok 334 - independent evaluation plan remains Markdown-only
+  ---
+  duration_ms: 600.0465
+  type: 'test'
+  ...
+# Subtest: V2: merge a harmless skill edit then rollback on red organ ledger
+ok 335 - V2: merge a harmless skill edit then rollback on red organ ledger
+  ---
+  duration_ms: 3380.3539
+  type: 'test'
+  ...
+# Subtest: V3: exploding typecheck is an evidenced reject, never a claimed merge
+ok 336 - V3: exploding typecheck is an evidenced reject, never a claimed merge
+  ---
+  duration_ms: 1153.0675
+  type: 'test'
+  ...
+# Subtest: V4: transient EPERM during gate diff read retries, warns, and does not fail the gate
+ok 337 - V4: transient EPERM during gate diff read retries, warns, and does not fail the gate
+  ---
+  duration_ms: 2570.5882
+  type: 'test'
+  ...
+# [selfmod-gate-read] giving up after 3 attempts, last error: EACCES
+# Subtest: V4: persistent EACCES during gate diff read is an honest gate failure
+ok 338 - V4: persistent EACCES during gate diff read is an honest gate failure
+  ---
+  duration_ms: 1289.7584
+  type: 'test'
+  ...
+# Subtest: createSelfmodWorktree junctions node_modules and copies providers/data
+ok 339 - createSelfmodWorktree junctions node_modules and copies providers/data
+  ---
+  duration_ms: 939.9695
+  type: 'test'
+  ...
+# Subtest: removeSelfmodWorktree unlinks the junction before deleting the tree and prunes
+ok 340 - removeSelfmodWorktree unlinks the junction before deleting the tree and prunes
+  ---
+  duration_ms: 984.5781
+  type: 'test'
+  ...
+# Subtest: a live selfmod lock refuses a new run
+ok 341 - a live selfmod lock refuses a new run
+  ---
+  duration_ms: 606.0329
+  type: 'test'
+  ...
+# Subtest: an expired selfmod lock is treated as absent
+ok 342 - an expired selfmod lock is treated as absent
+  ---
+  duration_ms: 2566.1484
+  type: 'test'
+  ...
+# Subtest: acquireSelfmodLock reports held when a valid lock is present
+ok 343 - acquireSelfmodLock reports held when a valid lock is present
+  ---
+  duration_ms: 2.4428
+  type: 'test'
+  ...
+# Subtest: a corrupt truncated lock is treated as held, not absent
+ok 344 - a corrupt truncated lock is treated as held, not absent
+  ---
+  duration_ms: 1.7175
+  type: 'test'
+  ...
+# Subtest: an expired lock is reclaimed by exactly one of two concurrent reclaimers
+ok 345 - an expired lock is reclaimed by exactly one of two concurrent reclaimers
+  ---
+  duration_ms: 608.5285
+  type: 'test'
+  ...
+# Subtest: task-reconcile: no tasks -> exit 0, empty events
+ok 346 - task-reconcile: no tasks -> exit 0, empty events
+  ---
+  duration_ms: 7.7199
+  type: 'test'
+  ...
+# Subtest: task-reconcile --json: output is JSON-parseable with events and wakeupsFired
+ok 347 - task-reconcile --json: output is JSON-parseable with events and wakeupsFired
+  ---
+  duration_ms: 3.0222
+  type: 'test'
+  ...
+1..347
+# tests 351
+# suites 1
+# pass 351
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 330800.4739

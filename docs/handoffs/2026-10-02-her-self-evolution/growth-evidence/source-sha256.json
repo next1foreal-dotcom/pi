@@ -1,0 +1,62 @@
+[
+  {
+    "sha256": "960ae69ce268cfc1cc099d68c6d5cb26431f1f472d144cd31d80dbe4c6b07481",
+    "path": "packages/her/src/cli.ts",
+    "gitBlobSha256": "960ae69ce268cfc1cc099d68c6d5cb26431f1f472d144cd31d80dbe4c6b07481",
+    "lines": 1984
+  },
+  {
+    "sha256": "c16cb0ee3d00ecdac5fdb21f4ff6cfe3fe3cf6bf309deb5a9a5a435369e9e2b9",
+    "path": "packages/her/src/growth-experiment/cli.ts",
+    "gitBlobSha256": "c16cb0ee3d00ecdac5fdb21f4ff6cfe3fe3cf6bf309deb5a9a5a435369e9e2b9",
+    "lines": 78
+  },
+  {
+    "sha256": "916963a574586b1317f39c9422bc774b0fbacabbb48b3cfb52e40fb4e243a8fc",
+    "path": "packages/her/src/growth-experiment/host.ts",
+    "gitBlobSha256": "916963a574586b1317f39c9422bc774b0fbacabbb48b3cfb52e40fb4e243a8fc",
+    "lines": 683
+  },
+  {
+    "sha256": "6c85fd19412858d4e30f89084da12de3b7fde02c059c2b4b60fd86eac20d73ff",
+    "path": "packages/her/src/growth-experiment/journal.ts",
+    "gitBlobSha256": "6c85fd19412858d4e30f89084da12de3b7fde02c059c2b4b60fd86eac20d73ff",
+    "lines": 99
+  },
+  {
+    "sha256": "1e8fdd3d185f801287747b762c944645dad9d536e04bcce416d9947719a482bb",
+    "path": "packages/her/src/growth-experiment/loop.ts",
+    "gitBlobSha256": "1e8fdd3d185f801287747b762c944645dad9d536e04bcce416d9947719a482bb",
+    "lines": 390
+  },
+  {
+    "sha256": "5594be2e447c20f5eccb740cdab76c58dfab717211bd715baa48507f1e29477b",
+    "path": "packages/her/src/growth-experiment/model.ts",
+    "gitBlobSha256": "5594be2e447c20f5eccb740cdab76c58dfab717211bd715baa48507f1e29477b",
+    "lines": 51
+  },
+  {
+    "sha256": "238892a9ffc4caf098a1cb26bcd7d69b83d868a2c59d26c1b510f333a07a9e21",
+    "path": "packages/her/src/growth-experiment/parse.ts",
+    "gitBlobSha256": "238892a9ffc4caf098a1cb26bcd7d69b83d868a2c59d26c1b510f333a07a9e21",
+    "lines": 159
+  },
+  {
+    "sha256": "80369d670874ecec41f22ac1c7c3064c494c57a22857d25fd79f1f44eff8202b",
+    "path": "packages/her/src/growth-experiment/types.ts",
+    "gitBlobSha256": "80369d670874ecec41f22ac1c7c3064c494c57a22857d25fd79f1f44eff8202b",
+    "lines": 144
+  },
+  {
+    "sha256": "93a6740eed39ba26784c05aab7239407614a02423094c85a6606932458e7adfe",
+    "path": "packages/her/test/growth-experiment.test.ts",
+    "gitBlobSha256": "93a6740eed39ba26784c05aab7239407614a02423094c85a6606932458e7adfe",
+    "lines": 509
+  },
+  {
+    "sha256": "9c5d00638716db52b82d33b49d4e92ae6f30640398f781fa810712b23c5b0049",
+    "path": "packages/her/test/growth-host.test.ts",
+    "gitBlobSha256": "9c5d00638716db52b82d33b49d4e92ae6f30640398f781fa810712b23c5b0049",
+    "lines": 390
+  }
+]

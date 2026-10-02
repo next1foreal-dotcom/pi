@@ -1,0 +1,45 @@
+✔ four stages: discover, investigate, review, use in fresh state, suspend, reopen (3.1279ms)
+✔ no-learning-needed is a real branch; no probe or method is manufactured (0.2547ms)
+✔ a probe whose hypotheses predict the same outcome is refused before execution (0.3711ms)
+✔ candidate cannot cite invented evidence (0.5093ms)
+✔ pending probe is never silently replayed after a lost response (0.4275ms)
+✔ out-of-scope new task does not invalidate the method globally (0.6458ms)
+✔ declining a method records an opportunity, without executing it (0.6079ms)
+✔ two concurrent drivers cannot both pass the save compare-and-swap (2.8065ms)
+✔ thought and probe limits stop before the next action (0.2317ms)
+✔ training tasks cannot be relabeled as held-out evaluation (0.5606ms)
+✔ self-reported success without host evidence is not accepted (0.3537ms)
+✔ wrong method/task receipt stays pending and cannot suspend another version (0.7304ms)
+✔ permission denial stops a proposed probe (0.205ms)
+✔ failed independent review cannot activate a candidate (0.4807ms)
+✔ cancellation before a call prevents both reasoning and action (0.318ms)
+✔ probe port can return actual filesystem observations; driver does not score them (8.7711ms)
+✔ review is reserved once; interrupted review requires explicit host reconciliation (0.6131ms)
+✔ missing precondition evidence blocks use even when the model recommends it (0.4911ms)
+✔ permission for a new task is not inherited from approval of a method (0.506ms)
+✔ cancel during durable reservation prevents probe execution (0.2726ms)
+✔ reopening does not silently replenish the research budget or discard history (0.5443ms)
+✔ model adapter uses the injected model and token cap, not its own provider or credentials (0.1261ms)
+✔ model adapter rejects malformed output without a repair loop or extra calls (0.0674ms)
+✔ held-out review record is not included in later model prompts (0.7203ms)
+✔ durable host snapshots survive a new object without rewriting earlier records (4.1568ms)
+✔ missing budgets cannot turn limits into an unbounded loop (0.1481ms)
+✔ inquiry ids cannot masquerade as filesystem paths (0.052ms)
+✔ real Markdown journal: revision zero, append-only CAS, restart and corruption refusal (239.3949ms)
+✔ model host records actual usage and monthly cost ledger; preset reply is only engineering evidence (20.3821ms)
+✔ budget/STOP reject before provider call and frozen plans cannot be replaced (28.088ms)
+✔ unknown usage leaves durable reservation, blocks replay across new host instance (23.5876ms)
+✔ real task executor runs only granted frozen actions, preserves logs and drops credentials (268.2784ms)
+✔ independent paired review uses actual executor artifacts, sealed cases and measured costs; no final replay (1461.7465ms)
+✔ task execution interruption stays pending, consumed action cannot run again (28.0503ms)
+✔ budget exhaustion survives reopening and blocks before a model call (17.7002ms)
+✔ failed response retains fresh real usage, never settles with stale metadata (30.0743ms)
+✔ formal CLI reads persisted state and wakes from a real completed task without resetting budget (268.3558ms)
+ℹ tests 37
+ℹ suites 0
+ℹ pass 37
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3257.7411
