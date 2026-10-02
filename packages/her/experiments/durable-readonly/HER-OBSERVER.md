@@ -64,3 +64,18 @@ The runner copies the actual Her authorization modules/policies and evidence hel
 The suite has 13 dependency-free scope/compatibility tests and 10 SDK/Her integration tests. It reads copies of two actual Her source files, exercises the real Cedar evaluator/policies, performs SIGKILL recovery, and verifies permission revocation, unknown IDs, unchanged private-store sentinels, source mutation, persistent budgets and manifest rejection. The model is simulated; the SDK, SQLite, files, child processes, Her policy code and evidence helper are real.
 
 Local authoring result: 13/13 scope tests passed and all authored `.mjs` files pass `node --check`. Local SDK execution is blocked by Node 22.16.0 and unavailable npm DNS. CI results must be recorded separately after inspection. Root `npm run check`, full Her regression tests, a live primary-session integration and browser UI are still required before rollout. Keep draft; do not auto-merge.
+
+## Inspected CI evidence — 2026-10-02
+
+Tested code commit: `8d6c84070f9f58be5bab76aa63259e88aeadf404`.
+
+Workflow: https://github.com/next1foreal-dotcom/pi/actions/runs/37009178551
+
+- Linux job `110844526796`: **23 passed, 0 failed, 0 skipped**.
+- Windows job `110844526324`: **23 passed, 0 failed, 0 skipped**.
+- Both used Node 24.21.0, Durable/Pi AI/Chord 1.0.0, and Cedar WASM 4.11.1. Both full job logs were inspected.
+- The logged authorization receipts name the real `plan` profile, `read` capability and `allow_memory_tools` rule. A separate real-policy test rejects `write`.
+- Process-death recovery measured source-tool attempts `{review: 1, guard: 2}`, one user input, and zero model calls on the final reattachment. Final reporting still performs fresh bounded disk reads; only completed tool execution is deduplicated.
+- The existing recovery-probe workflow `37009178414` also succeeded on this code commit. Secret Scan succeeded. `Merge Upstream Dry Run` (`37009178448`) failed; no attempt was made here to resolve upstream/core conflicts.
+
+The 23 tests are 13 scope/compatibility cases plus 10 SDK/Her integration cases repeated on two platforms, not 46 different scenarios. Passing this suite establishes the isolated adapter's behavior, not a deployed Her observer. The full root check, wider Her regressions and primary-session/browser integration remain open. This validation-only documentation update does not change the tested code.
