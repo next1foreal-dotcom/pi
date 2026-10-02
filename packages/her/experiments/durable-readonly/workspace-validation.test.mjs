@@ -105,11 +105,14 @@ test('real Node subprocess reports pass, failure, nested names, skipped and canc
     describe('two', () => { test('same', () => {}); });
     test('fails', () => assert.equal(1, 2));
     test('skip', { skip: true }, () => {});
-    test('cancel', () => new Promise(() => {}));\n`);
+    const cancelled = new AbortController();
+    cancelled.abort();
+    test('cancel', { signal: cancelled.signal }, () => assert.fail('cancelled body ran'));\n`);
   const env = { ...process.env };
   delete env.NODE_TEST_CONTEXT; // The child is a separate runner, not a nested test context.
   const result = spawnSync(process.execPath, ['--test', `--test-reporter=${join(here, 'workspace-reporter.mjs')}`,
     'test/fixture.mjs'], { cwd: root, env, encoding: 'utf8', timeout: 15000, shell: false });
+  assert.ifError(result.error);
   assert.equal(result.status, 1, result.stderr);
   const parsed = parseResults(result.stdout);
   assert.equal(parsed.summary.success, false);
