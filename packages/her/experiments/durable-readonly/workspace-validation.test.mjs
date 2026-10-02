@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import report from './workspace-reporter.mjs';
-import { compareResults, parseResults } from './workspace-comparison.mjs';
+import { compareResults, modelDataFingerprint, parseResults } from './workspace-comparison.mjs';
 import { OBSERVER_TIMEOUTS, runStage } from './validation-stage.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -106,7 +106,8 @@ test('real Node subprocess reports pass, failure, nested names, skipped and canc
     test('fails', () => assert.equal(1, 2));
     test('skip', { skip: true }, () => {});
     const cancelled = new AbortController();
-    cancelled.abort();
+    // Error retains custom cancellation metadata across process serialization.
+    cancelled.abort(new Error('fixture cancellation'));
     test('cancel', { signal: cancelled.signal }, () => assert.fail('cancelled body ran'));\n`);
   const env = { ...process.env };
   delete env.NODE_TEST_CONTEXT; // The child is a separate runner, not a nested test context.
@@ -115,10 +116,34 @@ test('real Node subprocess reports pass, failure, nested names, skipped and canc
   assert.ifError(result.error);
   assert.equal(result.status, 1, result.stderr);
   const parsed = parseResults(result.stdout);
+  t.diagnostic(JSON.stringify(parsed.summary));
   assert.equal(parsed.summary.success, false);
   assert.equal(parsed.summary.counts.passed, 2);
   assert.equal(parsed.summary.counts.failed, 1);
   assert.equal(parsed.summary.counts.cancelled, 1);
   assert.equal(parsed.summary.counts.skipped, 1);
+  const failed = [...parsed.results.values()].filter((item) => item.outcome === 'failed');
+  assert.equal(failed.find((item) => item.names.at(-1) === 'fails')?.code, 'ERR_ASSERTION');
+  assert.equal(failed.find((item) => item.names.at(-1) === 'cancel')?.failureType, 'testAborted');
+  assert.ok(!failed.some((item) => item.message?.includes('cancelled body ran')));
   assert.equal([...parsed.results.values()].filter((item) => item.names.at(-1) === 'same').length, 2);
+});
+
+test('model fingerprint ignores only manifest generation time, not actual model data', () => {
+  const manifest = { schemaVersion: 3, generatedAt: '2026-10-02T00:00:00Z', structureHash: 'structure', files: { 'provider.json': 'hash' } };
+  const entries = (value, provider = '{"value":1}') => [['.manifest.json', JSON.stringify(value)], ['provider.json', provider]];
+  const before = modelDataFingerprint(entries(manifest));
+  assert.equal(before, modelDataFingerprint(entries({ ...manifest, generatedAt: '2026-10-02T01:00:00Z' })));
+  assert.equal(before, modelDataFingerprint(entries(manifest).reverse()));
+  assert.notEqual(before, modelDataFingerprint(entries(manifest, '{"value":2}')));
+  assert.notEqual(before, modelDataFingerprint(entries({ ...manifest, structureHash: 'different' })));
+  assert.notEqual(before, modelDataFingerprint(entries({ ...manifest, schemaVersion: 4 })));
+  assert.notEqual(before, modelDataFingerprint(entries({ ...manifest, files: { 'provider.json': 'different' } })));
+});
+test('model fingerprint rejects missing, malformed and duplicate manifests', () => {
+  for (const entries of [[], [['.manifest.json', '{']], [['.manifest.json', '{}']],
+    [['.manifest.json', 'null']], [['.manifest.json', '{"generatedAt":"invalid"}']],
+    [['.manifest.json', '{}'], ['.manifest.json', '{}']]]) {
+    assert.throws(() => modelDataFingerprint(entries));
+  }
 });

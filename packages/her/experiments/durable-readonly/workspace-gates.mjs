@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs';
 import { appendFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { compareResults, parseResults } from './workspace-comparison.mjs';
+import { compareResults, modelDataFingerprint, parseResults } from './workspace-comparison.mjs';
 import { runStage } from './validation-stage.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -41,11 +41,11 @@ for (const [label, directory] of [['base', basePath], ['head', headPath]]) {
     run('model-data-check', [npm, 'run', 'check:model-data'], 120000);
     const dataDir = join(cwd, 'packages/ai/src/providers/data');
     if (existsSync(dataDir)) {
-      const digest = createHash('sha256');
-      for (const file of (await readdir(dataDir)).sort()) {
-        digest.update(file); digest.update('\0'); digest.update(await readFile(join(dataDir, file)));
-      }
-      metadata.modelDataSha256 = digest.digest('hex');
+      try {
+        const entries = [];
+        for (const file of (await readdir(dataDir)).sort()) entries.push([file, await readFile(join(dataDir, file))]);
+        metadata.modelDataSha256 = modelDataFingerprint(entries);
+      } catch (error) { metadata.modelDataError = error.message; }
     }
     metadata.lockSha256 = createHash('sha256').update(await readFile(join(cwd, 'package-lock.json'))).digest('hex');
     const testFiles = (await readdir(join(cwd, 'packages/her/test')))
