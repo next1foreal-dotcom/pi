@@ -1,6 +1,7 @@
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context';
 import { createModels } from '@earendil-works/pi-ai';
-import { discoverAndLoadExtensions } from '@earendil-works/pi-coding-agent';
+import { createAgentSession, DefaultResourceLoader, discoverAndLoadExtensions,
+  SessionManager, SettingsManager } from '@earendil-works/pi-coding-agent';
 import { createRegistry, Harness } from '@earendil-works/pi-durable';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { authorizeHerRead, createHerObserver, Observation } from './her-observer.mjs';
@@ -176,7 +177,7 @@ test('recovery cannot revive revoked permission or silently change the source ma
 });
 
 // Real owner-side endpoint. No model provider is installed in the reporting harness.
-async function reportingHost(t, config) {
+async function reportingHost(t, config, sessionId = 'main-session') {
   const enabled = { value: true };
   const observer = await createHerObserver({ ...config, isEnabled: () => enabled.value });
   const registry = createRegistry(); registry.install(observer.extension);
@@ -184,7 +185,7 @@ async function reportingHost(t, config) {
   const root = await harness.root(context);
   await observer.bind(harness, root, context);
   const token = 'e'.repeat(64);
-  const service = await serveObserverReport({ observer, harness, root, context, token, sessionId: 'main-session' });
+  const service = await serveObserverReport({ observer, harness, root, context, token, sessionId });
   let closed = false;
   const close = async () => { if (closed) return; closed = true; await service.close(); await harness.close(context); };
   active.get(config.database)?.add(close); t.after(close);
@@ -288,4 +289,109 @@ test('real Pi loader command reaches actual Durable/Her HTTP report without trig
   assert.equal((await host.harness.snapshot(Observation, host.root.id, context)).attempts, 2);
   t.diagnostic(JSON.stringify({ loader: 'pi-coding-agent@1.0.0', endpoint: 'real Durable + Her',
     providerInstalledInReportHost: false, toolAttempts: 2, triggeredTurns: 0 }));
+});
+
+
+// Exercise the real public session factory, extension lifecycle, command dispatch,
+// event stream, and JSONL storage. No SessionManager or sendMessage capture stubs.
+test('real AgentSession persists the report, rejects revoked evidence and restores without a model turn',
+  { timeout: 60000 }, async (t) => {
+  const config = await setup(t);
+  await run(t, { ...config, phase: 'start' });
+  const agentDir = join(dirname(config.database), 'pi-agent');
+  const sessionDir = join(dirname(config.database), 'pi-sessions');
+  const manager = SessionManager.create(config.workspaceRoot, sessionDir);
+  const host = await reportingHost(t, config, manager.getSessionId());
+  const before = await host.harness.snapshot(Observation, host.root.id, context);
+  const sessions = [];
+  t.after(() => { for (const session of sessions) session.dispose(); });
+  const env = {
+    HER_OBSERVER_REPORT_ENABLED: '1', HER_OBSERVER_REPORT_URL: host.connection.url,
+    HER_OBSERVER_REPORT_TOKEN: host.connection.token, HER_OBSERVER_REPORT_MANIFEST: host.connection.manifestId,
+  };
+  let modelCalls = 0;
+  let agentStarts = 0;
+  async function attach(sessionManager) {
+    const settingsManager = SettingsManager.inMemory();
+    const loader = new DefaultResourceLoader({
+      cwd: config.workspaceRoot, agentDir, settingsManager,
+      noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
+      additionalExtensionPaths: [join(root, '.pi/extensions/her-observer.ts')],
+    });
+    const previous = Object.fromEntries(Object.keys(env).map((key) => [key, process.env[key]]));
+    try { Object.assign(process.env, env); await loader.reload(); }
+    finally {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key]; else process.env[key] = value;
+      }
+    }
+    assert.deepEqual(loader.getExtensions().errors, []);
+    assert.equal(loader.getExtensions().extensions.length, 1);
+    const { session } = await createAgentSession({
+      cwd: config.workspaceRoot, agentDir, settingsManager, sessionManager,
+      resourceLoader: loader, tools: [], noTools: 'all',
+    });
+    sessions.push(session);
+    session.agent.streamFn = async () => { modelCalls++; throw new Error('report commands must not invoke a model'); };
+    session.subscribe((event) => { if (event.type === 'agent_start') agentStarts++; });
+    await session.bindExtensions();
+    assert.deepEqual(session.getActiveToolNames(), []);
+    return session;
+  }
+  const messages = (session) => session.messages.filter((message) =>
+    message.role === 'custom' && message.customType === 'her-observer-report');
+  const receipts = (sessionManager) => sessionManager.getBranch().filter((entry) =>
+    entry.type === 'custom' && entry.customType === 'her-observer-report-v1');
+
+  const session = await attach(manager);
+  await session.prompt('/her-observer status');
+  assert.match(messages(session).at(-1).content, /尚无观察回执/);
+  await session.prompt('/her-observer refresh');
+  assert.equal(receipts(manager).length, 1);
+  assert.equal(receipts(manager)[0].data.report.status, 'evidence-complete');
+  assert.match(messages(session).at(-1).content, /结构证据/);
+  assert.equal(session.isIdle, true);
+
+  // Pi deliberately buffers setup/custom entries until a user or assistant message.
+  // The fresh-session receipt is real session state, but is not a durable file yet.
+  const file = manager.getSessionFile();
+  assert.equal(typeof file, 'string');
+  await assert.rejects(readFile(file), { code: 'ENOENT' });
+  // Seed an existing conversation with a synthetic user entry. This is storage setup,
+  // not a model request, and proves the normal existing-main-session persistence path.
+  manager.appendMessage({ role: 'user', content: 'fixture: inspect the selected source receipts', timestamp: Date.now() });
+  await session.prompt('/her-observer refresh');
+  const persisted = (await readFile(file, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+  assert.equal(persisted.filter((entry) => entry.type === 'custom' &&
+    entry.customType === 'her-observer-report-v1' && entry.data.report.status === 'evidence-complete').length, 2);
+  assert.ok(persisted.some((entry) => entry.type === 'custom_message' &&
+    entry.customType === 'her-observer-report' && /结构证据/.test(entry.content)));
+  assert.ok(!JSON.stringify(persisted).includes(host.connection.token));
+  assert.ok(!JSON.stringify(receipts(manager)).includes(config.workspaceRoot));
+
+  host.enabled.value = false;
+  await session.prompt('/her-observer refresh');
+  assert.equal(receipts(manager).at(-1).data.report.status, 'blocked');
+  await session.prompt('/her-observer status');
+  assert.match(messages(session).at(-1).content, /核验被阻止/);
+  session.dispose();
+
+  const restoredManager = SessionManager.open(file, sessionDir);
+  const restored = await attach(restoredManager);
+  assert.equal(restoredManager.getSessionId(), manager.getSessionId());
+  assert.equal(receipts(restoredManager).at(-1).data.report.status, 'blocked');
+  await restored.prompt('/her-observer status');
+  assert.match(messages(restored).at(-1).content, /尚无观察回执/);
+  assert.equal(restored.isIdle, true);
+
+  const other = await attach(SessionManager.create(config.workspaceRoot, sessionDir));
+  await other.prompt('/her-observer refresh');
+  assert.equal(receipts(other.sessionManager).length, 0);
+  assert.match(messages(other).at(-1).content, /未通过本次核对/);
+  assert.equal(modelCalls, 0);
+  assert.equal(agentStarts, 0);
+  assert.deepEqual(await host.harness.snapshot(Observation, host.root.id, context), before);
+  t.diagnostic(JSON.stringify({ runtime: 'real AgentSession + real JSONL + real Durable/Her endpoint',
+    modelCalls, agentStarts, freshSessionDiskFile: false, persistedSuccessfulReceipts: 2,
+    revokedStatus: 'blocked', restoredCache: 'empty', wrongSession: 'rejected' }));
 });
