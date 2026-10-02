@@ -124,6 +124,8 @@ test('real SDK: happy path and repeated request ID do not repeat work', { timeou
   assert.equal(report.observerStatus, 'verified');
   assert.equal(report.modelCalls, 3);
   assert.deepEqual(report.reconnected.receipts, report.receipts);
+  assert.ok(report.updates.some((update) => Object.keys(update.receipts).length === 2),
+    'custom-document commits must reach an already attached client, not only a new snapshot');
   assert.deepEqual(await attempts(path), { a: 1, b: 1 });
   t.diagnostic(JSON.stringify({ node: report.node, versions: report.versions, observerStatus: report.observerStatus }));
 });

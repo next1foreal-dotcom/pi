@@ -35,6 +35,35 @@ async function sdkVersions() {
   return versions;
 }
 
+/**
+ * Pi 1.0.0's conversation view mounts built-in documents only. Custom receipts
+ * have their own committed watch. This is a composite client projection, not
+ * a claim that the two subscriptions advance in a single atomic UI frame.
+ */
+export async function watchProbe({ harness, root }) {
+  const transcript = await root.watch(context);
+  let receipts;
+  try {
+    receipts = await harness.watchDoc(Receipts, root.id, context);
+    if (!receipts) throw new Error('The committed receipt document is missing.');
+  } catch (error) {
+    await transcript.stop();
+    throw error;
+  }
+  const current = () => {
+    if (receipts.value === null) throw new Error('The receipt document was retired.');
+    return { ...transcript.value, docs: { ...transcript.value.docs, [DOC_KIND]: receipts.value } };
+  };
+  return {
+    get value() { return current(); },
+    start(listener) {
+      transcript.start(async () => { await listener(current()); });
+      receipts.start(async () => { await listener(current()); });
+    },
+    stop: async () => { await Promise.all([transcript.stop(), receipts.stop()]); },
+  };
+}
+
 export function viewSummary(value) {
   return {
     entryIds: value.entries.map((entry) => entry.id),
@@ -96,6 +125,8 @@ export async function openProbe({ database, fixtures, phase, replay = 'safe', al
     model: { provider: 'faux', modelId: 'faux-1' }, tools: [read],
     instructions: 'Only inspect the two approved test fixtures. A response is not an acceptance verdict.',
   } });
+  // Materialize the custom document before clients subscribe; never reset it on reopening.
+  await root.commit(async (tx) => { await tx.doc(Receipts, root.id); }, context);
   return { harness, root, faux, versions, reports };
 }
 
@@ -105,7 +136,7 @@ export async function reportProbe(opened, settled) {
   const toolResults = entries.filter((entry) => entry.kind === 'pi.tool-result')
     .flatMap((entry) => entry.model ?? []).filter((message) => message.role === 'toolResult');
   const receipts = (await harness.snapshot(Receipts, root.id, context))?.completed ?? {};
-  const watch = await root.watch(context);
+  const watch = await watchProbe(opened);
   const reconnected = viewSummary(watch.value);
   await watch.stop();
   return {

@@ -2,7 +2,7 @@
 import { closeSync, fsyncSync, openSync, writeSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { context, openProbe, reportProbe, REQUEST, viewSummary } from './host.mjs';
+import { context, openProbe, reportProbe, REQUEST, viewSummary, watchProbe } from './host.mjs';
 
 const [phase, scratch, replay = 'safe', policy = 'allow'] = process.argv.slice(2);
 if (!['normal', 'crash', 'resume', 'inspect'].includes(phase) || !scratch || !['safe', 'unsafe'].includes(replay) ||
@@ -30,7 +30,7 @@ try {
       finally { closeSync(fd); }
     },
     onPause: async (callContext) => {
-      const state = await opened.root.watch(context);
+      const state = await watchProbe(opened);
       const snapshot = viewSummary(state.value);
       await state.stop();
       const signal = callContext.abortSignal;
@@ -44,7 +44,7 @@ try {
       });
     },
   });
-  watch = await opened.root.watch(context);
+  watch = await watchProbe(opened);
   const initial = viewSummary(watch.value);
   const updates = [];
   watch.start(async (value) => { updates.push(viewSummary(value)); });
