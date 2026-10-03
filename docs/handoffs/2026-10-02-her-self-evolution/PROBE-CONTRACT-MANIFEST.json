@@ -1,0 +1,10 @@
+{
+  "baseline": "73494f083ca349749a7193c0298c8129f37de144",
+  "hostGitBlob": "a881772b0b30f4b313941504437b37cc8a3158cb",
+  "patchSha256": "7c4693a7f256bc69cd6f9ea4e902542f753154ddee7e5de017a85e560c85dc56",
+  "patchBytes": 22960,
+  "xzSha256": "683eff5833f05323f1dfd4068ab79c5758cd3f680aab53d2909a0c1142a2b651",
+  "xzBytes": 6584,
+  "xzGitBlob": "8a2ddb77a4451b6eb751f163a04930a5cb950a05",
+  "scope": "quarantined protocol candidate; no paid call, pilot restart, merge or deployment"
+}
