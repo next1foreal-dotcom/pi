@@ -1502,6 +1502,15 @@ test("extension memory tools write, recall, judge, and update status", async () 
 
 		const recalled = await executeTool(recall, { query: "exact verification", k: 3, privacy: "private" }, ctx);
 		assert.match(firstText(recalled), /exact verification/);
+		await writeText(
+			join(store, "semantic", "long-receipt.md"),
+			`---\nprivacy: shared\n---\nlong-receipt ${"background ".repeat(70)}Final handoff: Mela checks, Luno signs.`,
+		);
+		const preview = await executeTool(recall, { query: "long-receipt", k: 1 }, ctx);
+		assert.match(firstText(preview), /truncated/);
+		assert.doesNotMatch(firstText(preview), /Final handoff/);
+		const full = await executeTool(recall, { query: "long-receipt", k: 1, maxChars: 2000 }, ctx);
+		assert.match(firstText(full), /Final handoff: Mela checks, Luno signs/);
 
 		const ideaResult = await executeTool(
 			idea,
