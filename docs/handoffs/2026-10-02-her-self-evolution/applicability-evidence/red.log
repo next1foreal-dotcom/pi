@@ -1,0 +1,61 @@
+✖ real file facts satisfy explicit conditions, with a bound receipt and no provider call (1335.5881ms)
+✖ changed real rule or binary encoding rejects use; host rejection is out-of-scope, not model decline (269.7272ms)
+✖ unverifiable natural language, missing facts and malformed constraints stay unknown (252.1009ms)
+✖ direct authorization cannot bypass checks or borrow another method/task receipt (265.7906ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 0
+ℹ fail 4
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4550.7404
+
+✖ failing tests:
+
+test at packages\her\test\growth-applicability.test.ts:1:3496
+✖ real file facts satisfy explicit conditions, with a bound receipt and no provider call (1335.5881ms)
+  Error: independent environment check missing
+      at HerGrowthHost.checkApplicability (D:\@Her\wt-self-evolution-20261002\packages\her\src\growth-experiment\host.ts:702:52)
+      at async TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-applicability.test.ts:42:17)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3)
+
+test at packages\her\test\growth-applicability.test.ts:1:4147
+✖ changed real rule or binary encoding rejects use; host rejection is out-of-scope, not model decline (269.7272ms)
+  Error: independent environment check missing
+      at HerGrowthHost.checkApplicability (D:\@Her\wt-self-evolution-20261002\packages\her\src\growth-experiment\host.ts:702:52)
+      at async TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-applicability.test.ts:53:17)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7)
+
+test at packages\her\test\growth-applicability.test.ts:1:4762
+✖ unverifiable natural language, missing facts and malformed constraints stay unknown (252.1009ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /unknown/. Input:
+
+  'Error: independent environment check missing'
+
+      at async TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-applicability.test.ts:62:3)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: independent environment check missing
+        at HerGrowthHost.checkApplicability (D:\@Her\wt-self-evolution-20261002\packages\her\src\growth-experiment\host.ts:702:52)
+        at async waitForActual (node:assert:646:5)
+        at async strict.rejects (node:assert:769:25)
+        at async TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-applicability.test.ts:62:3)
+        at async Test.run (node:internal/test_runner/test:1313:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:897:7),
+    expected: /unknown/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at packages\her\test\growth-applicability.test.ts:1:5326
+✖ direct authorization cannot bypass checks or borrow another method/task receipt (265.7906ms)
+  Error: independent environment check missing
+      at HerGrowthHost.checkApplicability (D:\@Her\wt-self-evolution-20261002\packages\her\src\growth-experiment\host.ts:702:52)
+      at async TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-applicability.test.ts:69:2)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7)

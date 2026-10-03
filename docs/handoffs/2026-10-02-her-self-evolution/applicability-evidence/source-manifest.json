@@ -1,0 +1,22 @@
+[
+  {
+    "lines": 991,
+    "sha256": "02e4b504d2adb6d9b3ee8c15c9791a2142eee502e68196c93e0cad21e64fdb39",
+    "path": "packages/her/src/growth-experiment/host.ts"
+  },
+  {
+    "lines": 155,
+    "sha256": "4ffbc23ff9707261c6117d7421bfe7d0c60e9a05223bdd47457de10154581d3f",
+    "path": "packages/her/src/growth-experiment/applicability.ts"
+  },
+  {
+    "lines": 59,
+    "sha256": "8f95003bfb071b1fc4a30cf519592bd445e86db0e627c86d32ddb4ea432f7f5d",
+    "path": "packages/her/src/growth-experiment/observe-applicability.mjs"
+  },
+  {
+    "lines": 360,
+    "sha256": "e04a107d6080adc206cf5225ee1488d78be7f0d1cd664dd244aa62c837619054",
+    "path": "packages/her/test/growth-applicability.test.ts"
+  }
+]

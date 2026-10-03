@@ -33,6 +33,13 @@ import { readText, redactSecrets, writeNewText } from "../her-core/store.ts";
 import { storeLock } from "../her-core/store-lock.ts";
 import { launchTask, stopTask } from "../her-core/task-executor.ts";
 import { appendAuditLog } from "../lib/audit.ts";
+import {
+	type ApplicabilityFacts,
+	hasMetApplicability,
+	recordApplicability,
+	renderApplicabilityFacts,
+	validateApplicabilityFacts,
+} from "./applicability.ts";
 import { GrowthJournal } from "./journal.ts";
 import { createReasoner, type GrowthCompletionPolicy, growthCompletionOptions, isModelProbeEcho } from "./model.ts";
 import { record, text } from "./parse.ts";
@@ -87,6 +94,7 @@ export interface GrowthHostPlan {
 		}
 	>;
 	applicabilityOperation: string;
+	applicabilityFacts?: ApplicabilityFacts;
 	useOperation: string;
 	reviewOperation: string;
 	review: { cases: Array<HostTask & { split: "holdout" | "regression" }>; minGain: number };
@@ -193,6 +201,7 @@ export class HerGrowthHost implements GrowthHost {
 		const inputDigests = cases.map((c) => sha256(canonicalJson(c.input)));
 		if (new Set(inputDigests).size !== inputDigests.length) throw new Error("duplicate host task input");
 		validateProbeContracts(plan.operations);
+		validateApplicabilityFacts(plan.applicabilityFacts);
 		const sources = new Map<string, string>();
 		for (const [id, op] of Object.entries(plan.operations)) {
 			if (
@@ -247,7 +256,9 @@ export class HerGrowthHost implements GrowthHost {
 				throw new Error("owner probe window inactive or exhausted");
 			return;
 		}
-		const created = (await this.journal.read())[0]?.at;
+		const rows = await this.journal.read();
+		if (rows.some((row) => row.kind === "pilot-stop")) throw new Error("growth pilot stopped; no resume or replay");
+		const created = rows[0]?.at;
 		if (
 			Date.now() >= Date.parse(this.plan.expiresAt) ||
 			(created && Date.now() - Date.parse(created) >= this.plan.budget.wallMs)
@@ -255,7 +266,7 @@ export class HerGrowthHost implements GrowthHost {
 			throw new Error("growth wall-clock budget exhausted");
 	}
 	async reason(request: ReasonRequest, signal?: AbortSignal): Promise<unknown> {
-		const instruction = `${request.instruction}\n${renderProbeOperations(this.plan.operations)}`;
+		const instruction = `${request.instruction}\n${renderProbeOperations(this.plan.operations)}\n${renderApplicabilityFacts(this.plan.applicabilityFacts)}`;
 		return createReasoner(
 			{ complete: (prompt) => this.complete(prompt, request.stage, signal) },
 			this.plan.model.maxOutputTokens,
@@ -536,6 +547,17 @@ export class HerGrowthHost implements GrowthHost {
 			)
 		)
 			return false;
+		if (
+			this.plan.applicabilityFacts &&
+			!hasMetApplicability(
+				await this.journal.read(),
+				request.method,
+				request.task,
+				this.planDigest,
+				this.plan.applicabilityOperation,
+			)
+		)
+			return false;
 		return this.grant(request.runId, request, "use", signal);
 	}
 	private async grant(runId: string, request: unknown, purpose: string, signal?: AbortSignal): Promise<boolean> {
@@ -689,6 +711,16 @@ export class HerGrowthHost implements GrowthHost {
 		task: TrialTask,
 		signal?: AbortSignal,
 	): Promise<{ met: boolean; evidence: Evidence[] }> {
+		if (
+			this.plan.applicabilityFacts &&
+			!this.plan.tasks.some(
+				(item) =>
+					canonicalJson({ id: item.id, description: item.description, environment: item.environment }) ===
+					canonicalJson(task),
+			)
+		)
+			throw new Error("applicability task not approved");
+		const runId = randomUUID();
 		const result = await this.execute(
 			this.plan.applicabilityOperation,
 			"applicability",
@@ -696,13 +728,34 @@ export class HerGrowthHost implements GrowthHost {
 				preconditions: method.draft.preconditions,
 				task: { ...task, input: this.plan.tasks.find((t) => t.id === task.id)?.input },
 			},
-			randomUUID(),
+			runId,
 			signal,
 		);
+		if (this.plan.applicabilityFacts)
+			return recordApplicability(
+				this.journal,
+				method,
+				task,
+				this.planDigest,
+				this.plan.applicabilityFacts,
+				runId,
+				result,
+			);
 		if (typeof result.value.met !== "boolean") throw new Error("independent environment check missing");
 		return { met: result.value.met, evidence: result.evidence };
 	}
 	async runUse(request: UseRequest, signal?: AbortSignal): Promise<UseObservation> {
+		if (
+			this.plan.applicabilityFacts &&
+			!hasMetApplicability(
+				await this.journal.read(),
+				request.method,
+				request.task,
+				this.planDigest,
+				this.plan.applicabilityOperation,
+			)
+		)
+			throw new Error("verified applicability receipt required");
 		await this.consume(request.runId, request);
 		const task = this.plan.tasks.find((t) => t.id === request.task.id);
 		if (!task) throw new Error("task not approved");
