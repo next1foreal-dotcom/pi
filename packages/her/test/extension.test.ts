@@ -348,7 +348,7 @@ test("extension injects Her context and captures completed turns", async () => {
 				},
 			},
 		);
-		assert.deepEqual(fake.messages.at(-1)?.options, { deliverAs: "followUp" });
+		assert.deepEqual(fake.messages.at(-1)?.options, { deliverAs: "followUp", triggerTurn: false });
 		assert.equal((fake.messages.at(-1)?.message as { customType?: string }).customType, "her-mirror");
 		assert.match((fake.messages.at(-1)?.message as { content?: string }).content ?? "", /semantic\/mirror/);
 	});
@@ -593,7 +593,7 @@ test("extension sends a context digest for due unreviewed updates", async () => 
 		const message = fake.messages.at(-1)?.message as { customType?: string; content?: string };
 		assert.equal(message.customType, "her-context-digest");
 		assert.match(message.content ?? "", new RegExp(update.id));
-		assert.deepEqual(fake.messages.at(-1)?.options, { deliverAs: "followUp" });
+		assert.deepEqual(fake.messages.at(-1)?.options, { deliverAs: "followUp", triggerTurn: false });
 		assert.equal(
 			fake.entries.some((entry) => entry.customType === "her-state" && entryStatus(entry) === "context-digest-sent"),
 			true,
@@ -1502,6 +1502,15 @@ test("extension memory tools write, recall, judge, and update status", async () 
 
 		const recalled = await executeTool(recall, { query: "exact verification", k: 3, privacy: "private" }, ctx);
 		assert.match(firstText(recalled), /exact verification/);
+		await writeText(
+			join(store, "semantic", "long-receipt.md"),
+			`---\nprivacy: shared\n---\nlong-receipt ${"background ".repeat(70)}Final handoff: Mela checks, Luno signs.`,
+		);
+		const preview = await executeTool(recall, { query: "long-receipt", k: 1 }, ctx);
+		assert.match(firstText(preview), /truncated/);
+		assert.doesNotMatch(firstText(preview), /Final handoff/);
+		const full = await executeTool(recall, { query: "long-receipt", k: 1, maxChars: 2000 }, ctx);
+		assert.match(firstText(full), /Final handoff: Mela checks, Luno signs/);
 
 		const ideaResult = await executeTool(
 			idea,
@@ -1974,6 +1983,7 @@ test("completed turn boundary surfaces real memory before the run becomes idle",
 			ctx,
 		);
 		assert.ok(fake.entries.some((entry) => entryStatus(entry) === "mirror-sent"));
+		assert.deepEqual(fake.messages.at(-1)?.options, { deliverAs: "followUp", triggerTurn: false });
 		const log = (await readText(join(store, ".her", "trigger-log.jsonl"))) ?? "";
 		assert.match(log, /"outcome":"surfaced"/);
 	});

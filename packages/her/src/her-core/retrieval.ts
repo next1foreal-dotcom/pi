@@ -97,10 +97,10 @@ export async function rrfSearch(query: string, docs: CorpusDoc[], opts: RrfSearc
 	const k = opts.k ?? 8;
 	const poolSize = opts.poolSize ?? Math.max(k * 4, 20);
 	const fts = ftsSearch(query, docs, poolSize);
-	const lexical = fts.length > 0 ? fts : lexicalSearch(query, docs, poolSize);
+	const lexical = lexicalSearch(query, docs, poolSize);
 	const entities = entitySearch(query, docs, poolSize);
 	const semantic = opts.semanticSearch ? await opts.semanticSearch(query, docs, poolSize) : [];
-	return reciprocalRankFusion([lexical, semantic, entities], { k, rrfK: opts.rrfK });
+	return reciprocalRankFusion([fts, lexical, semantic, entities], { k, rrfK: opts.rrfK });
 }
 
 export function reciprocalRankFusion(rankings: Note[][], opts: { k?: number; rrfK?: number } = {}): Note[] {
