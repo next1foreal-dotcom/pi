@@ -1,0 +1,37 @@
+✔ contract freezes with the real plan and reaches the actual reasoner prompt (38.9939ms)
+✔ historical reply is unchanged, rejected before grant, and journal diagnostics bind the exact action (17.5605ms)
+✔ real journal append failure cannot grant invalid actions (13.4317ms)
+✔ runProbe revalidates structure before consuming a durable grant (20.8941ms)
+✔ sealed tasks remain unavailable inside contract batch key cases (17.4108ms)
+✖ sealed tasks remain unavailable inside contract batch key samples (22.152ms)
+✔ STOP prevents contract-valid probes before grant (26.5736ms)
+✔ real host executes immutable observer: Windows Git, text view, text pair and binary; grant cannot replay (1059.4504ms)
+✔ shape-valid inputs still face the observer's real combined-length semantic guard (257.7926ms)
+✔ original applicability observer returns unknown; real loop blocks without use or a correct-boundary claim (299.3858ms)
+ℹ tests 10
+ℹ suites 0
+ℹ pass 9
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2177.0808
+
+✖ failing tests:
+
+test at packages\her\test\growth-probe-host.test.ts:1:6560
+✖ sealed tasks remain unavailable inside contract batch key samples (22.152ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+  true !== false
+
+      at TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-probe-host.test.ts:106:11)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: true,
+    expected: false,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

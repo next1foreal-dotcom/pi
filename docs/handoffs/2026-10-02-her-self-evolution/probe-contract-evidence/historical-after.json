@@ -1,0 +1,67 @@
+[
+  {
+    "path": "D:\\@Her\\tmp\\growth-live-20261002\\evals\\pilot01\\authorization.json",
+    "sha256": "66ae5e7d90962de75c30455469ebdb15d83c1517505743a2053b492aba3a1531",
+    "unchanged": true
+  },
+  {
+    "path": "D:\\@Her\\tmp\\growth-live-20261002\\evals\\pilot01\\execution-sources.json",
+    "sha256": "b6d6527d54cd48b57a4999a429f7acc4c27d422cb6674beca1939bb5a2f1635a",
+    "unchanged": true
+  },
+  {
+    "path": "D:\\@Her\\tmp\\growth-live-20261002\\evals\\pilot01\\experiences.json",
+    "sha256": "367e8bc35633a250e2ffaba7379e9bc0921a134f01aaf292f45b87f875a935bb",
+    "unchanged": true
+  },
+  {
+    "path": "D:\\@Her\\tmp\\growth-live-20261002\\evals\\pilot01\\input-inventory.json",
+    "sha256": "479256f0daff82db6de133187477701346e6817e5b01ff24f224289f475a1e0d",
+    "unchanged": true
+  },
+  {
+    "path": "D:\\@Her\\tmp\\growth-live-20261002\\evals\\pilot01\\learning-input.txt",
+    "sha256": "5ff1f65cb61b32486cf6461688596a9c66944218da2745db2ef104cc401646af",
+    "unchanged": true
+  },
+  {
+    "path": "D:\\@Her\\tmp\\growth-live-20261002\\evals\\pilot01\\observe.mjs",
+    "sha256": "e53638f5bc0cdce989c5984e5e0ca6b6c78740f8912ed85b4ade7321be34df0c",
+    "unchanged": true
+  },
+  {
+    "path": "D:\\@Her\\tmp\\growth-live-20261002\\evals\\pilot01\\plan.json",
+    "sha256": "6dc629810d9aeafbe17dbc2a2a1c01d1133c1da3e60a0069f7a24636ce3b26b6",
+    "unchanged": true
+  },
+  {
+    "path": "D:\\@Her\\tmp\\growth-live-20261002\\evals\\pilot01\\preflight-encoding-failed.json",
+    "sha256": "152c4ee4cf4a5cacab7406d77f1d9e830efefe7befef45209360e083e550d504",
+    "unchanged": true
+  },
+  {
+    "path": "D:\\@Her\\tmp\\growth-live-20261002\\evals\\pilot01\\preflight.json",
+    "sha256": "773eb67e6ca5065565a29610ae93a23b78d0e01a4728838e079cdb44158aefb4",
+    "unchanged": true
+  },
+  {
+    "path": "D:\\@Her\\tmp\\growth-live-20261002\\evals\\pilot01\\prepared-plan.json",
+    "sha256": "aa44219c65380ad57a463ddd068707213fe7c5e049b7d9bcc618b7c7c5e443bc",
+    "unchanged": true
+  },
+  {
+    "path": "D:\\@Her\\tmp\\growth-live-20261002\\proposals\\growth\\growth-pilot-01.md",
+    "sha256": "8ce9c8b81a1d40f8c8e2f3100eaec84c5fea20022e5eecc80296be05f8a3eb80",
+    "unchanged": true
+  },
+  {
+    "path": "D:\\@Her\\tmp\\growth-live-20261002\\proposals\\growth\\windows-reader-inquiry.md",
+    "sha256": "5295b5196b568e8e3cae692847ee63ae0bbeab6e9e0bd4e8de803874e9c4a5c8",
+    "unchanged": true
+  },
+  {
+    "path": "D:\\@Her\\tmp\\growth-live-20261002\\evals\\growth\\plan.json",
+    "sha256": "4367cb00ad1fa8b14fdc3cf3926e3e7b08306b44bb174b2c803920e4cdc11191",
+    "unchanged": true
+  }
+]

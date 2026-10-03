@@ -1,0 +1,35 @@
+{
+  "recordedAt": "2026-10-03T00:22:26.6080479-07:00",
+  "base": "73494f083ca349749a7193c0298c8129f37de144",
+  "handoff": "2aa912401ce69b8157c16c12c422cfd94dfb7f72",
+  "upstreamPatchSha256": "7c4693a7f256bc69cd6f9ea4e902542f753154ddee7e5de017a85e560c85dc56",
+  "historicalActionMatchesReceipt": true,
+  "paidRequests": 0,
+  "files": [
+    {
+      "path": "packages/her/src/growth-experiment/host.ts",
+      "sha256": "ee631b5a4cdb3f65e5793a789aeab2b98a03ac304364497863a5ed99feedb570",
+      "lines": 938
+    },
+    {
+      "path": "packages/her/src/growth-experiment/probe-contract.ts",
+      "sha256": "47b554b88059fcfc2982a3e481ec70879550157721777e37585568b774b470db",
+      "lines": 230
+    },
+    {
+      "path": "packages/her/test/growth-probe-host.test.ts",
+      "sha256": "0d9d5e110433539607be2a76a60bcd49dbcd00c2772565f6c60dd38b66f40335",
+      "lines": 321
+    },
+    {
+      "path": "packages/her/test/growth-probe-contract.test.ts",
+      "sha256": "0bf1d263d5b04477ad777c86c1c11605c2a76bddcc9d0f76ff573ce6c52350c4",
+      "lines": 182
+    },
+    {
+      "path": "packages/her/test/fixtures/growth-probe-pilot01-action.json",
+      "sha256": "cc15cc71429a15542c9226ac1e85d56fd1524804de6d39a069c488a0ecbe1556",
+      "lines": 8
+    }
+  ]
+}

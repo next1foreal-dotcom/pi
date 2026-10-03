@@ -1,0 +1,170 @@
+✖ contract freezes with the real plan and reaches the actual reasoner prompt (7.0998ms)
+✖ historical reply is unchanged, rejected before grant, and journal diagnostics bind the exact action (2.6823ms)
+✖ real journal append failure cannot grant invalid actions (1.4171ms)
+✖ runProbe revalidates structure before consuming a durable grant (1.3855ms)
+✖ sealed tasks remain unavailable inside contract batch key cases (1.2493ms)
+✖ sealed tasks remain unavailable inside contract batch key samples (1.029ms)
+✖ STOP prevents contract-valid probes before grant (1.1924ms)
+✖ real host executes immutable observer: Windows Git, text view, text pair and binary; grant cannot replay (1.1917ms)
+✖ shape-valid inputs still face the observer's real combined-length semantic guard (1.1805ms)
+✖ original applicability observer returns unknown; real loop blocks without use or a correct-boundary claim (1.1565ms)
+ℹ tests 10
+ℹ suites 0
+ℹ pass 0
+ℹ fail 10
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 579.5988
+
+✖ failing tests:
+
+test at packages\her\test\growth-probe-host.test.ts:1:4068
+✖ contract freezes with the real plan and reaches the actual reasoner prompt (7.0998ms)
+  Error: ENOENT: no such file or directory, open 'D:\@Her\docs\handoffs\2026-10-02-her-self-evolution\pilot-01-evidence\live\observe.mjs'
+      at async open (node:internal/fs/promises:640:25)
+      at async readFile (node:internal/fs/promises:1290:14)
+      at async fixture (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-probe-host.test.ts:30:17)
+      at async TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-probe-host.test.ts:57:38)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    errno: -4058,
+    code: 'ENOENT',
+    syscall: 'open',
+    path: 'D:\\@Her\\docs\\handoffs\\2026-10-02-her-self-evolution\\pilot-01-evidence\\live\\observe.mjs'
+  }
+
+test at packages\her\test\growth-probe-host.test.ts:1:4836
+✖ historical reply is unchanged, rejected before grant, and journal diagnostics bind the exact action (2.6823ms)
+  Error: ENOENT: no such file or directory, open 'D:\@Her\docs\handoffs\2026-10-02-her-self-evolution\pilot-01-evidence\live\observe.mjs'
+      at async open (node:internal/fs/promises:640:25)
+      at async readFile (node:internal/fs/promises:1290:14)
+      at async fixture (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-probe-host.test.ts:30:17)
+      at async TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-probe-host.test.ts:69:26)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    errno: -4058,
+    code: 'ENOENT',
+    syscall: 'open',
+    path: 'D:\\@Her\\docs\\handoffs\\2026-10-02-her-self-evolution\\pilot-01-evidence\\live\\observe.mjs'
+  }
+
+test at packages\her\test\growth-probe-host.test.ts:1:5787
+✖ real journal append failure cannot grant invalid actions (1.4171ms)
+  Error: ENOENT: no such file or directory, open 'D:\@Her\docs\handoffs\2026-10-02-her-self-evolution\pilot-01-evidence\live\observe.mjs'
+      at async open (node:internal/fs/promises:640:25)
+      at async readFile (node:internal/fs/promises:1290:14)
+      at async fixture (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-probe-host.test.ts:30:17)
+      at async TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-probe-host.test.ts:85:19)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    errno: -4058,
+    code: 'ENOENT',
+    syscall: 'open',
+    path: 'D:\\@Her\\docs\\handoffs\\2026-10-02-her-self-evolution\\pilot-01-evidence\\live\\observe.mjs'
+  }
+
+test at packages\her\test\growth-probe-host.test.ts:1:6025
+✖ runProbe revalidates structure before consuming a durable grant (1.3855ms)
+  Error: ENOENT: no such file or directory, open 'D:\@Her\docs\handoffs\2026-10-02-her-self-evolution\pilot-01-evidence\live\observe.mjs'
+      at async open (node:internal/fs/promises:640:25)
+      at async readFile (node:internal/fs/promises:1290:14)
+      at async fixture (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-probe-host.test.ts:30:17)
+      at async TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-probe-host.test.ts:93:19)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    errno: -4058,
+    code: 'ENOENT',
+    syscall: 'open',
+    path: 'D:\\@Her\\docs\\handoffs\\2026-10-02-her-self-evolution\\pilot-01-evidence\\live\\observe.mjs'
+  }
+
+test at packages\her\test\growth-probe-host.test.ts:1:6543
+✖ sealed tasks remain unavailable inside contract batch key cases (1.2493ms)
+  Error: ENOENT: no such file or directory, open 'D:\@Her\docs\handoffs\2026-10-02-her-self-evolution\pilot-01-evidence\live\observe.mjs'
+      at async open (node:internal/fs/promises:640:25)
+      at async readFile (node:internal/fs/promises:1290:14)
+      at async fixture (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-probe-host.test.ts:30:17)
+      at async TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-probe-host.test.ts:104:26)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    errno: -4058,
+    code: 'ENOENT',
+    syscall: 'open',
+    path: 'D:\\@Her\\docs\\handoffs\\2026-10-02-her-self-evolution\\pilot-01-evidence\\live\\observe.mjs'
+  }
+
+test at packages\her\test\growth-probe-host.test.ts:1:6543
+✖ sealed tasks remain unavailable inside contract batch key samples (1.029ms)
+  Error: ENOENT: no such file or directory, open 'D:\@Her\docs\handoffs\2026-10-02-her-self-evolution\pilot-01-evidence\live\observe.mjs'
+      at async open (node:internal/fs/promises:640:25)
+      at async readFile (node:internal/fs/promises:1290:14)
+      at async fixture (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-probe-host.test.ts:30:17)
+      at async TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-probe-host.test.ts:104:26)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    errno: -4058,
+    code: 'ENOENT',
+    syscall: 'open',
+    path: 'D:\\@Her\\docs\\handoffs\\2026-10-02-her-self-evolution\\pilot-01-evidence\\live\\observe.mjs'
+  }
+
+test at packages\her\test\growth-probe-host.test.ts:1:6905
+✖ STOP prevents contract-valid probes before grant (1.1924ms)
+  Error: ENOENT: no such file or directory, open 'D:\@Her\docs\handoffs\2026-10-02-her-self-evolution\pilot-01-evidence\live\observe.mjs'
+      at async open (node:internal/fs/promises:640:25)
+      at async readFile (node:internal/fs/promises:1290:14)
+      at async fixture (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-probe-host.test.ts:30:17)
+      at async TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-probe-host.test.ts:113:25)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    errno: -4058,
+    code: 'ENOENT',
+    syscall: 'open',
+    path: 'D:\\@Her\\docs\\handoffs\\2026-10-02-her-self-evolution\\pilot-01-evidence\\live\\observe.mjs'
+  }
+
+test at packages\her\test\growth-probe-host.test.ts:1:7194
+✖ real host executes immutable observer: Windows Git, text view, text pair and binary; grant cannot replay (1.1917ms)
+  Error: ENOENT: no such file or directory, open 'D:\@Her\docs\handoffs\2026-10-02-her-self-evolution\pilot-01-evidence\live\observe.mjs'
+      at async open (node:internal/fs/promises:640:25)
+      at async readFile (node:internal/fs/promises:1290:14)
+      at async fixture (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-probe-host.test.ts:30:17)
+      at async TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-probe-host.test.ts:121:26)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    errno: -4058,
+    code: 'ENOENT',
+    syscall: 'open',
+    path: 'D:\\@Her\\docs\\handoffs\\2026-10-02-her-self-evolution\\pilot-01-evidence\\live\\observe.mjs'
+  }
+
+test at packages\her\test\growth-probe-host.test.ts:1:8368
+✖ shape-valid inputs still face the observer's real combined-length semantic guard (1.1805ms)
+  Error: ENOENT: no such file or directory, open 'D:\@Her\docs\handoffs\2026-10-02-her-self-evolution\pilot-01-evidence\live\observe.mjs'
+      at async open (node:internal/fs/promises:640:25)
+      at async readFile (node:internal/fs/promises:1290:14)
+      at async fixture (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-probe-host.test.ts:30:17)
+      at async TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-probe-host.test.ts:140:19)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    errno: -4058,
+    code: 'ENOENT',
+    syscall: 'open',
+    path: 'D:\\@Her\\docs\\handoffs\\2026-10-02-her-self-evolution\\pilot-01-evidence\\live\\observe.mjs'
+  }
+
+test at packages\her\test\growth-probe-host.test.ts:1:8906
+✖ original applicability observer returns unknown; real loop blocks without use or a correct-boundary claim (1.1565ms)
+  Error: ENOENT: no such file or directory, open 'D:\@Her\docs\handoffs\2026-10-02-her-self-evolution\pilot-01-evidence\live\observe.mjs'
+      at async open (node:internal/fs/promises:640:25)
+      at async readFile (node:internal/fs/promises:1290:14)
+      at async fixture (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-probe-host.test.ts:30:17)
+      at async TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-probe-host.test.ts:151:32)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    errno: -4058,
+    code: 'ENOENT',
+    syscall: 'open',
+    path: 'D:\\@Her\\docs\\handoffs\\2026-10-02-her-self-evolution\\pilot-01-evidence\\live\\observe.mjs'
+  }

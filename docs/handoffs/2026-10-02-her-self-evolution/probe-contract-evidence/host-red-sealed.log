@@ -1,0 +1,50 @@
+✔ contract freezes with the real plan and reaches the actual reasoner prompt (56.689ms)
+✔ historical reply is unchanged, rejected before grant, and journal diagnostics bind the exact action (42.5722ms)
+✔ real journal append failure cannot grant invalid actions (20.3828ms)
+✔ runProbe revalidates structure before consuming a durable grant (34.9905ms)
+✔ sealed tasks remain unavailable inside contract batch key cases (22.3855ms)
+✖ sealed tasks remain unavailable inside contract batch key samples (32.7769ms)
+✖ STOP prevents contract-valid probes before grant (17.5803ms)
+✔ real host executes immutable observer: Windows Git, text view, text pair and binary; grant cannot replay (923.9064ms)
+✔ shape-valid inputs still face the observer's real combined-length semantic guard (379.4294ms)
+✔ original applicability observer returns unknown; real loop blocks without use or a correct-boundary claim (307.7896ms)
+ℹ tests 10
+ℹ suites 0
+ℹ pass 8
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2292.7887
+
+✖ failing tests:
+
+test at packages\her\test\growth-probe-host.test.ts:1:6560
+✖ sealed tasks remain unavailable inside contract batch key samples (32.7769ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+  true !== false
+
+      at TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-probe-host.test.ts:106:11)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: true,
+    expected: false,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at packages\her\test\growth-probe-host.test.ts:1:6922
+✖ STOP prevents contract-valid probes before grant (17.5803ms)
+  TypeError [ERR_INVALID_ARG_TYPE]: The "path" argument must be of type string. Received undefined
+      at join (node:path:513:7)
+      at drainFlagPath (D:\@Her\wt-self-evolution-20261002\packages\her\src\her-core\drain.ts:83:9)
+      at readDrainState (D:\@Her\wt-self-evolution-20261002\packages\her\src\her-core\drain.ts:98:30)
+      at startDrain (D:\@Her\wt-self-evolution-20261002\packages\her\src\her-core\drain.ts:151:25)
+      at TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-probe-host.test.ts:114:8)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    code: 'ERR_INVALID_ARG_TYPE'
+  }

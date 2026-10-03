@@ -1,0 +1,8 @@
+{
+  "scope": "historical-action-offline-replay-not-new-learning",
+  "commit": "73494f083ca349749a7193c0298c8129f37de144",
+  "source": "docs/handoffs/2026-10-02-her-self-evolution/pilot-01-evidence/live/model-receipts.json",
+  "responseId": "26e8f22b-0b95-43d0-8303-e37dd0e0c51e",
+  "action": "{\"operationId\":\"git-status\",\"input\":{\"cases\":[{\"checkoutAutocrlf\":true,\"readerConfig\":\"inherit\",\"newline\":\"CRLF\"},{\"checkoutAutocrlf\":false,\"readerConfig\":\"inherit\",\"newline\":\"CRLF\"},{\"checkoutAutocrlf\":true,\"readerConfig\":\"sanitized\",\"newline\":\"CRLF\"},{\"checkoutAutocrlf\":true,\"readerConfig\":\"inherit\",\"newline\":\"LF\"}]}}",
+  "actionSha256": "02d76b202bc37ee0b1a4b8ee6c4a1d6a584b8bba785bb65a1334b3617bb088a8"
+}

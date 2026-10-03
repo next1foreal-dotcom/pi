@@ -1,0 +1,62 @@
+✔ contract freezes with the real plan and reaches the actual reasoner prompt (215.6866ms)
+✔ historical reply is unchanged, rejected before grant, and journal diagnostics bind the exact action (42.33ms)
+✔ real journal append failure cannot grant invalid actions (28.7171ms)
+✔ runProbe revalidates structure before consuming a durable grant (37.7059ms)
+✔ sealed tasks remain unavailable inside contract batch key cases (106.9317ms)
+✖ sealed tasks remain unavailable inside contract batch key samples (34.2005ms)
+✖ STOP prevents contract-valid probes before grant (45.9075ms)
+✔ real host executes immutable observer: Windows Git, text view, text pair and binary; grant cannot replay (1644.1095ms)
+✔ shape-valid inputs still face the observer's real combined-length semantic guard (451.9682ms)
+✖ original applicability observer returns unknown; real loop blocks without use or a correct-boundary claim (84.4527ms)
+ℹ tests 10
+ℹ suites 0
+ℹ pass 7
+ℹ fail 3
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3129.238
+
+✖ failing tests:
+
+test at packages\her\test\growth-probe-host.test.ts:1:6539
+✖ sealed tasks remain unavailable inside contract batch key samples (34.2005ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+  true !== false
+
+      at TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-probe-host.test.ts:106:11)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: true,
+    expected: false,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at packages\her\test\growth-probe-host.test.ts:1:6901
+✖ STOP prevents contract-valid probes before grant (45.9075ms)
+  TypeError: Cannot read properties of undefined (reading 'trim')
+      at startDrain (D:\@Her\wt-self-evolution-20261002\packages\her\src\her-core\drain.ts:147:29)
+      at TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-probe-host.test.ts:114:8)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7)
+
+test at packages\her\test\growth-probe-host.test.ts:1:8902
+✖ original applicability observer returns unknown; real loop blocks without use or a correct-boundary claim (84.4527ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /independent environment check missing/. Input:
+
+  'adaptation needs 1..32 entries'
+
+      at TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-probe-host.test.ts:158:9)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'adaptation needs 1..32 entries',
+    expected: /independent environment check missing/,
+    operator: 'match',
+    diff: 'simple'
+  }

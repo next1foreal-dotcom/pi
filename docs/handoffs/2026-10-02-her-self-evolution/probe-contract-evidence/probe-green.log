@@ -1,0 +1,36 @@
+✔ catalog separates executable IDs from discriminators; no private script or final cases (1.2264ms)
+✔ valid single input is unchanged and is only shape-valid (0.3211ms)
+✔ historical Pilot 01 action remains rejected without rewriting (0.4149ms)
+✔ a test-only envelope with the right tool still needs kind on EVERY case (0.1208ms)
+✔ valid batch accepted without expanding it into host actions (0.1525ms)
+✔ no alias: input kind is not an executable ID (0.0968ms)
+✔ review-only operation cannot become a probe (0.0828ms)
+✔ missing required fields identified, booleans never coerced (0.1042ms)
+✔ unknown extra fields and nested batches rejected (0.114ms)
+✔ empty/oversized batch and sibling fields rejected (0.1636ms)
+✔ binary requires even nonempty hexadecimal without executing a decoder (0.23ms)
+✔ bad JSON, objects, arrays and oversized strings refused (0.1688ms)
+✔ envelope accepts only operationId and object input (0.0905ms)
+✔ undeclared legacy contract remains visibly undeclared, with old tool scope checks (0.0923ms)
+✔ owner contract validation fails before rendering, rather than silently weakening it (0.6519ms)
+✔ prototype names cannot name tools, variants, or fields (0.0974ms)
+✔ diagnostics never echo untrusted payload values (0.1093ms)
+✔ optional field must be typed when present; missing optional is valid (0.0977ms)
+✔ contract freezes with the real plan and reaches the actual reasoner prompt (57.855ms)
+✔ historical reply is unchanged, rejected before grant, and journal diagnostics bind the exact action (21.2298ms)
+✔ real journal append failure cannot grant invalid actions (16.6294ms)
+✔ runProbe revalidates structure before consuming a durable grant (25.59ms)
+✔ sealed tasks remain unavailable inside contract batch key cases (18.2571ms)
+✔ sealed tasks remain unavailable inside contract batch key samples (17.7495ms)
+✔ STOP prevents contract-valid probes before grant (25.5156ms)
+✔ real host executes immutable observer: Windows Git, text view, text pair and binary; grant cannot replay (807.8049ms)
+✔ shape-valid inputs still face the observer's real combined-length semantic guard (276.5943ms)
+✔ original applicability observer returns unknown; real loop blocks without use or a correct-boundary claim (272.8029ms)
+ℹ tests 28
+ℹ suites 0
+ℹ pass 28
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2003.4322

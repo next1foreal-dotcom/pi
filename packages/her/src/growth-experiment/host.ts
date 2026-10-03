@@ -36,6 +36,12 @@ import { appendAuditLog } from "../lib/audit.ts";
 import { GrowthJournal } from "./journal.ts";
 import { createReasoner, type GrowthCompletionPolicy, growthCompletionOptions, isModelProbeEcho } from "./model.ts";
 import { record, text } from "./parse.ts";
+import {
+	type ProbeInputContract,
+	renderProbeOperations,
+	validateProbeAction,
+	validateProbeContracts,
+} from "./probe-contract.ts";
 import type {
 	Evidence,
 	GrowthHost,
@@ -76,6 +82,7 @@ export interface GrowthHostPlan {
 			file: string;
 			sha256: string;
 			description?: string;
+			probeInputContract?: ProbeInputContract;
 			purposes: Array<"probe" | "applicability" | "use" | "review">;
 		}
 	>;
@@ -185,6 +192,7 @@ export class HerGrowthHost implements GrowthHost {
 		}
 		const inputDigests = cases.map((c) => sha256(canonicalJson(c.input)));
 		if (new Set(inputDigests).size !== inputDigests.length) throw new Error("duplicate host task input");
+		validateProbeContracts(plan.operations);
 		const sources = new Map<string, string>();
 		for (const [id, op] of Object.entries(plan.operations)) {
 			if (
@@ -247,12 +255,7 @@ export class HerGrowthHost implements GrowthHost {
 			throw new Error("growth wall-clock budget exhausted");
 	}
 	async reason(request: ReasonRequest, signal?: AbortSignal): Promise<unknown> {
-		const instruction = `${request.instruction}\nApproved probe operations: ${Object.entries(this.plan.operations)
-			.filter(([, op]) => op.purposes.includes("probe"))
-			.map(([id, op]) => `${id}: ${op.description ?? "host-approved operation"}`)
-			.join(
-				", ",
-			)}. Probe action must be a JSON string {"operationId":"approved id","input":{...}}; only data, never executable code.`;
+		const instruction = `${request.instruction}\n${renderProbeOperations(this.plan.operations)}`;
 		return createReasoner(
 			{ complete: (prompt) => this.complete(prompt, request.stage, signal) },
 			this.plan.model.maxOutputTokens,
@@ -498,21 +501,23 @@ export class HerGrowthHost implements GrowthHost {
 	}
 	async authorizeProbe(request: ProbeRequest, signal?: AbortSignal): Promise<boolean> {
 		if (request.inquiryId !== this.plan.inquiryId) return false;
-		let action: Record<string, unknown>;
-		try {
-			action = record(JSON.parse(request.probe.action), "probe action");
-		} catch {
+		await this.assertRunning(signal);
+		const checked = validateProbeAction(request.probe.action, this.plan.operations);
+		if (!checked.ok) {
+			await this.journal.append("probe-validation-rejected", {
+				runId: request.runId,
+				planDigest: this.planDigest,
+				actionDigest: sha256(request.probe.action),
+				issues: checked.issues,
+			});
 			return false;
 		}
-		if (
-			typeof action.operationId !== "string" ||
-			!this.plan.operations[action.operationId]?.purposes.includes("probe")
-		)
-			return false;
+		const action = checked.action;
 		// A batched observation must not hide a sealed review/final input inside its envelope.
 		const input = action.input;
 		if (!input || typeof input !== "object" || Array.isArray(input)) return false;
-		const cases = (input as Record<string, unknown>).cases;
+		const batchKey = this.plan.operations[action.operationId].probeInputContract?.batch?.key ?? "cases";
+		const cases = input[batchKey];
 		const inputs = Array.isArray(cases) ? cases : [input];
 		const sealed = [...this.plan.review.cases, ...this.plan.tasks].map((task) => canonicalJson(task.input));
 		if (inputs.some((item) => sealed.includes(canonicalJson(item)))) return false;
@@ -667,8 +672,10 @@ export class HerGrowthHost implements GrowthHost {
 		return { value: record(JSON.parse(log.toString("utf8")), "operation output"), evidence: refs };
 	}
 	async runProbe(request: ProbeRequest, signal?: AbortSignal): Promise<Observation> {
+		const checked = validateProbeAction(request.probe.action, this.plan.operations);
+		if (!checked.ok) throw new Error("probe action violates frozen input contract");
 		await this.consume(request.runId, request);
-		const action = record(JSON.parse(request.probe.action), "probe action");
+		const action = checked.action;
 		const result = await this.execute(String(action.operationId), "probe", action.input, request.runId, signal);
 		return {
 			runId: request.runId,
