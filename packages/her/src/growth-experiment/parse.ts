@@ -133,7 +133,8 @@ export function selection(value: unknown): Selection {
 	return {
 		decision: raw.decision,
 		reason: text(raw.reason, "reason"),
-		adaptation: texts(raw.adaptation, "adaptation", raw.decision === "use" ? 1 : 0),
+		// A structurally fitting method may be reused unchanged; host checks still apply.
+		adaptation: texts(raw.adaptation, "adaptation", 0),
 	};
 }
 export function review(value: unknown, methodId: string, trainingIds: Set<string>): ReviewReceipt {

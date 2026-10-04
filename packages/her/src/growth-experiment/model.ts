@@ -33,6 +33,8 @@ Choose an approach to the new task. An available method is optional context, not
 Check structural fit and limitations; decline when a fresh approach is more appropriate.
 Return {"decision":"deliberate","reason":"...","adaptation":[]}
 or {"decision":"use","reason":"structural fit","adaptation":["changes required for this task"]}.
+For unchanged reuse, return "adaptation":[] and explain the structural fit in "reason".
+List only necessary adaptations; do not invent a change merely to use a method.
 The host independently checks preconditions and permission before any action.`,
 } as const;
 
