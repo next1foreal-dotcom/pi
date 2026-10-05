@@ -6,6 +6,7 @@
 import { appendFile, mkdir, readdir, readFile } from "node:fs/promises";
 import { hostname as osHostname } from "node:os";
 import { join } from "node:path";
+import { captureSubscribedTask } from "../task-subscriptions/store.ts";
 import { type AcceptanceOutcome, evaluateTaskAcceptance, formatAcceptanceLine } from "./bg-task-acceptance.ts";
 import { loadRuntimeConfig } from "./bg-task-config.ts";
 import { truncateTaskLogIfNeeded } from "./bg-task-log.ts";
@@ -446,6 +447,8 @@ export async function reconcileBgTasks(memoryRoot: string, options: ReconcileOpt
 			}
 		}
 
+		// Persist the subscription handoff before notifiedAt; keep settlement/retry/cleanup above.
+		const subscriptionDelivery = event ? await captureSubscribedTask(memoryRoot, finalRecord) : false;
 		const statusChanged = Boolean(result.record && result.record.status !== recheck.record.status);
 		if (result.record || recheck.record.lockedBy) {
 			if (statusChanged) {
@@ -466,8 +469,10 @@ export async function reconcileBgTasks(memoryRoot: string, options: ReconcileOpt
 				logTailBytes: cfg.logTailBytes,
 			});
 			// G-185/S5 — settled but not announced: Studio already told Fei about this one.
-			if (result.external) {
-				console.warn(`[her] wake withheld for ${event.taskId}: already delivered by the Studio watcher`);
+			if (result.external || subscriptionDelivery) {
+				console.warn(
+					`[her] wake withheld for ${event.taskId}: routed to ${subscriptionDelivery ? "task subscription" : "Studio watcher"}`,
+				);
 			} else {
 				events.push(event);
 			}

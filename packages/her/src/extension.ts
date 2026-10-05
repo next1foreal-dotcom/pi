@@ -169,6 +169,8 @@ import { registerPreviewTools } from "./preview/tools.ts";
 import { registerRelayProviderTools } from "./providers-relay/tools.ts";
 import { registerShowWidgetTools } from "./show-widget/tools.ts";
 import { createSummaryModel } from "./summary-model.ts";
+import { TaskSubscriptionRuntime } from "./task-subscriptions/runtime.ts";
+import { registerTaskSubscriptionTools } from "./task-subscriptions/tools.ts";
 import { registerTodoWriteTools } from "./todo-write/tools.ts";
 import { registerToolDisclosure } from "./tool-disclosure.ts";
 import { registerFileToolkit } from "./tools/index.ts";
@@ -807,12 +809,25 @@ export default function her(pi: ExtensionAPI): void {
 	let wakeTurnActive = false;
 	let eventWakeTimer: ReturnType<typeof setInterval> | undefined;
 	let lastEventWakeCtx: ExtensionContext | undefined;
+	const taskSubscriptions = new TaskSubscriptionRuntime(pi, memoryDir, {
+		allowed: () => !wakeTurnActive && evaluate(toolAuthorizationCall("her_task_watch", true)).decision === "allow",
+		onEnd: () => {
+			wakeTurnActive = false;
+		},
+	});
+	registerTaskSubscriptionTools(pi, memoryDir, taskSubscriptions);
 
 	// Shared by turn_end and the idle poller. Returns true when a wake follow-up was
 	// sent, so turn_end knows to stop (single triggerTurn) instead of also claiming a
 	// long task. Telegram is enqueued unconditionally before the gate (notify/wake are
 	// decoupled); every failure path degrades gracefully and never throws to the caller.
-	const maybeEventWake = async (ctx: ExtensionContext | undefined): Promise<boolean> => {
+	const runEventWake = async (ctx: ExtensionContext | undefined): Promise<boolean> => {
+		try {
+			if (await taskSubscriptions.maintain(ctx)) return true;
+		} catch (error) {
+			console.warn(`[her] task subscription lease cleanup failed: ${errorMessage(error)}`);
+			return true;
+		}
 		if (!ctx || !ctx.isIdle() || ctx.hasPendingMessages()) return false;
 		let events: Awaited<ReturnType<typeof reconcileBgTasks>>;
 		try {
@@ -830,6 +845,14 @@ export default function her(pi: ExtensionAPI): void {
 			await fireDueWakeups(memoryDir, new Date());
 		} catch (error) {
 			console.warn(`[her] self-wakeup fire skipped: ${errorMessage(error)}`);
+		}
+		try {
+			if (await taskSubscriptions.poll(ctx)) {
+				wakeTurnActive = taskSubscriptions.handling;
+				return true;
+			}
+		} catch (error) {
+			console.warn(`[her] task subscription wake failed: ${errorMessage(error)}`);
 		}
 		const runtime = loadRuntimeConfig(memoryDir);
 		const selfId = ctx.sessionManager.getSessionId();
@@ -953,12 +976,24 @@ export default function her(pi: ExtensionAPI): void {
 		return true;
 	};
 
+	// An idle tick can be awaiting disk I/O when shutdown invalidates its context.
+	// Fence the whole tick so that a late context access cannot reject the bare timer promise.
+	const maybeEventWake = async (ctx: ExtensionContext | undefined): Promise<boolean> => {
+		try {
+			return await runEventWake(ctx);
+		} catch (error) {
+			console.warn(`[her] event-wake stopped: ${errorMessage(error)}`);
+			return false;
+		}
+	};
+
 	pi.on("resources_discover", () => ({
 		skillPaths: [skillsDir],
 		promptPaths: [promptsDir],
 	}));
 
 	pi.on("session_start", async (_event, ctx) => {
+		await taskSubscriptions.start(ctx);
 		lastEventWakeCtx = ctx;
 		readGuardFor(ctx);
 		const disclosure = toolDisclosure.apply(
@@ -1393,7 +1428,7 @@ export default function her(pi: ExtensionAPI): void {
 		};
 	});
 
-	pi.on("tool_call", (event, ctx) => {
+	pi.on("tool_call", async (event, ctx) => {
 		const tool = resolveGovernedTool(event.toolName);
 
 		const ts = new Date().toISOString();
@@ -1438,6 +1473,19 @@ export default function her(pi: ExtensionAPI): void {
 				context: { destructive: tool.destructive },
 			});
 			return { block: true, reason };
+		}
+
+		const subscriptionGate = await taskSubscriptions.guardTool(event.toolName, ctx);
+		if (subscriptionGate) {
+			appendAuditLog({
+				ts,
+				tool: event.toolName,
+				toolCallId: event.toolCallId,
+				verdict: "DENY",
+				rule: "task_subscription_read_only",
+				reason: subscriptionGate.reason,
+			});
+			return subscriptionGate;
 		}
 
 		// G-403: first write/edit of the turn snapshots the worktree. Capture

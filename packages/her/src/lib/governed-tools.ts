@@ -48,6 +48,11 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	her_rewind: { destructive: true },
 	her_feedback: { destructive: false },
 	her_sync: { destructive: false },
+	// Management establishes paid future wakes; receipts are confined to an active read-only lease.
+	her_task_watch: { destructive: true },
+	her_task_watch_update: { destructive: true },
+	her_task_watch_list: { destructive: false },
+	her_task_watch_result: { destructive: false },
 	her_task_create: { destructive: false },
 	her_task_update: { destructive: false },
 	her_task_list: { destructive: false },

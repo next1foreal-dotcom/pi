@@ -228,3 +228,11 @@ permit(
   action == Action::"CallTool",
   resource == Tool::"design_element_classes"
 );
+
+// Explicit user-requested local task subscriptions. No new tools or actions in the
+// wake turn: the runtime restricts it to read-only task analysis and a result receipt.
+// Heartbeat remains a separate policy set and denies these destructive tools.
+@id("permit_her_task_watch")
+permit(principal == Agent::"samantha", action == Action::"CallTool", resource == Tool::"her_task_watch");
+@id("permit_her_task_watch_update")
+permit(principal == Agent::"samantha", action == Action::"CallTool", resource == Tool::"her_task_watch_update");
