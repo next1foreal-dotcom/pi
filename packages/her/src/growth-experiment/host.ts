@@ -44,6 +44,12 @@ import { GrowthJournal } from "./journal.ts";
 import { createReasoner, type GrowthCompletionPolicy, growthCompletionOptions, isModelProbeEcho } from "./model.ts";
 import { record } from "./parse.ts";
 import {
+	auditGrowthPilot,
+	freezePilotAuthorization,
+	type GrowthPilotAuthorization,
+	validatePilotAuthorization,
+} from "./pilot-authorization.ts";
+import {
 	type ProbeInputContract,
 	renderProbeOperations,
 	validateProbeAction,
@@ -106,7 +112,14 @@ export interface GrowthHostPlan {
 	reviewOperation: string;
 	review: GrowthReviewSuite;
 	correction?: { developmentTaskIds: string[]; review: GrowthReviewSuite };
-	pilot?: { finalTaskIds: string[]; developmentTaskId: string; thoughts: 12; probes: 2 };
+	pilot?: {
+		finalTaskIds: string[];
+		developmentTaskId: string;
+		thoughts: 12;
+		probes: 2;
+		experience?: { file: string; sha256: string };
+	};
+	pilotAuthorization?: GrowthPilotAuthorization;
 	tasks: HostTask[];
 }
 /** Separate owner approval; the original plan and unresolved spend remain immutable. */
@@ -192,6 +205,7 @@ export class HerGrowthHost implements GrowthHost {
 			plan.review.minGain > 1
 		)
 			throw new Error("invalid host evaluation limits");
+		if (plan.pilot || plan.pilotAuthorization) await validatePilotAuthorization(root, plan);
 		validateGrowthReviewPlan(plan);
 		validateProbeContracts(plan.operations);
 		validateApplicabilityFacts(plan.applicabilityFacts);
@@ -225,6 +239,7 @@ export class HerGrowthHost implements GrowthHost {
 			const previous = (await host.journal.read()).find((r) => r.kind === "plan");
 			if (previous && previous.data.digest !== host.planDigest) throw new Error("growth plan changed after freeze");
 			if (!previous) {
+				if (plan.pilot) await auditGrowthPilot(root, plan);
 				if (await host.journal.state()) throw new Error("plan must precede inquiry/candidate");
 				await host.journal.append("plan", {
 					digest: host.planDigest,
@@ -233,6 +248,7 @@ export class HerGrowthHost implements GrowthHost {
 					budget: plan.budget,
 				});
 			}
+			if (plan.pilot) await freezePilotAuthorization(host.journal, plan, host.planDigest);
 		});
 		return host;
 	}
@@ -245,6 +261,7 @@ export class HerGrowthHost implements GrowthHost {
 		if (drain.active || (drain.warning && drain.warning !== "drain flag expired"))
 			throw new Error("growth STOP: drain active or unreadable");
 		if (authorization) {
+			if (this.plan.pilot) throw new Error("single-probe permission does not authorize this pilot");
 			if (Date.now() < Date.parse(authorization.startsAt) || Date.now() >= Date.parse(authorization.expiresAt))
 				throw new Error("owner probe window inactive or exhausted");
 			return;
@@ -257,6 +274,11 @@ export class HerGrowthHost implements GrowthHost {
 			(created && Date.now() - Date.parse(created) >= this.plan.budget.wallMs)
 		)
 			throw new Error("growth wall-clock budget exhausted");
+		if (this.plan.pilot) {
+			await auditGrowthPilot(this.journal.root, this.plan);
+			if (Date.now() < Date.parse(this.plan.pilotAuthorization!.startsAt))
+				throw new Error("pilot clock window has not started");
+		}
 	}
 	async reason(request: ReasonRequest, signal?: AbortSignal): Promise<unknown> {
 		if (request.stage !== "select")
@@ -307,6 +329,7 @@ export class HerGrowthHost implements GrowthHost {
 	}
 	/** One explicit response check, charged to this inquiry. Never starts or resumes learning. */
 	async probeModel(signal?: AbortSignal, authorization?: GrowthProbeAuthorization): Promise<ModelProbeResult> {
+		if (this.plan.pilot) throw new Error("pilot permission does not authorize a connectivity probe");
 		if (authorization) {
 			authorization = JSON.parse(JSON.stringify(authorization)) as GrowthProbeAuthorization;
 			this.validateProbeAuthorization(authorization);
@@ -368,7 +391,11 @@ export class HerGrowthHost implements GrowthHost {
 		authorization?: GrowthProbeAuthorization,
 	): Promise<{ result: CompletionResult; runId: string; usd: number }> {
 		await this.assertRunning(signal, authorization);
-		const authorizationDigest = authorization ? sha256(canonicalJson(authorization)) : undefined;
+		const authorizationDigest = authorization
+			? sha256(canonicalJson(authorization))
+			: this.plan.pilotAuthorization
+				? sha256(canonicalJson(this.plan.pilotAuthorization))
+				: undefined;
 		const budget = authorization?.budget ?? this.plan.budget;
 		const expiresAt = authorization?.expiresAt ?? this.plan.expiresAt;
 		const runId = randomUUID();
@@ -378,6 +405,8 @@ export class HerGrowthHost implements GrowthHost {
 			(reservedTokens * Math.max(this.plan.model.inputUsdPerMillion, this.plan.model.outputUsdPerMillion)) / 1e6;
 		await storeLock(this.journal.root, async () => {
 			const rows = await this.journal.read();
+			if (this.plan.pilot && !rows.some((r) => r.kind === "pilot-run-reserved"))
+				throw new Error("pilot runner reservation required before any model request");
 			if (this.plan.budget.requests !== undefined) {
 				if (rows.some((r) => r.kind === "pilot-stop")) throw new Error("growth pilot stopped; no resume or replay");
 				if (rows.filter((r) => r.kind === "model-reserve").length >= this.plan.budget.requests)

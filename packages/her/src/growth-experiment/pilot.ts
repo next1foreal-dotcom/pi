@@ -3,6 +3,7 @@ import { redactSecrets } from "../her-core/store.ts";
 import { storeLock } from "../her-core/store-lock.ts";
 import type { HerGrowthHost } from "./host.ts";
 import { advance, reopen } from "./loop.ts";
+import { experiences } from "./parse.ts";
 import { assertResearchUnexposed } from "./review.ts";
 import { type GrowthTaskResult, type GrowthUsage, growthUsage, runGrowthTask } from "./task.ts";
 import type { GrowthState, Observation } from "./types.ts";
@@ -78,6 +79,13 @@ export async function runGrowthPilot(host: HerGrowthHost, signal?: AbortSignal):
 		)
 			throw new Error("pilot needs fresh revision zero; consumed or interrupted runs cannot replay");
 		assertResearchUnexposed(host.plan, state, rows);
+		const raw = experiences(
+			JSON.parse(
+				(await readProtectedFile(host.journal.root, contract.experience!.file, 1024 * 1024)).toString("utf8"),
+			),
+		);
+		if (canonicalJson(raw) !== canonicalJson(state.experiences))
+			throw new Error("initial learning state differs from approved raw experience");
 		for (const e of state.experiences.flatMap((x) => x.evidence))
 			if (sha256(await readProtectedFile(host.journal.root, e.ref, 1024 * 1024)) !== e.digest)
 				throw new Error("raw learning experience artifact mismatch");

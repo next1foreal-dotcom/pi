@@ -7,6 +7,7 @@ import { type GrowthHostPlan, HerGrowthHost } from "../../src/growth-experiment/
 import { startInquiry } from "../../src/growth-experiment/loop.ts";
 import { sha256 } from "../../src/her-core/improvement-plan.ts";
 import { FakeModel } from "../../src/her-core/model.ts";
+import { authorizePilotFixture } from "./growth-pilot-owner.ts";
 // Preset replies test the real journal/executor wiring only, not learning.
 export const original = {
 	id: "original",
@@ -26,8 +27,10 @@ export async function fixture(
 	t: TestContext,
 	mode = "use",
 	provider = "api.deepseek.com",
-	configure?: (plan: GrowthHostPlan) => void,
+	configure?: (plan: GrowthHostPlan, root: string) => void | Promise<void>,
 	fresh = false,
+	withPilotAuthorization = true,
+	initialize = true,
 ) {
 	const root = await mkdtemp(join(tmpdir(), "her-growth-task-"));
 	t.after(() => rm(root, { recursive: true, force: true }));
@@ -87,7 +90,8 @@ export async function fixture(
 			},
 		},
 	};
-	configure?.(plan);
+	await configure?.(plan, root);
+
 	if (provider !== "api.deepseek.com") {
 		await mkdir(join(root, ".her"));
 		await writeFile(
@@ -95,6 +99,7 @@ export async function fixture(
 			`llm:\n  base_url: http://${provider}\n  model_fast: deepseek-v4-flash\n  api_key_env: TEST_TASK_KEY\n`,
 		);
 	}
+	if (plan.pilot && withPilotAuthorization) await authorizePilotFixture(root, plan, [original]);
 	await writeFile(join(root, "evals/plan.json"), JSON.stringify(plan));
 	const model = new FakeModel("{}", false);
 	model.completeWithMeta = (prompt, options) => {
@@ -140,6 +145,6 @@ export async function fixture(
 			evidence: original.evidence,
 		},
 	};
-	await host.save(fresh ? initial : { ...initial, phase: "trial-ready", method }, -1);
+	if (initialize) await host.save(fresh ? initial : { ...initial, phase: "trial-ready", method }, -1);
 	return { root, host, model };
 }

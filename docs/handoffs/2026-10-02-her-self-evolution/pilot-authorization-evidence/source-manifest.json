@@ -1,0 +1,50 @@
+[
+  {
+    "file": "packages/her/src/growth-experiment/cli.ts",
+    "lines": 109,
+    "utf8Bom": false,
+    "sha256": "9dd0bcb55356161ac495636e7bb1fbda1602336a1906e80aa8c625d7c8cca2ff"
+  },
+  {
+    "file": "packages/her/src/growth-experiment/host.ts",
+    "lines": 951,
+    "utf8Bom": false,
+    "sha256": "df86c0b0481f59714d9cd3b54df3a9d6140b5b0b5002091fc20a05c6bffa81fb"
+  },
+  {
+    "file": "packages/her/src/growth-experiment/pilot.ts",
+    "lines": 223,
+    "utf8Bom": false,
+    "sha256": "3adab33de97afd143c5134213a009ac175023e66df4bb7dd14742616f7cc7037"
+  },
+  {
+    "file": "packages/her/src/growth-experiment/pilot-authorization.ts",
+    "lines": 240,
+    "utf8Bom": false,
+    "sha256": "e0c43508933c8ee9097a81f1c89b2e5e68e0b9988d02735e9ac33bd6d8ea055b"
+  },
+  {
+    "file": "packages/her/test/fixtures/growth-task-host.ts",
+    "lines": 150,
+    "utf8Bom": false,
+    "sha256": "c6499ebcae03de2a3db894100493c6788caf5000a798f77cf0b7bfc124e3b478"
+  },
+  {
+    "file": "packages/her/test/fixtures/growth-pilot-owner.ts",
+    "lines": 97,
+    "utf8Bom": false,
+    "sha256": "20ae37b45aacb633f126d73b0bcd588b89d09b20f60e5fb70b4e6e588d1d1e44"
+  },
+  {
+    "file": "packages/her/test/growth-pilot-runner.test.ts",
+    "lines": 229,
+    "utf8Bom": false,
+    "sha256": "77c02ab28903abe2397a1e3ebf81b47c2d8fd7bd2139c5773d9e1d530b3c8e90"
+  },
+  {
+    "file": "packages/her/test/growth-pilot-authorization.test.ts",
+    "lines": 275,
+    "utf8Bom": false,
+    "sha256": "1ffc3b68b918149483b94d6ba244509b09822e89096d2e29ff60907c3ed98330"
+  }
+]

@@ -8,6 +8,7 @@ import { HerGrowthHost } from "./host.ts";
 import { recallGrowthMethods } from "./journal.ts";
 import { advance, reopen, startInquiry, tryMethod } from "./loop.ts";
 import { experiences } from "./parse.ts";
+import { runGrowthPilot } from "./pilot.ts";
 import { runGrowthTask } from "./task.ts";
 
 /** Opt-in host entry point. No production schedule or tool permission is registered. */
@@ -19,7 +20,7 @@ export async function runGrowthCli(
 	const [action, rootArg, planPath, argument, extra] = argv;
 	if (!action || !rootArg || !planPath)
 		throw new Error(
-			"growth: <init|step|status|task|use|wake|recall|probe-model> <memoryRoot> <hostPlan-relative-path> [experience-file|task-id] [expectation]",
+			"growth: <init|step|status|pilot|task|use|wake|recall|probe-model> <memoryRoot> <hostPlan-relative-path> [experience-file|task-id] [expectation]",
 		);
 	const root = resolve(cwd, rootArg);
 	const model = new OpenAICompatibleModel(loadConfig(resolve(root, ".her/config.yaml")), env);
@@ -32,6 +33,24 @@ export async function runGrowthCli(
 	}
 	if (action === "recall")
 		return (await recallGrowthMethods(root)).map((s) => ({ inquiryId: s.id, method: s.method }));
+	if (host.plan.pilot && !["pilot", "status", "recall"].includes(action))
+		throw new Error("owner pilot permission authorizes only the continuous runner; no probe or manual replay");
+	if (action === "pilot") {
+		if (!host.plan.pilot?.experience || !host.plan.pilotAuthorization || argument || extra)
+			throw new Error("pilot needs its frozen owner authorization and experience; no input overrides");
+		if (await host.journal.state()) throw new Error("pilot already initialized; no automatic resume or replay");
+		const input = experiences(
+			JSON.parse((await readProtectedFile(root, host.plan.pilot.experience.file, 1024 * 1024)).toString("utf8")),
+		);
+		await host.save(
+			startInquiry(host.plan.inquiryId, input, {
+				thoughts: host.plan.pilot.thoughts,
+				probes: host.plan.pilot.probes,
+			}),
+			-1,
+		);
+		return runGrowthPilot(host);
+	}
 	if (action === "init") {
 		if (!argument) throw new Error("growth init needs actual experience file");
 		const input = experiences(JSON.parse(await readFile(argument, "utf8")));
@@ -71,7 +90,8 @@ export async function runGrowthCli(
 	throw new Error("unknown growth command");
 }
 export function growthExitCode(result: unknown): number {
-	if (["probe-failed", "task-failed"].includes((result as { status?: string } | null)?.status ?? "")) return 1;
+	if (["probe-failed", "task-failed", "INCOMPLETE"].includes((result as { status?: string } | null)?.status ?? ""))
+		return 1;
 	const phase = (result as { phase?: string } | null)?.phase;
 	return phase === "blocked" || phase?.startsWith("pending-") ? 1 : 0;
 }

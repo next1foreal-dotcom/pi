@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "scope": "growth-pilot",
+  "inquiryId": "growth-pilot-02",
+  "memoryRoot": "D:/@Her/tmp/growth-live-20261002",
+  "endpoint": "https://api.deepseek.com",
+  "proposalDigest": "8bb503be40e0ef891bf71eb8326820c05568a542737a6f4e85da8f8b65dafec5",
+  "historicalUnknown": {
+    "inquiryId": "windows-reader-inquiry",
+    "planDigest": "02a1b25de4d63c812d43a7068c049f451cf7cf30f77060ba19adc1a5fb815f6d",
+    "runId": "e9e181c7-b228-4feb-929f-6e54da270947",
+    "reservationDigest": "10a01f888aa0e6f392430add96cb9325c76096b28a135f1bbc55a2039d3e34b2",
+    "decisionDigest": "18762bc558312f5d8581a85515228ca993a6ac54f1b3f128cd368f88968fc4a4"
+  },
+  "previousPilot": {
+    "inquiryId": "growth-pilot-01",
+    "stopDigest": "9fb3970b84627dc187a409e1f896b38bc157384fc17e7a8965f3359b4770908f"
+  },
+  "modelProbe": {
+    "inquiryId": "windows-reader-inquiry",
+    "receiptDigest": "6afe30c7903cc3a8666786449af39a11d1e78616c9a50982a3bc46f2403a4d64"
+  },
+  "status": "UNAPPROVED-UNFROZEN",
+  "approvedBy": null,
+  "approvedAt": null,
+  "source": null,
+  "T0": null,
+  "T1": null,
+  "paidRequests": 0,
+  "acceptsHistoricalUnknown": null,
+  "providerDocs": {
+    "price": "https://api-docs.deepseek.com/quick_start/pricing/",
+    "output": "https://api-docs.deepseek.com/api/create-chat-completion/",
+    "checkedAt": "2026-10-05T06:31:01.982Z",
+    "maxOutputTokens": 8192,
+    "inputUsdPerMillion": 0.3,
+    "outputUsdPerMillion": 1.2
+  },
+  "proposalFileSha256": "3b98ed2e783875b15f4691b7cf392fe89edceca3d4b92b8342bd6f70e49d76ee"
+}

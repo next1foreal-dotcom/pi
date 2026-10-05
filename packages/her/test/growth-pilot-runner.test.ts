@@ -222,7 +222,7 @@ for (const block of [
 			await host.save({ ...state, revision: 1, limits: { thoughts: 12, probes: 3 } }, 0);
 		}
 		if (block === "changed-artifact") await writeFile(join(host.journal.root, "old.txt"), "changed");
-		await assert.rejects(runGrowthPilot(host), /contract|revision zero|artifact mismatch/);
+		await assert.rejects(runGrowthPilot(host), /contract|revision zero|artifact mismatch|unreconciled/);
 		assert.equal(model.calls.length, 0);
 		assert.ok(!(await host.journal.read()).some((r) => r.kind === "pilot-stop"));
 	});

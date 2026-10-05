@@ -1,0 +1,42 @@
+[
+  {
+    "file": "work/growth-complete-goal/freeze-pilot.ps1",
+    "sha256": "d15c69a876ee9fff1355d1a81784c1f35282f538bb3a937f404556a990052cbf"
+  },
+  {
+    "file": "work/growth-complete-goal/validate-staged-approval.ts",
+    "sha256": "eff3d1955f273a4a2e2b42f25afc248a939184fa40ad2b3f2f810316ccc1a049"
+  },
+  {
+    "file": "work/growth-complete-goal/prepare-authorization.ts",
+    "sha256": "b3d9d4ccdb45785661f123128e11fe1d9325701f05812f68944232d2cd30726d"
+  },
+  {
+    "file": "work/growth-complete-goal/verify-prepared.ts",
+    "sha256": "e4592a8c700820f5043eddf03489e9f0f7b3f51761221cce7634531e59dd9dfd"
+  },
+  {
+    "file": "work/growth-complete-goal/package/observe.mjs",
+    "sha256": "f30763aee8ba963e86955d31e226277afad1b296ae3c57db2ce7e7953af67514"
+  },
+  {
+    "file": "work/growth-complete-goal/package/facts.mjs",
+    "sha256": "4baca0c86f680fe35058a4b0b90571ffa6631ee2f503057729bd1f3a645b71b6"
+  },
+  {
+    "file": "work/growth-complete-goal/package/preflight.json",
+    "sha256": "8b12a16ab3b383d7fe288e7300915aa363f29d84b27b4e92e266dfa41a137797"
+  },
+  {
+    "file": "work/growth-complete-goal/package/historical-before.json",
+    "sha256": "76583c61c9d5561949a1ed6064ed877079ee30bfe938f3a9e5cd0f01d96a4b60"
+  },
+  {
+    "file": "work/growth-complete-goal/package/prepared-plan.json",
+    "sha256": "3b98ed2e783875b15f4691b7cf392fe89edceca3d4b92b8342bd6f70e49d76ee"
+  },
+  {
+    "file": "work/growth-complete-goal/package/approval-proposal.json",
+    "sha256": "7f9f32050b410bb30ee1a7206ccae66a8f6ee8df91e9faeedc00a0dd64c41587"
+  }
+]
