@@ -1,0 +1,180 @@
+
+> pi-monorepo@0.0.3 check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:runtime-deps && npm run check:ts-imports && npm run check:entry-graphs && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && npm run check:browser-smoke
+
+packages\her\src\her-core\memory.ts:1030:6 lint/style/useTemplate  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━━━
+
+  i Template literals are preferred over string concatenation.
+
+    1028 │ 				await appendText(
+    1029 │ 					consolidateSkipsPath,
+  > 1030 │ 					JSON.stringify({
+         │ 					^^^^^^^^^^^^^^^^
+  > 1031 │ 						at: new Date().toISOString(),
+          ...
+  > 1035 │ 						duplicate_of: episode.duplicateOf.id,
+  > 1036 │ 					}) + "\n",
+         │ 					^^^^^^^^^
+    1037 │ 				);
+    1038 │ 				console.warn(
+
+  i Unsafe fix: Use a template literal.
+
+    1028 1028 │   				await appendText(
+    1029 1029 │   					consolidateSkipsPath,
+    1030      │ - → → → → → JSON.stringify({
+         1030 │ + → → → → → `${JSON.stringify({
+    1031 1031 │   						at: new Date().toISOString(),
+    1032 1032 │   						episode: episode.id,
+    ········· │
+    1034 1034 │   						reason: "duplicate-body",
+    1035 1035 │   						duplicate_of: episode.duplicateOf.id,
+    1036      │ - → → → → → })·+·"\n",
+         1036 │ + → → → → → })}\n`,
+    1037 1037 │   				);
+    1038 1038 │   				console.warn(
+
+
+packages\her\src\her-core\memory.ts:1173:6 lint/style/useTemplate  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━━━
+
+  i Template literals are preferred over string concatenation.
+
+    1171 │ 				await appendText(
+    1172 │ 					consolidateSkipsPath,
+  > 1173 │ 					JSON.stringify({
+         │ 					^^^^^^^^^^^^^^^^
+  > 1174 │ 						at: new Date().toISOString(),
+          ...
+  > 1180 │ 						reason: "coarse-sampled",
+  > 1181 │ 					}) + "\n",
+         │ 					^^^^^^^^^
+    1182 │ 				);
+    1183 │ 				console.warn(
+
+  i Unsafe fix: Use a template literal.
+
+    1171 1171 │   				await appendText(
+    1172 1172 │   					consolidateSkipsPath,
+    1173      │ - → → → → → JSON.stringify({
+         1173 │ + → → → → → `${JSON.stringify({
+    1174 1174 │   						at: new Date().toISOString(),
+    1175 1175 │   						episodeId: fat.id,
+    ········· │
+    1179 1179 │   						slices: sample.slices,
+    1180 1180 │   						reason: "coarse-sampled",
+    1181      │ - → → → → → })·+·"\n",
+         1181 │ + → → → → → })}\n`,
+    1182 1182 │   				);
+    1183 1183 │   				console.warn(
+
+
+packages\her\src\her-core\memory.ts:2301:5 lint/style/useTemplate  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━━━
+
+  i Template literals are preferred over string concatenation.
+
+    2299 │ 			await appendText(
+    2300 │ 				consolidateSkipsPath,
+  > 2301 │ 				JSON.stringify({
+         │ 				^^^^^^^^^^^^^^^^
+  > 2302 │ 					at: new Date().toISOString(),
+  > 2303 │ 					reason: "junk-note",
+  > 2304 │ 					note_key: noteKey,
+  > 2305 │ 					junk_reason: junkReason,
+  > 2306 │ 				}) + "\n",
+         │ 				^^^^^^^^^
+    2307 │ 			);
+    2308 │ 			console.warn(`[her] consolidate: DROPPED junk note "${noteKey}" (${junkReason})`);
+
+  i Unsafe fix: Use a template literal.
+
+    2299 2299 │   			await appendText(
+    2300 2300 │   				consolidateSkipsPath,
+    2301      │ - → → → → JSON.stringify({
+         2301 │ + → → → → `${JSON.stringify({
+    2302 2302 │   					at: new Date().toISOString(),
+    2303 2303 │   					reason: "junk-note",
+    2304 2304 │   					note_key: noteKey,
+    2305 2305 │   					junk_reason: junkReason,
+    2306      │ - → → → → })·+·"\n",
+         2306 │ + → → → → })}\n`,
+    2307 2307 │   			);
+    2308 2308 │   			console.warn(`[her] consolidate: DROPPED junk note "${noteKey}" (${junkReason})`);
+
+
+packages\her\src\preview\jsx-attr.ts:373:11 lint/style/useTemplate  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━━
+
+  i Template literals are preferred over string concatenation.
+
+    371 │ 	return {
+    372 │ 		ok: true,
+  > 373 │ 		source: source.slice(0, insertAt) + ` ${built}` + source.slice(insertAt),
+        │ 		        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    374 │ 		before: "",
+    375 │ 		after: built,
+
+  i Unsafe fix: Use a template literal.
+
+    371 371 │   	return {
+    372 372 │   		ok: true,
+    373     │ - → → source:·source.slice(0,·insertAt)·+·`·${built}`·+·source.slice(insertAt),
+        373 │ + → → source:·`${source.slice(0,·insertAt)}·${built}${source.slice(insertAt)}`,
+    374 374 │   		before: "",
+    375 375 │   		after: built,
+
+
+packages\her\test\her-core-modules.test.ts:1031:59 lint/style/useTemplate  FIXABLE  ━━━━━━━━━━━━━━━━
+
+  i Template literals are preferred over string concatenation.
+
+    1030 │ test("G-251 selectRelevantKeys obeys budget, recent fallback, and empty boundaries", () => {
+  > 1031 │ 	const stems = Array.from({ length: 2000 }, (_, index) => "topic-" + index + "-evidence");
+         │ 	                                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    1032 │ 	const recent = ["unrelated-recent-key", "topic-17-evidence", "unrelated-recent-key"];
+    1033 │ 	const selected = selectRelevantKeys("topic evidence", stems, { max: 7, recent });
+
+  i Unsafe fix: Use a template literal.
+
+    1029 1029 │
+    1030 1030 │   test("G-251 selectRelevantKeys obeys budget, recent fallback, and empty boundaries", () => {
+    1031      │ - → const·stems·=·Array.from({·length:·2000·},·(_,·index)·=>·"topic-"·+·index·+·"-evidence");
+         1031 │ + → const·stems·=·Array.from({·length:·2000·},·(_,·index)·=>·`topic-${index}-evidence`);
+    1032 1032 │   	const recent = ["unrelated-recent-key", "topic-17-evidence", "unrelated-recent-key"];
+    1033 1033 │   	const selected = selectRelevantKeys("topic evidence", stems, { max: 7, recent });
+
+
+Skipped 5 suggested fixes.
+If you wish to apply the suggested (unsafe) fixes, use the command biome check --write --unsafe
+
+Checked 1834 files in 13s. No fixes applied.
+Found 5 infos.
+
+> pi-monorepo@0.0.3 check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> pi-monorepo@0.0.3 check:runtime-deps
+> node scripts/check-runtime-deps.mjs
+
+Public package runtime imports have declared dependencies.
+
+> pi-monorepo@0.0.3 check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> pi-monorepo@0.0.3 check:entry-graphs
+> node scripts/check-entry-graphs.mjs
+
+Entry point graphs are within budget.
+
+> pi-monorepo@0.0.3 check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> pi-monorepo@0.0.3 check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+
+> pi-monorepo@0.0.3 check:browser-smoke
+> node scripts/check-browser-smoke.mjs

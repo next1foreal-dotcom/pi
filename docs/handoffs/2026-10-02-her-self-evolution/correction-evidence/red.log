@@ -1,0 +1,222 @@
+✖ real development failure enables exactly one new sealed review with cumulative usage across restart (2103.4289ms)
+✖ correction no-fresh cannot consume another suite or spend on learning (2168.4652ms)
+✖ correction identical-draft cannot consume another suite or spend on learning (1847.5886ms)
+✖ correction final-exposed cannot consume another suite or spend on learning (1978.9422ms)
+✖ invalid frozen correction plan duplicate-input is rejected before journal/model (13.2316ms)
+✖ invalid frozen correction plan missing-regression is rejected before journal/model (12.3315ms)
+✖ invalid frozen correction plan unknown-development is rejected before journal/model (12.8967ms)
+✖ invalid frozen correction plan lowered-threshold is rejected before journal/model (13.3701ms)
+✖ fresh correction holdout is sealed against direct and batched probes before method formation (27.882ms)
+✖ invalid task answer null never reaches evaluator; real receipt stays charged (278.3694ms)
+✖ invalid task answer [] never reaches evaluator; real receipt stays charged (264.1552ms)
+✖ invalid task answer true never reaches evaluator; real receipt stays charged (298.2778ms)
+✖ second review shares request cap and cannot reset spent usage (2445.9759ms)
+ℹ tests 13
+ℹ suites 0
+ℹ pass 0
+ℹ fail 13
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 11989.0052
+
+✖ failing tests:
+
+test at packages\her\test\growth-correction-host.test.ts:1:4777
+✖ real development failure enables exactly one new sealed review with cumulative usage across restart (2103.4289ms)
+  AssertionError [ERR_ASSERTION]: review needs reconciliation: final suite already consumed; no tuning/replay
+  + actual - expected
+
+  + 'pending-review'
+  - 'trial-ready'
+
+      at TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-correction-host.test.ts:76:9)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'pending-review',
+    expected: 'trial-ready',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at packages\her\test\growth-correction-host.test.ts:1:6076
+✖ correction no-fresh cannot consume another suite or spend on learning (2168.4652ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /fresh|changed|final.*exposed/. Input:
+
+  'review needs reconciliation: final suite already consumed; no tuning/replay'
+
+      at TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-correction-host.test.ts:106:9)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'review needs reconciliation: final suite already consumed; no tuning/replay',
+    expected: /fresh|changed|final.*exposed/,
+    operator: 'match',
+    diff: 'simple'
+  }
+
+test at packages\her\test\growth-correction-host.test.ts:1:6076
+✖ correction identical-draft cannot consume another suite or spend on learning (1847.5886ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /fresh|changed|final.*exposed/. Input:
+
+  'review needs reconciliation: final suite already consumed; no tuning/replay'
+
+      at TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-correction-host.test.ts:106:9)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'review needs reconciliation: final suite already consumed; no tuning/replay',
+    expected: /fresh|changed|final.*exposed/,
+    operator: 'match',
+    diff: 'simple'
+  }
+
+test at packages\her\test\growth-correction-host.test.ts:1:6076
+✖ correction final-exposed cannot consume another suite or spend on learning (1978.9422ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-correction-host.test.ts:103:32)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /final.*exposed/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at packages\her\test\growth-correction-host.test.ts:1:7184
+✖ invalid frozen correction plan duplicate-input is rejected before journal/model (13.2316ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-correction-host.test.ts:115:2)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /duplicate|held-out|development|threshold/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at packages\her\test\growth-correction-host.test.ts:1:7184
+✖ invalid frozen correction plan missing-regression is rejected before journal/model (12.3315ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-correction-host.test.ts:115:2)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /duplicate|held-out|development|threshold/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at packages\her\test\growth-correction-host.test.ts:1:7184
+✖ invalid frozen correction plan unknown-development is rejected before journal/model (12.8967ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-correction-host.test.ts:115:2)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /duplicate|held-out|development|threshold/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at packages\her\test\growth-correction-host.test.ts:1:7184
+✖ invalid frozen correction plan lowered-threshold is rejected before journal/model (13.3701ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-correction-host.test.ts:115:2)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /duplicate|held-out|development|threshold/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at packages\her\test\growth-correction-host.test.ts:1:7735
+✖ fresh correction holdout is sealed against direct and batched probes before method formation (27.882ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+  true !== false
+
+      at TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-correction-host.test.ts:129:9)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: true,
+    expected: false,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at packages\her\test\growth-correction-host.test.ts:1:8279
+✖ invalid task answer null never reaches evaluator; real receipt stays charged (278.3694ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-correction-host.test.ts:138:2)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /task answer must be an object/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at packages\her\test\growth-correction-host.test.ts:1:8279
+✖ invalid task answer [] never reaches evaluator; real receipt stays charged (264.1552ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-correction-host.test.ts:138:2)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /task answer must be an object/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at packages\her\test\growth-correction-host.test.ts:1:8279
+✖ invalid task answer true never reaches evaluator; real receipt stays charged (298.2778ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-correction-host.test.ts:138:2)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /task answer must be an object/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at packages\her\test\growth-correction-host.test.ts:1:8874
+✖ second review shares request cap and cannot reset spent usage (2445.9759ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /request budget/. Input:
+
+  'review needs reconciliation: final suite already consumed; no tuning/replay'
+
+      at TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-correction-host.test.ts:151:54)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'review needs reconciliation: final suite already consumed; no tuning/replay',
+    expected: /request budget/,
+    operator: 'match',
+    diff: 'simple'
+  }

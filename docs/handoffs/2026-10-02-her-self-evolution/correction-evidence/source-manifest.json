@@ -1,0 +1,20 @@
+[
+  {
+    "sha256": "27f80323fcad5d8e92154b338ba16497c43fa0f5e20f47a9b688a4e77ac10937",
+    "path": "packages/her/src/growth-experiment/host.ts",
+    "utf8NoBom": true,
+    "lines": 909
+  },
+  {
+    "sha256": "a02ee0f25a0c9cbd9bb3dcc1d96b6537adba9b2ea12c47327c8464f51ed09a5f",
+    "path": "packages/her/src/growth-experiment/review.ts",
+    "utf8NoBom": true,
+    "lines": 303
+  },
+  {
+    "sha256": "3349302b6eb1c77c70a6de46f8b89dd0b6a33b08506b4b0109e4c4a8566e218e",
+    "path": "packages/her/test/growth-correction-host.test.ts",
+    "utf8NoBom": true,
+    "lines": 313
+  }
+]
