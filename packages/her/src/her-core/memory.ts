@@ -1027,13 +1027,13 @@ export class Memory {
 				if (!episode.duplicateOf || recordedDuplicateIndices.has(episode.sourceIndex)) continue;
 				await appendText(
 					consolidateSkipsPath,
-					JSON.stringify({
+					`${JSON.stringify({
 						at: new Date().toISOString(),
 						episode: episode.id,
 						ts: episode.ts,
 						reason: "duplicate-body",
 						duplicate_of: episode.duplicateOf.id,
-					}) + "\n",
+					})}\n`,
 				);
 				console.warn(
 					"[her] consolidate: SKIPPED duplicate episode " +
@@ -1170,7 +1170,7 @@ export class Memory {
 			if (sample) {
 				await appendText(
 					consolidateSkipsPath,
-					JSON.stringify({
+					`${JSON.stringify({
 						at: new Date().toISOString(),
 						episodeId: fat.id,
 						episode: fat.id,
@@ -1178,7 +1178,7 @@ export class Memory {
 						sampledChars: sample.sampledChars,
 						slices: sample.slices,
 						reason: "coarse-sampled",
-					}) + "\n",
+					})}\n`,
 				);
 				console.warn(
 					`[her] consolidate: COARSE-SAMPLED episode ${fat.id} ${sample.sampledChars}/${fat.text.length} chars in ${sample.slices} slices; raw preserved`,
@@ -2298,12 +2298,12 @@ ${connections.map((item) => `- [[${item}]]`).join("\n")}
 			const noteKey = typeof note.key === "string" ? note.key : typeof note.title === "string" ? note.title : "";
 			await appendText(
 				consolidateSkipsPath,
-				JSON.stringify({
+				`${JSON.stringify({
 					at: new Date().toISOString(),
 					reason: "junk-note",
 					note_key: noteKey,
 					junk_reason: junkReason,
-				}) + "\n",
+				})}\n`,
 			);
 			console.warn(`[her] consolidate: DROPPED junk note "${noteKey}" (${junkReason})`);
 		}

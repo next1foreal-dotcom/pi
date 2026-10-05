@@ -370,7 +370,7 @@ export function editProp(source: string, request: PropEditRequest): PropEditResu
 
 	return {
 		ok: true,
-		source: source.slice(0, insertAt) + ` ${built}` + source.slice(insertAt),
+		source: `${source.slice(0, insertAt)} ${built}${source.slice(insertAt)}`,
 		before: "",
 		after: built,
 		changed: true,
