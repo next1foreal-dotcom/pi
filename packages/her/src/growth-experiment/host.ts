@@ -106,6 +106,7 @@ export interface GrowthHostPlan {
 	reviewOperation: string;
 	review: GrowthReviewSuite;
 	correction?: { developmentTaskIds: string[]; review: GrowthReviewSuite };
+	pilot?: { finalTaskIds: string[]; developmentTaskId: string; thoughts: 12; probes: 2 };
 	tasks: HostTask[];
 }
 /** Separate owner approval; the original plan and unresolved spend remain immutable. */
@@ -817,25 +818,38 @@ export class HerGrowthHost implements GrowthHost {
 		await this.journal.append("common-reflection", { runId: receipt.runId, text: receipt.result.text });
 	}
 	/** Matched control/fallback, through the same charged model and real task executor. */
-	async runBaseline(taskId: string, deliberate = true, signal?: AbortSignal): Promise<Observation> {
+	async runBaseline(
+		taskId: string,
+		deliberate = true,
+		signal?: AbortSignal,
+		options: { condition?: "control" | "task"; deliberation?: string[] } = {},
+	): Promise<Observation> {
 		const task = this.plan.tasks.find((t) => t.id === taskId);
 		if (!task) throw new Error("task not approved");
-		if (
-			(await this.journal.read()).some(
-				(r) => r.kind === "baseline-reserved" && r.data.taskId === taskId && r.data.deliberate === deliberate,
+		const condition = options.condition ?? "control";
+		if (!["control", "task"].includes(condition)) throw new Error("invalid baseline condition");
+		await this.assertRunning(signal);
+		await storeLock(this.journal.root, async () => {
+			if (
+				(await this.journal.read()).some(
+					(r) =>
+						r.kind === "baseline-reserved" &&
+						r.data.taskId === taskId &&
+						(r.data.condition ?? "control") === condition,
+				)
 			)
-		)
-			throw new Error("control task already consumed");
-		await this.journal.append("baseline-reserved", { taskId, deliberate });
+				throw new Error("baseline task already consumed");
+			await this.journal.append("baseline-reserved", { taskId, deliberate, condition });
+		});
 		const adaptation = deliberate
 			? [
 					await this.complete(
 						`Choose an approach to this task using the evidence. Return a JSON object describing the approach and limitations.\n${canonicalJson({ task: { id: task.id, description: task.description, environment: task.environment, input: task.input }, ...(await this.commonContext()) })}`,
-						"control-deliberation",
+						condition === "control" ? "control-deliberation" : "task-deliberation",
 						signal,
 					),
 				]
-			: [];
+			: (options.deliberation ?? []);
 		const answer = await this.solve(task, undefined, adaptation, signal);
 		const runId = randomUUID();
 		const result = await this.execute(
@@ -851,7 +865,7 @@ export class HerGrowthHost implements GrowthHost {
 			summary: JSON.stringify(result.value),
 			evidence: result.evidence,
 		};
-		await this.journal.append("baseline-result", { taskId, ...observation });
+		await this.journal.append("baseline-result", { taskId, condition, ...observation });
 		return observation;
 	}
 	private async solve(

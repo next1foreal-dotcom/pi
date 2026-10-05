@@ -82,7 +82,7 @@ export function assertResearchUnexposed(
 		state?.trials.some((t) => finals.includes(t.task.id)) ||
 		rows.some(
 			(r) =>
-				["baseline-reserved", "use-result", "task-selection-reserved"].includes(r.kind) &&
+				["baseline-reserved", "use-result", "task-selection-reserved", "ordinary-task-reserved"].includes(r.kind) &&
 				finals.includes(String(r.data.taskId)),
 		)
 	)

@@ -1,0 +1,50 @@
+[
+  {
+    "path": "packages/her/src/growth-experiment/cli.ts",
+    "sha256": "4d243b043180f0020c94efe06a81b93363ff1cfe5607a99dc10cc9cdd68cc285",
+    "lines": 90,
+    "utf8NoBom": true
+  },
+  {
+    "path": "packages/her/src/growth-experiment/host.ts",
+    "sha256": "2b30af8a8670bc1deda8b8ff915b1fb0896455ec29e47670f906ca0e4a4d0346",
+    "lines": 923,
+    "utf8NoBom": true
+  },
+  {
+    "path": "packages/her/src/growth-experiment/review.ts",
+    "sha256": "375260b1bcfca48e18c02da13fe79d69d24c05668629c37db7f52ea4d2e58d1d",
+    "lines": 303,
+    "utf8NoBom": true
+  },
+  {
+    "path": "packages/her/src/growth-experiment/task.ts",
+    "sha256": "5d134516b11cb6b553b6e3279712ad39562d3cc2f83a43ad5fca199e4875b73d",
+    "lines": 133,
+    "utf8NoBom": true
+  },
+  {
+    "path": "packages/her/src/growth-experiment/pilot.ts",
+    "sha256": "0ea6bdef34559cdf5ef644f522576fc9b992937d6fd49772f0492258cdc284bc",
+    "lines": 216,
+    "utf8NoBom": true
+  },
+  {
+    "path": "packages/her/test/growth-task-entry.test.ts",
+    "sha256": "5558c2553dd5c90987946534133d6bf0e88cd9b195f463001e489015cf4f6236",
+    "lines": 207,
+    "utf8NoBom": true
+  },
+  {
+    "path": "packages/her/test/growth-pilot-runner.test.ts",
+    "sha256": "08d8a2bb7a8f1bafce78ad2cb2d19c9374fb0fca822156c1f9439c3dfb9b6c47",
+    "lines": 230,
+    "utf8NoBom": true
+  },
+  {
+    "path": "packages/her/test/fixtures/growth-task-host.ts",
+    "sha256": "1bd3045a214c9cb84a592567923f88bbca6834d2ec6c77b518ce320566c557d2",
+    "lines": 146,
+    "utf8NoBom": true
+  }
+]

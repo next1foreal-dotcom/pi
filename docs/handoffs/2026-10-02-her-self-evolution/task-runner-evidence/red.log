@@ -1,0 +1,19 @@
+✖ control and no-method task deliberation have separate once-only slots (316.2828ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 706.6431
+
+✖ failing tests:
+
+test at packages\her\test\growth-task-entry.test.ts:1:3612
+✖ control and no-method task deliberation have separate once-only slots (316.2828ms)
+  Error: control task already consumed
+      at HerGrowthHost.runBaseline (D:\@Her\wt-self-evolution-20261002\packages\her\src\growth-experiment\host.ts:828:10)
+      at async TestContext.<anonymous> (D:\@Her\wt-self-evolution-20261002\packages\her\test\growth-task-entry.test.ts:58:17)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3)

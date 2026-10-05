@@ -8,6 +8,7 @@ import { HerGrowthHost } from "./host.ts";
 import { recallGrowthMethods } from "./journal.ts";
 import { advance, reopen, startInquiry, tryMethod } from "./loop.ts";
 import { experiences } from "./parse.ts";
+import { runGrowthTask } from "./task.ts";
 
 /** Opt-in host entry point. No production schedule or tool permission is registered. */
 export async function runGrowthCli(
@@ -18,7 +19,7 @@ export async function runGrowthCli(
 	const [action, rootArg, planPath, argument, extra] = argv;
 	if (!action || !rootArg || !planPath)
 		throw new Error(
-			"growth: <init|step|status|use|wake|recall|probe-model> <memoryRoot> <hostPlan-relative-path> [experience-file|task-id] [expectation]",
+			"growth: <init|step|status|task|use|wake|recall|probe-model> <memoryRoot> <hostPlan-relative-path> [experience-file|task-id] [expectation]",
 		);
 	const root = resolve(cwd, rootArg);
 	const model = new OpenAICompatibleModel(loadConfig(resolve(root, ".her/config.yaml")), env);
@@ -49,6 +50,10 @@ export async function runGrowthCli(
 			receipts: (await host.journal.read()).map((r) => ({ seq: r.seq, kind: r.kind, digest: r.digest })),
 		};
 	if (action === "step") return advance(state, host);
+	if (action === "task") {
+		if (!argument) throw new Error("growth task needs an approved task id");
+		return runGrowthTask(host, argument);
+	}
 	if (action === "use") {
 		const task = host.plan.tasks.find((t) => t.id === argument);
 		if (!task) throw new Error("new task not in approved host plan");
@@ -66,7 +71,7 @@ export async function runGrowthCli(
 	throw new Error("unknown growth command");
 }
 export function growthExitCode(result: unknown): number {
-	if ((result as { status?: string } | null)?.status === "probe-failed") return 1;
+	if (["probe-failed", "task-failed"].includes((result as { status?: string } | null)?.status ?? "")) return 1;
 	const phase = (result as { phase?: string } | null)?.phase;
 	return phase === "blocked" || phase?.startsWith("pending-") ? 1 : 0;
 }
