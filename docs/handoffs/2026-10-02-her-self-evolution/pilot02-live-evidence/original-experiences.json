@@ -1,0 +1,16 @@
+[
+  {
+    "taskId": "integration-windows-config-red",
+    "evidence": [
+      {
+        "summary": "ℹ tests 1\nℹ pass 0\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\n  Error: candidate has uncommitted tracked changes",
+        "digest": "5ff1f65cb61b32486cf6461688596a9c66944218da2745db2ef104cc401646af",
+        "origin": "environment",
+        "ref": "evals/pilot01/learning-input.txt"
+      }
+    ],
+    "observation": "ℹ tests 1\nℹ pass 0\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\n  Error: candidate has uncommitted tracked changes",
+    "expectation": "Accept a committed clean candidate after a read-only revision check.",
+    "id": "original-windows-reader-failure"
+  }
+]

@@ -1,0 +1,358 @@
+{
+  "version": 1,
+  "inquiryId": "growth-pilot-02",
+  "approvedBy": "Fei (direct user approval)",
+  "ownerSessionId": "01a0f910-9d84-7d31-9ccb-074570b833b5",
+  "model": {
+    "reported": [
+      "deepseek-v4-flash",
+      "deepseek-flash",
+      "deepseek-v4.1-flash",
+      "DeepSeek-V4.1-Flash"
+    ],
+    "outputUsdPerMillion": 1.2,
+    "request": "deepseek-v4-flash",
+    "maxOutputTokens": 8192,
+    "inputUsdPerMillion": 0.3,
+    "provider": "api.deepseek.com",
+    "requestOptions": {
+      "requireComplete": true
+    }
+  },
+  "budget": {
+    "usd": 1,
+    "outputBytes": 131072,
+    "tokens": 100000,
+    "requests": 32,
+    "processMs": 180000,
+    "wallMs": 1800000
+  },
+  "operations": {
+    "observe-facts": {
+      "purposes": [
+        "applicability"
+      ],
+      "sha256": "4baca0c86f680fe35058a4b0b90571ffa6631ee2f503057729bd1f3a645b71b6",
+      "description": "Owner-frozen bounded scalar facts; no equality/dirty answer.",
+      "file": "evals/pilot02/facts.mjs"
+    },
+    "observe-environment": {
+      "probeInputContract": {
+        "version": 1,
+        "discriminator": "kind",
+        "variants": {
+          "binary-pair": {
+            "leftHex": {
+              "type": "string",
+              "format": "hex-bytes",
+              "maxLength": 12000
+            },
+            "rightHex": {
+              "type": "string",
+              "format": "hex-bytes",
+              "maxLength": 12000
+            }
+          },
+          "git-status": {
+            "readerConfig": {
+              "values": [
+                "inherit",
+                "sanitized"
+              ],
+              "type": "string"
+            },
+            "newline": {
+              "values": [
+                "LF",
+                "CRLF"
+              ],
+              "type": "string"
+            },
+            "content": {
+              "type": "string",
+              "maxLength": 12000,
+              "optional": true
+            },
+            "checkoutAutocrlf": {
+              "type": "boolean"
+            }
+          },
+          "text-pair": {
+            "left": {
+              "maxLength": 12000,
+              "type": "string"
+            },
+            "right": {
+              "maxLength": 12000,
+              "type": "string"
+            },
+            "rule": {
+              "values": [
+                "literal",
+                "normalize-lf",
+                "case-insensitive"
+              ],
+              "type": "string"
+            }
+          },
+          "text-view": {
+            "content": {
+              "maxLength": 12000,
+              "type": "string"
+            },
+            "leftView": {
+              "values": [
+                "raw",
+                "normalize-lf"
+              ],
+              "type": "string"
+            },
+            "rightView": {
+              "values": [
+                "raw",
+                "normalize-lf"
+              ],
+              "type": "string"
+            }
+          }
+        },
+        "batch": {
+          "maxItems": 4,
+          "key": "cases"
+        }
+      },
+      "purposes": [
+        "probe",
+        "use",
+        "review"
+      ],
+      "sha256": "f30763aee8ba963e86955d31e226277afad1b296ae3c57db2ce7e7953af67514",
+      "description": "Bounded data observations: git-status {checkoutAutocrlf:boolean,readerConfig:inherit|sanitized,newline:LF|CRLF,content?:text}; text-view {content,leftView:raw|normalize-lf,rightView:raw|normalize-lf}; text-pair {left,right,rule:literal|normalize-lf|case-insensitive}; binary-pair {leftHex,rightHex}. An experiment can supply {cases:[1..4 bounded inputs]} for matched observations. Actual Git/file facts returned. No executable code, paths or commands.",
+      "file": "evals/pilot02/observe.mjs"
+    }
+  },
+  "applicabilityOperation": "observe-facts",
+  "useOperation": "observe-environment",
+  "reviewOperation": "observe-environment",
+  "review": {
+    "cases": [
+      {
+        "environment": "git",
+        "id": "p02-holdout",
+        "split": "holdout",
+        "description": "Determine whether Git reports the tracked file dirty under the specified checkout and reader settings. Return exactly {\"dirty\":boolean}.",
+        "input": {
+          "readerConfig": "sanitized",
+          "kind": "git-status",
+          "newline": "LF",
+          "content": "封存甲B\nindependent gate\n",
+          "checkoutAutocrlf": true
+        },
+        "expected": {
+          "dirty": false
+        }
+      },
+      {
+        "environment": "text",
+        "id": "p02-regression",
+        "split": "regression",
+        "description": "Determine whether the stated views or files compare equal under the stated rule. Return exactly {\"equal\":boolean}.",
+        "input": {
+          "content": "门禁乙B\r\nseparate sample\r\n",
+          "leftView": "normalize-lf",
+          "kind": "text-view",
+          "rightView": "normalize-lf"
+        },
+        "expected": {
+          "equal": true
+        }
+      }
+    ],
+    "minGain": 0.5
+  },
+  "tasks": [
+    {
+      "input": {
+        "readerConfig": "inherit",
+        "kind": "git-status",
+        "newline": "LF",
+        "content": "新任务壹B\nround-two\n",
+        "checkoutAutocrlf": true
+      },
+      "expected": {
+        "dirty": false
+      },
+      "description": "Determine whether Git reports the tracked file dirty under the specified checkout and reader settings. Return exactly {\"dirty\":boolean}.",
+      "environment": "git",
+      "id": "T1-git-lf"
+    },
+    {
+      "input": {
+        "content": "订单829\r\n三号来源\r\n",
+        "leftView": "raw",
+        "kind": "text-view",
+        "rightView": "normalize-lf"
+      },
+      "expected": {
+        "equal": false
+      },
+      "description": "Determine whether the stated views or files compare equal under the stated rule. Return exactly {\"equal\":boolean}.",
+      "environment": "text",
+      "id": "T2-mixed-views"
+    },
+    {
+      "input": {
+        "left": "Delivery-Beta\r\n阶段四\r\n",
+        "right": "delivery-beta\n阶段四\n",
+        "kind": "text-pair",
+        "rule": "case-insensitive"
+      },
+      "expected": {
+        "equal": false
+      },
+      "description": "Determine whether the stated views or files compare equal under the stated rule. Return exactly {\"equal\":boolean}.",
+      "environment": "text",
+      "id": "T3-case-crlf"
+    },
+    {
+      "input": {
+        "rightHex": "fe000a0d827f",
+        "kind": "binary-pair",
+        "leftHex": "fe000d0a827f"
+      },
+      "expected": {
+        "equal": false
+      },
+      "description": "Compare opaque binary files using exact bytes. Do not infer encoding or normalize. Return exactly {\"equal\":boolean}.",
+      "environment": "binary",
+      "id": "T4-equal-length-binary"
+    },
+    {
+      "input": {
+        "left": "开发新证据甲\r\nX\r\n",
+        "right": "开发新证据甲\nX\n",
+        "kind": "text-pair",
+        "rule": "literal"
+      },
+      "expected": {
+        "equal": false
+      },
+      "description": "Determine whether the stated views or files compare equal under the stated rule. Return exactly {\"equal\":boolean}. Isolated development task D1-develop.",
+      "environment": "text",
+      "id": "D1-develop"
+    }
+  ],
+  "expiresAt": "2026-10-05T16:38:15.9847772+08:00",
+  "applicabilityFacts": {
+    "runtime.platform": {
+      "type": "string"
+    },
+    "data.encoding": {
+      "type": "string"
+    },
+    "input.kind": {
+      "type": "string"
+    },
+    "git.readerAutocrlf": {
+      "type": "boolean"
+    },
+    "data.hasCRLF": {
+      "type": "boolean"
+    },
+    "data.totalBytes": {
+      "type": "number"
+    },
+    "comparison.rule": {
+      "type": "string"
+    },
+    "git.version": {
+      "type": "string"
+    }
+  },
+  "correction": {
+    "developmentTaskIds": [
+      "D1-develop"
+    ],
+    "review": {
+      "minGain": 0.5,
+      "cases": [
+        {
+          "environment": "git",
+          "id": "R2-holdout",
+          "split": "holdout",
+          "description": "Determine whether Git reports the tracked file dirty under the specified checkout and reader settings. Return exactly {\"dirty\":boolean}.",
+          "input": {
+            "readerConfig": "inherit",
+            "kind": "git-status",
+            "newline": "CRLF",
+            "content": "修正封存甲\nsecond gate\n",
+            "checkoutAutocrlf": false
+          },
+          "expected": {
+            "dirty": false
+          }
+        },
+        {
+          "environment": "text",
+          "id": "R2-regression",
+          "split": "regression",
+          "description": "Determine whether the stated views or files compare equal under the stated rule. Return exactly {\"equal\":boolean}.",
+          "input": {
+            "left": "修正封存乙\r\nY\r\n",
+            "right": "修正封存乙\nY\n",
+            "kind": "text-pair",
+            "rule": "normalize-lf"
+          },
+          "expected": {
+            "equal": true
+          }
+        }
+      ]
+    }
+  },
+  "pilot": {
+    "finalTaskIds": [
+      "T1-git-lf",
+      "T2-mixed-views",
+      "T3-case-crlf",
+      "T4-equal-length-binary"
+    ],
+    "developmentTaskId": "D1-develop",
+    "probes": 2,
+    "thoughts": 12,
+    "experience": {
+      "file": "evals/pilot01/experiences.json",
+      "sha256": "367e8bc35633a250e2ffaba7379e9bc0921a134f01aaf292f45b87f875a935bb"
+    }
+  },
+  "pilotAuthorization": {
+    "version": 1,
+    "scope": "growth-pilot",
+    "inquiryId": "growth-pilot-02",
+    "memoryRoot": "D:/@Her/tmp/growth-live-20261002",
+    "endpoint": "https://api.deepseek.com",
+    "approvedBy": "Fei (direct user approval)",
+    "proposalDigest": "8bb503be40e0ef891bf71eb8326820c05568a542737a6f4e85da8f8b65dafec5",
+    "approval": {
+      "file": "evals/pilot02/owner-approval.json",
+      "sha256": "82c3155c0b8f377618393b32c63c863b5a41f2bd9a9826e4014ebdaa16be5f0e"
+    },
+    "startsAt": "2026-10-05T16:08:15.9847772+08:00",
+    "expiresAt": "2026-10-05T16:38:15.9847772+08:00",
+    "historicalUnknown": {
+      "inquiryId": "windows-reader-inquiry",
+      "planDigest": "02a1b25de4d63c812d43a7068c049f451cf7cf30f77060ba19adc1a5fb815f6d",
+      "runId": "e9e181c7-b228-4feb-929f-6e54da270947",
+      "reservationDigest": "10a01f888aa0e6f392430add96cb9325c76096b28a135f1bbc55a2039d3e34b2",
+      "decisionDigest": "18762bc558312f5d8581a85515228ca993a6ac54f1b3f128cd368f88968fc4a4"
+    },
+    "previousPilot": {
+      "inquiryId": "growth-pilot-01",
+      "stopDigest": "9fb3970b84627dc187a409e1f896b38bc157384fc17e7a8965f3359b4770908f"
+    },
+    "modelProbe": {
+      "inquiryId": "windows-reader-inquiry",
+      "receiptDigest": "6afe30c7903cc3a8666786449af39a11d1e78616c9a50982a3bc46f2403a4d64"
+    }
+  }
+}

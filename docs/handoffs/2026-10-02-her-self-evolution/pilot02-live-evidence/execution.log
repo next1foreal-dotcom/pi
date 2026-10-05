@@ -1,0 +1,116 @@
+{
+  "status": "INCOMPLETE",
+  "inquiryId": "growth-pilot-02",
+  "planDigest": "5073b9e609982a70e73532475f0890afb44c86bc41d91ca5d94d05199dd75ada",
+  "correction": "not-reached",
+  "rows": [
+    {
+      "taskId": "T1-git-lf",
+      "condition": "A",
+      "status": "missing",
+      "mode": null,
+      "observation": null,
+      "selection": null,
+      "retrievedMethodIds": null,
+      "usage": null,
+      "elapsedMs": null,
+      "reason": "real usage/model identity required; spend remains reserved"
+    },
+    {
+      "taskId": "T1-git-lf",
+      "condition": "B",
+      "status": "missing",
+      "mode": null,
+      "observation": null,
+      "selection": null,
+      "retrievedMethodIds": null,
+      "usage": null,
+      "elapsedMs": null,
+      "reason": "real usage/model identity required; spend remains reserved"
+    },
+    {
+      "taskId": "T2-mixed-views",
+      "condition": "B",
+      "status": "missing",
+      "mode": null,
+      "observation": null,
+      "selection": null,
+      "retrievedMethodIds": null,
+      "usage": null,
+      "elapsedMs": null,
+      "reason": "real usage/model identity required; spend remains reserved"
+    },
+    {
+      "taskId": "T2-mixed-views",
+      "condition": "A",
+      "status": "missing",
+      "mode": null,
+      "observation": null,
+      "selection": null,
+      "retrievedMethodIds": null,
+      "usage": null,
+      "elapsedMs": null,
+      "reason": "real usage/model identity required; spend remains reserved"
+    },
+    {
+      "taskId": "T3-case-crlf",
+      "condition": "B",
+      "status": "missing",
+      "mode": null,
+      "observation": null,
+      "selection": null,
+      "retrievedMethodIds": null,
+      "usage": null,
+      "elapsedMs": null,
+      "reason": "real usage/model identity required; spend remains reserved"
+    },
+    {
+      "taskId": "T3-case-crlf",
+      "condition": "A",
+      "status": "missing",
+      "mode": null,
+      "observation": null,
+      "selection": null,
+      "retrievedMethodIds": null,
+      "usage": null,
+      "elapsedMs": null,
+      "reason": "real usage/model identity required; spend remains reserved"
+    },
+    {
+      "taskId": "T4-equal-length-binary",
+      "condition": "A",
+      "status": "missing",
+      "mode": null,
+      "observation": null,
+      "selection": null,
+      "retrievedMethodIds": null,
+      "usage": null,
+      "elapsedMs": null,
+      "reason": "real usage/model identity required; spend remains reserved"
+    },
+    {
+      "taskId": "T4-equal-length-binary",
+      "condition": "B",
+      "status": "missing",
+      "mode": null,
+      "observation": null,
+      "selection": null,
+      "retrievedMethodIds": null,
+      "usage": null,
+      "elapsedMs": null,
+      "reason": "real usage/model identity required; spend remains reserved"
+    }
+  ],
+  "development": null,
+  "usage": {
+    "requests": 1,
+    "tokens": null,
+    "estimatedUsd": null,
+    "knownTokens": 0,
+    "knownEstimatedUsd": 0,
+    "runIds": [
+      "22a375bc-7a52-4470-a90f-4fd5f895e3b6"
+    ]
+  },
+  "reason": "real usage/model identity required; spend remains reserved"
+}

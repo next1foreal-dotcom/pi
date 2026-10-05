@@ -1,0 +1,86 @@
+{
+  "status": "INCOMPLETE",
+  "sourceSha": "e0f7077b45ec6ae057450b6259c903e57bf1fa05",
+  "ownerSessionId": "01a0f910-9d84-7d31-9ccb-074570b833b5",
+  "proposalDigest": "8bb503be40e0ef891bf71eb8326820c05568a542737a6f4e85da8f8b65dafec5",
+  "planDigest": "5073b9e609982a70e73532475f0890afb44c86bc41d91ca5d94d05199dd75ada",
+  "T0": "2026-10-05T16:08:15.9847772+08:00",
+  "T1": "2026-10-05T16:38:15.9847772+08:00",
+  "command": "node --import tsx packages/her/src/growth-experiment/cli.ts pilot D:/@Her/tmp/growth-live-20261002 evals/pilot02/plan.json",
+  "exitCode": 1,
+  "requests": 1,
+  "runId": "22a375bc-7a52-4470-a90f-4fd5f895e3b6",
+  "actualTokens": "unknown",
+  "actualUsd": "unknown",
+  "reservedTokens": 13599,
+  "reservedUsd": 0.016318799999999998,
+  "requestedModel": "deepseek-v4-flash",
+  "observedModel": null,
+  "endpoint": "https://api.deepseek.com",
+  "httpStatus": 402,
+  "finishReason": null,
+  "validResponseBody": false,
+  "stopAt": "2026-10-05T08:08:17.076Z",
+  "stopDigest": "e93b95c75038fd2e20f499c60ff3222a4f3ff0fe72f3b87227279e0d4b7e3569",
+  "unknownDigest": "00cf3ff234182699816e95aaf132798be2c379a99053b887cac07a4e3750a605",
+  "reservationDigest": "8c5325717877753db8f66918b544688375f9bf130aa992767f422f4e1194925d",
+  "reviewedHashesUnchanged": 19,
+  "oldHistoricalFilesUnchanged": 13,
+  "selfChosenExperiments": 0,
+  "questionProduced": false,
+  "methodProduced": false,
+  "gateReached": false,
+  "developmentReached": false,
+  "reflectionReached": false,
+  "finalConditionsObserved": 0,
+  "finalConditionsMissing": 8,
+  "retried": false,
+  "windowRenewed": false,
+  "modelOrEndpointChanged": false,
+  "oldUnknownSettled": false,
+  "newUnknownRiskException": false,
+  "merged": false,
+  "deployed": false,
+  "files": [
+    {
+      "file": "frozen-plan.json",
+      "executedSource": "D:\\@Her\\tmp\\growth-live-20261002\\evals\\pilot02\\plan.json",
+      "sha256": "d6f0b7156c61a0bd744c73fdaf753044074377db87269e897fe42e35a360d636"
+    },
+    {
+      "file": "owner-approval.json",
+      "executedSource": "D:\\@Her\\tmp\\growth-live-20261002\\evals\\pilot02\\owner-approval.json",
+      "sha256": "82c3155c0b8f377618393b32c63c863b5a41f2bd9a9826e4014ebdaa16be5f0e"
+    },
+    {
+      "file": "growth-pilot-02.md",
+      "executedSource": "D:\\@Her\\tmp\\growth-live-20261002\\proposals\\growth\\growth-pilot-02.md",
+      "sha256": "05553683fa3e5f010e19f9ca0247a4e3a2f007dd7bb341cec6f08035e524b35d"
+    },
+    {
+      "file": "original-experiences.json",
+      "executedSource": "D:\\@Her\\tmp\\growth-live-20261002\\evals\\pilot01\\experiences.json",
+      "sha256": "367e8bc35633a250e2ffaba7379e9bc0921a134f01aaf292f45b87f875a935bb"
+    },
+    {
+      "file": "original-learning-input.txt",
+      "executedSource": "D:\\@Her\\tmp\\growth-live-20261002\\evals\\pilot01\\learning-input.txt",
+      "sha256": "5ff1f65cb61b32486cf6461688596a9c66944218da2745db2ef104cc401646af"
+    },
+    {
+      "file": "execution.log",
+      "executedSource": "D:\\@Her\\wt-self-evolution-20261002\\work\\growth-complete-goal\\pilot02-execution.log",
+      "sha256": "e5688a86a984b0b2f5c37ca6839eaaeaf1ae4290dfde96d45849f9b09604bbab"
+    },
+    {
+      "file": "freeze.log",
+      "executedSource": "D:\\@Her\\wt-self-evolution-20261002\\work\\growth-complete-goal\\pilot02-freeze.log",
+      "sha256": "441d40b72e41d7daf95741c567b40855373ce885aec959953c6707cdc0ac4a88"
+    },
+    {
+      "file": "journal-audit.json",
+      "executedSource": "D:\\@Her\\wt-self-evolution-20261002\\work\\growth-complete-goal\\pilot02-audit.json",
+      "sha256": "4493f6bf15e6c7c019a795197007f6adb7229fa2dba5e8b0779bd05cc78459b1"
+    }
+  ]
+}

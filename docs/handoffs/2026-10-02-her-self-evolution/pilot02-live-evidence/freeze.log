@@ -1,0 +1,9 @@
+{"status":"UNAPPROVED-UNFROZEN","correctionReviewFrozenInDraft":true,"matchingRealPreflightInputs":9,"historicalUnchanged":13,"paidRequests":0,"sourceSha":"b1882e132fc0d5100255cc0d832dcb396d33d8b8","ledgerSha":"69049afc5c110094759fb8361c29b5d56c5ca276"}
+{"validationOnly":true,"noWindowWritten":true,"newRequests":0,"knownHistoricalTokens":9565,"knownHistoricalEstimatedUsd":0.010024499999999999,"grandTotal":"unknown"}
+{
+  "status": "FROZEN-NOT-STARTED",
+  "T0": "2026-10-05T16:08:15.9847772+08:00",
+  "T1": "2026-10-05T16:38:15.9847772+08:00",
+  "proposalDigest": "8bb503be40e0ef891bf71eb8326820c05568a542737a6f4e85da8f8b65dafec5",
+  "newRequests": 0
+}
