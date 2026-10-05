@@ -6,7 +6,7 @@ import { execPath } from "node:process";
 import test from "node:test";
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { governedTools } from "../src/extension.ts";
-import { CUA_DRIVER_M0, CuaCliDriver, type DriverResult, FakeDriver } from "../src/hands/driver.ts";
+import { CuaCliDriver, type DriverResult, FakeDriver } from "../src/hands/driver.ts";
 import {
 	evaluateHandsPolicy,
 	type HandsActionKind,
@@ -243,7 +243,7 @@ test("T15c write confirm false blocks the write, true allows it, click skips con
 	assert.equal(allowedCtx.confirmCalls, 1);
 	assert.deepEqual(
 		allowed.driver.calls.map((call) => call[1]),
-		["list_windows", "type_text"],
+		["list_windows", "type_text", "get_window_state"],
 	);
 
 	const clickOnly = await handsHarness([listWindowsResult(), okCase(/click/)], { desktopAllowedApps: "notepad.exe" });
@@ -263,15 +263,29 @@ test("T15c write confirm false blocks the write, true allows it, click skips con
 	assert.equal(clickCtx.confirmCalls, 0);
 	assert.deepEqual(
 		clickOnly.driver.calls.map((call) => call[1]),
-		["list_windows", "click"],
+		["list_windows", "click", "get_window_state"],
 	);
-	assert.equal(JSON.parse(clickOnly.driver.calls[1]?.[2] ?? "{}").session, CUA_DRIVER_M0.session);
+	assert.match(JSON.parse(clickOnly.driver.calls[1]?.[2] ?? "{}").session, /^her-hands-/);
 });
 
 test("T16 snapshot wraps screen content in injection fence", async () => {
-	const { tools, driver } = await handsHarness([listWindowsResult(), okCase(/get_window_state/, "TREE")], {
-		desktopAllowedApps: "notepad.exe",
-	});
+	const { tools, driver } = await handsHarness(
+		[
+			listWindowsResult(),
+			okCase(
+				/get_window_state/,
+				JSON.stringify({
+					snapshot_id: "s00000001",
+					capture_id: "fixture-capture",
+					elements: [],
+					tree_markdown: "TREE",
+				}),
+			),
+		],
+		{
+			desktopAllowedApps: "notepad.exe",
+		},
+	);
 	const snapshot = tools.get("her_hands_snapshot");
 	assert.ok(snapshot);
 
@@ -285,14 +299,15 @@ test("T16 snapshot wraps screen content in injection fence", async () => {
 		driver.calls.map((call) => call[1]),
 		["list_windows", "get_window_state"],
 	);
-	assert.equal(JSON.parse(driver.calls[1]?.[2] ?? "{}").session, CUA_DRIVER_M0.session);
+	assert.match(JSON.parse(driver.calls[1]?.[2] ?? "{}").session, /^her-hands-/);
 });
 
-test("T16d act maps cached click elementIndex to window coordinates", async () => {
+test("T16d act preserves snapshot identity instead of guessing pixel coordinates", async () => {
 	const snapshotTree = JSON.stringify({
+		snapshot_id: "s12345678",
 		elements: [
-			{ element_index: 0, frame: { x: 5, y: 10, w: 100, h: 100 } },
-			{ element_index: 3, frame: { x: 10, y: 20, w: 30, h: 40 } },
+			{ element_index: 0, element_token: "s12345678:0", frame: { x: 5, y: 10, w: 100, h: 100 } },
+			{ element_index: 3, element_token: "s12345678:3", frame: { x: 10, y: 20, w: 30, h: 40 } },
 		],
 	});
 	const { tools, driver } = await handsHarness(
@@ -312,10 +327,11 @@ test("T16d act maps cached click elementIndex to window coordinates", async () =
 	);
 
 	const payload = JSON.parse(driver.calls[3]?.[2] ?? "{}");
-	assert.equal(payload.x, 20);
-	assert.equal(payload.y, 30);
-	assert.equal(payload.element_index, undefined);
-	assert.equal(payload.session, CUA_DRIVER_M0.session);
+	assert.equal(payload.x, undefined);
+	assert.equal(payload.y, undefined);
+	assert.equal(payload.element_token, "s12345678:3");
+	assert.equal(payload.snapshot_id, undefined);
+	assert.match(payload.session, /^her-hands-/);
 });
 test("T17 batch act stops at policy denial after prior actions and records skipped", async () => {
 	const { tools, driver } = await handsHarness([listWindowsResult(), okCase(/click/)], {
@@ -343,7 +359,7 @@ test("T17 batch act stops at policy denial after prior actions and records skipp
 	assert.match(firstText(result), /1 skipped/);
 	assert.deepEqual(
 		driver.calls.map((call) => call[1]),
-		["list_windows", "click"],
+		["list_windows", "click", "get_window_state"],
 	);
 	const trail = (result.details as { trail: Array<{ outcome: string; detail: string }> }).trail;
 	assert.deepEqual(
@@ -382,7 +398,7 @@ test("T18 batch act stops on driver background_unavailable and returns raw error
 	assert.match(firstText(result), /background_unavailable/);
 	assert.deepEqual(
 		driver.calls.map((call) => call[1]),
-		["list_windows", "click", "double_click"],
+		["list_windows", "click", "double_click", "get_window_state"],
 	);
 	const trail = (result.details as { trail: Array<{ outcome: string; detail: string }> }).trail;
 	assert.deepEqual(
@@ -524,7 +540,7 @@ test("T22 the confirm dialog shows what will be typed, not just the action name"
 // 2026-08-03 live fire: target resolution once landed on a pre-existing Notepad holding Fei's
 // real file. Before nodding, Fei must see WHICH window the keys would land in - so the dialog
 // names the window the driver actually resolved, not just the process the agent asked for.
-test("T23 the confirm dialog names the resolved target window, not just the process", async () => {
+test("T23 ambiguous windows are refused without input or approval", async () => {
 	// Incident shape: two same-named Notepads, the foreign one (Fei's real file) resolves first.
 	const { tools, driver } = await handsHarness(
 		[
@@ -558,10 +574,8 @@ test("T23 the confirm dialog names the resolved target window, not just the proc
 	// The dialog names the window that actually resolved (first name match - here the foreign
 	// one), and the delivered action goes to that same window: what Fei reads is what happens.
 	const message = context.confirmMessages[0] ?? "";
-	assert.match(message, /target window: notepad\.exe — 机密预算\.txt - Notepad/);
-	const payload = JSON.parse(driver.calls[1]?.[2] ?? "{}");
-	assert.equal(payload.pid, 33056);
-	assert.equal(payload.window_id, 7);
+	assert.equal(message, "");
+	assert.equal(driver.calls.filter((call) => call[1] === "type_text").length, 0);
 });
 
 test("T23b the confirm dialog truncates a runaway window title at 80 characters", async () => {
@@ -636,11 +650,33 @@ async function tempMemory(): Promise<{ root: string; mem: Memory }> {
 async function handsHarness(
 	cases: Array<{ match: string[] | RegExp; result: DriverResult }> = [],
 	overrides: Partial<HerConfig["hands"]> = {},
+	observed = true,
 ) {
 	const { mem } = await tempMemory();
-	const driver = new FakeDriver(cases);
+	// Most action tests start after observing the window; opt out to test missing observation.
+	const windowCase = cases.find((item) => String(item.match).includes("list_windows")) ?? listWindowsResult();
+	const driver = new FakeDriver(
+		observed
+			? [
+					windowCase,
+					okCase(
+						/get_window_state/,
+						JSON.stringify({
+							snapshot_id: "s00000001",
+							capture_id: "fixture-capture",
+							elements: [0, 1, 3].map((element_index) => ({
+								element_index,
+								element_token: `s00000001:${element_index}`,
+							})),
+						}),
+					),
+					...cases,
+				]
+			: cases,
+	);
 	const tools = new Map<string, ToolDefinition>();
 	const pi = {
+		on() {},
 		registerTool(tool: ToolDefinition) {
 			tools.set(tool.name, tool);
 		},
@@ -650,6 +686,10 @@ async function handsHarness(
 		driver,
 		loadHandsConfig: () => hands({ desktopAllowedApps: "notepad.exe", ...overrides }),
 	});
+	if (observed) {
+		await executeHands(tools.get("her_hands_snapshot")!, { process: "notepad.exe" }, ctx().context);
+		driver.calls.length = 0;
+	}
 	return { tools, driver };
 }
 
@@ -690,10 +730,162 @@ function listWindowsResult() {
 	);
 }
 
-function okCase(match: string[] | RegExp, stdout = "ok") {
+function okCase(match: string[] | RegExp, stdout = JSON.stringify({ effect: "confirmed" })) {
 	return { match, result: { ok: true, exitCode: 0, stdout, stderr: "", timedOut: false } satisfies DriverResult };
 }
 
 function failCase(match: string[] | RegExp, stdout = "error") {
 	return { match, result: { ok: false, exitCode: 1, stdout, stderr: "", timedOut: false } satisfies DriverResult };
 }
+
+test("CUA 0.33.3 refuses an indexed action without a successful snapshot", async () => {
+	const { tools, driver } = await handsHarness([listWindowsResult(), okCase(/click/)], {}, false);
+	const result = await executeHands(
+		tools.get("her_hands_act")!,
+		{
+			process: "notepad.exe",
+			taskLabel: "no snapshot",
+			actions: [{ action: "click", elementIndex: 0 }],
+		},
+		ctx().context,
+	);
+	assert.match(firstText(result), /snapshot required/i);
+	assert.deepEqual(
+		driver.calls.map((call) => call[1]),
+		["list_windows"],
+	);
+});
+
+test("CUA 0.33.3 retains opaque element tokens and stops on unverified effects", async () => {
+	const { tools, driver } = await handsHarness([
+		listWindowsResult(),
+		okCase(
+			/get_window_state/,
+			JSON.stringify({ snapshot_id: "s12345678", elements: [{ element_index: 0, element_token: "opaque-handle" }] }),
+		),
+		listWindowsResult(),
+		okCase(/click/, JSON.stringify({ effect: "unverifiable", verified: false })),
+		okCase(/click/),
+	]);
+	await executeHands(tools.get("her_hands_snapshot")!, { process: "notepad.exe" }, ctx().context);
+	const result = await executeHands(
+		tools.get("her_hands_act")!,
+		{
+			process: "notepad.exe",
+			taskLabel: "uncertain",
+			actions: [
+				{ action: "click", elementIndex: 0 },
+				{ action: "click", elementIndex: 0 },
+			],
+		},
+		ctx().context,
+	);
+	const payload = JSON.parse(driver.calls[3][2]);
+	assert.equal(payload.element_token, "opaque-handle");
+	assert.equal(payload.snapshot_id, undefined);
+	assert.match(firstText(result), /unverified/i);
+	assert.equal(driver.calls.length, 5);
+	assert.equal((result.details as { trail: Array<{ outcome: string }> }).trail[0].outcome, "unverified");
+});
+
+test("CUA 0.33.3 failed observation invalidates the previous snapshot", async () => {
+	const { tools, driver } = await handsHarness([
+		listWindowsResult(),
+		okCase(/get_window_state/, JSON.stringify({ snapshot_id: "s12345678", elements: [{ element_index: 0 }] })),
+		listWindowsResult(),
+		failCase(/get_window_state/, "window disappeared"),
+		listWindowsResult(),
+		okCase(/click/),
+	]);
+	const snapshot = tools.get("her_hands_snapshot")!;
+	await executeHands(snapshot, { process: "notepad.exe" }, ctx().context);
+	await executeHands(snapshot, { process: "notepad.exe" }, ctx().context);
+	const result = await executeHands(
+		tools.get("her_hands_act")!,
+		{ process: "notepad.exe", taskLabel: "after failed snapshot", actions: [{ action: "click", elementIndex: 0 }] },
+		ctx().context,
+	);
+	assert.match(firstText(result), /snapshot required/i);
+	assert.equal(driver.calls.filter((call) => call[1] === "click").length, 0);
+});
+
+test("CUA 0.33.3 rejects stale handles without pixel fallback or retry", async () => {
+	const { tools, driver } = await handsHarness([
+		listWindowsResult(),
+		failCase(/click/, JSON.stringify({ code: "stale_element_token" })),
+		listWindowsResult(),
+	]);
+	const act = tools.get("her_hands_act")!;
+	const input = {
+		process: "notepad.exe",
+		taskLabel: "stale",
+		actions: [
+			{ action: "click", elementIndex: 0 },
+			{ action: "click", elementIndex: 1 },
+		],
+	};
+	const result = await executeHands(act, input, ctx().context);
+	assert.match(firstText(result), /stale_element_token/);
+	assert.equal(driver.calls.filter((call) => call[1] === "click").length, 1);
+	assert.equal(JSON.parse(driver.calls[1][2]).x, undefined);
+	const retry = await executeHands(act, input, ctx().context);
+	assert.match(firstText(retry), /snapshot required/);
+});
+
+test("CUA 0.33.3 maps drag endpoints and retains write confirmation", async () => {
+	const { tools, driver } = await handsHarness([listWindowsResult(), okCase(/drag/)], { desktopTier: 2 });
+	const context = ctx(true, true);
+	const result = await executeHands(
+		tools.get("her_hands_act")!,
+		{ process: "notepad.exe", taskLabel: "drag", actions: [{ action: "drag", fromX: 1, fromY: 2, toX: 3, toY: 4 }] },
+		context.context,
+	);
+	assert.match(firstText(result), /hands act delivered/);
+	assert.equal(context.confirmCalls, 1);
+	const payload = JSON.parse(driver.calls[1][2]);
+	assert.deepEqual([payload.from_x, payload.from_y, payload.to_x, payload.to_y], [1, 2, 3, 4]);
+	assert.equal(payload.delivery_mode, "background");
+});
+
+test("CUA native action returns a fresh observation and does not claim goal success", async () => {
+	const { tools, driver } = await handsHarness([
+		listWindowsResult(),
+		okCase(/click/),
+		okCase(
+			/get_window_state/,
+			JSON.stringify({
+				snapshot_id: "s00000002",
+				elements: [{ element_index: 9, element_token: "new:9" }],
+				screenshot_png_b64: "aGVsbG8=",
+			}),
+		),
+		listWindowsResult(),
+	]);
+	const r = await executeHands(
+		tools.get("her_hands_act")!,
+		{ process: "notepad.exe", taskLabel: "readback", actions: [{ action: "click", elementIndex: 0 }] },
+		ctx().context,
+	);
+	assert.equal((r.details as { goalVerified: boolean }).goalVerified, false);
+	assert.ok(r.content.some((c) => c.type === "image"));
+	assert.match(firstText(r), /s00000002/);
+	const next = await executeHands(
+		tools.get("her_hands_act")!,
+		{ process: "notepad.exe", taskLabel: "readback", actions: [{ action: "click", elementIndex: 0 }] },
+		ctx().context,
+	);
+	assert.match(firstText(next), /absent from the latest/);
+	assert.equal(driver.calls.filter((c) => c[1] === "click").length, 1);
+});
+test("CUA native snapshots cannot cross chats", async () => {
+	const { tools, driver } = await handsHarness([listWindowsResult()]);
+	const other = ctx().context;
+	other.sessionManager = { getSessionId: () => "other" } as ExtensionContext["sessionManager"];
+	const r = await executeHands(
+		tools.get("her_hands_act")!,
+		{ process: "notepad.exe", taskLabel: "other", actions: [{ action: "click", elementIndex: 0 }] },
+		other,
+	);
+	assert.match(firstText(r), /snapshot required/);
+	assert.equal(driver.calls.filter((c) => c[1] === "click").length, 0);
+});

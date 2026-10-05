@@ -1,6 +1,9 @@
+import { CUA_TOOL_NAMES } from "../hands/cua-tools.ts";
 export type GovernedToolResolution = { destructive: boolean; registered: boolean };
 
 export const governedTools: Record<string, { destructive: boolean }> = {
+	// CUA enforces its own live-UI policy and exact per-action approval, like legacy hands.
+	...Object.fromEntries(CUA_TOOL_NAMES.map((name) => [name, { destructive: false }])),
 	bash: { destructive: true },
 	edit: { destructive: true },
 	write: { destructive: true },

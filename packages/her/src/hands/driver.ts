@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 
-export const CUA_DRIVER_M0 = {
-	version: "0.7.0",
+export const CUA_DRIVER = {
+	version: "0.33.3",
 	binary: "cua-driver",
 	callCommand: "call",
 	callArgShape: "cua-driver call <tool> <json-args>",
@@ -23,12 +23,12 @@ export const CUA_DRIVER_M0 = {
 	backgroundUnavailableSignal: "background_unavailable",
 	notepadSnapshotCommand:
 		'\'{"pid":30048,"window_id":25103322,"include_screenshot":false,"max_elements":80}\' | cua-driver call get_window_state',
-	evidenceFile: "pi-package/skills/her-hands-desktop/evidence/cua-driver-0.7.0-m0.txt",
+	evidenceFile: "pi-package/skills/her-hands-desktop/evidence/cua-driver-0.33.3.md",
 } as const;
 
 export type CuaDriverToolName =
-	| typeof CUA_DRIVER_M0.snapshotTool
-	| (typeof CUA_DRIVER_M0.actionTools)[keyof typeof CUA_DRIVER_M0.actionTools];
+	| typeof CUA_DRIVER.snapshotTool
+	| (typeof CUA_DRIVER.actionTools)[keyof typeof CUA_DRIVER.actionTools];
 
 export interface DriverResult {
 	ok: boolean;
@@ -39,22 +39,31 @@ export interface DriverResult {
 }
 
 export interface HandsDriver {
-	run(args: string[], opts?: { timeoutMs?: number }): Promise<DriverResult>;
+	run(args: string[], opts?: { timeoutMs?: number; signal?: AbortSignal }): Promise<DriverResult>;
 }
 
 export class CuaCliDriver implements HandsDriver {
 	readonly #binary: string;
 	readonly #defaultTimeoutMs: number;
+	readonly #socket?: string;
 
-	constructor(opts: { binary: string; defaultTimeoutMs: number }) {
+	constructor(opts: { binary: string; defaultTimeoutMs: number; socket?: string }) {
 		this.#binary = opts.binary;
+		this.#socket = opts.socket;
 		this.#defaultTimeoutMs = opts.defaultTimeoutMs;
 	}
 
-	run(args: string[], opts: { timeoutMs?: number } = {}): Promise<DriverResult> {
+	run(args: string[], opts: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<DriverResult> {
 		const timeoutMs = opts.timeoutMs ?? this.#defaultTimeoutMs;
 		return new Promise((resolve, reject) => {
-			const child = spawn(this.#binary, args, { windowsHide: true });
+			opts.signal?.throwIfAborted();
+			const effectiveArgs =
+				this.#socket && args[0] === "call" && !args.includes("--socket")
+					? [...args, "--socket", this.#socket]
+					: args;
+			const child = spawn(this.#binary, effectiveArgs, { windowsHide: true });
+			const abort = () => child.kill();
+			opts.signal?.addEventListener("abort", abort, { once: true });
 			let stdout = "";
 			let stderr = "";
 			let timedOut = false;
@@ -74,13 +83,15 @@ export class CuaCliDriver implements HandsDriver {
 				if (settled) return;
 				settled = true;
 				clearTimeout(timer);
+				opts.signal?.removeEventListener("abort", abort);
 				reject(error);
 			});
 			child.once("close", (exitCode) => {
 				if (settled) return;
 				settled = true;
 				clearTimeout(timer);
-				resolve({ ok: exitCode === 0 && !timedOut, exitCode, stdout, stderr, timedOut });
+				opts.signal?.removeEventListener("abort", abort);
+				resolve({ ok: exitCode === 0 && !timedOut && !opts.signal?.aborted, exitCode, stdout, stderr, timedOut });
 			});
 		});
 	}

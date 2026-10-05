@@ -47,6 +47,9 @@ export interface HandsResolvedConfig {
 	desktopMaxActionsPerTask: number;
 	desktopActionTimeoutS: number;
 	desktopDriverBinary: string;
+	driverSocket?: string;
+	browserEnabled: boolean;
+	browserAllowedApps: readonly string[];
 }
 
 export interface HandsPolicyInput {
@@ -68,6 +71,9 @@ export function resolveHandsConfig(config: HerConfig["hands"]): HandsResolvedCon
 		desktopMaxActionsPerTask: config.desktopMaxActionsPerTask,
 		desktopActionTimeoutS: config.desktopActionTimeoutS,
 		desktopDriverBinary: config.desktopDriverBinary,
+		driverSocket: config.driverSocket,
+		browserEnabled: config.browserEnabled === true,
+		browserAllowedApps: splitProcessList(config.browserAllowedApps ?? "chrome.exe,msedge.exe"),
 	};
 }
 

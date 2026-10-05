@@ -23,7 +23,7 @@ import { clearConditionalRules, loadConditionalRules } from "./conditional-rules
 import { registerDesignCanvasTools, withCanvasNag } from "./design-canvas/tools.ts";
 import { registerDesignProjectTools } from "./design-project/tools.ts";
 import { registerDesignVersionTools } from "./design-versions/index.ts";
-import { CuaCliDriver } from "./hands/driver.ts";
+import { CuaMcpDriver } from "./hands/mcp-driver.ts";
 import { resolveHandsConfig } from "./hands/policy.ts";
 import { registerHandsTools } from "./hands/tools.ts";
 import { registerHerActTools } from "./her-actions/tools.ts";
@@ -3018,18 +3018,15 @@ export default function her(pi: ExtensionAPI): void {
 		},
 	});
 
+	const handsDriverConfig = loadConfig(resolve(memoryDir, ".her", "config.yaml")).hands;
 	registerHandsTools(pi, {
 		mem,
 		loadHandsConfig: () => resolveHandsConfig(loadConfig(resolve(memoryDir, ".her", "config.yaml")).hands),
-		driver: {
-			run(args, opts) {
-				const config = loadConfig(resolve(memoryDir, ".her", "config.yaml")).hands;
-				return new CuaCliDriver({
-					binary: config.desktopDriverBinary,
-					defaultTimeoutMs: config.desktopActionTimeoutS * 1000,
-				}).run(args, opts);
-			},
-		},
+		driver: new CuaMcpDriver({
+			binary: handsDriverConfig.desktopDriverBinary,
+			socket: handsDriverConfig.driverSocket,
+			defaultTimeoutMs: handsDriverConfig.desktopActionTimeoutS * 1000,
+		}),
 	});
 	registerPreviewTools(pi);
 	registerDesignProjectTools(pi);

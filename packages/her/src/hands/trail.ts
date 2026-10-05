@@ -6,7 +6,7 @@ export interface HandsTrailEntry {
 	action: HandsActionKind;
 	targetProcess: string;
 	deliveryMode: "background" | "foreground";
-	outcome: "ok" | "denied" | "error";
+	outcome: "ok" | "denied" | "error" | "unverified";
 	detail: string;
 }
 

@@ -35,6 +35,9 @@ export interface HerConfig {
 		desktopMaxActionsPerTask: number;
 		desktopActionTimeoutS: number;
 		desktopDriverBinary: string;
+		driverSocket?: string;
+		browserEnabled?: boolean;
+		browserAllowedApps?: string;
 	};
 }
 
@@ -71,6 +74,9 @@ export const DEFAULT_CONFIG: HerConfig = {
 		desktopMaxActionsPerTask: 30,
 		desktopActionTimeoutS: 30,
 		desktopDriverBinary: "cua-driver",
+		driverSocket: "",
+		browserEnabled: false,
+		browserAllowedApps: "chrome.exe,msedge.exe",
 	},
 };
 
@@ -128,6 +134,9 @@ export function renderConfig(config: HerConfig = DEFAULT_CONFIG): string {
 		`  desktop_max_actions_per_task: ${config.hands.desktopMaxActionsPerTask}`,
 		`  desktop_action_timeout_s: ${config.hands.desktopActionTimeoutS}`,
 		`  desktop_driver_binary: ${config.hands.desktopDriverBinary}`,
+		`  driver_socket: ${config.hands.driverSocket ?? ""}`,
+		`  browser_enabled: ${config.hands.browserEnabled ?? false}`,
+		`  browser_allowed_apps: ${config.hands.browserAllowedApps ?? "chrome.exe,msedge.exe"}`,
 		"",
 	].join("\n");
 }
