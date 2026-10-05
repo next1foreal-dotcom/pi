@@ -4,7 +4,8 @@ import { pathToFileURL } from "node:url";
 import { loadConfig } from "../her-core/config.ts";
 import { readProtectedFile, sha256 } from "../her-core/improvement-plan.ts";
 import { OpenAICompatibleModel } from "../her-core/model.ts";
-import { HerGrowthHost } from "./host.ts";
+import { GrokBuildModel } from "./grok-build.ts";
+import { type GrowthHostPlan, HerGrowthHost } from "./host.ts";
 import { recallGrowthMethods } from "./journal.ts";
 import { advance, reopen, startInquiry, tryMethod } from "./loop.ts";
 import { experiences } from "./parse.ts";
@@ -23,7 +24,10 @@ export async function runGrowthCli(
 			"growth: <init|step|status|pilot|task|use|wake|recall|probe-model> <memoryRoot> <hostPlan-relative-path> [experience-file|task-id] [expectation]",
 		);
 	const root = resolve(cwd, rootArg);
-	const model = new OpenAICompatibleModel(loadConfig(resolve(root, ".her/config.yaml")), env);
+	const plan = JSON.parse((await readProtectedFile(root, planPath, 1024 * 1024)).toString("utf8")) as GrowthHostPlan;
+	const model = plan.model?.grokBuild
+		? new GrokBuildModel(root, plan, env)
+		: new OpenAICompatibleModel(loadConfig(resolve(root, ".her/config.yaml")), env);
 	const host = await HerGrowthHost.open(root, planPath, cwd, model);
 	if (action === "probe-model") {
 		const authorization = argument

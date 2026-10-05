@@ -40,8 +40,10 @@ import {
 	renderApplicabilityFacts,
 	validateApplicabilityFacts,
 } from "./applicability.ts";
+import { GrokBuildModel, type GrokBuildTransport, grokBuildSpend } from "./grok-build.ts";
 import { GrowthJournal } from "./journal.ts";
 import { createReasoner, type GrowthCompletionPolicy, growthCompletionOptions, isModelProbeEcho } from "./model.ts";
+import { assertNativeFirstPurpose, nativeReadiness } from "./native-readiness.ts";
 import { record } from "./parse.ts";
 import {
 	auditGrowthPilot,
@@ -92,6 +94,7 @@ export interface GrowthHostPlan {
 		provider: string;
 		maxOutputTokens: number;
 		requestOptions?: GrowthCompletionPolicy;
+		grokBuild?: GrokBuildTransport;
 		inputUsdPerMillion: number;
 		outputUsdPerMillion: number;
 	};
@@ -182,13 +185,18 @@ export class HerGrowthHost implements GrowthHost {
 			throw new Error("approved frozen host plan required");
 		// These settings are part of the frozen model plan, not a response-driven fallback.
 		growthCompletionOptions(plan.model.maxOutputTokens, plan.model.requestOptions);
-		const cfg = loadRuntimeConfig(root);
-		if (
-			plan.model.request !== cfg.llm.modelFast ||
-			plan.model.provider !== new URL(cfg.llm.baseUrl).host ||
-			!plan.model.reported?.length
-		)
-			throw new Error("host plan must use configured model/provider");
+		if (plan.model.grokBuild) {
+			if (!(model instanceof GrokBuildModel)) throw new Error("approved native model port required");
+			await model.verifyBinding(plan, root);
+		} else {
+			const cfg = loadRuntimeConfig(root);
+			if (
+				plan.model.request !== cfg.llm.modelFast ||
+				plan.model.provider !== new URL(cfg.llm.baseUrl).host ||
+				!plan.model.reported?.length
+			)
+				throw new Error("host plan must use configured model/provider");
+		}
 		for (const value of [
 			plan.model.maxOutputTokens,
 			plan.model.inputUsdPerMillion,
@@ -405,6 +413,7 @@ export class HerGrowthHost implements GrowthHost {
 			(reservedTokens * Math.max(this.plan.model.inputUsdPerMillion, this.plan.model.outputUsdPerMillion)) / 1e6;
 		await storeLock(this.journal.root, async () => {
 			const rows = await this.journal.read();
+			assertNativeFirstPurpose(this.plan, rows, purpose);
 			if (this.plan.pilot && !rows.some((r) => r.kind === "pilot-run-reserved"))
 				throw new Error("pilot runner reservation required before any model request");
 			if (this.plan.budget.requests !== undefined) {
@@ -530,6 +539,8 @@ export class HerGrowthHost implements GrowthHost {
 			model: result.model,
 			provider: result.provider,
 			finishReason: result.finishReason ?? "unknown",
+			...(this.plan.model.grokBuild ? grokBuildSpend(result) : {}),
+			...nativeReadiness(this.plan, purpose, result, failure),
 			...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
 			prompt: redactSecrets(prompt),
 			response: redactSecrets(result.text),

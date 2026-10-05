@@ -2,8 +2,11 @@ import { readdir, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { loadRuntimeConfig } from "../her-core/bg-task-config.ts";
 import { canonicalJson, readProtectedFile, sha256 } from "../her-core/improvement-plan.ts";
+import { growthModelEndpoint, validateGrokBuildPolicy } from "./grok-build.ts";
+import { auditAdditionalUnknown, type HistoricalUnknown } from "./historical-risk.ts";
 import type { GrowthHostPlan } from "./host.ts";
 import { GrowthJournal, type GrowthReceipt } from "./journal.ts";
+import { auditNativeDiscovery, nativeDiscoveryBootstrap } from "./native-readiness.ts";
 import { record, text } from "./parse.ts";
 import { growthUsage } from "./task.ts";
 
@@ -26,7 +29,8 @@ export interface GrowthPilotAuthorization {
 		decisionDigest: string;
 	};
 	previousPilot: { inquiryId: string; stopDigest: string };
-	modelProbe: { inquiryId: string; receiptDigest: string };
+	modelProbe: { inquiryId: string; receiptDigest: string } | { scope: "first-discovery-response" };
+	additionalHistoricalUnknown?: HistoricalUnknown;
 }
 /** The owner approves the complete immutable proposal; runtime clock fields are frozen separately once. */
 export function growthPilotProposalDigest(plan: Readonly<GrowthHostPlan>): string {
@@ -75,8 +79,8 @@ export async function validatePilotAuthorization(root: string, plan: Readonly<Gr
 	)
 		throw new Error("pilot authorization bound to another memory root");
 	if (
-		auth.endpoint !== loadRuntimeConfig(root).llm.baseUrl ||
-		plan.model.request !== loadRuntimeConfig(root).llm.modelFast
+		auth.endpoint !== growthModelEndpoint(root, plan) ||
+		(!plan.model.grokBuild && plan.model.request !== loadRuntimeConfig(root).llm.modelFast)
 	)
 		throw new Error("pilot endpoint changed from approved configuration");
 	const start = Date.parse(auth.startsAt);
@@ -114,6 +118,22 @@ export async function validatePilotAuthorization(root: string, plan: Readonly<Gr
 		approvedAt > start
 	)
 		throw new Error("new direct owner approval and specific historical risk acceptance required");
+	if (plan.model.grokBuild) {
+		validateGrokBuildPolicy(plan);
+		if (
+			!nativeDiscoveryBootstrap(plan) ||
+			approval.acceptsNativeLimits !== true ||
+			canonicalJson(approval.nativePolicy) !== canonicalJson(plan.model.grokBuild)
+		)
+			throw new Error("direct owner acceptance of subscription cost/reasoning limits and first discovery required");
+	} else if ("scope" in auth.modelProbe)
+		throw new Error("native discovery bootstrap requires native subscription policy");
+	if (
+		auth.additionalHistoricalUnknown &&
+		(approval.acceptsAdditionalHistoricalUnknown !== true ||
+			canonicalJson(approval.additionalHistoricalUnknown) !== canonicalJson(auth.additionalHistoricalUnknown))
+	)
+		throw new Error("specific additional unknown requires separate direct owner acceptance");
 	const experience = plan.pilot.experience;
 	if (!experience || sha256(await readProtectedFile(root, experience.file, 1024 * 1024)) !== experience.sha256)
 		throw new Error("approved raw experience artifact changed");
@@ -144,23 +164,29 @@ export async function auditGrowthPilot(root: string, plan: Readonly<GrowthHostPl
 		.find((h) => h.id === auth.previousPilot.inquiryId)
 		?.rows.find((r) => r.kind === "pilot-stop" && r.digest === auth.previousPilot.stopDigest);
 	if (!stop || Date.parse(stop.at) > approvedAt) throw new Error("previous stopped pilot and fresh approval required");
-	const probeRows = history.find((h) => h.id === auth.modelProbe.inquiryId)?.rows;
-	const probe = probeRows?.find((r) => r.kind === "model-probe-result" && r.digest === auth.modelProbe.receiptDigest);
-	const measured = probeRows?.find((r) => r.kind === "model-result" && r.data.runId === probe?.data.runId);
-	const probedPlan = probeRows?.find((r) => r.kind === "plan" && r.data.digest === probe?.data.planDigest);
-	if (
-		!probe ||
-		probe.data.status !== "model-ready" ||
-		!measured ||
-		measured.data.error ||
-		measured.data.finishReason !== "stop" ||
-		probe.data.tokens !== measured.data.tokens ||
-		probe.data.reportedModel !== measured.data.model ||
-		!plan.model.reported.includes(String(probe.data.reportedModel)) ||
-		probe.data.provider !== plan.model.provider ||
-		record(probedPlan?.data.model, "probed model plan").request !== plan.model.request
-	)
-		throw new Error("existing model-ready and actual usage receipt required; no new connectivity probe");
+	if ("scope" in auth.modelProbe) {
+		auditNativeDiscovery(plan, history.find((h) => h.id === plan.inquiryId)?.rows ?? []);
+	} else {
+		const modelProbe = auth.modelProbe;
+		const probeRows = history.find((h) => h.id === modelProbe.inquiryId)?.rows;
+		const probe = probeRows?.find((r) => r.kind === "model-probe-result" && r.digest === modelProbe.receiptDigest);
+		const measured = probeRows?.find((r) => r.kind === "model-result" && r.data.runId === probe?.data.runId);
+		const probedPlan = probeRows?.find((r) => r.kind === "plan" && r.data.digest === probe?.data.planDigest);
+		if (
+			!probe ||
+			probe.data.status !== "model-ready" ||
+			!measured ||
+			measured.data.error ||
+			measured.data.finishReason !== "stop" ||
+			probe.data.tokens !== measured.data.tokens ||
+			probe.data.reportedModel !== measured.data.model ||
+			!plan.model.reported.includes(String(probe.data.reportedModel)) ||
+			probe.data.provider !== plan.model.provider ||
+			record(probedPlan?.data.model, "probed model plan").request !== plan.model.request
+		)
+			throw new Error("existing model-ready and actual usage receipt required; no new connectivity probe");
+	}
+	auditAdditionalUnknown(history, auth);
 	for (const h of history) {
 		if (h.rows.some((r) => typeof r.at !== "string" || !Number.isFinite(Date.parse(r.at))))
 			throw new Error("invalid growth receipt timestamp");
@@ -185,11 +211,22 @@ export async function auditGrowthPilot(root: string, plan: Readonly<GrowthHostPl
 				throw new Error("invalid actual usage accounting");
 		}
 		for (const r of h.rows) {
+			if (
+				h.id !== plan.inquiryId &&
+				r.kind === "model-result" &&
+				r.data.costBasis === "api-equivalent-estimate" &&
+				r.data.providerReportedUsd === "unknown"
+			)
+				throw new Error("unreconciled subscription cost outside approved inquiry; stop pilot");
 			const original = h.id === auth.historicalUnknown.inquiryId && r.data.runId === auth.historicalUnknown.runId;
 			if (
 				(r.kind === "model-unknown" ||
 					(r.kind === "model-reserve" && !results.some((s) => s.data.runId === r.data.runId))) &&
-				!original
+				!original &&
+				!(
+					h.id === auth.additionalHistoricalUnknown?.inquiryId &&
+					r.data.runId === auth.additionalHistoricalUnknown.runId
+				)
 			)
 				throw new Error("unreconciled spend outside specific owner decision; stop pilot");
 			if (h.id !== plan.inquiryId && r.kind === "model-reserve" && Date.parse(r.at) >= Date.parse(auth.startsAt))
@@ -212,6 +249,9 @@ export async function auditGrowthPilot(root: string, plan: Readonly<GrowthHostPl
 			tokens: "unknown",
 			usd: "unknown",
 		},
+		...(auth.additionalHistoricalUnknown
+			? { additionalHistoricalUnknown: { ...auth.additionalHistoricalUnknown, tokens: "unknown", usd: "unknown" } }
+			: {}),
 		knownTokens: inquiries.reduce((n, h) => n + h.usage.knownTokens, 0),
 		knownEstimatedUsd: inquiries.reduce((n, h) => n + h.usage.knownEstimatedUsd, 0),
 		totalTokens: "unknown",

@@ -91,7 +91,11 @@ for (const block of [
 		}
 		if (block === "window")
 			plan.pilotAuthorization!.expiresAt = new Date(Date.parse(plan.expiresAt) + 60000).toISOString();
-		if (block === "probe") plan.pilotAuthorization!.modelProbe.receiptDigest = sha256("different receipt");
+		if (block === "probe")
+			plan.pilotAuthorization!.modelProbe = {
+				inquiryId: "historical-inquiry",
+				receiptDigest: sha256("different receipt"),
+			};
 		if (block === "decision")
 			plan.pilotAuthorization!.historicalUnknown.decisionDigest = sha256("different decision");
 		if (block === "approval-change") await writeFile(join(root, plan.pilotAuthorization!.approval.file), "changed");

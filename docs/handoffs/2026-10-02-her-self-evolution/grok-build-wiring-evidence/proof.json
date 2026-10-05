@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "scope": "engineering-only-native-subscription-wiring",
+  "newSupplierRequests": 0,
+  "learningSucceeded": false,
+  "newWindowFrozen": false,
+  "modelReady": false,
+  "baseCommit": "f70921ae25fdea4f1af6cf4aeb4dc0a431b59518",
+  "createdAt": "2026-10-05T18:33:09.4803606+08:00",
+  "pending": [
+    "direct owner acceptance of specifically additional historical unknown",
+    "direct owner acceptance of subscription USD estimate and return-time reasoning overrun",
+    "actual native provider model/body/finish/usage and growth outcomes"
+  ],
+  "sourceFiles": [
+    {
+      "file": "packages/her/src/growth-experiment/cli.ts",
+      "sha256": "1e420326f66416439443a94e2e3d733429755257f4efe5ad3bc303f9675be61b"
+    },
+    {
+      "file": "packages/her/src/growth-experiment/host.ts",
+      "sha256": "6d2224de4fc18d67e9be29aa61bf8d8348e1cf756a41a5c200abbf207df5d7bc"
+    },
+    {
+      "file": "packages/her/src/growth-experiment/pilot-authorization.ts",
+      "sha256": "b6f96e2af83903e406e9b947b4e61e83bd77a3a33ec0aaeffa96c3003d23a6ee"
+    },
+    {
+      "file": "packages/her/src/growth-experiment/grok-build.ts",
+      "sha256": "0ecb796cc5685e3c449522264afd5d42b4b51cb675a6e90339a81ead7b24e18c"
+    },
+    {
+      "file": "packages/her/src/growth-experiment/historical-risk.ts",
+      "sha256": "d6cba752deccd6363f45a72165012322a8a0890d3989f9dac9cb4f869e57701c"
+    },
+    {
+      "file": "packages/her/src/growth-experiment/native-readiness.ts",
+      "sha256": "297b612667dfb23c542d962cdffcb1306020574023238a684aca20e9958b9d18"
+    },
+    {
+      "file": "packages/her/test/growth-grok-build.test.ts",
+      "sha256": "98cc73e409f1db1997045e0d9bd88debb870a66907b242121ce23fca5effa422"
+    },
+    {
+      "file": "packages/her/test/growth-pilot-authorization.test.ts",
+      "sha256": "6469611f49ffd0b4808fb915f1969936c2c9e08abc69247c625adf69fe529434"
+    }
+  ],
+  "newRiskDecisionAppended": false,
+  "preservedPilot02Artifacts": [
+    {
+      "unchanged": true,
+      "file": "frozen-plan.json",
+      "sha256": "d6f0b7156c61a0bd744c73fdaf753044074377db87269e897fe42e35a360d636"
+    },
+    {
+      "unchanged": true,
+      "file": "owner-approval.json",
+      "sha256": "82c3155c0b8f377618393b32c63c863b5a41f2bd9a9826e4014ebdaa16be5f0e"
+    },
+    {
+      "unchanged": true,
+      "file": "growth-pilot-02.md",
+      "sha256": "05553683fa3e5f010e19f9ca0247a4e3a2f007dd7bb341cec6f08035e524b35d"
+    },
+    {
+      "unchanged": true,
+      "file": "original-experiences.json",
+      "sha256": "367e8bc35633a250e2ffaba7379e9bc0921a134f01aaf292f45b87f875a935bb"
+    },
+    {
+      "unchanged": true,
+      "file": "original-learning-input.txt",
+      "sha256": "5ff1f65cb61b32486cf6461688596a9c66944218da2745db2ef104cc401646af"
+    }
+  ],
+  "checks": {
+    "boundaryRegression": {
+      "exitCode": 0,
+      "tests": 92,
+      "skipped": 0,
+      "command": "node --import tsx --test packages/her/test/growth-grok-build.test.ts packages/her/test/growth-pilot-authorization.test.ts packages/her/test/model-response-boundary.test.ts"
+    },
+    "npmCheck": {
+      "exitCode": 0,
+      "warnings": 0,
+      "existingInfos": 5,
+      "command": "npm run check"
+    },
+    "growthRegression": {
+      "exitCode": 0,
+      "tests": 223,
+      "skipped": 0,
+      "command": "node --import tsx --test packages/her/test/growth-grok-build.test.ts packages/her/test/growth-pilot-authorization.test.ts packages/her/test/growth-pilot-runner.test.ts packages/her/test/growth-probe-host.test.ts packages/her/test/growth-probe-contract.test.ts packages/her/test/growth-model-probe.test.ts packages/her/test/growth-host.test.ts packages/her/test/growth-experiment.test.ts packages/her/test/growth-correction-host.test.ts packages/her/test/growth-completion-policy.test.ts packages/her/test/growth-applicability.test.ts packages/her/test/growth-task-entry.test.ts"
+    },
+    "uniqueTests": 264
+  },
+  "merged": false,
+  "deployed": false
+}
