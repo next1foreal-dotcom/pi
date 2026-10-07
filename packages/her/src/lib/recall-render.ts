@@ -22,6 +22,7 @@ export function renderRecall(notes: Note[], maxChars = 500): string {
 			body,
 		) +
 		"\nCite complete source IDs exactly as shown, including the namespace (for example [semantic/n01]); never shorten them to [n01]." +
+		"\nFor a missing part, make a targeted follow-up and retainSourceIds needed for the parts already supported (fewer than k). Check dates and scope before treating a statement as current; a proposal or pending item is not a confirmed outcome. If evidence remains missing, say what could not be verified. Retaining a source does not establish its truth." +
 		(clipped
 			? "\nSome notes are truncated. Repeat her_recall with the relevant name/ID and a larger maxChars (up to 8000) before concluding facts are missing."
 			: "")

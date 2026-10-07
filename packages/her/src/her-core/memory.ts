@@ -535,6 +535,33 @@ export interface GetContextOptions {
 	prior?: GetContextPriorOptions;
 }
 
+const RETAINED_SOURCE_UNAVAILABLE_ERROR =
+	"Requested retained source is unavailable in the current recall scope; search again without retaining it.";
+
+function normalizeRecallRetentionIds(value: unknown): string[] {
+	if (value === undefined) return [];
+	if (!Array.isArray(value)) throw new Error("retainSourceIds must be an array of source IDs");
+	const ids: string[] = [];
+	const seen = new Set<string>();
+	for (const id of value) {
+		if (typeof id !== "string" || id.trim().length === 0 || id !== id.trim()) {
+			throw new Error("retainSourceIds must contain non-empty source IDs");
+		}
+		if (seen.has(id)) continue;
+		seen.add(id);
+		ids.push(id);
+	}
+	return ids;
+}
+
+function validateRecallRetentionK(value: number | undefined): number {
+	const k = value ?? 8;
+	if (!Number.isSafeInteger(k) || k < 1) {
+		throw new Error("k must be a finite safe positive integer when retainSourceIds is used");
+	}
+	return k;
+}
+
 export interface MemoryContext {
 	choiceModel: string;
 	context: string;
@@ -761,13 +788,49 @@ export class Memory {
 
 	async recall(
 		query: string,
-		opts: { k?: number; recordAccess?: boolean; privacy?: MemoryPrivacy } = {},
+		opts: {
+			k?: number;
+			recordAccess?: boolean;
+			privacy?: MemoryPrivacy;
+			retainSourceIds?: string[];
+		} = {},
 	): Promise<Note[]> {
 		const corpus = (await buildCorpus(this.paths)).filter((doc) => allowsRecallPrivacy(doc.text, opts.privacy));
-		const hits = await rrfSearch(query, corpus, {
-			k: opts.k ?? 8,
-			semanticSearch: this.semanticSearch,
-		});
+		const retainedIds = normalizeRecallRetentionIds(opts.retainSourceIds);
+		const k = retainedIds.length > 0 ? validateRecallRetentionK(opts.k) : (opts.k ?? 8);
+		let hits: Note[];
+		if (retainedIds.length === 0) {
+			hits = await rrfSearch(query, corpus, {
+				k,
+				semanticSearch: this.semanticSearch,
+			});
+		} else {
+			if (retainedIds.length >= k) {
+				throw new Error(
+					"retainSourceIds must retain fewer sources than k; choose fewer sources or increase k to leave room for a fresh query hit",
+				);
+			}
+			const byId = new Map(corpus.map((doc) => [doc.id, doc]));
+			if (retainedIds.some((id) => !byId.has(id))) throw new Error(RETAINED_SOURCE_UNAVAILABLE_ERROR);
+			const ranked = await rrfSearch(query, corpus, {
+				k,
+				semanticSearch: this.semanticSearch,
+			});
+			const retained = retainedIds.map((id) => {
+				const doc = byId.get(id);
+				if (!doc) throw new Error(RETAINED_SOURCE_UNAVAILABLE_ERROR);
+				const rankedNote = ranked.find((note) => note.id === id);
+				return { ...doc, score: rankedNote?.score ?? 0 };
+			});
+			const retainedSet = new Set(retainedIds);
+			const fresh: Note[] = [];
+			for (const note of ranked) {
+				if (retainedSet.has(note.id) || fresh.some((item) => item.id === note.id)) continue;
+				fresh.push(note);
+				if (fresh.length >= k - retained.length) break;
+			}
+			hits = [...retained, ...fresh];
+		}
 		if (opts.recordAccess !== false) {
 			await this.withStoreLock(() =>
 				recordAccess(

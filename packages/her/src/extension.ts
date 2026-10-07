@@ -1555,9 +1555,15 @@ export default function her(pi: ExtensionAPI): void {
 		name: "her_recall",
 		label: "Her Recall",
 		description:
-			"Search Samantha's owned memory. Defaults to public/shared; private and intimate require an explicit privacy level. For continuation, correction, or preferences, cover the subject/scope, completed vs pending state, responsible people, next action/order and dates; cite supporting source IDs. If a necessary link is absent, search again using names or IDs found in the results before claiming no record. Truncated notes can be read again with a larger maxChars.",
+			"Search Samantha's owned memory. Defaults to public/shared; private and intimate require an explicit privacy level. For continuation, correction, or preferences, cover the subject/scope, completed vs pending state, responsible people, next action/order and dates; cite supporting source IDs. If a necessary link is absent, search again using names or IDs found in the results before claiming no record. Truncated notes can be read again with a larger maxChars. On a targeted follow-up, retainSourceIds keeps the exact sources needed for already-supported parts of the question; retain fewer than k to leave room for new evidence. Retention does not confirm relevance or truth. Distinguish historical from current statements and pending from confirmed outcomes. If targeted searches still leave a gap, state what is unknown rather than inventing an answer.",
 		parameters: Type.Object({
 			query: Type.String({ description: "Memory search query" }),
+			retainSourceIds: Type.Optional(
+				Type.Array(Type.String({ minLength: 1 }), {
+					description:
+						"Exact source IDs from earlier hits to keep during a follow-up (for example semantic/n01). Deduplicated; must use fewer than k slots. Sources are re-read with the current privacy/lifecycle filters; unavailable sources fail explicitly.",
+				}),
+			),
 			maxChars: Type.Optional(
 				Type.Integer({
 					minimum: 1,
@@ -1576,7 +1582,11 @@ export default function her(pi: ExtensionAPI): void {
 			),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			const notes = await mem.recall(params.query, { k: params.k, privacy: params.privacy });
+			const notes = await mem.recall(params.query, {
+				k: params.k,
+				privacy: params.privacy,
+				retainSourceIds: params.retainSourceIds,
+			});
 			const receipts = buildRecallReceipts(notes);
 			const rendered = renderRecall(notes, params.maxChars);
 			const worldNotes = notes.filter((note) => note.kind === "world");
