@@ -152,6 +152,11 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	browser_viewport: { destructive: false },
 	browser_history: { destructive: false },
 	browser_batch: { destructive: false },
+	// Tab actions remain subject to the browser host control-owner gate.
+	browser_tabs_context: { destructive: false },
+	browser_tabs_create: { destructive: false },
+	browser_tabs_select: { destructive: false },
+	browser_tabs_close: { destructive: false },
 	artifact_publish: { destructive: true },
 	her_show_widget: { destructive: false },
 	her_ui_act: { destructive: false },

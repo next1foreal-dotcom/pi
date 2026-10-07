@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { type TSchema, Type } from "typebox";
+import { BROWSER_TAB_TOOL_NAMES, registerBrowserTabTools } from "./browser-tabs.ts";
 import {
 	DESIGN_LAB_PORT,
 	DESIGN_LAB_URL,
@@ -26,6 +27,7 @@ export const REQUEST_TIMEOUT_MS = 5000;
 export const BROWSER_REQUEST_TIMEOUT_MS = 30_000;
 
 const BATCHABLE_BROWSER_TOOL_NAMES = [
+	...BROWSER_TAB_TOOL_NAMES,
 	"browser_navigate",
 	"browser_read_page",
 	"browser_act",
@@ -43,6 +45,12 @@ const BATCHABLE_BROWSER_TOOL_NAMES = [
 
 const BATCHABLE_BROWSER_TOOL_NAME_SET: ReadonlySet<string> = new Set(BATCHABLE_BROWSER_TOOL_NAMES);
 const BROWSER_BATCH_MAX_STEPS = 20;
+const tabIdParameter = Type.Optional(
+	Type.String({
+		minLength: 1,
+		description: "Target from browser_tabs_context. Omit for the active tab; pair refs with the tab they came from.",
+	}),
+);
 
 export interface PreviewToolDeps {
 	/** Override for tests; defaults to globalThis.fetch. */
@@ -139,10 +147,13 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 		description:
 			"Navigate the shared co-drive live browser to a URL. The navigation goes through the UI host's " +
 			"control-owner gate: if Fei currently holds control, the request is denied.",
-		parameters: Type.Object({ url: Type.String() }),
+		parameters: Type.Object({
+			tabId: tabIdParameter,
+			url: Type.String(),
+		}),
 		async execute(_toolCallId, params, signal) {
 			const base = uiBase();
-			return await navigateStudioBrowser(fetchImpl, base, params.url, signal, browserTimeoutMs);
+			return await navigateStudioBrowser(fetchImpl, base, params.url, signal, browserTimeoutMs, params.tabId);
 		},
 	});
 
@@ -163,10 +174,13 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 			"payment or agreement field, do not plan to fill it — read the browser-discipline skill and ask Fei to " +
 			"take over. If the response is an error mentioning 'browser not started', the live browser has not been " +
 			"launched yet — ask Fei to open a page or use browser_navigate first.",
-		parameters: Type.Object({ maxChars: Type.Optional(Type.Number()) }),
+		parameters: Type.Object({
+			tabId: tabIdParameter,
+			maxChars: Type.Optional(Type.Number()),
+		}),
 		async execute(_toolCallId, params, signal) {
 			const base = uiBase();
-			const body = params.maxChars === undefined ? {} : { maxChars: params.maxChars };
+			const body = { maxChars: params.maxChars, tabId: params.tabId };
 			return await postJson(fetchImpl, base, "/api/browser/agent-read", body, signal, browserTimeoutMs, {
 				successText: (parsed) => renderPageRead(parsed),
 			});
@@ -190,6 +204,7 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 			"payment-confirm or terms-agreement control — those four classes are his to press; read the " +
 			"browser-discipline skill and ask him to take over.",
 		parameters: Type.Object({
+			tabId: tabIdParameter,
 			ref: Type.String(),
 			action: Type.Union([
 				Type.Literal("click"),
@@ -203,6 +218,7 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 			const base = uiBase();
 			// `text: ""` is a legitimate "clear this field", so only an absent text is dropped.
 			const body = {
+				tabId: params.tabId,
 				ref: params.ref,
 				action: params.action,
 				...(params.text === undefined ? {} : { text: params.text }),
@@ -246,14 +262,17 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 			"When the result says truncated: true, your query matched more than 20 elements — narrow it. " +
 			"If nothing matches, the query may be wrong, the element may not be on screen, or the page may " +
 			"have changed since your last read — read the page again and retry before concluding it is absent.",
-		parameters: Type.Object({ query: Type.String() }),
+		parameters: Type.Object({
+			tabId: tabIdParameter,
+			query: Type.String(),
+		}),
 		async execute(_toolCallId, params, signal) {
 			const base = uiBase();
 			return await postJson(
 				fetchImpl,
 				base,
 				"/api/browser/agent-find",
-				{ query: params.query },
+				{ query: params.query, tabId: params.tabId },
 				signal,
 				browserTimeoutMs,
 				{
@@ -281,10 +300,13 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 			"Fei holding the wheel does NOT block this (the gate stops acting, not reading). " +
 			"Optional maxChars limits the response length. When truncated is true, the text was cut — raise " +
 			"maxChars to see more. If the response mentions 'browser not started', ask Fei to open a page first.",
-		parameters: Type.Object({ maxChars: Type.Optional(Type.Number()) }),
+		parameters: Type.Object({
+			tabId: tabIdParameter,
+			maxChars: Type.Optional(Type.Number()),
+		}),
 		async execute(_toolCallId, params, signal) {
 			const base = uiBase();
-			const body = params.maxChars === undefined ? {} : { maxChars: params.maxChars };
+			const body = { maxChars: params.maxChars, tabId: params.tabId };
 			return await postJson(fetchImpl, base, "/api/browser/agent-page-text", body, signal, browserTimeoutMs, {
 				successText: (parsed) => {
 					const truncation = parsed?.truncated ? "\n[truncated — raise maxChars to see more]" : "";
@@ -307,11 +329,12 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 			"that no errors occurred. If the entries array is empty and droppedUnread is 0, the page genuinely " +
 			"has no console output of that type.",
 		parameters: Type.Object({
+			tabId: tabIdParameter,
 			filter: Type.Optional(Type.Union([Type.Literal("all"), Type.Literal("error"), Type.Literal("warn")])),
 		}),
 		async execute(_toolCallId, params, signal) {
 			const base = uiBase();
-			const body = params.filter ? { filter: params.filter } : {};
+			const body = { filter: params.filter, tabId: params.tabId };
 			return await postJson(fetchImpl, base, "/api/browser/agent-console", body, signal, browserTimeoutMs, {
 				successText: (parsed) => {
 					const entries = (parsed?.entries ?? []) as unknown[];
@@ -339,12 +362,13 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 			"entries are NOT the complete request log — some were pushed out. Do not treat a partial buffer " +
 			"as evidence that no failed requests occurred.",
 		parameters: Type.Object({
+			tabId: tabIdParameter,
 			filter: Type.Optional(Type.Union([Type.Literal("all"), Type.Literal("failed")])),
 			requestId: Type.Optional(Type.String()),
 		}),
 		async execute(_toolCallId, params, signal) {
 			const base = uiBase();
-			const body: Record<string, unknown> = {};
+			const body: Record<string, unknown> = { tabId: params.tabId };
 			if (params.filter) body.filter = params.filter;
 			if (params.requestId) body.requestId = params.requestId;
 			return await postJson(fetchImpl, base, "/api/browser/agent-network", body, signal, browserTimeoutMs, {
@@ -380,6 +404,7 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 			"a page first. Do not use this when you only need text or structure — browser_read_page and " +
 			"browser_get_text are faster and cheaper for those.",
 		parameters: Type.Object({
+			tabId: tabIdParameter,
 			scale: Type.Optional(Type.Number()),
 			region: Type.Optional(
 				Type.Object({
@@ -392,7 +417,7 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 		}),
 		async execute(_toolCallId, params, signal) {
 			const base = uiBase();
-			const body: Record<string, unknown> = {};
+			const body: Record<string, unknown> = { tabId: params.tabId };
 			if (params.scale !== undefined) body.scale = params.scale;
 			if (params.region !== undefined) body.region = params.region;
 			return await postJson(fetchImpl, base, "/api/browser/agent-screenshot", body, signal, browserTimeoutMs, {
@@ -424,6 +449,7 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 			"payment-confirm, or terms-agreement control — those are Fei's; read the browser-discipline skill " +
 			"and ask him to take over.",
 		parameters: Type.Object({
+			tabId: tabIdParameter,
 			act: Type.Object({
 				action: Type.String(),
 				text: Type.Optional(Type.String()),
@@ -458,7 +484,7 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 		}),
 		async execute(_toolCallId, params, signal) {
 			const base = uiBase();
-			const body: Record<string, unknown> = { act: params.act };
+			const body: Record<string, unknown> = { act: params.act, tabId: params.tabId };
 			if (params.target !== undefined) body.target = params.target;
 			return await postJson(fetchImpl, base, "/api/browser/agent-computer", body, signal, browserTimeoutMs, {
 				successText: () =>
@@ -484,6 +510,7 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 			"and ask him to take over. If the ref is stale (the element left the DOM), you get stale-ref — " +
 			"call browser_read_page again and use a fresh ref.",
 		parameters: Type.Object({
+			tabId: tabIdParameter,
 			ref: Type.String(),
 			value: Type.Union([Type.String(), Type.Number(), Type.Boolean()]),
 		}),
@@ -493,7 +520,7 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 				fetchImpl,
 				base,
 				"/api/browser/agent-form-input",
-				{ ref: params.ref, value: params.value },
+				{ ref: params.ref, value: params.value, tabId: params.tabId },
 				signal,
 				browserTimeoutMs,
 				{
@@ -527,12 +554,13 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 			"do not implement UI changes via eval; edit source code instead. If the result mentions " +
 			"'browser not started', ask Fei to open a page first.",
 		parameters: Type.Object({
+			tabId: tabIdParameter,
 			code: Type.String(),
 			timeoutMs: Type.Optional(Type.Number()),
 		}),
 		async execute(_toolCallId, params, signal) {
 			const base = uiBase();
-			const body: Record<string, unknown> = { code: params.code };
+			const body: Record<string, unknown> = { code: params.code, tabId: params.tabId };
 			if (params.timeoutMs !== undefined) body.timeoutMs = params.timeoutMs;
 			return await postJson(fetchImpl, base, "/api/browser/agent-eval", body, signal, browserTimeoutMs, {
 				successText: (parsed) => {
@@ -564,6 +592,7 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 			"Reset to preset 'desktop' when you are done testing responsive layouts — leaving a mobile " +
 			"emulation on would change Fei's view without him expecting it.",
 		parameters: Type.Object({
+			tabId: tabIdParameter,
 			preset: Type.Optional(Type.Union([Type.Literal("mobile"), Type.Literal("tablet"), Type.Literal("desktop")])),
 			width: Type.Optional(Type.Number()),
 			height: Type.Optional(Type.Number()),
@@ -571,7 +600,7 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 		}),
 		async execute(_toolCallId, params, signal) {
 			const base = uiBase();
-			const body: Record<string, unknown> = {};
+			const body: Record<string, unknown> = { tabId: params.tabId };
 			if (params.preset !== undefined) body.preset = params.preset;
 			if (params.width !== undefined) body.width = params.width;
 			if (params.height !== undefined) body.height = params.height;
@@ -603,6 +632,7 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 			"refs from previous reads are invalidated (the page changed) — call browser_read_page to get " +
 			"fresh refs.",
 		parameters: Type.Object({
+			tabId: tabIdParameter,
 			direction: Type.Union([Type.Literal("back"), Type.Literal("forward")]),
 		}),
 		async execute(_toolCallId, params, signal) {
@@ -611,7 +641,7 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 				fetchImpl,
 				base,
 				"/api/browser/agent-history",
-				{ direction: params.direction },
+				{ direction: params.direction, tabId: params.tabId },
 				signal,
 				browserTimeoutMs,
 				{
@@ -626,6 +656,11 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 		},
 	});
 
+	registerBrowserTabTools({ registerTool }, (body, signal) =>
+		postJson(fetchImpl, uiBase(), "/api/browser/tabs", body, signal, browserTimeoutMs, {
+			successText: (parsed) => JSON.stringify(parsed),
+		}),
+	);
 	registerTool({
 		name: "browser_batch",
 		label: "Browser Batch",
@@ -644,7 +679,7 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 			"input is passed through to that tool unchanged — this tool does not pick or rewrite " +
 			"parameters. Allowed names: browser_navigate, browser_read_page, browser_act, " +
 			"browser_find, browser_get_text, browser_console, browser_network, browser_screenshot, " +
-			"browser_computer, browser_form_input, browser_eval, browser_viewport, browser_history. " +
+			"browser_computer, browser_form_input, browser_eval, browser_viewport, browser_history, browser_tabs_context, browser_tabs_create, browser_tabs_select, browser_tabs_close. " +
 			"If a step returns control-owner-denied, that is the control-owner gate working, not a " +
 			"fault: Fei currently holds the wheel (or the browser is paused). Stop and wait for him " +
 			"to hand control back — do not retry the batch.",
@@ -705,6 +740,7 @@ export function registerPreviewTools(pi: ExtensionAPI, deps: PreviewToolDeps = {
 				const denied = result.details?.controlOwnerDenied === true;
 				if (!denied && batchStepSucceeded(result.details)) {
 					lines.push(`step ${i + 1}/${total}  ${action.name}   ok`);
+					if (stepText.trim()) lines.push(stepText);
 					continue;
 				}
 				const reason = denied ? "control-owner-denied" : batchFailureReason(stepText);
@@ -818,8 +854,9 @@ async function navigateStudioBrowser(
 	url: string,
 	signal: AbortSignal | undefined,
 	timeoutMs: number,
+	tabId?: string,
 ) {
-	return await postJson(fetchImpl, base, "/api/browser/agent-navigate", { url }, signal, timeoutMs, {
+	return await postJson(fetchImpl, base, "/api/browser/agent-navigate", { url, tabId }, signal, timeoutMs, {
 		successText: () => `Navigated to ${url}`,
 		controlOwnerDeniedText: () =>
 			"Navigation denied: control is with Fei right now. Ask him to hand control back (handback), then try again.",
@@ -912,7 +949,9 @@ async function postJson(
 		return textResult(opts.notConfiguredText());
 	}
 	if (!response.ok || parsed?.ok === false) {
-		return textResult(`Her UI rejected the request (HTTP ${response.status}): ${parsed?.error ?? "unknown error"}`);
+		return textResult(
+			`Her UI rejected the request (HTTP ${response.status}): ${parsed?.error ?? parsed?.reason ?? "unknown error"}${parsed?.message ? `: ${parsed.message}` : ""}`,
+		);
 	}
 	return textResult(opts.successText(parsed), { status: response.status });
 }
