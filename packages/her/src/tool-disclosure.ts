@@ -38,6 +38,7 @@ export function capabilityCategory(name: string): string {
 	if (/^(?:design_|canvas_|asset_)/.test(name)) return "design";
 	if (/^(?:doc_|pdf_|ocr_|archive_|convert_|imgmin_)/.test(name)) return "documents";
 	if (/^(?:mcp_|provider_|relay_|ui_|show_widget|her_publish)/.test(name)) return "integration";
+	if (name === "her_intelligent_ui") return "integration";
 	if (name.startsWith("her_")) return "memory";
 	return "other";
 }

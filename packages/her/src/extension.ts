@@ -144,6 +144,7 @@ import { type ReviewEvidenceItem, verifyEvidence } from "./her-core/review-evide
 import { cancelWakeup, fireDueWakeups, listWakeups, scheduleWakeup } from "./her-core/self-wakeup.ts";
 import { applyHerStatus, herStatusParameters } from "./her-core/status.ts";
 import { buildWidgetMessage } from "./her-core/widget.ts";
+import { registerIntelligentUiTools } from "./intelligent-ui/tools.ts";
 import { appendAuditLog } from "./lib/audit.ts";
 import { installHerStatusAutoModeBypass } from "./lib/automode-bypass.ts";
 import { evaluate, policyEnvelope, resolveToolCallAnchor } from "./lib/cedar.ts";
@@ -3094,6 +3095,7 @@ export default function her(pi: ExtensionAPI): void {
 	registerRelayProviderTools(pi);
 	registerUiActionTools(pi);
 	registerHerActTools(pi);
+	registerIntelligentUiTools(pi);
 	registerFileToolkit(pi);
 	registerMcpTools(pi);
 }

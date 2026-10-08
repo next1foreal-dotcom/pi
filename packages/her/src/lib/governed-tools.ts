@@ -38,6 +38,9 @@ export const governedTools: Record<string, { destructive: boolean }> = {
 	// G-378 inline visualization. Custom transcript message only; Cedar :6 total
 	// permit covers non-destructive tools, so this stays off named Cedar permits.
 	her_widget: { destructive: false },
+	// The catalog is read-only; rendering appends a custom transcript message.
+	// Business actions are executed separately by Studio's Action Gate.
+	her_intelligent_ui: { destructive: false },
 	// G-368 self-alarm. Writes wakeup rows and, when due, an urgent inbox
 	// message — same side-effect family as her_session_send. Heartbeat forbids
 	// destructive tools, so this stays out of unattended rounds.
