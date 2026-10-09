@@ -1,0 +1,20 @@
+{
+  "name": "her-durable-readonly-probe",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.19.0" },
+  "scripts": {
+    "test": "node --test --test-concurrency=1 policy.test.mjs integration.test.mjs",
+    "test:policy": "node --test policy.test.mjs"
+  },
+  "dependencies": {
+    "@earendil-works/chord": "1.0.0",
+    "@earendil-works/pi-ai": "1.0.0",
+    "@earendil-works/pi-durable": "1.0.0"
+  },
+  "overrides": {
+    "@earendil-works/chord": "1.0.0",
+    "@earendil-works/pi-ai": "1.0.0"
+  }
+}

@@ -1,0 +1,35 @@
+name: Her Observer Workspace Gates
+on:
+  pull_request:
+    paths:
+      - 'packages/her/**'
+      - '.pi/extensions/her-observer.ts'
+      - '.github/workflows/her-observer-workspace.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  workspace:
+    name: workspace (base/head comparison)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: head
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha || 'a142e559d847dde0eb6c512fe485ef4acf9957e9' }}
+          path: base
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Verify the regression evidence collector
+        run: node --test head/packages/her/experiments/durable-readonly/workspace-validation.test.mjs
+      - name: Locked install, real model data, regressions and full check on both revisions
+        env:
+          HER_EVIDENCE_DIR: ${{ runner.temp }}/her-workspace-evidence
+        run: node head/packages/her/experiments/durable-readonly/workspace-gates.mjs base head "$HER_EVIDENCE_DIR"
