@@ -1,1 +1,1 @@
-export { default } from "../../../packages/her/src/extension.ts";
+export { default } from "../../../packages/her/src/extension-with-review.ts";
