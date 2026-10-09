@@ -2,6 +2,7 @@ import type { CustomMessageEntryDraft, ExtensionAPI } from "@earendil-works/pi-c
 import { Type } from "typebox";
 import { resolveStudioUiBase } from "../preview/design-lab-open.ts";
 import { buildIntelligentUiMessage, INTELLIGENT_UI_TITLE_MAX } from "./message.ts";
+import { type IntelligentUiTaskSnapshot, requestIntelligentUiTasks } from "./tasks.ts";
 
 const CATALOG_TIMEOUT_MS = 5_000;
 
@@ -9,6 +10,7 @@ export interface IntelligentUiToolDeps {
 	fetchImpl?: typeof fetch;
 	resolveUiBase?: () => string;
 	requestTimeoutMs?: number;
+	workspaceId?: string;
 }
 
 interface PendingUiMessage {
@@ -21,6 +23,11 @@ export function registerIntelligentUiTools(pi: ExtensionAPI, deps: IntelligentUi
 	const fetchImpl = deps.fetchImpl ?? globalThis.fetch;
 	const resolveUiBase = deps.resolveUiBase ?? resolveStudioUiBase;
 	const pendingBySession = new Map<string, Map<string, PendingUiMessage>>();
+	let lifecycle = 0;
+	const discardPending = () => {
+		lifecycle += 1;
+		pendingBySession.clear();
+	};
 	pi.on("turn_end", (event, ctx) => {
 		const sessionId = ctx.sessionManager.getSessionId();
 		const pending = pendingBySession.get(sessionId);
@@ -38,27 +45,32 @@ export function registerIntelligentUiTools(pi: ExtensionAPI, deps: IntelligentUi
 		// handlers' entries and do not request an extra provider turn to deliver a UI.
 		if (drafts.length > 0) return { entries: [...event.entries, ...drafts] };
 	});
-	pi.on("agent_end", () => pendingBySession.clear());
-	pi.on("session_start", () => pendingBySession.clear());
-	pi.on("session_shutdown", () => pendingBySession.clear());
-	pi.on("session_tree", () => pendingBySession.clear());
+	pi.on("agent_end", discardPending);
+	pi.on("session_start", discardPending);
+	pi.on("session_shutdown", discardPending);
+	pi.on("session_tree", discardPending);
 	pi.registerTool({
 		name: "her_intelligent_ui",
 		label: "Her Intelligent UI",
 		description:
-			"Compose an interactive answer with Studio's own themed components. First call operation=catalog " +
+			"Compose an interactive answer with Studio's own themed components. For recent task duration and failures, " +
+			"call operation=tasks with no other parameters: Studio reads real local background tasks, preserves their " +
+			"sources in an immutable snapshot, and displays linked filters, metrics, a table and a trend. " +
+			"The current Studio workspace comes from the host. Never supply task rows, values, code or another workspace. " +
+			"For other interfaces, first call operation=catalog " +
 			"to discover the component schemas and read-only action/continue contract. Then call operation=render " +
 			"(the default) with a short title and OpenUI code, starting with root = as the first statement. " +
 			"Studio previews code as the tool arguments stream and saves the final interface in this conversation. " +
 			"Use only catalog components and listed read-only actions; continue with the current UI state. " +
 			"This tool does not execute business actions or require a separate model.",
 		parameters: Type.Object({
-			operation: Type.Optional(Type.Union([Type.Literal("catalog"), Type.Literal("render")])),
+			operation: Type.Optional(Type.Union([Type.Literal("catalog"), Type.Literal("render"), Type.Literal("tasks")])),
 			title: Type.Optional(Type.String({ maxLength: INTELLIGENT_UI_TITLE_MAX })),
 			code: Type.Optional(Type.String({ description: "OpenUI Lang source; root must be the first assignment." })),
 		}),
 		async execute(toolCallId, params, signal, _onUpdate, ctx) {
-			signal?.throwIfAborted();
+			const toolSignal = signal && ctx.signal ? AbortSignal.any([signal, ctx.signal]) : (signal ?? ctx.signal);
+			toolSignal?.throwIfAborted();
 			const operation = params.operation ?? "render";
 			if (operation === "catalog") {
 				const base = resolveUiBase().replace(/\/+$/, "");
@@ -107,9 +119,39 @@ export function registerIntelligentUiTools(pi: ExtensionAPI, deps: IntelligentUi
 				}
 				return { content: [{ type: "text", text: JSON.stringify(catalog) }], details: catalog };
 			}
-			if (operation !== "render") throw new Error("operation must be catalog or render");
-			const message = buildIntelligentUiMessage(toolCallId, params);
+			if (operation !== "render" && operation !== "tasks")
+				throw new Error("operation must be catalog, render or tasks");
 			const sessionId = ctx.sessionManager.getSessionId();
+			const requestLifecycle = lifecycle;
+			let snapshot: IntelligentUiTaskSnapshot | undefined;
+			if (operation === "tasks") {
+				if (Object.keys(params).some((key) => key !== "operation")) {
+					throw new Error(
+						"tasks accepts only operation; Studio supplies the current workspace, sources and interface",
+					);
+				}
+				snapshot = await requestIntelligentUiTasks(
+					{
+						fetchImpl,
+						uiBase: resolveUiBase(),
+						workspaceId: deps.workspaceId,
+						requestTimeoutMs: deps.requestTimeoutMs,
+					},
+					toolSignal,
+				);
+				if (requestLifecycle !== lifecycle || sessionId !== ctx.sessionManager.getSessionId()) {
+					throw new Error("Task snapshot interrupted by a runtime or session change");
+				}
+			}
+			const message = buildIntelligentUiMessage(
+				toolCallId,
+				snapshot
+					? {
+							title: "最近任务的耗时与失败情况",
+							code: `root = Stack([TaskInsights("recent_tasks", "${snapshot.snapshotId}")])`,
+						}
+					: params,
+			);
 			let pending = pendingBySession.get(sessionId);
 			if (!pending) {
 				pending = new Map();
@@ -117,13 +159,14 @@ export function registerIntelligentUiTools(pi: ExtensionAPI, deps: IntelligentUi
 			}
 			pending.set(toolCallId, {
 				draft: { type: "custom_message", customType: "her-intelligent-ui", display: true, ...message },
-				signal,
+				signal: toolSignal,
 			});
 			return {
 				content: [
 					{ type: "text", text: `交互界面已准备，将在本轮完成后保存到 Studio：${message.details.title}。` },
+					...(snapshot ? [{ type: "text" as const, text: JSON.stringify(snapshot) }] : []),
 				],
-				details: { uiId: message.details.uiId, version: 1, queued: true },
+				details: { uiId: message.details.uiId, version: 1, queued: true, ...(snapshot ? { snapshot } : {}) },
 			};
 		},
 	});
