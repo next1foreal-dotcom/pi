@@ -71,7 +71,18 @@ async function runFull(
 ): Promise<ToolCallResult> {
 	assert.ok(tool, "tool not registered");
 	const ctx = { cwd } as unknown as ExtensionContext;
-	const result = (await tool.execute("call-1", params, undefined, undefined, ctx)) as {
+	const result = (await tool.execute(
+		"call-1",
+		params,
+		undefined,
+		undefined,
+		Object.assign(ctx, {
+			tools: [],
+			async executeTool() {
+				throw new Error("Unexpected nested tool call in test");
+			},
+		}),
+	)) as {
 		content: ToolContent[];
 		details?: Record<string, unknown>;
 	};

@@ -10,7 +10,7 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionToolContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { registerChapterTools } from "../src/chapters/tools.ts";
 import { resolveGovernedTool } from "../src/lib/governed-tools.ts";
 
@@ -28,7 +28,7 @@ function registeredTool(): ToolDefinition {
 }
 
 // The tool only shapes transcript data — it never touches ctx.
-const noCtx = undefined as unknown as ExtensionContext;
+const noCtx = undefined as unknown as ExtensionToolContext;
 
 async function run(tool: ToolDefinition, params: Record<string, unknown>) {
 	const result = await tool.execute("call-1", params, undefined, undefined, noCtx);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ExtensionContext } from "../src/core/extensions/types.ts";
+import type { ExtensionToolContext } from "../src/core/extensions/types.ts";
 import { type BashOperations, createBashToolDefinition } from "../src/core/tools/bash.ts";
 
 /**
@@ -21,7 +21,7 @@ describe("bash tool default timeout", () => {
 		return { ops, seen };
 	}
 
-	const noCtx = undefined as unknown as ExtensionContext;
+	const noCtx = undefined as unknown as ExtensionToolContext;
 
 	it("applies the default when the model omits timeout", async () => {
 		const { ops, seen } = recordingOps();

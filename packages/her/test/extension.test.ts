@@ -203,7 +203,18 @@ async function withEnv<T>(values: Record<string, string | undefined>, fn: () => 
 }
 
 async function executeTool(tool: ToolDefinition, params: Record<string, unknown>, ctx: ExtensionContext) {
-	return await tool.execute("tool-call-1", params, undefined, undefined, ctx);
+	return await tool.execute(
+		"tool-call-1",
+		params,
+		undefined,
+		undefined,
+		Object.assign(ctx, {
+			tools: [],
+			async executeTool() {
+				throw new Error("Unexpected nested tool call in test");
+			},
+		}),
+	);
 }
 
 function firstText(result: Awaited<ReturnType<typeof executeTool>>): string {

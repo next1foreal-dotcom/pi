@@ -675,7 +675,18 @@ function ctx(
 }
 
 async function executeHands(tool: ToolDefinition, params: Record<string, unknown>, context?: ExtensionContext) {
-	return await tool.execute("tool-call-1", params, undefined, undefined, context as ExtensionContext);
+	return await tool.execute(
+		"tool-call-1",
+		params,
+		undefined,
+		undefined,
+		Object.assign(context ?? ({} as ExtensionContext), {
+			tools: [],
+			async executeTool() {
+				throw new Error("Unexpected nested tool call in test");
+			},
+		}),
+	);
 }
 
 function firstText(result: Awaited<ReturnType<typeof executeHands>>): string {

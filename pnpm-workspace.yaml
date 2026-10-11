@@ -1,0 +1,14 @@
+packages:
+  - 'packages/*'
+  - '!packages/design-lab'
+  - 'packages/coding-agent/examples/extensions/with-deps'
+  - 'packages/coding-agent/examples/extensions/custom-provider-anthropic'
+  - 'packages/coding-agent/examples/extensions/custom-provider-gitlab-duo'
+  - 'packages/coding-agent/examples/extensions/sandbox'
+  - 'packages/coding-agent/examples/extensions/gondolin'
+linkWorkspacePackages: true
+preferWorkspacePackages: true
+nodeLinker: hoisted
+ignoreScripts: true
+overrides:
+  protobufjs: 7.6.6

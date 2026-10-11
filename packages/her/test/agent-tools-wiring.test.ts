@@ -179,7 +179,18 @@ async function invoke(
 	ctx: ExtensionContext,
 ): Promise<{ text: string; details: Record<string, unknown> }> {
 	assert.ok(tool, "expected the tool to be registered on the session");
-	const result = (await tool.execute("call-g284", params, undefined, undefined, ctx)) as {
+	const result = (await tool.execute(
+		"call-g284",
+		params,
+		undefined,
+		undefined,
+		Object.assign(ctx, {
+			tools: [],
+			async executeTool() {
+				throw new Error("Unexpected nested tool call in test");
+			},
+		}),
+	)) as {
 		content: Array<{ type: string; text?: string }>;
 		details?: Record<string, unknown>;
 	};

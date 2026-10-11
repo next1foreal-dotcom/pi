@@ -1028,7 +1028,7 @@ test("G-251 selectRelevantKeys is deterministic and relevance-ranked", () => {
 });
 
 test("G-251 selectRelevantKeys obeys budget, recent fallback, and empty boundaries", () => {
-	const stems = Array.from({ length: 2000 }, (_, index) => "topic-" + index + "-evidence");
+	const stems = Array.from({ length: 2000 }, (_, index) => `topic-${index}-evidence`);
 	const recent = ["unrelated-recent-key", "topic-17-evidence", "unrelated-recent-key"];
 	const selected = selectRelevantKeys("topic evidence", stems, { max: 7, recent });
 	assert.ok(selected.length <= 9);
